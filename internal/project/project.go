@@ -85,7 +85,7 @@ func Load(root string) (*Project, error) {
 	}
 
 	// Type-check each module in order. Types defined in a module are
-	// only visible to other modules that import it — without this
+	// only visible to other modules that import it: without this
 	// scoping, two pages could not both define `type Model = ...`.
 	tEnv := typecheck.BaseEnv()
 	aliasesByModule := map[string]map[string]typecheck.TypeAlias{}
@@ -155,7 +155,7 @@ func Load(root string) (*Project, error) {
 		}
 	}
 
-	// Boundary shape lint — catches Entity.define / Repo.* /
+	// Boundary shape lint: catches Entity.define / Repo.* /
 	// Auth.config issues that BaseEnv's polymorphic types let
 	// through. Includes the new Entity.define checks: literal name,
 	// portable identifier shape, reserved-prefix rejection, and
@@ -201,12 +201,12 @@ func Load(root string) (*Project, error) {
 // accepted.
 //
 // `modulesByName` is the project-wide module map. It's only consulted
-// here to resolve `import M exposing (Type(..))` — we need the list of
+// here to resolve `import M exposing (Type(..))`: we need the list of
 // constructors for `Type`, which lives in `M`'s AST.
 //
 // Why per-module: with a single shared env, two modules that both
 // declare a bare name (e.g. `Backend.Projects.projects = Entity ...`
-// and `Frontend.Routes.projects : Path` — yes this happens in real
+// and `Frontend.Routes.projects : Path`, yes this happens in real
 // code) would clobber each other on load. The flat env's last-write-
 // wins would then feed the wrong value into bare references inside
 // either module's handlers. Putting each module in its own frame
@@ -221,12 +221,12 @@ func loadIntoEnv(mod *ast.Module, modName string, rEnv *runtime.Env, modulesByNa
 	// against the alias's field types and reported errors against the alias
 	// name; here we give them their runtime meaning by rewriting each
 	// `Point x y` (or a bare `Point` passed to a higher-order function) into
-	// `\a b -> { x = a, y = b }`. Done before eval — and, because the same
-	// module value is what gets serialized for the client, before that too —
+	// `\a b -> { x = a, y = b }`. Done before eval, and, because the same
+	// module value is what gets serialized for the client, before that too:
 	// so no constructor concept ever has to cross the wire.
 	desugarRecordAliasCtors(mod, modulesByName)
 
-	// Pass 0: import exposing — bare-name aliases for runtime values
+	// Pass 0: import exposing, bare-name aliases for runtime values
 	// already in env. Mirrors what CheckModuleWith does at the type
 	// level; without this, code like `column [...]` after
 	// `import View exposing (column)` typechecks but explodes at
@@ -236,7 +236,7 @@ func loadIntoEnv(mod *ast.Module, modName string, rEnv *runtime.Env, modulesByNa
 			continue
 		}
 		impName := joinName(imp.Module)
-		// `exposing (..)`: bind every export of the module bare —
+		// `exposing (..)`: bind every export of the module bare:
 		// values and ctors registered as `impName.x` in the env chain
 		// (for builtin modules like UI, the whole vocabulary). Mirrors
 		// the typechecker's wildcard handling in CheckModuleWith.
@@ -296,7 +296,7 @@ func loadIntoEnv(mod *ast.Module, modName string, rEnv *runtime.Env, modulesByNa
 	}
 
 	// Pass 2: pre-bind values to placeholders (for mutual recursion).
-	// Local to modEnv — only this module's body needs the placeholder
+	// Local to modEnv: only this module's body needs the placeholder
 	// for self-/mutual reference; other modules see the final value
 	// via the qualified name set in Pass 3.
 	for _, d := range mod.Decls {
@@ -353,7 +353,7 @@ func loadIntoEnv(mod *ast.Module, modName string, rEnv *runtime.Env, modulesByNa
 // `module Main` entry point), then falls back to the entry module's
 // qualified name. The entry is always last in `mods`
 // because the loader's BFS starts from the entry file and the topo
-// sort emits dependencies before their dependents — so for any
+// sort emits dependencies before their dependents, so for any
 // project the user can run, mods[len(mods)-1] is the file they
 // passed on the CLI.
 //
@@ -391,9 +391,9 @@ func desugarRecordAliasCtors(mod *ast.Module, modulesByName map[string]*ast.Modu
 }
 
 // collectRecordAliases maps the name a record-alias constructor is written as
-// — bare (`Point`) for the current module's own aliases and for those an
+// : bare (`Point`) for the current module's own aliases and for those an
 // import exposes, qualified (`Geometry.Point`) for any imported module's
-// aliases — to that alias's field names in declaration order. This mirrors
+// aliases: to that alias's field names in declaration order. This mirrors
 // loadIntoEnv's Pass 0 import-exposing rules, so the set matches exactly what
 // the typechecker accepted as a constructor.
 func collectRecordAliases(mod *ast.Module, modulesByName map[string]*ast.Module) map[string][]string {
@@ -428,7 +428,7 @@ func collectRecordAliases(mod *ast.Module, modulesByName map[string]*ast.Module)
 
 // moduleRecordAliasMap returns the closed-record type aliases declared in m,
 // each as its field names in declaration order. Only closed records become
-// constructors — `type alias Id = Int` and open rows (`{ r | ... }`) do not.
+// constructors: `type alias Id = Int` and open rows (`{ r | ... }`) do not.
 func moduleRecordAliasMap(m *ast.Module) map[string][]string {
 	out := map[string][]string{}
 	for _, d := range m.Decls {
@@ -571,7 +571,7 @@ func makeCtorValueLocal(tag string, arity int) runtime.Value {
 // findMarFiles returns the .mar files belonging to a project at root.
 //
 // If root is a single .mar file, returns just that file.
-// If root is a directory, walks it recursively — subdirectories that
+// If root is a directory, walks it recursively: subdirectories that
 // match dotted module segments (e.g. `Frontend/Home.mar` for
 // `module Frontend.Home`) are picked up. Hidden directories
 // (".git", ".cache", etc.) and `node_modules` are skipped.
@@ -676,13 +676,13 @@ var (
 
 // stdlibModules is the set of built-in module names. It is derived from the
 // qualified builtin surface (typecheck.BaseQualifiedSymbols) so it can never
-// drift from what the language actually provides — adding a builtin under a
+// drift from what the language actually provides: adding a builtin under a
 // new module makes that module importable automatically. Computed once.
 func stdlibModules() map[string]bool {
 	stdlibModulesOnce.Do(func() {
 		// View is an ambient type module: UI.* build View values, so View
 		// has no qualified functions of its own and isn't in the qualified
-		// symbol map — but `import View` is still valid.
+		// symbol map, but `import View` is still valid.
 		set := map[string]bool{"View": true}
 		for qualified := range typecheck.BaseQualifiedSymbols() {
 			if i := strings.IndexByte(qualified, '.'); i > 0 {

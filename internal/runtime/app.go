@@ -30,10 +30,10 @@ type VPage struct {
 	IsProtected bool // duplicates `Redirect != ""` for clarity; future
 	//                  // protected variants without a redirect (eg. native
 	//                  // sheets) will still set this true.
-	IsAdmin bool // Page.adminProtected — gated by the framework admin
+	IsAdmin bool // Page.adminProtected: gated by the framework admin
 	//             // session (mar.json["admins"]) instead of the app's user
 	//             // auth. Implies IsProtected.
-	IsSheet bool // Page.sheet — PRESENTED over the page you came from
+	IsSheet bool // Page.sheet: PRESENTED over the page you came from
 	//             // instead of replacing it. Orthogonal to the four
 	//             // dynamic × protected combinations: the route, the
 	//             // history entry and the deep link are unchanged, only
@@ -55,7 +55,7 @@ func (p VPage) Display() string {
 // plus the update and subscriptions that drive it. Built by App.shared, read
 // by Page.withShared, written by Cmd.toShared.
 //
-// The store itself only ever runs in the browser — this half exists because
+// The store itself only ever runs in the browser: this half exists because
 // `mar dev` evaluates `main` server-side to learn the ROUTES, and a page built
 // by Page.withShared cannot report its path without first being built, which
 // needs a model. InitModel is that model, and only that: the init's Cmd is
@@ -74,7 +74,7 @@ func (VShared) Display() string { return "<shared>" }
 
 // readPageRecord pulls the common { path, init, update, view, title? } shape
 // out of a record argument. Used by Page.dynamic and Page.dynamicProtected
-// — both share the same surface as Page.create, the only difference being
+// : both share the same surface as Page.create, the only difference being
 // which flags get flipped on the resulting VPage. The caller is expected to
 // set IsDynamic / IsProtected / Redirect as appropriate.
 func readPageRecord(arg Value, name string) (VPage, error) {
@@ -114,19 +114,19 @@ func readPageRecord(arg Value, name string) (VPage, error) {
 // appBuiltins exposes the page / app builders.
 //
 //	Page.create  : { path, title, init, update, view } -> Page
-//	App.frontend : List Page -> Effect String ()
-//	App.backend  : List Route -> Effect String ()
-//	App.fullstack: { api, pages } -> Effect String ()
+//	App.frontend : List Page -> Cmd ()
+//	App.backend  : List Route -> Task ()
+//	App.fullstack: { api, pages } -> Cmd ()
 //
 // The default builtins for the App.* server entry points error out when
 // evaluated outside of `mar dev`, because they need access to the
 // project's module ASTs (to ship as a browser bundle) and mar.json
 // (for the listening port). The CLI installs project-aware overrides
-// before evaluating Main.main — see cmd/mar/main.go runDev.
+// before evaluating Main.main: see cmd/mar/main.go runDev.
 func appBuiltins() map[string]Value {
 	return map[string]Value{
 		// Page.create takes a record { path, title?, init, update, view }.
-		// `title` is optional — when omitted the browser-tab title is left
+		// `title` is optional, when omitted the browser-tab title is left
 		// to whatever the host HTML set up.
 		"pageCreate": nativeFn(1, func(args []Value) (Value, error) {
 			rec, ok := args[0].(VRecord)
@@ -164,7 +164,7 @@ func appBuiltins() map[string]Value {
 
 		// Page.protected mirrors Page.create plus a `redirect` field
 		// and User-aware handler signatures. Server-side we only need
-		// the static metadata (path/title/redirect/origin) — the JS
+		// the static metadata (path/title/redirect/origin): the JS
 		// runtime drives the Auth.me bootstrap and the User threading.
 		"pageProtected": nativeFn(1, func(args []Value) (Value, error) {
 			rec, ok := args[0].(VRecord)
@@ -191,7 +191,7 @@ func appBuiltins() map[string]Value {
 			if t, ok := rec.Fields["title"].(VString); ok {
 				title = t.V
 			}
-			// Marker — empty `Redirect` means "use Auth.config.signInPage".
+			// Marker: empty `Redirect` means "use Auth.config.signInPage".
 			// The browser dispatcher resolves it at render time. The
 			// non-empty case stays open as a future per-page override
 			// (would need a `signInPage : Page` field here too).
@@ -221,11 +221,11 @@ func appBuiltins() map[string]Value {
 			return page, nil
 		}),
 
-		// Page.dynamic — pattern path with typed `{name:Type}` segments.
+		// Page.dynamic, pattern path with typed `{name:Type}` segments.
 		// Same fields as Page.create; the path string gets parsed into
 		// the typed segments the JS / iOS runtimes need to match URLs
 		// and decode params. Server-side we only validate that the
-		// pattern is well-formed — the parsed Pattern is shipped to
+		// pattern is well-formed: the parsed Pattern is shipped to
 		// the client via the bundle JSON.
 		"pageDynamic": nativeFn(1, func(args []Value) (Value, error) {
 			page, err := readPageRecord(args[0], "Page.dynamic")
@@ -241,7 +241,7 @@ func appBuiltins() map[string]Value {
 			return page, nil
 		}),
 
-		// Page.dynamicProtected — pattern path + auth gate. Combines
+		// Page.dynamicProtected: pattern path + auth gate. Combines
 		// IsDynamic and IsProtected; client runtime threads BOTH
 		// User and Params (in that order) through the handlers.
 		"pageDynamicProtected": nativeFn(1, func(args []Value) (Value, error) {
@@ -259,7 +259,7 @@ func appBuiltins() map[string]Value {
 			return page, nil
 		}),
 
-		// Page.dynamicAdminProtected — pattern path + admin gate. Like
+		// Page.dynamicAdminProtected: pattern path + admin gate. Like
 		// pageDynamicProtected but threads AdminSession (not User) + Params.
 		"pageDynamicAdminProtected": nativeFn(1, func(args []Value) (Value, error) {
 			page, err := readPageRecord(args[0], "Page.dynamicAdminProtected")
@@ -277,7 +277,7 @@ func appBuiltins() map[string]Value {
 			return page, nil
 		}),
 
-		// Page.sheet — presentation, not a new kind of page. Takes a
+		// Page.sheet: presentation, not a new kind of page. Takes a
 		// page built by any of the constructors above and flips one
 		// flag: navigating to it lays it over the screen you came from
 		// instead of replacing it.
@@ -297,7 +297,7 @@ func appBuiltins() map[string]Value {
 			return page, nil
 		}),
 
-		// App.shared — the app-wide client store's definition.
+		// App.shared: the app-wide client store's definition.
 		//
 		// Server-side this is a carrier, not a store: nothing here runs an
 		// update or a subscription. It exists because `mar dev` evaluates
@@ -324,7 +324,7 @@ func appBuiltins() map[string]Value {
 			}, nil
 		}),
 
-		// Page.withShared — a wrapper over the six page constructors, not a
+		// Page.withShared: a wrapper over the six page constructors, not a
 		// seventh flavor of each.
 		//
 		// The builder is applied ONCE here, with the store's initial model,
@@ -332,7 +332,7 @@ func appBuiltins() map[string]Value {
 		// registered and the bundle narrowed to the modules it reaches. In
 		// the browser the same builder is re-applied on every shared change,
 		// which is what makes a page render the live value rather than a
-		// snapshot — see runtime.js.
+		// snapshot: see runtime.js.
 		"pageWithShared": nativeFn(2, func(args []Value) (Value, error) {
 			shared, ok := args[0].(VShared)
 			if !ok {
@@ -361,7 +361,7 @@ func appBuiltins() map[string]Value {
 		}),
 
 		// Nav.* are browser-only effects. Server-side they evaluate
-		// but their Run errors out — same shape as Service.call.
+		// but their Run errors out: same shape as Service.call.
 		"navPush": nativeFn(1, func(args []Value) (Value, error) {
 			return VEffect{
 				Tag: "navPush",
@@ -389,7 +389,7 @@ func appBuiltins() map[string]Value {
 
 		// Auth.completeSignIn is the post-Auth.verifyCode helper that reads
 		// the captured `?next=` and navigates back to the origin. Pure
-		// browser-side concern — server evaluation shouldn't reach it.
+		// browser-side concern: server evaluation shouldn't reach it.
 		"authCompleteSignIn": VEffect{
 			Tag: "authCompleteSignIn",
 			Run: func() (Value, error) {
@@ -402,7 +402,7 @@ func appBuiltins() map[string]Value {
 		// effect is a no-op server-side; the browser runtime overrides
 		// it with the actual history.pushState / replaceState wiring.
 		// We pre-render the URL here so the runtime check runs on the
-		// server too — a shape mismatch (missing field, wrong type)
+		// server too: a shape mismatch (missing field, wrong type)
 		// fails fast in `mar build` rather than waiting for the click.
 		"navPushTo": nativeFn(2, func(args []Value) (Value, error) {
 			_, err := buildPathURL(args[0], args[1], "Nav.pushTo")
@@ -431,7 +431,7 @@ func appBuiltins() map[string]Value {
 
 		// linkTo : Path r -> r -> String
 		// Pure URL builder. Same shape as Nav.pushTo's argument
-		// processing minus the Effect wrapping — meant for `href`
+		// processing minus the Effect wrapping: meant for `href`
 		// attributes on anchor tags. Server + browser + iOS all use
 		// the same logic; no runtime override needed.
 		"linkTo": nativeFn(2, func(args []Value) (Value, error) {

@@ -11,8 +11,8 @@ import (
 	"mar/internal/typecheck"
 )
 
-// parseExpr compiles a Mar expression the way the REPL does — a throwaway
-// binding parsed and inferred against the stdlib env — and hands back both the
+// parseExpr compiles a Mar expression the way the REPL does: a throwaway
+// binding parsed and inferred against the stdlib env, and hands back both the
 // inferred type and the tree, so the caller can decide whether to run it.
 // checkModuleExample compiles an example that is a block of declarations rather
 // than a single expression. Some things cannot be written as one: a Path only
@@ -52,8 +52,8 @@ func parseExpr(src string) (typecheck.Type, ast.Expr, error) {
 //
 // An equality like `List.map negate [1, 2, 3] == [-1, -2, -3]` infers as Bool:
 // it makes a claim, so it is evaluated and must come out True. Anything else
-// has no meaningful value to compare against — a Canvas.rect call is a Shape, a
-// UI.text call is a View, Time.now is a Task — so the bar is that it compiles.
+// has no meaningful value to compare against: a Canvas.rect call is a Shape, a
+// UI.text call is a View, Time.now is a Task, so the bar is that it compiles.
 // That still catches the failure that matters here: if the signature changes
 // under it, the snippet stops typechecking and this test goes red, the same way
 // a drifted signature fails the staleness test. What it deliberately does not
@@ -62,9 +62,9 @@ func parseExpr(src string) (typecheck.Type, ast.Expr, error) {
 func checkExample(src string) error {
 	t, body, err := parseExpr(src)
 	if err != nil {
-		// Not an expression. Some examples have to be declarations — a Path or
+		// Not an expression. Some examples have to be declarations: a Path or
 		// a table only comes into being through a binding, and naming the thing
-		// is half of what the example is teaching — so try again as a module
+		// is half of what the example is teaching, so try again as a module
 		// body. Whether it is one line or several does not matter; what matters
 		// is whether it parses as an expression, which is a question the parser
 		// can answer better than a heuristic on the text.
@@ -89,8 +89,8 @@ func checkExample(src string) error {
 
 // TestExamplesHold is the trust anchor for the worked examples: every one is
 // real Mar that compiles against the live stdlib, and every one that states an
-// equality is run and must hold. A wrong example — or a stdlib change that
-// quietly breaks one — fails here.
+// equality is run and must hold. A wrong example, or a stdlib change that
+// quietly breaks one: fails here.
 func TestExamplesHold(t *testing.T) {
 	checked, evaluated := 0, 0
 	for _, e := range Entries() {

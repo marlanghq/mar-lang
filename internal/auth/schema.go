@@ -6,7 +6,7 @@ import (
 )
 
 // Migrate creates the framework-managed auth tables if they're missing.
-// Idempotent — safe to call on every dispatcher boot. Both tables use
+// Idempotent: safe to call on every dispatcher boot. Both tables use
 // the `_mar_` prefix (reserved by the manifest checker) so they don't
 // collide with user-defined entities.
 func Migrate(db *sql.DB) error {
@@ -48,7 +48,7 @@ func Migrate(db *sql.DB) error {
 // SweepExpired deletes auth codes that expired more than a day ago,
 // and sessions that expired at all. The 24h code grace lets us inspect
 // recent activity if a user reports an issue. Sessions don't get the
-// same grace — once expired they can't be honored anyway, so keeping
+// same grace: once expired they can't be honored anyway, so keeping
 // them around just bloats the table.
 //
 // Called by the background sweeper started in StartSweeper. Idempotent

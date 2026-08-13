@@ -5,7 +5,7 @@ import Shared
 
 
 -- Tweets entity. The body is capped at 280 chars by the frontend +
--- service handler — we don't enforce it at the column type because
+-- service handler: we don't enforce it at the column type because
 -- Mar's `Entity.text` is unbounded by default; the cap is policy,
 -- not schema.
 tweets : Entity Shared.Tweet

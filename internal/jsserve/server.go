@@ -69,12 +69,12 @@ func currentPublicDir() string {
 // serveStaticOrShell serves a file from the project's public/ dir when
 // the request path maps to a real file (e.g. /logo.svg), otherwise
 // renders the SPA shell so client-side routing keeps working. The path
-// is cleaned and confined to publicDir — `..` traversal and absolute
+// is cleaned and confined to publicDir: `..` traversal and absolute
 // escapes can't reach outside the folder.
 func serveStaticOrShell(w http.ResponseWriter, r *http.Request, lp *LiveProgram) {
 	// /_mar/ is the framework's reserved namespace (runtime.js, program.json,
 	// manifest, icons, admin panel, …). Every real asset there is registered
-	// with its own handler and never reaches this catch-all — so anything under
+	// with its own handler and never reaches this catch-all, so anything under
 	// /_mar/ that lands here is a framework path that doesn't exist for this
 	// app (e.g. /_mar/admin on a frontend-only app, where the admin panel is
 	// not mounted). Answer 404 rather than leak the SPA shell for it.
@@ -86,7 +86,7 @@ func serveStaticOrShell(w http.ResponseWriter, r *http.Request, lp *LiveProgram)
 		clean := path.Clean(r.URL.Path) // collapses .. and duplicate slashes
 		// Skip any path with a dotfile segment (.env, .git, .DS_Store…).
 		// Matches the build's copyPublicDir, which never ships them, so
-		// dev and a deployed bundle agree — and a stray secret dropped
+		// dev and a deployed bundle agree, and a stray secret dropped
 		// in public/ isn't served by accident.
 		if hasDotSegment(clean) {
 			renderShell(w, lp)
@@ -176,7 +176,7 @@ func serveProgramJSON(lp *LiveProgram) http.HandlerFunc {
 	}
 }
 
-// renderShell writes the HTML page. The HTML stays small — program.json
+// renderShell writes the HTML page. The HTML stays small: program.json
 // is fetched separately; we use <link rel="preload"> in the head so the
 // browser kicks off both runtime.js AND program.json downloads as soon
 // as the head is parsed. Result: cold-start round-trips effectively =
@@ -184,11 +184,11 @@ func serveProgramJSON(lp *LiveProgram) http.HandlerFunc {
 //
 // Why not inline the program in the HTML? Tried; reverted. For
 // returning users with runtime.js cached, an inline program means
-// the entire program ships in every HTML response — no ETag, no 304.
+// the entire program ships in every HTML response: no ETag, no 304.
 // The separate /_mar/program.json keeps its strong ETag, so steady-
 // state visits only re-download the program when it actually changed.
 //
-// Cache-Control: no-store on the HTML — the runtime.js and program.json
+// Cache-Control: no-store on the HTML, the runtime.js and program.json
 // links sit in the head, and we want every visit to re-fetch the shell
 // so a stale shell doesn't keep a returning user pinned to last
 // deploy's runtime.js by serving its old reference.
@@ -199,7 +199,7 @@ func renderShell(w http.ResponseWriter, lp *LiveProgram) {
 }
 
 // programETag returns the strong ETag value for a program.json payload.
-// First 16 hex chars of the sha256 — plenty of collision space for a
+// First 16 hex chars of the sha256: plenty of collision space for a
 // single app's deploy history. Cached on the LiveProgram itself
 // (computed once per program swap, not per request).
 func programETag(body []byte) string {
@@ -224,7 +224,7 @@ func programETag(body []byte) string {
 // drops from T_runtime + T_program to max(T_runtime, T_program).
 //
 // Implementation: inline `fetch()` from the head. The HTML parser
-// dispatches the request immediately — same parallel-load timing as
+// dispatches the request immediately: same parallel-load timing as
 // `<link rel="preload" as="fetch">` would offer, but Safari/WebKit
 // rejects that pairing (its preload-matcher treats `as="fetch"`
 // link entries as a different request kind from the actual fetch
@@ -487,12 +487,12 @@ window.addEventListener('DOMContentLoaded', function () {
 //     shell. "/_mar/*" serves assets.
 //
 // LiveProgram is updated on every reload but the mux registration here
-// is fixed — so ServeLive must be called after the initial compile so
+// is fixed, so ServeLive must be called after the initial compile so
 // HasFrontend/HasAPI reflect the program shape.
 //
 // `onReady` (optional) fires exactly once, after the TCP bind succeeds
 // and the banner has printed. The CLI uses this to open the user's
-// browser only when the server is actually serving — without it, a
+// browser only when the server is actually serving: without it, a
 // polling opener would race against a stale `mar dev` already on the
 // port and launch a tab pointing at the wrong instance.
 func ServeLive(port int, lp *LiveProgram, hub *ReloadHub, onReady func()) error {
@@ -502,7 +502,7 @@ func ServeLive(port int, lp *LiveProgram, hub *ReloadHub, onReady func()) error 
 	hasAPI := lp.HasAPI()
 
 	// SSE channel for hot-reload + compile-error broadcasting. In
-	// production (mar-runtime) the caller passes a nil hub — no
+	// production (mar-runtime) the caller passes a nil hub: no
 	// /_mar/reload route is registered and the JS runtime's dev
 	// channel never connects (and is skipped client-side by checking
 	// `program.devMode`).
@@ -515,8 +515,8 @@ func ServeLive(port int, lp *LiveProgram, hub *ReloadHub, onReady func()) error 
 	// session secret (from mar.json or .mar/dev-secrets.json), we
 	// mount the framework HTTP endpoints at /_auth/*.
 	//
-	// Before mounting the handlers, validate that the SMTP config —
-	// if any — actually works. The boot SMTP check connects, runs
+	// Before mounting the handlers, validate that the SMTP config:
+	// if any: actually works. The boot SMTP check connects, runs
 	// STARTTLS, authenticates, and disconnects. Failures here mean
 	// the deploy would silently swallow every sign-in attempt
 	// (auth.Send would error per request); failing fast at boot
@@ -524,11 +524,11 @@ func ServeLive(port int, lp *LiveProgram, hub *ReloadHub, onReady func()) error 
 	//
 	// Skipped automatically when SMTP isn't configured (Host empty,
 	// dev's stdout sink path). To boot without SMTP verification,
-	// omit the `mail.from` field from mar.json — there's no env-var
+	// omit the `mail.from` field from mar.json: there's no env-var
 	// escape hatch, by design.
 	// Before either mail-sending surface mounts, refuse to boot if the
 	// codes would have nowhere to go but the log stream. Covers user
-	// auth AND the admin panel — the admin panel is the case that
+	// auth AND the admin panel: the admin panel is the case that
 	// motivated this, since an admin-only project needs no Auth.config
 	// and so slipped past every check below.
 	if err := guardMailSink(); err != nil {
@@ -542,7 +542,7 @@ func ServeLive(port int, lp *LiveProgram, hub *ReloadHub, onReady func()) error 
 		mountAuthHandlers(mux)
 	}
 
-	// Admin panel — mounted unconditionally when a session secret is
+	// Admin panel: mounted unconditionally when a session secret is
 	// available. No "registered Auth.config" requirement: the admin
 	// panel doesn't share user-auth's signup hook or User entity, so
 	// it can run on a project that has no Auth.config at all (single
@@ -550,11 +550,11 @@ func ServeLive(port int, lp *LiveProgram, hub *ReloadHub, onReady func()) error 
 	//
 	// Without a session secret (no auth.sessionSecret in mar.json
 	// AND no .mar/dev-secrets.json), admin endpoints would have
-	// nothing to sign cookies with — skip mounting so the panel
+	// nothing to sign cookies with: skip mounting so the panel
 	// appears unreachable rather than misbehaving.
 	// ...and only when the app has a database. A frontend-only app
-	// (App.frontend) has no SQLite db in dev, so the admin panel — which
-	// reads/writes _mar_admins — has nothing to run against; skip it.
+	// (App.frontend) has no SQLite db in dev, so the admin panel, which
+	// reads/writes _mar_admins, has nothing to run against; skip it.
 	if AuthSecret() != "" && runtime.CurrentDBPath() != "" {
 		mountAdminHandlers(mux)
 	}
@@ -564,7 +564,7 @@ func ServeLive(port int, lp *LiveProgram, hub *ReloadHub, onReady func()) error 
 			// no-store on dev runtime: hot-reload changes the embedded
 			// runtime.js on every `mar dev` restart, but Safari/Chrome
 			// happily serve a cached copy unless we tell them not to.
-			// `no-store` is stricter than `no-cache` — guarantees a
+			// `no-store` is stricter than `no-cache`: guarantees a
 			// network fetch, not a 304 Not Modified.
 			w.Header().Set("Cache-Control", "no-store")
 			w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
@@ -572,7 +572,7 @@ func ServeLive(port int, lp *LiveProgram, hub *ReloadHub, onReady func()) error 
 		}))
 		mux.HandleFunc("/_mar/program.json", withCompression(func(w http.ResponseWriter, r *http.Request) {
 			// `no-cache` (not `no-store`) so the browser CAN cache the
-			// response — but must revalidate with the strong ETag on
+			// response, but must revalidate with the strong ETag on
 			// every request. Two reasons we don\'t use `no-store`:
 			//
 			// 1. Safari\'s preload-matcher refuses to reuse a preload
@@ -616,7 +616,7 @@ func ServeLive(port int, lp *LiveProgram, hub *ReloadHub, onReady func()) error 
 				_, _ = w.Write(b)
 			})
 		}
-		// /favicon.ico — browsers request this implicitly (tab, bookmark,
+		// /favicon.ico: browsers request this implicitly (tab, bookmark,
 		// address bar) regardless of <link rel="icon">. Serve the app
 		// icon as PNG bytes (browsers accept PNG at this path); without
 		// it the SPA catch-all returns HTML and the tab shows a generic
@@ -641,7 +641,7 @@ func ServeLive(port int, lp *LiveProgram, hub *ReloadHub, onReady func()) error 
 		// miss falls through to the static/shell handler.
 		//
 		// Rate limit + compression wrap only the service pipeline, not the
-		// HTML shell — a 429 on a page load would be terrible UX, and the
+		// HTML shell: a 429 on a page load would be terrible UX, and the
 		// shell is cheap to serve. We pre-check matchability (cheap, no
 		// body read) to pick the pipeline without rate-limiting the shell.
 		serviceDispatch := rateLimit(withCompression(func(w http.ResponseWriter, r *http.Request) {
@@ -661,7 +661,7 @@ func ServeLive(port int, lp *LiveProgram, hub *ReloadHub, onReady func()) error 
 		})
 	case hasAPI:
 		// Backend-only: services mount directly at their declared paths.
-		// The /_mar/reload path is registered above — ServeMux
+		// The /_mar/reload path is registered above: ServeMux
 		// longest-prefix match keeps it from being shadowed by this
 		// catch-all. An unmatched request is a 404.
 		mux.HandleFunc("/", rateLimit(withCompression(func(w http.ResponseWriter, r *http.Request) {
@@ -672,11 +672,11 @@ func ServeLive(port int, lp *LiveProgram, hub *ReloadHub, onReady func()) error 
 	}
 
 	addr := fmt.Sprintf(":%d", port)
-	// Bind FIRST — before any side effect that assumes the server
+	// Bind FIRST: before any side effect that assumes the server
 	// will run. If the port is already in use, returning early here
 	// keeps the banner from printing, the Bonjour record from being
-	// advertised, and (crucially) the onReady callback — which the
-	// CLI uses to open the browser — from firing. Without this
+	// advertised, and (crucially) the onReady callback, which the
+	// CLI uses to open the browser: from firing. Without this
 	// ordering, a stale `mar dev` on the same port would steal the
 	// browser tab launch even when the new instance refuses to boot.
 	ln, err := net.Listen("tcp", addr)
@@ -685,7 +685,7 @@ func ServeLive(port int, lp *LiveProgram, hub *ReloadHub, onReady func()) error 
 	}
 	// Advertise on the LAN via mDNS whenever the server has an HTTP
 	// API to talk to (frontend or fullstack). Native iOS clients
-	// browse for `_mar._tcp` and auto-connect — no manual baseURL
+	// browse for `_mar._tcp` and auto-connect: no manual baseURL
 	// configuration on the same network. The instance name is not
 	// surfaced in the banner: `.local` resolution is unreliable across
 	// OSes, so we let it stay an iOS-discovery-only mechanism.
@@ -693,7 +693,7 @@ func ServeLive(port int, lp *LiveProgram, hub *ReloadHub, onReady func()) error 
 		_, stop := publishBonjour(lp.AppName(), port)
 		defer stop()
 	}
-	// mailToStdout is true when Auth.config is wired but SMTP isn't —
+	// mailToStdout is true when Auth.config is wired but SMTP isn't:
 	// auth.Send routes those emails to stdout. The banner surfaces
 	// this so the first sign-in attempt isn't a surprise log dump.
 	// Mirrors the skip logic in maybeVerifySMTP (Host or Password
@@ -707,11 +707,11 @@ func ServeLive(port int, lp *LiveProgram, hub *ReloadHub, onReady func()) error 
 		onReady()
 	}
 	// Wrap mux with two layers:
-	//   1. adminInstrument — captures every request (method, path,
+	//   1. adminInstrument: captures every request (method, path,
 	//      status, duration, user email) into the in-memory ring
 	//      buffer powering the admin panel's "recent requests"
 	//      section. No-op when the buffer is not configured.
-	//   2. withVersionHeaders — stamps X-Mar-Runtime and
+	//   2. withVersionHeaders: stamps X-Mar-Runtime and
 	//      X-Mar-Program on every response so clients can detect
 	//      version drift and trigger OTA refresh / compat alerts.
 	//
@@ -722,11 +722,11 @@ func ServeLive(port int, lp *LiveProgram, hub *ReloadHub, onReady func()) error 
 	//
 	// recoverPanic is the OUTERMOST layer so a panic anywhere in the
 	// chain (handler, version headers, instrumentation) becomes a clean
-	// 500 with the stack logged server-side — never a dropped connection
+	// 500 with the stack logged server-side, never a dropped connection
 	// or a stack trace leaked toward the client.
 	// Wrap in an *http.Server with timeouts rather than the bare
 	// http.Serve, so a slow client can't hold a connection (and its
-	// goroutine) open indefinitely — Slowloris and slow-body attacks
+	// goroutine) open indefinitely: Slowloris and slow-body attacks
 	// (security-audit-2026-07-15.md #3). ReadHeaderTimeout is the key
 	// Slowloris defense. WriteTimeout bounds a slow-reading client; the
 	// live-reload SSE stream clears its own write deadline so it survives

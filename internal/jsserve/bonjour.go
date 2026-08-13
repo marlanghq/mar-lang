@@ -16,13 +16,13 @@ const bonjourServiceType = "_mar._tcp"
 // network via mDNS. Lets a freshly installed iOS app discover the
 // backend on the same LAN without typing in an IP address.
 //
-// `instance` is the human-readable name shown in pickers — defaults
+// `instance` is the human-readable name shown in pickers: defaults
 // to the hostname when the program title is empty (avoids two
 // instances on the same LAN colliding).
 //
 // Returns the actual instance name registered (so the caller can
 // print it in the startup banner) and an unregister function.
-// Returns ("", noop) on failure — the server keeps running, just
+// Returns ("", noop) on failure: the server keeps running, just
 // without LAN discovery.
 func publishBonjour(instance string, port int) (string, func()) {
 	if instance == "" {
@@ -36,7 +36,7 @@ func publishBonjour(instance string, port int) (string, func()) {
 		bonjourServiceType,
 		"local.",
 		port,
-		nil, // no TXT records (yet — could carry app version, schema URL, etc.)
+		nil, // no TXT records (yet, could carry app version, schema URL, etc.)
 		nil, // all interfaces
 	)
 	if err != nil {

@@ -27,13 +27,13 @@ import QuartzCore
 /// spirals a heavy game into a death loop). Mirrors the web runtime's rAF
 /// tick source (ADR-0003) step for step:
 ///  - display period within ±25% of the interval (the healthy 60Hz case):
-///    lock ONE tick per painted frame — glass-smooth, ~4% slower than
+///    lock ONE tick per painted frame: glass-smooth, ~4% slower than
 ///    nominal, imperceptible.
 ///  - faster panels (120Hz ProMotion): the accumulator fires at the correct
 ///    average rate (the frame-rate range below is a hint, not a guarantee).
 ///  - SLOWER frames (Low Power Mode, a heavy scene): 2..catchUpMax
 ///    back-to-back ticks per painted frame keep the GAME clock at true
-///    speed — only the paint rate drops, instead of dropped frames dilating
+///    speed: only the paint rate drops, instead of dropped frames dilating
 ///    game time into slow motion. Debt beyond the cap is dropped, so an
 ///    impossible load degrades to slow motion, never a catch-up spiral.
 ///    SwiftUI coalesces the burst's model writes into a single body
@@ -59,7 +59,7 @@ final class DisplayLinkProxy {
         let l = CADisplayLink(target: self, selector: #selector(step(_:)))
         // Ask the panel for the requested rate (16ms -> ~60Hz) so ProMotion
         // doesn't wake us at 120Hz for nothing. This is a hint, not a
-        // guarantee — the accumulator below is what actually gates ticks.
+        // guarantee: the accumulator below is what actually gates ticks.
         let hz = Float(min(120, max(30, Int((1.0 / max(interval, 1.0 / 120.0)).rounded()))))
         l.preferredFrameRateRange = CAFrameRateRange(minimum: 30, maximum: hz, preferred: hz)
         l.add(to: .main, forMode: .common)
@@ -171,7 +171,7 @@ final class PageRuntime {
         // Stop, and only for the case that cannot recover. A `dispatch`
         // failure leaves a consistent screen behind it and the next message
         // may well succeed; a `page` failure will not. Cutting the
-        // subscriptions here — after the message is recorded, never before —
+        // subscriptions here, after the message is recorded, never before:
         // is what keeps a broken screen from running a display link at sixty
         // frames a second for as long as the phone stays awake.
         if where_ == .page {
@@ -186,7 +186,7 @@ final class PageRuntime {
     /// no message, no log, nothing recorded. A failing `subscriptions` simply
     /// stopped registering and a failing tagger simply stopped delivering, so
     /// a page whose arithmetic broke looked like "the keyboard died on its
-    /// own" — with no way to tell that from a bug in the framework.
+    /// own": with no way to tell that from a bug in the framework.
     ///
     /// Swallowing is never the right default. A subscription that cannot be
     /// built is still a broken program, and the person running it deserves to
@@ -204,7 +204,7 @@ final class PageRuntime {
     @ObservationIgnored private var sharedTaggerOwners: [String: String] = [:]
 
     /// A stable identity for a tagger value. Taggers are closures, and Swift
-    /// closures are not Equatable — the pointer is what the reconciler already
+    /// closures are not Equatable: the pointer is what the reconciler already
     /// keys survivors on, so it is the honest choice here too.
     private static func taggerIdentity(_ v: MarValue) -> String {
         if case .fn(let f) = v { return String(UInt(bitPattern: ObjectIdentifier(f).hashValue)) }
@@ -252,7 +252,7 @@ final class PageRuntime {
         self.init(page: page, user: nil, params: nil)
     }
 
-    /// Full constructor — covers all four page flavors. When `user`
+    /// Full constructor: covers all four page flavors. When `user`
     /// is non-nil, init/update/view are partially applied with it as
     /// the first argument; when `params` is non-nil, it's applied
     /// next. Order matches the type sigs in env.go: User first, then
@@ -309,7 +309,7 @@ final class PageRuntime {
     ///
     /// `currentOwner` is stamped with this instance's identity so
     /// `unmount` can tell whether the dispatcher slot is still
-    /// ours when SwiftUI eventually tears us down — see the
+    /// ours when SwiftUI eventually tears us down: see the
     /// comment on MarDispatcher.currentOwner for why that matters.
     func mount() {
         // One line per screen that comes up, naming what it drew. "mounted
@@ -324,7 +324,7 @@ final class PageRuntime {
             self?.dispatch(msg)
         }
         // A page built by Page.withShared IS a function of the shared model,
-        // so a change there changes what this page is — not merely what it
+        // so a change there changes what this page is, not merely what it
         // shows. Re-reconcile and let @Observable redraw; the four functions
         // are computed, so the next read already sees the new model.
         //
@@ -348,7 +348,7 @@ final class PageRuntime {
 
     /// Called when the page leaves the screen. Detaches the
     /// dispatcher so a stale closure can't dispatch into a torn-down
-    /// page — but ONLY when the slot is still ours. After a
+    /// page, but ONLY when the slot is still ours. After a
     /// navigation, the incoming page's `mount` may have already
     /// fired before our `unmount` runs (SwiftUI's lifecycle order
     /// for `.id`-swap views is "onAppear new, then onDisappear
@@ -392,7 +392,7 @@ final class PageRuntime {
             // navigated away, so this page received a message it can't match.
             // Case exhaustiveness is checked at compile time, so a no-match
             // reaching dispatch can only be a message meant for a torn-down
-            // page — drop it silently instead of surfacing it as an error.
+            // page: drop it silently instead of surfacing it as an error.
             // Mirrors the guard in internal/jsserve/runtime.js.
         } catch {
             record("update", .dispatch, error.localizedDescription)
@@ -404,7 +404,7 @@ final class PageRuntime {
     /// model recovers.
     func currentView() -> MarView? {
         // Reading `touch` is what subscribes this view to shared-model changes.
-        // @Observable tracks READS, so a counter nobody reads redraws nothing —
+        // @Observable tracks READS, so a counter nobody reads redraws nothing:
         // and `viewFn` being computed is not enough on its own, because the
         // page's own model never moved.
         _ = touch
@@ -429,7 +429,7 @@ final class PageRuntime {
     // MARK: - Subscriptions
     //
     // Reconcile the live subscription sources against `subscriptions model`.
-    // Run after init (mount) and after every dispatch — the same funnel as the
+    // Run after init (mount) and after every dispatch: the same funnel as the
     // JS runtime's render(): start newly-returned sources, stop ones no longer
     // returned, refresh taggers on survivors. Identity is the item content,
     // never the tagger. Mirrors reconcileSubs + subSources in
@@ -455,7 +455,7 @@ final class PageRuntime {
         }
 
         // A shared store subscribes too, and its messages belong to ITS update
-        // — not to whichever page happened to mount the source. The reconciler
+        //, not to whichever page happened to mount the source. The reconciler
         // groups by key across owners, so the destination has to travel with
         // each TAGGER rather than sit on the registration. The web hit exactly
         // this and solved it the same way (deliverSub in runtime.js).
@@ -498,7 +498,7 @@ final class PageRuntime {
                     // glide without pitch either (MarSound.heldKey, the JS
                     // heldKey). Handing one back with only a live parameter
                     // changed must GLIDE the running node (the survivor's
-                    // update hook below), never stop+restart it — restarting
+                    // update hook below), never stop+restart it: restarting
                     // clicked AND, at 60 renders/sec, stalled the frame rate.
                     // loop / once keep the full content key so a genuine
                     // change swaps the track.
@@ -513,7 +513,7 @@ final class PageRuntime {
                 }
             }
         }
-        // Stop sources no longer desired (collect keys first — never mutate
+        // Stop sources no longer desired (collect keys first, never mutate
         // while iterating).
         for key in activeSubs.keys.filter({ desired[$0] == nil }) {
             activeSubs[key]?.stop()
@@ -537,10 +537,10 @@ final class PageRuntime {
 
     private func makeTimer(_ key: String, _ seconds: Double) -> LiveSub {
         // Game-rate ticks (<= ~40fps, e.g. Time.every (millis 16)) ride a
-        // CADisplayLink: a vsync-aligned game clock (ADR-0003) — locked 1:1
+        // CADisplayLink: a vsync-aligned game clock (ADR-0003), locked 1:1
         // on a healthy display, capped catch-up when frames drop, never an
         // unbounded backlog. A 60Hz Timer both misaligns with vsync and
-        // QUEUES ticks under load — a heavy game then spirals into
+        // QUEUES ticks under load: a heavy game then spirals into
         // unplayability as the queue never drains. This mirrors the web
         // runtime's rAF tick source for Time.every ≤20ms.
         if seconds <= 0.025 {
@@ -563,7 +563,7 @@ final class PageRuntime {
         for t in live.taggers { if let m = applyTagger(t, now, "a Time.every subscription") { dispatch(m) } }
     }
 
-    // Keyboard.watch / Gamepad.watch — held-state mirrors. Each registers a
+    // Keyboard.watch / Gamepad.watch: held-state mirrors. Each registers a
     // change listener on its hub (which seeds the current snapshot on subscribe,
     // deferred, like Device.watch) and delivers the whole record on every
     // change. Mirrors subSources.keyboardWatch / gamepadWatch in runtime.js.
@@ -648,7 +648,7 @@ final class PageRuntime {
 #if DEBUG
 /// The pages that are on screen right now, bottom of the stack first.
 ///
-/// On iOS the navigation lifecycle is not bookkeeping the runtime does — it is
+/// On iOS the navigation lifecycle is not bookkeeping the runtime does: it is
 /// SwiftUI's. Each entry on the NavigationStack builds its own MarPageHost,
 /// whose `@State` gives it its own PageRuntime; popping destroys the pushed
 /// host while the one underneath was never torn down. That is exactly why
@@ -662,7 +662,7 @@ final class PageRuntime {
 ///
 /// The references are strong on purpose. A runtime whose host SwiftUI
 /// destroyed but whose unmount never ran would linger here and be read as the
-/// top of the stack — which is the failure showing up as a wrong answer
+/// top of the stack, which is the failure showing up as a wrong answer
 /// instead of as nothing at all.
 @MainActor
 enum MarLiveRuntimes {
@@ -688,7 +688,7 @@ enum MarLiveRuntimes {
 ///
 /// Separate from "is this path a sheet route?", which the route table can
 /// answer on its own. What matters to the harness is what the shell did with
-/// that answer, and those two can disagree — a shell that pushed a sheet route
+/// that answer, and those two can disagree: a shell that pushed a sheet route
 /// would still look right to anything that re-derived the answer itself.
 @MainActor
 enum MarPresentation {

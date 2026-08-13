@@ -23,7 +23,7 @@ cmd = Random.generate Got shapesGen
 
 // A Generator is not a Cmd: it can only reach the MVU loop through
 // Random.generate. Returning a bare Generator where a Cmd is expected is a type
-// error — the same discipline that keeps Task/Cmd/Sub distinct.
+// error: the same discipline that keeps Task/Cmd/Sub distinct.
 func TestRandomGeneratorIsNotCmd(t *testing.T) {
 	src := `module M exposing (..)
 type Msg = Got Int

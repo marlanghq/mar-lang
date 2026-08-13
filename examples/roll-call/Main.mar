@@ -14,7 +14,7 @@ import Frontend.TakeAttendance
 import Frontend.StudentDetail
 
 
--- Roll Call — attendance & roster for teachers.
+-- Roll Call: attendance & roster for teachers.
 --
 -- Sign in with an email + one-time code, keep a roster of classes and
 -- students, take daily attendance (present / late / absent), and read

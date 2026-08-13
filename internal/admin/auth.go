@@ -1,4 +1,4 @@
-// Admin auth — primitives for the passwordless email-code flow,
+// Admin auth: primitives for the passwordless email-code flow,
 // kept separate from package auth to avoid leaking framework session
 // details into the user-auth surface. Reuses auth.Hash / auth.Code /
 // auth.Token / auth.Equal so the cryptographic shape matches.
@@ -8,7 +8,7 @@
 //   _mar_admin_codes      ephemeral 6-digit codes (hashed), TTL minutes
 //   _mar_admin_sessions   session token (hashed) + email + expiresAt
 //
-// Both code and token storage use TEXT (base64) — same convention as
+// Both code and token storage use TEXT (base64): same convention as
 // _mar_auth_codes / _mar_auth_sessions on the user-auth side.
 
 package admin
@@ -39,7 +39,7 @@ const MaxCodeAttempts = 5
 // IsAdmin returns true when `email` (already canonicalized) is in
 // _mar_admins. Used by RequestCode to decide whether to send.
 //
-// Returns false for any unexpected error too — RequestCode treats
+// Returns false for any unexpected error too: RequestCode treats
 // "is this an admin" probes as opaque (no enumeration leak).
 func IsAdmin(db *sql.DB, email string) bool {
 	if db == nil || email == "" {
@@ -54,7 +54,7 @@ func IsAdmin(db *sql.DB, email string) bool {
 // framework session secret, persists the hash with a TTL, and
 // returns the plaintext code so the caller can email it.
 //
-// IssueCode does NOT check admin membership — that's IsAdmin's job.
+// IssueCode does NOT check admin membership: that's IsAdmin's job.
 // We always issue a code (or pretend to) regardless of membership
 // to avoid timing-based enumeration; only IsAdmin's return decides
 // whether the code is actually delivered.
@@ -89,13 +89,13 @@ func IssueCode(db *sql.DB, secret, email string, now time.Time) (code string, er
 type VerifyCodeResult int
 
 const (
-	// VerifyOK — code matched, row deleted, caller should mint a session.
+	// VerifyOK: code matched, row deleted, caller should mint a session.
 	VerifyOK VerifyCodeResult = iota
-	// VerifyInvalid — no matching, non-expired code for this email,
+	// VerifyInvalid: no matching, non-expired code for this email,
 	// or the code didn't match. Caller returns 401 with a generic
 	// "invalid_code" message.
 	VerifyInvalid
-	// VerifyTooManyAttempts — the code's attempts counter just hit
+	// VerifyTooManyAttempts: the code's attempts counter just hit
 	// the lock threshold. Caller returns 401 with "too_many_attempts".
 	VerifyTooManyAttempts
 )
@@ -150,7 +150,7 @@ func VerifyCode(db *sql.DB, secret, email, candidate string, now time.Time) (Ver
 		}
 		return VerifyInvalid, nil
 	}
-	// Match — consume the code atomically so it can't be replayed. If a
+	// Match: consume the code atomically so it can't be replayed. If a
 	// concurrent request with the same code already burned it, RowsAffected
 	// == 0 and this one fails. See docs/security-audit-2026-07-15.md #4.
 	res, err := db.Exec(`DELETE FROM _mar_admin_codes WHERE codeHash = ?`, storedHash)
@@ -189,7 +189,7 @@ func CreateSession(db *sql.DB, secret, email string, now time.Time) (token strin
 // LookupSession resolves a cookie value to an admin email by hash
 // lookup. Returns "" + ErrNoSession when the token is unknown,
 // expired, or revoked. This is the per-request validation step the
-// middleware calls — the source of truth is the DB row, not the
+// middleware calls: the source of truth is the DB row, not the
 // cookie itself.
 //
 // Cleanup of expired rows happens lazily here: when a session is
@@ -223,7 +223,7 @@ func LookupSession(db *sql.DB, secret, token string, now time.Time) (string, err
 }
 
 // DeleteSession revokes a session by token. Used by the logout
-// handler. Idempotent — unknown tokens are a no-op.
+// handler. Idempotent: unknown tokens are a no-op.
 func DeleteSession(db *sql.DB, secret, token string) error {
 	if db == nil || secret == "" || token == "" {
 		return nil

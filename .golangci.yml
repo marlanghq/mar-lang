@@ -34,7 +34,7 @@ linters:
         - -QF1001
     errcheck:
       exclude-functions:
-        # Idiomatic `defer tx.Rollback()` — a no-op after a successful
+        # Idiomatic `defer tx.Rollback()`: a no-op after a successful
         # Commit, returns sql.ErrTxDone which is fine to ignore.
         - (*database/sql.Tx).Rollback
 
@@ -46,7 +46,7 @@ linters:
       - examples
     rules:
       # Test code: unchecked errors on setup/teardown (MkdirAll, Close,
-      # Scan, WriteString, Chdir) are deliberate — a failure there fails
+      # Scan, WriteString, Chdir) are deliberate: a failure there fails
       # the test anyway.
       - path: _test\.go
         linters:

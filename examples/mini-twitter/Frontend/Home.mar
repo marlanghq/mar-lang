@@ -26,7 +26,7 @@ import UI exposing
 --
 -- Timeline data is a 3-state machine (Loading / Loaded / Failed)
 -- rather than a bare list so the typechecker forces the view to
--- handle every case explicitly — no "0 tweets" flash during fetch.
+-- handle every case explicitly: no "0 tweets" flash during fetch.
 
 
 type Timeline

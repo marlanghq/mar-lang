@@ -57,7 +57,7 @@ annotateMember _ member =
             )
 
 
--- updateMemberRole flips a member's role. Admin-only — gated by the
+-- updateMemberRole flips a member's role. Admin-only: gated by the
 -- decorator stack in `services` below. Same-team check ensures an
 -- admin from team A can't bump a user in team B.
 updateMemberRole : Shared.UpdateMemberRole -> Shared.User -> Task (Maybe Shared.User)
@@ -74,7 +74,7 @@ loadMemberByID input _ =
 
 
 -- Policy: only admins can change member roles, and only within their
--- own team. Combined with `requireRole Admin` below — both checks
+-- own team. Combined with `requireRole Admin` below: both checks
 -- compose so the policy reads top-to-bottom as the security story.
 sameTeam : a -> Shared.User -> Shared.User -> Bool
 sameTeam _ caller target =

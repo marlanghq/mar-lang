@@ -13,15 +13,15 @@ import (
 	"mar/internal/typecheck"
 )
 
-// Equality is implemented once per runtime — equalValues (Go), eqValues
-// (runtime.js), equalsMar (Swift) — as a switch over value kinds. Nothing forces
+// Equality is implemented once per runtime: equalValues (Go), eqValues
+// (runtime.js), equalsMar (Swift): as a switch over value kinds. Nothing forces
 // those switches to cover the same kinds, and the drift tests do not catch a gap
 // here: they check that each layer DEFINES a builtin, not that the layers AGREE.
 // `==` was defined everywhere and answered differently.
 //
 // It did exactly that for records: runtime.js had no record case, so it fell
 // through to `return false` and every record comparison in the browser said
-// "different" — a value against itself included — while Go and iOS said "equal".
+// "different", a value against itself included, while Go and iOS said "equal".
 // A rule shared by backend and frontend decided differently on the two sides of
 // the wire, with no error anywhere. This pins Go against JS the way
 // decimal_conformance_test.go pins arithmetic.
@@ -195,7 +195,7 @@ process.stdout.write(String(globalThis.__marEvalValue(program, 'Conform.results'
 		filepath.Join(dir, "runtime.js"), filepath.Join(dir, "program.json"))
 	var stderr strings.Builder
 	cmd.Stderr = &stderr
-	// Stdout only — node prints unrelated warnings on stderr even on success.
+	// Stdout only: node prints unrelated warnings on stderr even on success.
 	out, err := cmd.Output()
 	if err != nil {
 		t.Fatalf("node run: %v\n%s", err, stderr.String())

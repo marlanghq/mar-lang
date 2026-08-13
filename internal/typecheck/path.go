@@ -85,7 +85,7 @@ func resolveAliasToRecord(t Type, tEnv *typeNameEnv) Type {
 // whether a String-literal body should be coerced into a typed Path.
 //
 // We accept either the canonical `TCon{"Path", [r]}` or the same
-// after substitution chasing — anything else returns ok=false and the
+// after substitution chasing: anything else returns ok=false and the
 // caller falls back to plain String inference.
 func pathRowOfAnnot(t Type) (Type, bool) {
 	c, ok := t.(TCon)
@@ -103,7 +103,7 @@ func pathRowOfAnnot(t Type) (Type, bool) {
 //
 // `tEnv` is used to resolve custom enum types in `{name:Type}` (e.g.
 // `{role:Role}` where `Role = Member | Admin`). Only types whose
-// every ctor takes zero args are accepted — same restriction as
+// every ctor takes zero args are accepted: same restriction as
 // Entity.enum, since both round-trip through a stringly serialized
 // form.
 func elaboratePathLiteral(src string, tEnv *typeNameEnv) (Type, error) {
@@ -123,7 +123,7 @@ func elaboratePathLiteral(src string, tEnv *typeNameEnv) (Type, error) {
 			if strings.ContainsAny(p, "{}") {
 				return nil, fmt.Errorf("path %q: malformed segment %q (use `{name:Type}`)", src, p)
 			}
-			continue // literal segment — no field contribution
+			continue // literal segment: no field contribution
 		}
 		if !strings.HasSuffix(p, "}") {
 			return nil, fmt.Errorf("path %q: unclosed segment %q", src, p)
@@ -150,7 +150,7 @@ func elaboratePathLiteral(src string, tEnv *typeNameEnv) (Type, error) {
 		fields[name] = fieldType
 		order = append(order, name)
 	}
-	// Closed record — no Tail. The point of typing the path is to make
+	// Closed record: no Tail. The point of typing the path is to make
 	// the params row exact: extra fields on the user side become a
 	// compile error.
 	return TRecord{Fields: fields, Order: order}, nil
@@ -158,7 +158,7 @@ func elaboratePathLiteral(src string, tEnv *typeNameEnv) (Type, error) {
 
 // pathSegmentType maps `{name:Type}` type identifiers to Mar types.
 // Built-ins (`String`, `Int`) resolve directly. Any other identifier
-// is treated as a custom enum type — looked up in `tEnv.customs`,
+// is treated as a custom enum type: looked up in `tEnv.customs`,
 // validated to have all zero-arg ctors, and returned as the
 // corresponding TCon.
 //
@@ -182,7 +182,7 @@ func pathSegmentType(name string, tEnv *typeNameEnv) (Type, error) {
 			return nil, err
 		}
 		if ct, ok := tEnv.customs[canonical]; found && ok {
-			// Reject ctors with payload — the URL → ctor mapping
+			// Reject ctors with payload: the URL → ctor mapping
 			// only makes sense for nullary ctors (mirrors
 			// Entity.enum's restriction). Saying "no, you can't"
 			// up front beats a confusing runtime decode error.
@@ -194,7 +194,7 @@ func pathSegmentType(name string, tEnv *typeNameEnv) (Type, error) {
 			}
 			if len(ct.Params) != 0 {
 				// Generic custom types (e.g. `Maybe a`) don't fit
-				// here — even with all-nullary ctors, the row
+				// here, even with all-nullary ctors, the row
 				// would have to carry an unresolved parameter.
 				return nil, fmt.Errorf("type %q can't be used in a path: parameterized types aren't supported", name)
 			}

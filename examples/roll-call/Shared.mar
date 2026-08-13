@@ -1,7 +1,7 @@
 module Shared exposing (..)
 
 
--- Roll Call — attendance & roster for teachers.
+-- Roll Call: attendance & roster for teachers.
 --
 -- A teacher signs in, keeps a roster of classes and the students in
 -- each, and takes daily attendance (present / late / absent). The app
@@ -94,7 +94,7 @@ type alias AttendanceMark =
 -- with (exhaustive `case`, no magic numbers in view code); the Int
 -- mapping is only crossed at the storage/wire boundary via the two
 -- converters. `countedPresent` folds Late in with Present for the
--- "did they show up" rate — a late student was still in the room.
+-- "did they show up" rate: a late student was still in the room.
 
 
 type Status
@@ -151,8 +151,8 @@ countedPresent status =
 
 
 -- How a set of marks breaks down. Every screen that shows attendance
--- shows this same three-way split — today's roll on the class screen,
--- a whole term on the student screen — so the fold lives here once
+-- shows this same three-way split: today's roll on the class screen,
+-- a whole term on the student screen, so the fold lives here once
 -- rather than being retyped per page.
 type alias Tally =
     { present : Int, late : Int, absent : Int }

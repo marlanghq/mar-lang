@@ -11,7 +11,7 @@ import UI exposing
     )
 
 
--- TeamMembers — manage everyone in the caller's team. Admins can
+-- TeamMembers: manage everyone in the caller's team. Admins can
 -- flip another member's role between Admin and Member. Members
 -- can only view the roster.
 
@@ -69,7 +69,7 @@ roleToggle caller member =
     let
         isAdmin = member.role == Admin
 
-        -- Self can't demote self — keep the toggle inert for the
+        -- Self can't demote self: keep the toggle inert for the
         -- caller's own row to avoid the "locked yourself out" foot-
         -- gun. Same goes for non-admins (no permission either way).
         canToggle =

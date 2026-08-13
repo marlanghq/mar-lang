@@ -59,7 +59,7 @@ func TestCorpusCoversEveryBareGlobal(t *testing.T) {
 
 // Every stdlib module is either compared here or explained. A module in
 // neither list fails the build, which is what keeps a newly added one from
-// going untested by simply not being noticed — the first run of this check
+// going untested by simply not being noticed: the first run of this check
 // found JSON, whose encoder every client and server share.
 func TestEveryStdlibModuleIsClassified(t *testing.T) {
 	seen := map[string]bool{}

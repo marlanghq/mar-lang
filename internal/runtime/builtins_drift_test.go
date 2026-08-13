@@ -1,4 +1,4 @@
-// Black-box test in `runtime_test`, not `runtime` — so it can import
+// Black-box test in `runtime_test`, not `runtime`, so it can import
 // typecheck without dragging that dep into the runtime package itself.
 
 package runtime_test
@@ -15,7 +15,7 @@ import (
 // TestRuntimeQualifiedAliasesMatchTypecheck catches the drift class
 // where a builtin gets added to typecheck.qualifiedAliases (so
 // `List.foo` typechecks) but never gets the matching entry in
-// runtime.qualifiedAliasMapping — so the program load fails at
+// runtime.qualifiedAliasMapping, so the program load fails at
 // runtime with "unbound qualified name: List.foo".
 //
 // The parallel iOS / JS drift tests catch the corresponding miss on

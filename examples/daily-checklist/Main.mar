@@ -9,7 +9,7 @@ import Frontend.VerifyCode
 import Frontend.Home
 
 
--- Daily Checklist — a personal "things I want to do today" tracker,
+-- Daily Checklist: a personal "things I want to do today" tracker,
 -- now per-user. Each signed-in user owns their own list; the server
 -- never leaks rows across users.
 --

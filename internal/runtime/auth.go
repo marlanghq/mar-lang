@@ -21,11 +21,11 @@ type VAuth struct {
 	Identify Value // user -> String
 
 	// EmailSubject is the Subject: header for the sign-in code email.
-	// Required in Auth.config — gives each app a chance to brand it
+	// Required in Auth.config: gives each app a chance to brand it
 	// ("Sign in to Notes" vs the generic default).
 	//
 	// The From: header is NOT in this struct. It lives in mar.json's
-	// `mail.from` — the single source of truth for the address
+	// `mail.from`: the single source of truth for the address
 	// verified with the SMTP provider. Setting it in Mar source too
 	// would invite typos that silently shadow the manifest value
 	// and break delivery at the provider ("550 domain not verified").
@@ -49,7 +49,7 @@ type VAuth struct {
 
 	// SignInPath is the URL Page.protected redirects to when there's
 	// no session. Extracted from the `signInPage : Page` field in
-	// Auth.config so the source of truth is the Page itself —
+	// Auth.config so the source of truth is the Page itself:
 	// renaming the path on Frontend.SignIn.page propagates here
 	// automatically. Empty when the app has no Page.protected.
 	SignInPath string
@@ -83,7 +83,7 @@ func CurrentAuth() *VAuth {
 
 // ResetAuthForTesting clears the registered Auth so tests can run in
 // isolation without leaking state from previous runs. Production
-// code should never call this — `mar dev` and `mar-runtime` rely on
+// code should never call this: `mar dev` and `mar-runtime` rely on
 // the auth registration sticking for the lifetime of the process.
 func ResetAuthForTesting() {
 	regMu.Lock()
@@ -94,10 +94,10 @@ func ResetAuthForTesting() {
 // authBuiltins registers the language-level surface for authentication.
 //
 //	Auth.config  : { entity, identify, email, signup, sessionDuration } -> Auth user
-//	Auth.protect : Service req resp -> (req -> user -> Effect String resp) -> ExposedService
+//	Auth.protect : Service req resp -> (req -> user -> Task resp) -> ExposedService
 //
 // The four user-facing client effects (Auth.requestCode / verifyCode /
-// logout / me) are JS-runtime-only — they're built-ins on the browser
+// logout / me) are JS-runtime-only: they're built-ins on the browser
 // side that hit the framework HTTP endpoints directly.
 func authBuiltins() map[string]Value {
 	return map[string]Value{
@@ -110,7 +110,7 @@ func authBuiltins() map[string]Value {
 		"authAuthorize":    nativeFn(3, makeAuthAuthorize),
 		"authRequireOwner": nativeFn(3, makeAuthRequireOwner),
 
-		// Browser-only Effects. On the Go side they error out — the
+		// Browser-only Effects. On the Go side they error out: the
 		// JS runtime overrides them with fetch-based implementations
 		// (see runtime.js). Mirrors the Service.call / Http.get pattern.
 		"authRequestCode": nativeFn(2, browserOnlyEffect("Auth.requestCode")),
@@ -169,7 +169,7 @@ func makeAuthConfig(args []Value) (Value, error) {
 	if !ok {
 		return nil, fmt.Errorf("Auth.config: `email` must be a record")
 	}
-	// `email.from` is intentionally NOT accepted here — it duplicates
+	// `email.from` is intentionally NOT accepted here: it duplicates
 	// mar.json's `mail.from` (the address verified with the SMTP
 	// provider). Reject explicitly so a stale paste doesn't silently
 	// take over and trip "550 domain not verified" at the provider.
@@ -182,7 +182,7 @@ func makeAuthConfig(args []Value) (Value, error) {
 	if subject.V == "" {
 		return nil, fmt.Errorf("Auth.config: email.subject is required")
 	}
-	// Optional `email.body : String -> Int -> String` — given the
+	// Optional `email.body : String -> Int -> String`, given the
 	// generated code and TTL in minutes, produces the email body.
 	// When omitted, the framework's auth.DefaultBody fills in a
 	// transactional default. Useful for branding ("Welcome to App!
@@ -202,12 +202,12 @@ func makeAuthConfig(args []Value) (Value, error) {
 		durationSecs = int64(d.Seconds)
 	}
 	// `role` is optional; only required when the app uses
-	// Auth.requireRole. We don't validate the field's type here — the
+	// Auth.requireRole. We don't validate the field's type here: the
 	// dispatcher applies it as a function and surfaces failures as 500.
 	role := rec.Fields["role"]
 	// `signInPage` is a Page reference (typically Frontend.SignIn.page)
 	// that Page.protected redirects to when the user isn't logged in.
-	// Optional — backend-only apps don't have pages at all. When the
+	// Optional: backend-only apps don't have pages at all. When the
 	// app declares any Page.protected, the bundle bootstrap errors
 	// loudly if signInPage was missing.
 	signInPath := ""
@@ -352,7 +352,7 @@ func EnsureUser(cfg VAuth, email string) (int64, error) {
 	}
 	// Auto-fill TIMESTAMP columns with the current server time.
 	// Signup hooks are synchronous (no Effect access), so they can't
-	// call Time.now themselves — the framework patches in `now` for
+	// call Time.now themselves: the framework patches in `now` for
 	// any timestamp field the hook didn't already provide a valid
 	// VTime for. A common pattern is `createdAt = 0` in the hook
 	// record as a sentinel meaning "fill this in for me"; we treat
@@ -396,7 +396,7 @@ func fillTimestampsForSignup(entity VEntity, rec VRecord) VRecord {
 			continue
 		}
 		out.Fields[field.Name] = now
-		// Keep Order in sync — append only if the hook didn't already
+		// Keep Order in sync: append only if the hook didn't already
 		// list the field (e.g. as a non-Time sentinel).
 		present := false
 		for _, n := range out.Order {
@@ -576,7 +576,7 @@ func valueToAny(v Value) any {
 		return x.Seconds
 	case VTime:
 		// Marker form so jsToMar / iOS decoders can rebuild a VTime
-		// (instead of dropping back to a plain VString) — same
+		// (instead of dropping back to a plain VString): same
 		// pattern as VCtor's `{__ctor:...}`.
 		return map[string]any{
 			"__time": time.UnixMilli(x.Millis).UTC().Format(time.RFC3339),
@@ -594,7 +594,7 @@ func valueToAny(v Value) any {
 		}
 		return out
 	case VCtor:
-		// Every ctor — Nothing and Just included — uses the
+		// Every ctor, Nothing and Just included, uses the
 		// `__ctor` marker convention shared with encodeValue + the JS
 		// / iOS runtimes. See the note in internal/runtime/json.go on
 		// why Nothing can't be transparent to null (collides with

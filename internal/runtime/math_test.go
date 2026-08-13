@@ -47,7 +47,7 @@ func TestIsqrtIsTheFlooredRoot(t *testing.T) {
 			t.Fatalf("isqrt(%d) = %d, which is not the floored root", n, r)
 		}
 	}
-	// Perfect squares and their neighbours, up the range — the boundary
+	// Perfect squares and their neighbours, up the range: the boundary
 	// Newton's stopping rule is most likely to get wrong.
 	for _, k := range []int64{1, 2, 3, 1000, 65536, 3037000499} {
 		sq := k * k
@@ -69,7 +69,7 @@ func TestIsqrtIsTheFlooredRoot(t *testing.T) {
 // atan2 has to be the inverse of sin/cos at every representable angle: take a
 // point on the unit circle at angle a, ask for its angle back, get a. This is
 // the property that makes `Math.atan2` and `Math.sin` usable in the same
-// expression — and it only holds because both read the same table.
+// expression, and it only holds because both read the same table.
 func TestAtan2InvertsTheCircle(t *testing.T) {
 	for a := int64(0); a < deciFull; a++ {
 		// Scale up so the rounded table values still point accurately enough
@@ -103,7 +103,7 @@ func TestAtan2OnTheAxesAndOrigin(t *testing.T) {
 }
 
 // Legs above 2^40 are halved before the search so a product with a table entry
-// stays inside 53 bits. The halving is exact integer arithmetic — the point of
+// stays inside 53 bits. The halving is exact integer arithmetic: the point of
 // this test is that the answer is still right, not that no halving happened.
 func TestAtan2SurvivesHugeLegs(t *testing.T) {
 	const big = int64(1) << 50
@@ -121,7 +121,7 @@ func TestAtan2SurvivesHugeLegs(t *testing.T) {
 	}
 }
 
-// Every constructor wraps, so any Int is a valid argument — including the ones
+// Every constructor wraps, so any Int is a valid argument: including the ones
 // that would overflow if the scaling happened before the reduction.
 func TestAngleConstructorsWrapWithoutOverflow(t *testing.T) {
 	env := mathBuiltins()

@@ -70,7 +70,7 @@ addPetImpl input user =
 -- ===== Delete =====
 
 
--- Deleting a pet keeps its expenses (the money was spent) — it re-tags
+-- Deleting a pet keeps its expenses (the money was spent): it re-tags
 -- them to "all pets" first, then removes the pet row. Ownership-checked;
 -- a missing/foreign id is a silent success.
 deletePetImpl : { id : Int } -> Shared.User -> Task ()

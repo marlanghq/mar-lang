@@ -1,7 +1,7 @@
 module Shared exposing (..)
 
 
--- Quiz Duel — the contract layer shared by Backend (which implements
+-- Quiz Duel: the contract layer shared by Backend (which implements
 -- the services) and Frontend (which calls them). Every entity row,
 -- enum, DTO and Service.declare lives here so a field rename surfaces
 -- as a compile error on both sides at once.
@@ -30,7 +30,7 @@ type alias User =
 -- A player's public identity + denormalized overall record. `userId`
 -- is the User.id (a duel stores userIds, we join to nicks for
 -- display). W/L/D are bumped once, atomically with each duel's `done`
--- transition — cheaper than counting finished duels on every read.
+-- transition: cheaper than counting finished duels on every read.
 type alias Profile =
     { id     : Int
     , userId : Int
@@ -46,11 +46,11 @@ type alias Profile =
 -- ====================================================================
 
 
--- draft    — challenger is answering; the opponent can't see it yet
--- pending  — challenger finished; sits in the opponent's inbox
--- accepted — opponent accepted and is answering
--- declined — opponent said no (terminal, no score effect)
--- done     — both answered; outcome computed, records updated
+-- draft    - challenger is answering; the opponent can't see it yet
+-- pending  - challenger finished; sits in the opponent's inbox
+-- accepted: opponent accepted and is answering
+-- declined: opponent said no (terminal, no score effect)
+-- done     - both answered; outcome computed, records updated
 type Status
     = Draft
     | Pending
@@ -150,7 +150,7 @@ type ProfileResult
     | InvalidNick
 
 
--- POST /profiles/nick — rename yourself from the Account sheet.
+-- POST /profiles/nick: rename yourself from the Account sheet.
 type NickResult
     = NickUpdated Profile   -- the profile, with its new nick
     | NickUnavailable       -- someone else already has it
@@ -181,7 +181,7 @@ type CreateResult
     | CannotSelfChallenge
 
 
--- A served question. NEVER carries the correct index — correctness is
+-- A served question. NEVER carries the correct index: correctness is
 -- judged server-side and only revealed in the answer feedback.
 -- `remainingMs` re-syncs the client countdown after a refresh (the
 -- server clamp is authoritative regardless).
@@ -230,7 +230,7 @@ type Ack
 
 -- One lobby card (inbox / waiting / results). The frontend renders by
 -- `status` + `iAmChallenger`. Scores are only meaningful (and only
--- filled) for `done` cards — a pending/accepted card the OPPONENT sees
+-- filled) for `done` cards: a pending/accepted card the OPPONENT sees
 -- carries the challenger's scores as 0, so their target stays hidden.
 type alias DuelCard =
     { id           : Int

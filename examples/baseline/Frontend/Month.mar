@@ -19,7 +19,7 @@ import UI exposing
 -- This is the recognition view. Nobody reads a table of numbers and
 -- feels anything; everybody looks at a grid and sees the bad week
 -- immediately, before reading a single word. It is also where the
--- app's honesty about missing days is most visible — blanks are drawn
+-- app's honesty about missing days is most visible: blanks are drawn
 -- as blanks, not filled in, not apologised for.
 --
 -- Tapping a day opens it. Inside the three-day window it opens for

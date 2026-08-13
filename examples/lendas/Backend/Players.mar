@@ -15,7 +15,7 @@ import Shared
 
 -- The solo-play opponent is a virtual player: a reserved id that no real
 -- user can own (auth user ids are serial from 1), and a reserved nick no
--- human can register. It has no `players` row — findByNick/nickForUser
+-- human can register. It has no `players` row: findByNick/nickForUser
 -- special-case it, and bumpRecord already no-ops a missing player, so a
 -- bot match still credits the HUMAN's W/L and just skips the bot's.
 botId : Int
@@ -28,7 +28,7 @@ botNick =
     "bot"
 
 
--- Players — a user's game identity (nick) plus their public W/L
+-- Players: a user's game identity (nick) plus their public W/L
 -- record. One row per user, created at the nickname gate. The record
 -- counters are bumped exactly once, when a match transitions to
 -- Encerrada (see Backend.Games), so the lobby reads columns instead of
@@ -175,7 +175,7 @@ criarImpl input user =
 
 
 -- ====================================================================
--- listarJogadores  (GET /jogadores) — everyone but the caller, so the
+-- listarJogadores  (GET /jogadores): everyone but the caller, so the
 -- challenge screen can offer opponents.
 -- ====================================================================
 

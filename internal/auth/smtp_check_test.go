@@ -38,7 +38,7 @@ func TestVerifySMTPConfig_NoOpWhenPasswordEmpty(t *testing.T) {
 }
 
 // TestVerifySMTPConfig_TCPConnectFailure simulates a host that
-// resolves but refuses connections — we expect a FriendlyError
+// resolves but refuses connections: we expect a FriendlyError
 // pointing at the TCP-connect stage.
 func TestVerifySMTPConfig_TCPConnectFailure(t *testing.T) {
 	// 127.0.0.1 with no listener on the port → connection refused.
@@ -65,7 +65,7 @@ func TestVerifySMTPConfig_TCPConnectFailure(t *testing.T) {
 }
 
 // TestVerifySMTPConfig_GreetingFailure starts a TCP listener that
-// closes the connection immediately — looks like a TCP-OK SMTP
+// closes the connection immediately: looks like a TCP-OK SMTP
 // peer that died before sending the greeting. We expect Stage =
 // "SMTP greeting".
 func TestVerifySMTPConfig_GreetingFailure(t *testing.T) {

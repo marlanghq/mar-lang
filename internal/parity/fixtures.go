@@ -5,7 +5,7 @@
 // exercise: "the same program behaves the same way on the web and on iOS" is
 // only a claim about the same program if both tests literally read the same
 // bytes. Two copies of a source string drift, and the drift lands in the one
-// place where it is invisible — the tests keep passing while they quietly stop
+// place where it is invisible: the tests keep passing while they quietly stop
 // comparing anything.
 //
 // internal/jsserve drives it through runtime.js in a fake browser;
@@ -16,7 +16,7 @@ package parity
 // navigate to, and a third that is the same page declared with Page.sheet.
 //
 // The label in each view makes a screen self-identifying, so a wrong-page
-// render fails loudly instead of looking like a wrong counter — the two
+// render fails loudly instead of looking like a wrong counter: the two
 // failures have very different causes and an assertion that cannot tell them
 // apart is not worth much.
 const NavSource = `module Main exposing (main)
@@ -208,14 +208,14 @@ main =
     App.frontend [ page ]
 `
 
-// CanvasSource is the same idea for the draw list — every Shape builder, both
+// CanvasSource is the same idea for the draw list: every Shape builder, both
 // colour builders, nested groups, and each transform, all derived from the
 // counter so a tap moves the whole scene.
 //
 // Canvas screens were the blind spot the text comparison could not see: they
 // put no words on screen, so both platforms reported an empty string and
 // "matched" by having nothing to say. What they DO produce is a list of
-// shapes, built by the same Mar code from the same model — so that list, not
+// shapes, built by the same Mar code from the same model, so that list, not
 // the pixels, is the thing to compare.
 const CanvasSource = `module Main exposing (main)
 

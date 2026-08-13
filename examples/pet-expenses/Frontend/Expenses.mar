@@ -16,7 +16,7 @@ import UI exposing
 -- it leads with the running total + a per-category breakdown, then the
 -- list of expenses newest-first.
 --
--- An expense is for ALL your pets by default (food, litter) — the pet
+-- An expense is for ALL your pets by default (food, litter): the pet
 -- picker defaults to "All pets" and you only pick a specific pet for a
 -- one-off (a vet visit). Pets themselves are managed on a separate
 -- screen, reached via "Pets" in the top bar; account actions live under
@@ -133,7 +133,7 @@ update _ msg model =
             ( { model | draftDate = Just when }, Cmd.none )
 
         SubmitExpense ->
-            -- Decimal.fromString accepts "12", "12.5", "12.50" — exact
+            -- Decimal.fromString accepts "12", "12.5", "12.50": exact
             -- digits, no floats anywhere. The backend re-checks > 0 and
             -- normalizes to two places before writing.
             if model.busy then
@@ -260,7 +260,7 @@ errorSection model =
             []
 
 
--- datePicker is pure — it shows exactly the Time it's given. The model
+-- datePicker is pure: it shows exactly the Time it's given. The model
 -- seeds "today" with `Cmd.perform DatePicked Time.now`; for the brief
 -- moment before that arrives (draftDate = Nothing) the field is empty.
 dateField : Model -> View Msg
@@ -357,9 +357,9 @@ expenseRow pets expense =
         )
 
 
--- Date first (that's what the user asked to see), then the pet — but
+-- Date first (that's what the user asked to see), then the pet, but
 -- only when it's a specific pet, since "All pets" is the default and
--- would just be noise on every row — then the note if there is one.
+-- would just be noise on every row, then the note if there is one.
 rowSubtitle : List Shared.Pet -> Shared.Expense -> String
 rowSubtitle pets expense =
     String.join ", "
@@ -373,7 +373,7 @@ rowSubtitle pets expense =
 
 -- Per-category totals, dropping categories with no spend. Computed on
 -- the client by folding the known `Shared.categories` over the expense
--- list — no extra service needed.
+-- list: no extra service needed.
 breakdown : List Shared.Expense -> List Shared.CategoryTotal
 breakdown items =
     List.filter (\ct -> ct.total > 0)
@@ -394,8 +394,8 @@ totalOf items =
 
 
 -- Per-month report: each month the user spent in, newest first, with
--- that month's subtotal. Pure aggregation over `spentAt` — no wall
--- clock — and it leaves the deletable feed below untouched.
+-- that month's subtotal. Pure aggregation over `spentAt`: no wall
+-- clock, and it leaves the deletable feed below untouched.
 byMonthSection : List Shared.Expense -> List (View Msg)
 byMonthSection items =
     if List.isEmpty items then

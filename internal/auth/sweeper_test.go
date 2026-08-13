@@ -10,7 +10,7 @@ import (
 // an already-expired session, start the sweeper with a tiny interval,
 // give it room for the initial sweep, then assert the row is gone.
 //
-// The initial pre-tick sweep is what we're really exercising — without
+// The initial pre-tick sweep is what we're really exercising: without
 // it, this test would race against the first tick and be flaky on slow
 // CI. With it, the assertion can run almost immediately after start.
 func TestSweeperDeletesOnTick(t *testing.T) {
@@ -24,7 +24,7 @@ func TestSweeperDeletesOnTick(t *testing.T) {
 		`INSERT INTO _mar_auth_sessions(token_hash, user_id, expires_at, created_at, last_used_at) VALUES (?, ?, ?, ?, ?)`,
 		"expired-token", 1, now-3600, now-7200, now-3600)
 
-	// 1h interval — well over the test runtime. The point is to confirm
+	// 1h interval: well over the test runtime. The point is to confirm
 	// the *initial* sweep (run before the first tick) cleans up. If we
 	// used a tiny interval here, a slow goroutine schedule could let
 	// the test pass for the wrong reason.
@@ -47,7 +47,7 @@ func TestSweeperDeletesOnTick(t *testing.T) {
 }
 
 // TestSweeperStopWaitsForGoroutine verifies that `stop()` is
-// synchronous — it returns only after the sweeper goroutine has
+// synchronous: it returns only after the sweeper goroutine has
 // actually exited. If it returned eagerly, a test could close its
 // DB and then have the sweeper crash mid-DELETE on the closed handle.
 func TestSweeperStopWaitsForGoroutine(t *testing.T) {
@@ -70,7 +70,7 @@ func TestSweeperStopWaitsForGoroutine(t *testing.T) {
 
 	select {
 	case <-done:
-		// Good — stop returned within deadline.
+		// Good: stop returned within deadline.
 	case <-time.After(time.Second):
 		t.Fatal("stop() did not return within 1s — sweeper goroutine likely hung")
 	}
@@ -89,7 +89,7 @@ func TestSweeperHonoursTicker(t *testing.T) {
 	stop := StartSweeper(context.Background(), db, 10*time.Millisecond)
 	defer stop()
 
-	// Insert an expired session AFTER the sweeper started — so the
+	// Insert an expired session AFTER the sweeper started, so the
 	// initial pre-tick sweep can't delete it, only a subsequent
 	// tick can.
 	time.Sleep(20 * time.Millisecond) // let the initial sweep finish first

@@ -13,7 +13,7 @@ type alias User =
     }
 
 
--- Tasks carry an explicit `userId` — owner relation enforced at the
+-- Tasks carry an explicit `userId`: owner relation enforced at the
 -- DB layer and re-checked in every handler. The frontend never reads
 -- this field (the server only returns rows where userId == caller),
 -- but it stays in the type because Repo.create needs to write it on
@@ -71,7 +71,7 @@ resetAll = Service.declare POST "/tasks/reset"
 
 -- Bulk position update from the reorder gesture. The frontend sends
 -- the full re-ordered ID list; the backend writes position = idx in
--- a single pass. Simple "position int" pattern — works fine for the
+-- a single pass. Simple "position int" pattern: works fine for the
 -- expected task-list sizes (tens of rows). Apps with thousands of
 -- items would want lexicographic ordering (one update per move
 -- instead of N) but that's overkill here.
@@ -84,7 +84,7 @@ reorderTasks = Service.declare POST "/tasks/reorder"
 -- Irreversible account deletion. Required by App Store guideline
 -- 5.1.1(v): an app that lets you create an account must let you delete
 -- it from inside the app. The backend wipes the caller's tasks and
--- their user row; the client then signs out. () in, () out — the
+-- their user row; the client then signs out. () in, () out: the
 -- caller is always "me" (Auth.protect injects the user), so there's
 -- nothing to pass and nothing to return.
 deleteAccount : Service () ()

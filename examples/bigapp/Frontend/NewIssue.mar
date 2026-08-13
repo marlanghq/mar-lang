@@ -138,7 +138,7 @@ assigneeSection state current =
             section [ header "Assignee" ] [ text [] "Loading team members…" ]
 
         Just members ->
-            -- Picker selects by id (Int) — keeps the type simple and
+            -- Picker selects by id (Int): keeps the type simple and
             -- avoids the "selected record went stale after a refresh"
             -- pitfall of picking by record value.
             section [ header "Assignee" ]

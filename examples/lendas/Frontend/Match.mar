@@ -11,7 +11,7 @@ import Canvas exposing
 
 -- The table. A 640x360 logical scene scaled to the window, drawn every
 -- tick: the rival's row on top, yours below, your hand fanned at the
--- bottom. Every move — yours or the rival's — arrives through the same
+-- bottom. Every move, yours or the rival's, arrives through the same
 -- pipeline: fetched from the server, queued, ANIMATED one at a time
 -- into the displayed state (so you watch the rival's turn happen), with
 -- a sound for each beat. State is Shared.replay of the move log; this
@@ -513,7 +513,7 @@ deadWalk i before after =
 
 
 -- ====================================================================
--- GAME LOG — one readable line per move, built as moves animate
+-- GAME LOG: one readable line per move, built as moves animate
 -- ====================================================================
 
 
@@ -635,7 +635,7 @@ tapBoard model d st x y =
         foe = Shared.sideOf (d.souA == False) st
         myTurn = st.turnA == d.souA && model.sending == False && List.length model.queue == 0
     in
-    -- help (?) — opens the rules; readable any time, even on the rival's turn
+    -- help (?): opens the rules; readable any time, even on the rival's turn
     if inBox x y 552 6 36 30 then
         { model | help = True }
 
@@ -656,7 +656,7 @@ tapBoard model d st x y =
         send { model | sel = Nothing, selSlot = Nothing, concedeArm = False } d "E"
 
     -- while death ghosts play, the rows are DRAWN in the before-move
-    -- layout but hit-tested in the settled one — swallow row taps for
+    -- layout but hit-tested in the settled one: swallow row taps for
     -- that beat so a tap never lands on a shifted neighbour
     else if y >= foeRowY && y < handY
         && List.length (deadIxsFor model True) + List.length (deadIxsFor model False) > 0 then
@@ -1045,7 +1045,7 @@ scene model =
                 ]
 
 
--- While the challenge awaits an accept, say so on the center seam —
+-- While the challenge awaits an accept, say so on the center seam:
 -- and tell the challenger they can already play their opening turn.
 desafioShapes : Shared.PartidaData -> Shared.GState -> List Shape
 desafioShapes d st =
@@ -1139,7 +1139,7 @@ heroShapes model d st =
 -- the card art. Vertex on the left; two 2px arms meet with 1px overlap so
 -- the diagonal reads as continuous. (Defined ABOVE backBtn: backBtn is a
 -- top-level value and evaluates eagerly, so a forward reference would
--- resolve to VUnit — see docs/… the file-order eval trap.)
+-- resolve to VUnit: see docs/… the file-order eval trap.)
 chevronLeft : Int -> Int -> Color -> List Shape
 chevronLeft cx cy c =
     [ rect (cx + 1) (cy - 5) 2 2 c
@@ -1395,7 +1395,7 @@ boardShapes model d st =
 
 -- The board index (if any) on `mine`'s side that an active animation has
 -- lifted off the felt: the freshly-played creature during its KPlay, or an
--- attacker during its KLunge (only while it still exists on the board —
+-- attacker during its KLunge (only while it still exists on the board:
 -- if it traded and died, there is nothing to hide).
 flyingSlot : Model -> Bool -> List Shared.Slot -> Maybe Int
 flyingSlot model mine board =
@@ -1433,7 +1433,7 @@ flyingSlot model mine board =
 -- Should this enemy slot show a target ring? While targeting, guards
 -- eclipse everyone else (matching the engine's rule).
 -- Which enemy creatures light up as targets. A SPELL can hit ANY creature
--- (the engine ignores Guardião for spells — see playCard), so ring them
+-- (the engine ignores Guardião for spells: see playCard), so ring them
 -- all. An ATTACK obeys the Guardião eclipse: while a guard stands, only the
 -- guard is a legal target.
 targetRing : Bool -> Bool -> Bool -> Shared.Slot -> Bool
@@ -1598,7 +1598,7 @@ buttonShapes model d st =
         ]
 
 
--- Card text is written as "RULES. FLAVOR." — split at the first ". " so the
+-- Card text is written as "RULES. FLAVOR.": split at the first ". " so the
 -- reading strip can put the rules on one line and the flavor on the next,
 -- instead of one line that runs past the panel. No ". " (single sentence) =>
 -- it all stays on the first line (the adaptive font in infoShapes shrinks it).
@@ -1707,7 +1707,7 @@ animShape model d st a =
                     else
                         320 - cardW // 2
                 -- Land the (tall) flying card CENTERED on the (shorter)
-                -- settled slot, not top-aligned — otherwise it sinks
+                -- settled slot, not top-aligned: otherwise it sinks
                 -- ~17px past the slot before the smaller slot pops in
                 -- higher, reading as an overshoot ("foi longe demais").
                 yEnd = (if byMe then myRowY else foeRowY) - (cardH - slotH) // 2
@@ -1781,7 +1781,7 @@ animShape model d st a =
         KHitHero mine ->
             -- flash the struck hero's OWN panel: mine is at (6, 282), the
             -- rival's at (44, 8). The foe used to flash at x=6 (over my
-            -- corner, now under the back button) — wrong hero.
+            -- corner, now under the back button): wrong hero.
             if imod2 (a.t // 3) == 0 then
                 [ rect (if mine then 6 else 44) (if mine then 282 else 8) 150 44 (rgb 255 120 90) ]
 
@@ -1895,7 +1895,7 @@ winCry seed =
         (Shared.nth (Shared.imodP seed (List.length winLines)) winLines)
 
 
--- A COMPACT result ribbon across the center seam — the board (final
+-- A COMPACT result ribbon across the center seam: the board (final
 -- position, life totals, both fields) stays visible so you can see how
 -- it ended. The ≡ log button reviews the blow-by-blow. Back to the lobby
 -- via the ribbon line OR the ‹ top-left.
@@ -1949,7 +1949,7 @@ logShapes model =
 
 
 -- ====================================================================
--- CARD ART — one hand-drawn emblem per legend, in a 70x42 local box
+-- CARD ART: one hand-drawn emblem per legend, in a 70x42 local box
 -- ====================================================================
 
 
@@ -2328,7 +2328,7 @@ shadeC c pct =
 
 -- Canvas text neither wraps nor clips: a long name would bleed over the
 -- card edges onto its neighbours. Shrink the font by name length so the
--- whole name fits the card width (hand cards are 82 wide, slots 76 —
+-- whole name fits the card width (hand cards are 82 wide, slots 76:
 -- the longest name, "Múmia da Cordilheira", is 20 chars and needs the
 -- smallest step).
 nameSize : Int -> String -> Int

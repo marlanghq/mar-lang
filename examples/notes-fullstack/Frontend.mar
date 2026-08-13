@@ -59,7 +59,7 @@ update msg model =
             ({ model | draft = value }, Cmd.none)
 
         SubmitClicked ->
-            -- The Service contract is `Service NewNote Note` — the runtime
+            -- The Service contract is `Service NewNote Note`: the runtime
             -- encodes the input record as JSON and decodes the response
             -- straight into a typed Note. No JSON.encode / decode in user
             -- code anymore.

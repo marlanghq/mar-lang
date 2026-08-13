@@ -4,7 +4,7 @@ module Backend.Notes exposing (services)
 import Shared exposing (Role(..))
 
 
--- Notes domain — entity, business rules, and services list slice.
+-- Notes domain: entity, business rules, and services list slice.
 --
 -- The services list at the bottom is the **security policy of this
 -- app made executable**. Each line shows in plain text who can do

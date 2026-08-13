@@ -6,7 +6,7 @@
 // block emits a leading blank line to separate from prior output,
 // and a trailing blank only when it's the last thing printed.
 // Without coordination, consecutive blocks each emit their OWN
-// leading + trailing, producing TWO blank lines between them —
+// leading + trailing, producing TWO blank lines between them:
 // reads as a gap, not a separator.
 //
 // The fix used in cmd/mar/color.go is to track whether the previous
@@ -15,7 +15,7 @@
 // cmd/mar/color.go, so it only coordinated calls within that
 // package. When `mar dev` chained an `fprintHint` (admin panel
 // locked) with the dev banner from internal/jsserve, the two
-// packages didn't share state — two blanks slipped between.
+// packages didn't share state: two blanks slipped between.
 //
 // This package lifts the state to a place both packages can import.
 // The contract is simple: callers that write a block ending in a

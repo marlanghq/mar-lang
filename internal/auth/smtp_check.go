@@ -4,7 +4,7 @@
 // opens so a misconfigured deploy fails loudly instead of "looking
 // healthy" but silently swallowing every sign-in attempt. Mirrors
 // the pattern from the early Mar (commit ee4c78b) where startup
-// connected, authenticated, and disconnected — same defensive
+// connected, authenticated, and disconnected: same defensive
 // behavior, kept platform-agnostic so it runs the same way under
 // `mar dev`, `mar-runtime`, or anything else that calls Verify.
 //
@@ -18,7 +18,7 @@
 //
 // What we deliberately don't test:
 //
-//   - Sending a real email. Boot is not the moment for that — costs
+//   - Sending a real email. Boot is not the moment for that: costs
 //     a credit, may end up in a real inbox, and AUTH passing implies
 //     the credentials are valid for sending too.
 //   - Outbound network policy details. If the server says HELO works
@@ -38,7 +38,7 @@ import (
 )
 
 // smtpStartupTimeout caps the entire connect+auth+quit cycle. 5s is
-// generous — public SMTP submission endpoints typically respond in
+// generous: public SMTP submission endpoints typically respond in
 // well under 500ms. If we time out, something's genuinely wrong
 // (firewall, host typo, provider outage) and the wrapper exits with
 // a clear error.
@@ -48,7 +48,7 @@ const smtpStartupTimeout = 5 * time.Second
 // runs STARTTLS, authenticates, and sends QUIT. Returns nil if
 // everything works; a structured FriendlyError otherwise.
 //
-// No-ops with nil error when the config is incomplete — same
+// No-ops with nil error when the config is incomplete: same
 // condition as `Send`'s stdout-sink fallback (Host or Password
 // missing). This covers the `mar dev` case where the operator
 // hasn't exported `SMTP_PASSWORD`: the loader's dev tolerance
@@ -60,7 +60,7 @@ const smtpStartupTimeout = 5 * time.Second
 // Production callers should gate this behind their own
 // "is SMTP configured?" check; the no-op here is defensive only.
 //
-// `Insecure` is forced false — there's no provider in our supported
+// `Insecure` is forced false: there's no provider in our supported
 // list that requires plaintext SMTP, and silently allowing it would
 // hide misconfiguration (port 587 without STARTTLS is a "I forgot
 // to use the right port" tell).
@@ -69,7 +69,7 @@ func VerifySMTPConfig(cfg SMTPConfig) error {
 		return nil
 	}
 
-	// net.JoinHostPort handles IPv6 bracketing — the previous
+	// net.JoinHostPort handles IPv6 bracketing: the previous
 	// `fmt.Sprintf("%s:%d", ...)` produced malformed addresses like
 	// `::1:587` instead of `[::1]:587`. We don't expect IPv6 SMTP
 	// hosts in practice, but the lint catches it generically.
@@ -93,7 +93,7 @@ func VerifySMTPConfig(cfg SMTPConfig) error {
 
 	// STARTTLS. We require it on port 587 (and any other port that
 	// supports it). The crypto/tls config validates the server's
-	// certificate against the system CA bundle — a self-signed cert
+	// certificate against the system CA bundle: a self-signed cert
 	// on a public SMTP host is misconfiguration, not a use case to
 	// support.
 	if err := client.StartTLS(&tls.Config{ServerName: cfg.Host}); err != nil {
@@ -108,7 +108,7 @@ func VerifySMTPConfig(cfg SMTPConfig) error {
 	}
 
 	if err := client.Quit(); err != nil {
-		// QUIT failure isn't a real problem — connection might
+		// QUIT failure isn't a real problem: connection might
 		// have already closed gracefully. Don't fail the check
 		// just because of QUIT etiquette.
 		_ = err

@@ -1,4 +1,4 @@
-// Manifest validation — see docs/admin-panel.md §11 for the design.
+// Manifest validation: see docs/admin-panel.md §11 for the design.
 //
 // Runs from `mar build` / `mar dev` startup against the structural
 // manifest and again from `mar-runtime` against the env-resolved
@@ -30,7 +30,7 @@ const (
 	MaxRecentRequestsSize     = 5000
 )
 
-// Defaults for rateLimit knobs. Rate limit is always on — these
+// Defaults for rateLimit knobs. Rate limit is always on: these
 // bounds let users stretch from very strict (~1 req/min) to very
 // permissive (~1667 req/s) but not infinite. Out-of-range values
 // fail-fast at compile time, same policy as recentRequestsSize etc.
@@ -45,13 +45,13 @@ const (
 
 // Defaults for server knobs. Body cap is bounded: a default that's
 // "good enough for typical JSON APIs", with room to stretch up for
-// uploads but never "unlimited" — uncapped bodies are a classic DoS
+// uploads but never "unlimited": uncapped bodies are a classic DoS
 // vector (one client sending Content-Length: 10GB exhausts memory
 // before any handler runs).
 const (
 	DefaultMaxBodyBytes int64 = 1 << 20  // 1 MiB
-	MinMaxBodyBytes     int64 = 1 << 10  // 1 KiB — anything smaller is unusable
-	MaxMaxBodyBytes     int64 = 32 << 20 // 32 MiB — bigger payloads need a dedicated streaming route
+	MinMaxBodyBytes     int64 = 1 << 10  // 1 KiB: anything smaller is unusable
+	MaxMaxBodyBytes     int64 = 32 << 20 // 32 MiB: bigger payloads need a dedicated streaming route
 )
 
 // Defaults for database.autoBackup knobs. Bounds rationale documented
@@ -60,13 +60,13 @@ const (
 const (
 	DefaultAutoBackupIntervalHours  = 6
 	MinAutoBackupIntervalHours      = 1   // tighter than 1h → use streaming replication
-	MaxAutoBackupIntervalHours      = 168 // 1 week — looser is barely a backup
+	MaxAutoBackupIntervalHours      = 168 // 1 week: looser is barely a backup
 	DefaultAutoBackupRetentionCount = 28
 	MinAutoBackupRetentionCount     = 2   // 1 = single point of failure
 	MaxAutoBackupRetentionCount     = 100 // larger → export off-machine
 )
 
-// emailRegex is a lightweight shape check — not full RFC 5322. We
+// emailRegex is a lightweight shape check, not full RFC 5322. We
 // just want to reject obvious garbage in `admins: [...]` at compile
 // time, not validate that the address actually exists.
 var emailRegex = regexp.MustCompile(`^[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}$`)
@@ -74,24 +74,24 @@ var emailRegex = regexp.MustCompile(`^[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-
 // IsValidEmail reports whether s matches the framework's email
 // shape (the same one used to validate `admins:` and `mail.from`
 // at compile time). Exposed for runtime handlers that take an email
-// over the wire — currently /_auth/request-code, which would
+// over the wire: currently /_auth/request-code, which would
 // otherwise accept "not-an-email" and pollute the users table.
 //
 // Reject is shape-only: an unreachable domain like `x@invalid.tld`
 // passes here. The SMTP send step is what actually proves
-// deliverability — this just blocks the garbage that would never
+// deliverability: this just blocks the garbage that would never
 // have a chance.
 func IsValidEmail(s string) bool {
 	return emailRegex.MatchString(s)
 }
 
 // httpsURLRegex matches https://host[:port][/path]. Used to validate
-// ios.serverUrl. The check is shape-only — DNS resolution and
+// ios.serverUrl. The check is shape-only: DNS resolution and
 // reachability are not our concern here.
 var httpsURLRegex = regexp.MustCompile(`^https://[A-Za-z0-9.\-]+(:[0-9]+)?(/.*)?$`)
 
 // localhostURLRegex matches http://localhost[:port][/path] or http://
-// 127.0.0.1[:port]... — accepted as ios.serverUrl ONLY when the
+// 127.0.0.1[:port]..., accepted as ios.serverUrl ONLY when the
 // caller-context allows it (e.g. local QA build). The validator
 // rejects plain http for production targets per ATS / App Store
 // review reality.
@@ -135,7 +135,7 @@ func Validate(m *Manifest) error {
 
 var hexColorRe = regexp.MustCompile(`^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$`)
 
-// validatePWA checks the structural parts of the `pwa` block — the
+// validatePWA checks the structural parts of the `pwa` block: the
 // colors must be valid hex. The icon FILE check (PNG / square / size)
 // lives in ValidatePWAIcon, which needs the project directory to
 // resolve the path and so runs from the CLI (dev + build), not from
@@ -162,7 +162,7 @@ const minPWAIconSize = 512
 // ValidatePWAIcon checks the `pwa.icon` master image when one is set:
 // it must be a square PNG of at least 512×512 (Mar downscales it to
 // every size the manifest + apple-touch-icon need). Reads only the
-// image header (image.DecodeConfig) — no full decode. A nil PWA block
+// image header (image.DecodeConfig): no full decode. A nil PWA block
 // or empty icon path is fine (a tile is generated instead). Called from
 // `mar dev` (boot) and `mar build` so a bad icon fails fast.
 func ValidatePWAIcon(projectDir string, m *Manifest) error {
@@ -198,7 +198,7 @@ func ValidatePWAIcon(projectDir string, m *Manifest) error {
 }
 
 // validateServer enforces bounds on the `server` block. Currently
-// just maxBodyBytes — port/host validation lives elsewhere because
+// just maxBodyBytes: port/host validation lives elsewhere because
 // those are network-shape concerns, not policy knobs.
 func validateServer(m *Manifest) error {
 	if m.Server == nil {
@@ -225,7 +225,7 @@ func validateServer(m *Manifest) error {
 
 // validateRateLimit enforces bounds on rateLimit knobs. Absent
 // block / zero fields apply documented defaults. Hard rejection
-// outside bounds — rate limit can't be effectively disabled (the
+// outside bounds: rate limit can't be effectively disabled (the
 // upper bound is high enough for legitimate high-throughput
 // apps but not infinite, by design).
 func validateRateLimit(m *Manifest) error {
@@ -271,12 +271,12 @@ func extractEmailDomain(addr string) string {
 }
 
 // freeMailDomains is the set of domains we treat as "free mail
-// providers". Using one of these in mail.from is always wrong —
+// providers". Using one of these in mail.from is always wrong:
 // SMTP providers (Resend, SendGrid, AWS SES, Postmark, …) only
 // let you send from domains you've verified via DKIM/SPF, and you
 // can never verify a domain you don't own.
 //
-// Curated, not exhaustive — covers the ~95% of common mistakes.
+// Curated, not exhaustive: covers the ~95% of common mistakes.
 // More obscure free providers (Zoho, Fastmail) deliberately stay
 // off the list because some users do host on a custom domain
 // through them.
@@ -319,9 +319,9 @@ var freeMailDomains = map[string]bool{
 	"terra.com.br": true,
 }
 
-// hostnameRegex matches a bare DNS hostname — labels separated by
+// hostnameRegex matches a bare DNS hostname: labels separated by
 // dots, alphanumeric + hyphens (RFC 1123-ish). Used for smtpHost.
-// Deliberately rejects schemes (https://...), paths, ports — all
+// Deliberately rejects schemes (https://...), paths, ports, all
 // of which would break the SMTP dial.
 var hostnameRegex = regexp.MustCompile(
 	`^[A-Za-z0-9](?:[A-Za-z0-9\-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9\-]{0,61}[A-Za-z0-9])?)+$`)
@@ -343,7 +343,7 @@ func validateMail(m *Manifest) error {
 	}
 	mail := m.Mail
 
-	// Reject the placeholder literal anywhere in the mail block —
+	// Reject the placeholder literal anywhere in the mail block:
 	// makes "I pasted the snippet but forgot to edit" a fail-fast
 	// instead of a runtime mystery. Typed error so the CLI can
 	// render a tailored Hint (sample value, link to provider setup).
@@ -359,7 +359,7 @@ func validateMail(m *Manifest) error {
 
 	if mail.From != "" {
 		// Allow either a bare email (`x@y.com`) or "Display Name
-		// <x@y.com>" — common shape on real-world SMTP From headers.
+		// <x@y.com>": common shape on real-world SMTP From headers.
 		if !emailRegex.MatchString(mail.From) &&
 			!strings.Contains(mail.From, "<") {
 			return fmt.Errorf(
@@ -367,7 +367,7 @@ func validateMail(m *Manifest) error {
 		}
 		// Reject free-mail domains. Even if the email shape is
 		// valid, "from = anything@gmail.com" guarantees SMTP send
-		// failure — providers only allow domains you verified, and
+		// failure: providers only allow domains you verified, and
 		// you can never verify gmail.com.
 		if domain := extractEmailDomain(mail.From); domain != "" {
 			if freeMailDomains[strings.ToLower(domain)] {
@@ -385,7 +385,7 @@ func validateMail(m *Manifest) error {
 				mail.SMTPHost)
 		}
 	}
-	// smtpUsername is intentionally permissive — providers use
+	// smtpUsername is intentionally permissive: providers use
 	// wildly different formats (literal "apikey", emails, ARN-like
 	// strings, etc.). Only catch obvious garbage (the "..." case
 	// already handled above + non-empty when present).
@@ -400,7 +400,7 @@ func validateMail(m *Manifest) error {
 }
 
 // validateIOS enforces shape rules on the `ios` block. Required-ness
-// of serverUrl depends on the build target — that gate lives in the
+// of serverUrl depends on the build target: that gate lives in the
 // build path (scaffold.BuildIOS), not here. This validator only
 // catches malformed values when the field IS present.
 func validateIOS(m *Manifest) error {
@@ -408,7 +408,7 @@ func validateIOS(m *Manifest) error {
 		return nil
 	}
 	url := m.IOS.ServerURL
-	// Accept https:// always. Accept http://localhost only — never
+	// Accept https:// always. Accept http://localhost only, never
 	// http://example.com. App Store ATS rejects plain HTTP except
 	// for localhost (debug-only).
 	if httpsURLRegex.MatchString(url) {
@@ -424,7 +424,7 @@ func validateIOS(m *Manifest) error {
 }
 
 // validateDatabaseAutoBackup enforces the bounds on the auto-backup
-// scheduler config. Hard rejection — same policy as adminPanel knobs.
+// scheduler config. Hard rejection: same policy as adminPanel knobs.
 func validateDatabaseAutoBackup(m *Manifest) error {
 	if m.Database == nil || m.Database.AutoBackup == nil {
 		return nil
@@ -450,7 +450,7 @@ func validateDatabaseAutoBackup(m *Manifest) error {
 }
 
 // validateAdmins checks shape of every email in the admins list.
-// Compile-time only — boot-time re-runs the same shape check on the
+// Compile-time only: boot-time re-runs the same shape check on the
 // same literals (admins are not env:VAR references).
 func validateAdmins(m *Manifest) error {
 	for i, email := range m.Admins {
@@ -461,7 +461,7 @@ func validateAdmins(m *Manifest) error {
 			return fmt.Errorf("mar.json: admins[%d] %q is not a valid email", i, email)
 		}
 	}
-	// Detect duplicates — these are user errors and the boot-time sync
+	// Detect duplicates: these are user errors and the boot-time sync
 	// would silently dedupe; better to fail at compile time.
 	seen := make(map[string]int, len(m.Admins))
 	for i, email := range m.Admins {
@@ -505,7 +505,7 @@ func ResolvedRecentRequestsSize(m *Manifest) int {
 }
 
 // AllowedFlyMemorySizes is the canonical list of memory sizes Fly.io
-// accepts on shared-cpu instances. Validated as an exact match —
+// accepts on shared-cpu instances. Validated as an exact match:
 // arbitrary sizes like "300mb" fail with a friendly error listing
 // these. Source: fly.io/docs/machines/guides-examples/machine-sizing.
 var AllowedFlyMemorySizes = []string{
@@ -518,7 +518,7 @@ var AllowedFlyMemorySizes = []string{
 // while library callers can read the structured fields.
 type DeployFlyError struct {
 	// Kind is one of:
-	//   "missing-block" — deploy.fly is absent entirely
+	//   "missing-block": deploy.fly is absent entirely
 	//   "missing-app" / "missing-region" / "missing-memory"
 	//   "invalid-memory"
 	Kind string
@@ -549,13 +549,13 @@ func (e *DeployFlyError) Error() string {
 }
 
 // ValidateDeployFly enforces that the deploy.fly block is present and
-// well-formed. NOT called from the general Validate() pass — only
+// well-formed. NOT called from the general Validate() pass: only
 // from `mar fly *` subcommands, since non-deploy workflows
 // (`mar dev`, `mar build`) don\'t require this block.
 //
 // Returns a *DeployFlyError so callers can render with the structured
 // hint block. The first missing/invalid field wins (no aggregate
-// "you have 3 problems" report — the operator fixes one, re-runs,
+// "you have 3 problems" report: the operator fixes one, re-runs,
 // hits the next).
 func ValidateDeployFly(m *Manifest) error {
 	if m == nil || m.Deploy == nil || m.Deploy.Fly == nil {
@@ -582,12 +582,12 @@ func ValidateDeployFly(m *Manifest) error {
 // CLI callers can render with the structured hint block.
 type DeployCloudflarePagesError struct {
 	// Kind is one of:
-	//   "missing-block"     — deploy.cloudflare-pages is absent entirely
-	//   "missing-app"       — `app` field missing
-	//   "missing-account"   — `account` field missing
-	//   "missing-api-token" — `apiToken` field missing
-	//   "invalid-app"       — `app` field violates Pages naming rules
-	//   "invalid-account"   — `account` field is not a CF account ID
+	//   "missing-block"     - deploy.cloudflare-pages is absent entirely
+	//   "missing-app"       - `app` field missing
+	//   "missing-account"   - `account` field missing
+	//   "missing-api-token": `apiToken` field missing
+	//   "invalid-app"       - `app` field violates Pages naming rules
+	//   "invalid-account"   - `account` field is not a CF account ID
 	Kind string
 
 	// BadValue is the offending value (for "invalid-*" kinds),
@@ -616,7 +616,7 @@ func (e *DeployCloudflarePagesError) Error() string {
 
 // ValidateDeployCloudflarePages enforces that the deploy.cloudflare-pages
 // block is present and well-formed. NOT called from the general
-// Validate() pass — only from the `mar deploy` flow when it routes to
+// Validate() pass: only from the `mar deploy` flow when it routes to
 // Cloudflare Pages, since non-deploy workflows don't require this block.
 //
 // The shape rules are deliberately strict (account = 32 hex chars,
@@ -627,7 +627,7 @@ func (e *DeployCloudflarePagesError) Error() string {
 // "must be env:" rule for apiToken is enforced earlier, by
 // checkSecrets (manifest.go); by the time we get here, apiToken
 // is the resolved literal value. So we only check that it's
-// non-empty — the env: requirement is covered elsewhere.
+// non-empty, the env: requirement is covered elsewhere.
 func ValidateDeployCloudflarePages(m *Manifest) error {
 	if m == nil || m.Deploy == nil || m.Deploy.CloudflarePages == nil {
 		return &DeployCloudflarePagesError{Kind: "missing-block"}

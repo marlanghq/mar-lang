@@ -11,7 +11,7 @@ import UI exposing
 
 
 -- Email-entry half of the sign-in flow. On acceptance we push to
--- /sign-in/verify/{email} — a separate page for code entry — so the
+-- /sign-in/verify/{email}, a separate page for code entry, so the
 -- navigation stack's back button gives a mistyped-email retry for
 -- free, with no extra state to thread.
 

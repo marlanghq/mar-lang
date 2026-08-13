@@ -12,7 +12,7 @@ import Shared exposing
     )
 
 
--- ActivityFeed — the READ side of the audit log. Joins the raw
+-- ActivityFeed: the READ side of the audit log. Joins the raw
 -- activity rows with users, issues, and projects so the frontend
 -- can render "Marcio changed status of #42 to Closed in project
 -- bigapp" without per-row lookups. Lives in its own module
@@ -33,7 +33,7 @@ listRecent input user =
                 input.limit
     in
     -- Pull recent rows for the caller's team. Sort + take happen in
-    -- memory after the fetch — fine at the scale of an audit feed
+    -- memory after the fetch: fine at the scale of an audit feed
     -- (which a real product would cap-and-truncate via a sweeper).
     Repo.findBy Backend.Activities.activities { teamId = user.teamId }
         |> Task.andThen
@@ -89,7 +89,7 @@ buildActivityView a =
 -- activity points at an issue (directly) or a comment (which
 -- points at an issue via comment.issueId, stored in `extra` by
 -- the comment-flavored emitX helpers). For project activities,
--- the context fields stay empty — the row itself has the project
+-- the context fields stay empty: the row itself has the project
 -- name in `extra`.
 resolveIssueContext : Shared.Activity -> Task { issueNumber : Int, issueTitle : String, projectSlug : String }
 resolveIssueContext a =

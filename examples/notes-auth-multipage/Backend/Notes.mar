@@ -20,7 +20,7 @@ notes =
 
 
 -- Business rules. Each takes the User as proof of authorization and
--- is fully decoupled from the auth/transport layer — easy to test
+-- is fully decoupled from the auth/transport layer: easy to test
 -- in isolation, and trivial to re-wire (e.g. swap Auth.protect for
 -- Service.implement on an internal-only variant).
 --

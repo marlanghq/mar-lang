@@ -16,14 +16,14 @@ final class MarDispatcher {
     static let shared = MarDispatcher()
 
     /// The Msg sink for the currently-mounted page. Set on mount,
-    /// cleared on unmount. Async effects check this before firing —
+    /// cleared on unmount. Async effects check this before firing:
     /// a stale closure would dispatch into a torn-down page.
     var current: ((MarValue) -> Void)?
 
     /// Identity tag for the page that owns `current`. Set together
     /// with `current` on mount, checked on unmount. Lets the
     /// outgoing page detect that someone else (the incoming page)
-    /// has already taken over the dispatcher slot — without this
+    /// has already taken over the dispatcher slot: without this
     /// check, a page-swap whose onAppear fires before the previous
     /// page's onDisappear would have the outgoing unmount wipe the
     /// incoming page's freshly-set closure, orphaning every async

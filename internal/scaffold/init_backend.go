@@ -5,7 +5,7 @@ import "fmt"
 // backendFiles returns the file set for `mar init` when the operator
 // picks the backend-only kind. Single Main.mar exposing two RPC
 // services (listEntries + addEntry) over an Entity, mounted via
-// App.backend. No frontend — useful for API services consumed by an
+// App.backend. No frontend: useful for API services consumed by an
 // iOS app, an external SPA, or shell tooling via plain HTTP POST.
 func backendFiles(name string) map[string]string {
 	files := sharedFiles(name)

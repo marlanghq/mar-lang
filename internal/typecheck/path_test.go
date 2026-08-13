@@ -7,7 +7,7 @@ import (
 
 // String literal coerces to Path r when the value declaration carries
 // a `Path { ... }` annotation. The row's fields must match the
-// `{name:Type}` segments exactly — no more, no less.
+// `{name:Type}` segments exactly, no more, no less.
 func TestCheckPathFromStringLiteral(t *testing.T) {
 	src := `module M exposing (..)
 
@@ -86,7 +86,7 @@ href = linkTo notesDetail { id = 42 }
 }
 
 func TestCheckLinkTo_rejectsWrongFieldType(t *testing.T) {
-	// id is Int in the path but we pass a String here — should fail.
+	// id is Int in the path but we pass a String here, should fail.
 	src := `module M exposing (..)
 
 notesDetail : Path { id : Int }
@@ -113,7 +113,7 @@ href = linkTo notesDetail { id = 42, slug = "extra" }
 }
 
 // Custom enum types are accepted in `{name:Type}` segments so user
-// code can route on a closed sum type — same restriction as
+// code can route on a closed sum type: same restriction as
 // Entity.enum, only zero-arg ctors are eligible.
 func TestCheckPath_acceptsCustomEnumType(t *testing.T) {
 	src := `module M exposing (..)
@@ -134,7 +134,7 @@ userByRole = "/users/{role:Role}"
 }
 
 func TestCheckPath_rejectsCustomTypeWithPayload(t *testing.T) {
-	// Maybe's `Just a` ctor takes a payload — not eligible for
+	// Maybe's `Just a` ctor takes a payload, not eligible for
 	// path use because the URL ↔ ctor mapping doesn't cover args.
 	src := `module M exposing (..)
 

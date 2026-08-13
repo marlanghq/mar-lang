@@ -9,7 +9,7 @@ import Shared exposing (CType(..), Keyword(..), Efeito(..))
 -- (Backend.Games) applies it through the same `Shared.applyMoveBy` every
 -- human move goes through, appends it to the log, and calls again until the
 -- bot ends its turn ("E"). So the bot is just another source of moves in the
--- log — the client animates its turn exactly like a rival's, and it can't
+-- log: the client animates its turn exactly like a rival's, and it can't
 -- cheat. See BOT.md.
 --
 -- The bot is ALWAYS player B (you challenge it, so you are A). It only ever

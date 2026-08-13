@@ -3,7 +3,7 @@ package refgen
 import "strings"
 
 // The second hand-authored half of the reference: the modules an app reaches
-// for once it stops being pure data — drawing, sound, time, randomness, views,
+// for once it stops being pure data: drawing, sound, time, randomness, views,
 // navigation, effects, and the backend.
 //
 // It is split from content.go only for navigation; the maps here are merged
@@ -12,11 +12,11 @@ import "strings"
 // examples_test.go compiles against the live compiler.
 //
 // The examples differ from content.go's in two ways. A List example can state
-// an equality and be run; a Canvas.rect call cannot — a Shape has no value
+// an equality and be run; a Canvas.rect call cannot: a Shape has no value
 // worth comparing against. Those are compiled instead of evaluated, which is
 // what keeps them honest: change the signature and the snippet stops
-// typechecking. And where a call needs something declared first — a route, a
-// table, an endpoint — the example declares it on its own line, with a name.
+// typechecking. And where a call needs something declared first: a route, a
+// table, an endpoint: the example declares it on its own line, with a name.
 // Inlining the declaration into the call fits on one line and teaches nothing:
 // what you get is a wall with the interesting part buried in the middle.
 func init() {
@@ -41,7 +41,7 @@ func init() {
 //
 // It is one flush-left line on purpose. The page draws an example one line per
 // element and its code style collapses runs of whitespace, so an indented
-// continuation line would show up unindented — and unindented Mar does not
+// continuation line would show up unindented, and unindented Mar does not
 // parse, which would put non-compiling code on a page whose whole promise is
 // that the code compiles. Every multi-line example here is a sequence of
 // top-level declarations, each complete on its own line.

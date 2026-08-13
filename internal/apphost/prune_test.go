@@ -92,7 +92,7 @@ page = blank.id
 }
 
 // The other half: a service implementation, and the Repo call inside it, is
-// reachable only from the backend's service list — never from a page.
+// reachable only from the backend's service list, never from a page.
 func TestPruneDropsServiceImplementations(t *testing.T) {
 	mods := parseMods(t,
 		`module Shared exposing (listNotes)
@@ -273,7 +273,7 @@ page = helper
 }
 
 // The backstop. After pruning, a server-only builtin in client code is not an
-// accident of bundling — someone wrote it there.
+// accident of bundling: someone wrote it there.
 func TestBackendOnlyLeakIsReportedWithItsDeclaration(t *testing.T) {
 	mods := parseMods(t,
 		`module Frontend.Home exposing (page)

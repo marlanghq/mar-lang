@@ -28,7 +28,7 @@ import UI exposing
 -- work is how a daily habit dies in week three.
 --
 -- Every option is a real button in the platform's own type. Nothing on
--- this screen is drawn by the app, which is a deliberate reversal —
+-- this screen is drawn by the app, which is a deliberate reversal:
 -- the first version drew the answer strips on a canvas, and canvas
 -- text sitting beside native text never quite matches, however close
 -- the family and the size.
@@ -507,7 +507,7 @@ summaryView model key =
 -- What you said, as something to read rather than something to press.
 --
 -- The rows were buttons at first, one per answer, and eleven of them in
--- a column read as eleven things demanding to be pressed — the same
+-- a column read as eleven things demanding to be pressed: the same
 -- wall of noise the sequence was meant to replace. A recap is text; the
 -- only action here is correcting one line, which is rare enough to
 -- deserve a menu rather than eleven permanent buttons.

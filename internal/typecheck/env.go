@@ -8,7 +8,7 @@ import (
 // TypeEnv maps names to types (or schemes). Implemented as an immutable
 // linked list of frames so that scoping works naturally.
 //
-// The root frame also carries a customs map — the registered custom-type
+// The root frame also carries a customs map: the registered custom-type
 // declarations indexed by name. Used by exhaustiveness checking on case
 // expressions to know "what are all the constructors of Msg?" without
 // reverse-engineering it from the constructor schemes.
@@ -90,7 +90,7 @@ func (e *TypeEnv) Bind(name string, t Type) *TypeEnv {
 // ExportsOf collects every binding that belongs to module `modName`:
 // keys of the form `modName.suffix` where suffix itself contains no
 // further dot (so `Mar.Admin.x` is an export of `Mar.Admin`, not of
-// `Mar`). Powers `import M exposing (..)` — the returned map is the
+// `Mar`). Powers `import M exposing (..)`: the returned map is the
 // full set of bare names the wildcard brings into scope. Walks frames
 // outermost-first so an inner (re)binding of the same qualified name
 // wins, matching Lookup's shadowing order.
@@ -150,13 +150,13 @@ func BaseEnv() *TypeEnv {
 // (Module.name → Type) as a flat map. Consumed by the LSP to power
 // completion / hover / workspace-symbol over the framework's
 // built-ins. Bare-name aliases (e.g. `listMap` for `List.map`) are
-// excluded — only the user-facing qualified form is reported, since
+// excluded: only the user-facing qualified form is reported, since
 // the bare names are an internal-runtime convention.
 func BaseQualifiedSymbols() map[string]Type {
 	return qualifiedAliases(baseBindings())
 }
 
-// BareGlobals returns the user-facing builtins that live in no module —
+// BareGlobals returns the user-facing builtins that live in no module:
 // the handful spelled without a qualifier, like Elm's Basics. It is the
 // bare-name counterpart to ExportsOf, and exists so tooling that walks
 // the stdlib module by module (the /reference generator) can still see
@@ -215,7 +215,7 @@ func builtinCustomTypes() map[string]CustomType {
 			Constructors: map[string]CustomCtor{"True": {Result: TBool}, "False": {Result: TBool}},
 			CtorOrder:    []string{"True", "False"},
 		},
-		// Order — three-way comparison result. Mirrors Elm exactly so
+		// Order: three-way comparison result. Mirrors Elm exactly so
 		// user code that came from Elm (or that the user wrote
 		// expecting Elm-style semantics for sortWith) just works.
 		// Registered as a built-in custom type so `case ord of LT -> ...`
@@ -230,7 +230,7 @@ func builtinCustomTypes() map[string]CustomType {
 			},
 			CtorOrder: []string{"LT", "EQ", "GT"},
 		},
-		// Method — the HTTP verb a service answers on. The first argument
+		// Method: the HTTP verb a service answers on. The first argument
 		// to Service.declare. Registered as a built-in custom type so a
 		// `case method of GET -> ...` matches exhaustively.
 		"Method": {
@@ -245,7 +245,7 @@ func builtinCustomTypes() map[string]CustomType {
 			},
 			CtorOrder: []string{"GET", "POST", "PUT", "PATCH", "DELETE"},
 		},
-		// Service.Error — the failure a Service.call delivers in its Err.
+		// Service.Error: the failure a Service.call delivers in its Err.
 		// A union so the frontend cases on it (Offline shows a retry,
 		// Unauthorized redirects to sign-in, RateLimited asks the user to
 		// slow down, ServerError shows the message) instead of matching
@@ -262,7 +262,7 @@ func builtinCustomTypes() map[string]CustomType {
 			},
 			CtorOrder: []string{"Offline", "Unauthorized", "RateLimited", "ServerError"},
 		},
-		// Auth.RequestOutcome / Auth.VerifyOutcome — per-endpoint domain
+		// Auth.RequestOutcome / Auth.VerifyOutcome: per-endpoint domain
 		// outcomes for the auth flow. Each endpoint declares only the
 		// branches it can produce (the email screen never sees WrongCode;
 		// the code screen never sees InvalidEmail), and the privacy rule
@@ -289,10 +289,10 @@ func builtinCustomTypes() map[string]CustomType {
 			},
 			CtorOrder: []string{"SignedIn", "WrongCode", "TooManyAttempts"},
 		},
-		// Canvas.Transform — what a group does to its children: the matrix ops
+		// Canvas.Transform, what a group does to its children: the matrix ops
 		// (translate / scale / rotate) applied in declaration order, plus the
 		// two compositing modifiers (Alpha, Blend) that are not matrix ops at
-		// all — the renderers pull those out before walking the rest. Reachable
+		// all: the renderers pull those out before walking the rest. Reachable
 		// only as `Canvas.Translate` etc.: `import Canvas exposing
 		// (Transform(..))` parses but does NOT bind the bare names, since
 		// open-exposing of a BUILTIN union is still unimplemented (verified
@@ -315,7 +315,7 @@ func builtinCustomTypes() map[string]CustomType {
 			},
 			CtorOrder: []string{"Translate", "Scale", "Rotate", "Alpha", "Blend"},
 		},
-		// Canvas.Blend — the compositing mode of a group (see TBlend). Same
+		// Canvas.Blend: the compositing mode of a group (see TBlend). Same
 		// exposing rule as Align and for a sharper reason: a game writing
 		// `type Op = Add | Sub` must not collide with a rendering mode.
 		"Rounding": {
@@ -345,7 +345,7 @@ func builtinCustomTypes() map[string]CustomType {
 			},
 			CtorOrder: []string{"Normal", "Add", "Multiply", "Screen", "Erase"},
 		},
-		// Canvas.Align — horizontal text anchor. Same exposing rule as
+		// Canvas.Align: horizontal text anchor. Same exposing rule as
 		// Transform; the constructors are NOT global (unlike Order/Method)
 		// precisely so a game can still write `type Direction = Left | Right`
 		// without importing Canvas.
@@ -360,7 +360,7 @@ func builtinCustomTypes() map[string]CustomType {
 			},
 			CtorOrder: []string{"Left", "Center", "Right"},
 		},
-		// Pointer — the precision of the PRIMARY input, inside a Device record
+		// Pointer: the precision of the PRIMARY input, inside a Device record
 		// (Device.watch). Coarse = finger / TV remote, Fine = mouse / trackpad /
 		// stylus. Constructors ARE global (like Order / Method, unlike Align):
 		// `d.pointer == Coarse` reads naturally and the two names are distinctive
@@ -374,10 +374,10 @@ func builtinCustomTypes() map[string]CustomType {
 			},
 			CtorOrder: []string{"Coarse", "Fine"},
 		},
-		// CanvasMode — the mandatory first argument of `canvas`. Pixelated =
+		// CanvasMode: the mandatory first argument of `canvas`. Pixelated =
 		// 1× buffer, nearest-neighbour (60 fps action games); Crisp = retina
 		// buffer, sharp text (turn-based / text). Global constructors (bare
-		// `Pixelated` / `Crisp`), like Pointer — distinctive, no collision.
+		// `Pixelated` / `Crisp`), like Pointer: distinctive, no collision.
 		"CanvasMode": {
 			Name:   "CanvasMode",
 			Params: nil,
@@ -387,13 +387,13 @@ func builtinCustomTypes() map[string]CustomType {
 			},
 			CtorOrder: []string{"Pixelated", "Crisp"},
 		},
-		// Keyboard.Key — a physical key (Keyboard.watch delivers the held set).
+		// Keyboard.Key: a physical key (Keyboard.watch delivers the held set).
 		// ~100 constructors mirroring the DOM event.code set of a US keyboard,
 		// built from the shared list in keyboard.go. Qualified-only (like
 		// Service.Error) so the ~100 names don't pollute the global scope.
 		"Keyboard.Key":   keyboardKeyCustomType(),
 		"Gamepad.Button": gamepadButtonCustomType(),
-		// Sound.Wave — chip-audio waveforms (Square/Triangle/Sawtooth/Noise) from
+		// Sound.Wave: chip-audio waveforms (Square/Triangle/Sawtooth/Noise) from
 		// sound.go. Qualified-only, like the other web-first input/output unions.
 		"Sound.Wave": soundWaveCustomType(),
 	}
@@ -407,7 +407,7 @@ func baseBindings() map[string]Type {
 	// ordering operators below. Same mechanism as Dict/Set keys: when
 	// the user writes `record1 < record2`, unification tries to bind
 	// this comparable TVar to a TRecord, the unifier rejects it, and
-	// inferBinop surfaces the kind-mismatch reason. Strict semantics —
+	// inferBinop surfaces the kind-mismatch reason. Strict semantics:
 	// only Int / Float / String / Char satisfy Comparable. Tuples /
 	// lists / records / custom types don't (the runtime's
 	// compareValues doesn't recurse).
@@ -417,7 +417,7 @@ func baseBindings() map[string]Type {
 
 	// Arithmetic: forall n:number. n -> n -> n, where number is
 	// Int | Decimal (docs/proposals/decimal.md). Both sides unify to
-	// ONE member — mixing Int and Decimal is a type error whose fix
+	// ONE member: mixing Int and Decimal is a type error whose fix
 	// (Decimal.fromInt, or writing the literal as 3.0) stays visible.
 	// These three are exact for Decimal: add/sub align scales, mul
 	// adds them; no rounding exists in any of them.
@@ -426,7 +426,7 @@ func baseBindings() map[string]Type {
 	out["-"] = TForall{Vars: []int{num.ID}, Body: TArrow{From: num, To: TArrow{From: num, To: num}}}
 	out["*"] = TForall{Vars: []int{num.ID}, Body: TArrow{From: num, To: TArrow{From: num, To: num}}}
 
-	// Integer division wears its truncation in its spelling — Elm's
+	// Integer division wears its truncation in its spelling: Elm's
 	// `//`, total (x // 0 == 0).
 	out["//"] = TArrow{From: TInt, To: TArrow{From: TInt, To: TInt}}
 
@@ -436,7 +436,7 @@ func baseBindings() map[string]Type {
 	// use site. No implicit rounding anywhere in the language.
 	out["/"] = TArrow{From: TDecimal, To: TArrow{From: TDecimal, To: TDivision}}
 
-	// always : a -> b -> a — Elm's Basics.always. Ignores its second
+	// always : a -> b -> a, Elm's Basics.always. Ignores its second
 	// argument; `always x` is `\_ -> x`. The everyday use is a constant
 	// function, e.g. `subscriptions = always Sub.none`.
 	out["always"] = TForall{
@@ -445,7 +445,7 @@ func baseBindings() map[string]Type {
 	}
 
 	// Equality: forall a. a -> a -> Bool. Stays polymorphic because
-	// equalValues is fully structural — records, tuples, lists, ctors
+	// equalValues is fully structural: records, tuples, lists, ctors
 	// all compare element-wise. Equality is universal; ordering is not.
 	out["=="] = TForall{
 		Vars: []int{a.ID},
@@ -456,7 +456,7 @@ func baseBindings() map[string]Type {
 		Body: TArrow{From: a, To: TArrow{From: a, To: TBool}},
 	}
 	// Ordering: forall k:Comparable. k -> k -> Bool. Comparable is
-	// Int / Float / String / Char only — see the `cmp` declaration
+	// Int / Float / String / Char only: see the `cmp` declaration
 	// above for the rationale.
 	out["<"] = TForall{
 		Vars: []int{cmp.ID},
@@ -479,15 +479,15 @@ func baseBindings() map[string]Type {
 	out["&&"] = TArrow{From: TBool, To: TArrow{From: TBool, To: TBool}}
 	out["||"] = TArrow{From: TBool, To: TArrow{From: TBool, To: TBool}}
 
-	// not : Bool -> Bool — Elm's Basics.not, bare like `always`. Mar
+	// not : Bool -> Bool, Elm's Basics.not, bare like `always`. Mar
 	// has no prefix operator, so negation is a function: `not model.busy`
-	// rather than `!model.busy`. It completes the boolean algebra —
+	// rather than `!model.busy`. It completes the boolean algebra:
 	// without it the complement of a predicate has to be spelled
 	// `if p x then False else True`.
 	out["not"] = TArrow{From: TBool, To: TBool}
 
 	// The numeric kit, bare and Elm-named. These are NOT here because
-	// they are short — `imax a b = if a > b then a else b` is one line.
+	// they are short: `imax a b = if a > b then a else b` is one line.
 	// They are here because eleven shipped apps each wrote their own
 	// (871 call sites), which means the language was asking every author
 	// to re-derive the same answer, and because Int-only hand-rolls
@@ -506,7 +506,7 @@ func baseBindings() map[string]Type {
 
 	// Two remainders, because they disagree on negatives and both uses
 	// are real. `modBy d n` follows the sign of the DIVISOR (floor
-	// modulo) — what wrapping a coordinate or an index needs, and what
+	// modulo): what wrapping a coordinate or an index needs, and what
 	// every game hand-rolled as `modI`. `remainderBy d n` follows the
 	// sign of the DIVIDEND, matching `//`'s truncation so that
 	// `(n // d) * d + remainderBy d n == n`. Divisor first in both,
@@ -514,8 +514,8 @@ func baseBindings() map[string]Type {
 	out["modBy"] = TArrow{From: TInt, To: TArrow{From: TInt, To: TInt}}
 	out["remainderBy"] = TArrow{From: TInt, To: TArrow{From: TInt, To: TInt}}
 
-	// String/list append. `app` is Appendable-constrained — only
-	// String and List satisfy it — so `1 ++ 2` (or `True ++ False`)
+	// String/list append. `app` is Appendable-constrained: only
+	// String and List satisfy it, so `1 ++ 2` (or `True ++ False`)
 	// is rejected at the call site, matching Elm's `appendable`.
 	// Without the constraint this was `forall a. a -> a -> a`, which
 	// typechecked nonsense the runtime append could never honor.
@@ -562,12 +562,12 @@ func baseBindings() map[string]Type {
 	out["Ok"] = TForall{Vars: []int{a.ID, b.ID}, Body: TArrow{From: b, To: TResult(a, b)}}
 	out["Err"] = TForall{Vars: []int{a.ID, b.ID}, Body: TArrow{From: a, To: TResult(a, b)}}
 
-	// Order constructors — nullary, monomorphic.
+	// Order constructors: nullary, monomorphic.
 	out["LT"] = TOrder
 	out["EQ"] = TOrder
 	out["GT"] = TOrder
 
-	// Method constructors — the HTTP verbs, nullary and monomorphic.
+	// Method constructors: the HTTP verbs, nullary and monomorphic.
 	// Bare-exposed (like LT/EQ/GT) so a service reads `Service.declare
 	// GET "/path"`.
 	out["GET"] = TMethod
@@ -576,7 +576,7 @@ func baseBindings() map[string]Type {
 	out["PATCH"] = TMethod
 	out["DELETE"] = TMethod
 
-	// Service.Error constructors — the transport failure a Service.call
+	// Service.Error constructors: the transport failure a Service.call
 	// delivers in its Err. Offline / Unauthorized / RateLimited are nullary;
 	// ServerError carries the server's message.
 	out["Service.Offline"] = TServiceError
@@ -584,7 +584,7 @@ func baseBindings() map[string]Type {
 	out["Service.RateLimited"] = TServiceError
 	out["Service.ServerError"] = TArrow{From: TString, To: TServiceError}
 
-	// Auth outcome constructors — qualified-only, like Service.Error.
+	// Auth outcome constructors: qualified-only, like Service.Error.
 	// SignedIn is polymorphic in the app's user record.
 	out["Auth.CodeSent"] = TAuthRequestOutcome
 	out["Auth.InvalidEmail"] = TAuthRequestOutcome
@@ -594,12 +594,12 @@ func baseBindings() map[string]Type {
 	out["Auth.TooManyAttempts"] = TForall{Vars: []int{a.ID}, Body: TAuthVerifyOutcome(a)}
 
 	// Keyboard.Key constructors (Keyboard.KeyW, Keyboard.ArrowUp, Keyboard.Space,
-	// ...) — the ~100 physical keys from keyboard.go, qualified-only like
+	// ...): the ~100 physical keys from keyboard.go, qualified-only like
 	// Service.Error so the names don't leak into the global scope.
 	for name, ty := range keyboardKeyBindings() {
 		out[name] = ty
 	}
-	// Keyboard.watch : ({ down : List Keyboard.Key } -> msg) -> Sub msg — the
+	// Keyboard.watch : ({ down : List Keyboard.Key } -> msg) -> Sub msg, the
 	// held-key MIRROR. Fires the whole current set on subscribe and on every
 	// change; OS auto-repeat emits nothing (the set is unchanged) and window
 	// blur clears it. "A key just went down" is derived by the app diffing the
@@ -607,19 +607,19 @@ func baseBindings() map[string]Type {
 	// held keys are state, so they arrive as state.
 	out["keyboardWatch"] = TForall{Vars: []int{b.ID}, Body: TArrow{From: TArrow{From: TKeyboardStateRecord(), To: b}, To: TSub(b)}}
 
-	// Gamepad.Button constructors (Gamepad.A, Gamepad.Up, ...) — the standard
+	// Gamepad.Button constructors (Gamepad.A, Gamepad.Up, ...): the standard
 	// controller buttons from gamepad.go, qualified-only like Keyboard.Key.
 	for name, ty := range gamepadButtonBindings() {
 		out[name] = ty
 	}
-	// Gamepad.watch : (pad -> msg) -> Sub msg — the full-pad MIRROR: connection,
+	// Gamepad.watch : (pad -> msg) -> Sub msg, the full-pad MIRROR: connection,
 	// both analog sticks (x/y in -100..100 with a deadzone), and the held
 	// buttons, as one snapshot that re-fires on change. Web-first (JS polls
 	// getGamepads()). Like the keyboard, the pad is state, so it arrives as state
-	// — no per-button or per-stick event subscription.
+	//: no per-button or per-stick event subscription.
 	out["gamepadWatch"] = TForall{Vars: []int{b.ID}, Body: TArrow{From: TArrow{From: TGamepadStateRecord(), To: b}, To: TSub(b)}}
 
-	// === Sound — chip-audio SFX + looping music (docs/proposals/sound.md) ===
+	// === Sound: chip-audio SFX + looping music (docs/proposals/sound.md) ===
 	//
 	// Sound.Wave constructors (Sound.Square, ...) come from soundWaveBindings
 	// (used as VALUES, the first arg to tone). The builders are monomorphic
@@ -643,19 +643,19 @@ func baseBindings() map[string]Type {
 	out["soundHoldPitch"] = TArrow{From: TInt, To: TArrow{From: TSound, To: TSound}}
 	// The ENVELOPE, in ms. It belongs to the voice, not to the Sub that plays it:
 	// before this, `once`/`loop` attacked in 8ms while `ambient` faded in over
-	// 400, so swapping one Sub for another silently changed how a sound speaks —
+	// 400, so swapping one Sub for another silently changed how a sound speaks:
 	// a value could not say "arrive now" or "arrive slowly". Both paths read
 	// these, so the note decides and the lifetime is all the Sub decides.
 	// (docs/proposals/sound-envelope.md)
 	out["soundAttack"] = TArrow{From: TInt, To: TArrow{From: TSound, To: TSound}}
 	out["soundRelease"] = TArrow{From: TInt, To: TArrow{From: TSound, To: TSound}}
-	// Expressiveness pack — the chip-character modifiers.
+	// Expressiveness pack: the chip-character modifiers.
 	// Sound.duty : Int -> Sound -> Sound  (pulse width % for Square: 12/25/50/75).
 	out["soundDuty"] = TArrow{From: TInt, To: TArrow{From: TSound, To: TSound}}
 	// Sound.vibrato : Int -> Int -> Sound -> Sound  (depth in cents, rate in Hz).
 	out["soundVibrato"] = TArrow{From: TInt, To: TArrow{From: TInt, To: TArrow{From: TSound, To: TSound}}}
 	// Sound.arp : List Int -> Sound -> Sound  (cycle the pitch fast through these Hz
-	//   plus the base — the classic chiptune arpeggio "chord" on one voice).
+	//   plus the base: the classic chiptune arpeggio "chord" on one voice).
 	out["soundArp"] = TArrow{From: TList(TInt), To: TArrow{From: TSound, To: TSound}}
 	// Sound.chord / Sound.sequence : List Sound -> Sound  (layer / string together)
 	out["soundChord"] = TArrow{From: TList(TSound), To: TSound}
@@ -663,17 +663,17 @@ func baseBindings() map[string]Type {
 	// Sound.rest : Int -> Sound  (silence of `ms`; occupies time inside a sequence)
 	out["soundRest"] = TArrow{From: TInt, To: TSound}
 	// Sound.play : Sound -> Cmd msg (fire once).
-	// Sound.loop : Sound -> Sub msg (replay the sound seamlessly while subscribed —
+	// Sound.loop : Sound -> Sub msg (replay the sound seamlessly while subscribed:
 	//   melodies / background music).
-	// Sound.once : Sound -> Sub msg (play the sound ONE time while subscribed —
-	//   a death dirge, a stinger — and cut it off if the sub goes away first;
+	// Sound.once : Sound -> Sub msg (play the sound ONE time while subscribed:
+	//   a death dirge, a stinger, and cut it off if the sub goes away first;
 	//   the cancellable middle ground between play and loop).
 	// Sound.voice : Sound -> Sub msg (one held voice, sounding for as long as it
 	//   is returned. Its PITCH is part of its identity, so two pitches are two
 	//   voices: that is polyphony, one voice per held key).
 	// Sound.glide : Sound -> Sub msg (the same held source with its pitch as a
 	//   LIVE parameter instead of its identity, so handing it a new pitch slides
-	//   the running oscillator there — an engine note, a siren. Monophonic by
+	//   the running oscillator there: an engine note, a siren. Monophonic by
 	//   construction, exactly like glide on a real synth: there is one source,
 	//   and it is always on its way somewhere).
 	out["soundPlay"] = TForall{Vars: []int{b.ID}, Body: TArrow{From: TSound, To: TCmd(b)}}
@@ -692,12 +692,12 @@ func baseBindings() map[string]Type {
 	out["soundSetMuted"] = TForall{Vars: []int{b.ID}, Body: TArrow{From: TBool, To: TCmd(b)}}
 	out["soundMaster"] = TForall{Vars: []int{b.ID}, Body: TArrow{From: TInt, To: TCmd(b)}}
 
-	// === Canvas (v0.0.7) — the 2D draw-list vocabulary ===
+	// === Canvas (v0.0.7): the 2D draw-list vocabulary ===
 	//
 	// `canvas` is a View that reports its own box size (onResize) and taps
 	// (onTap); shapes are positional and re-issued every frame, so a game
 	// lays them out from the live width/height (reflow) and nothing has to
-	// distort. The shape builders are monomorphic — they carry no msg; the
+	// distort. The shape builders are monomorphic: they carry no msg; the
 	// msg rides only on the canvas attrs, exactly like uiOnMove. Color is
 	// opaque (built only by `rgb`); Shape is opaque (rect / circle /
 	// canvasText / group). Transform / Align are the two user-facing unions
@@ -720,7 +720,7 @@ func baseBindings() map[string]Type {
 		To: TArrow{From: TInt, To: TArrow{From: TColor, To: TShape}}}}
 
 	// triangle : Int -> Int -> Int -> Int -> Int -> Int -> Color -> Shape
-	//   (x1 y1 x2 y2 x3 y3 color) — a filled triangle from three points
+	//   (x1 y1 x2 y2 x3 y3 color): a filled triangle from three points
 	out["triangle"] = TArrow{From: TInt, To: TArrow{From: TInt, To: TArrow{From: TInt,
 		To: TArrow{From: TInt, To: TArrow{From: TInt, To: TArrow{From: TInt,
 			To: TArrow{From: TColor, To: TShape}}}}}}}
@@ -758,7 +758,7 @@ func baseBindings() map[string]Type {
 			To:   TAttr(TAttrCanvasHost()),
 		},
 	}
-	// watchSize : (Int -> Int -> msg) -> Attr Canvas — the element-box MIRROR
+	// watchSize : (Int -> Int -> msg) -> Attr Canvas, the element-box MIRROR
 	// (w, h in CSS px, the model's coordinate space). Seeds the current size on
 	// mount, re-fires on resize. It is a state mirror (the size persists), hence
 	// `watch`, not `on`; it stays a canvas attr, not a Sub, because the box is
@@ -771,7 +771,7 @@ func baseBindings() map[string]Type {
 		},
 	}
 	// watchPointers : (List { id : Int, x : Int, y : Int } -> msg) -> Attr Canvas
-	// — the pointer MIRROR: every finger / pressed mouse on this canvas, in
+	//, the pointer MIRROR: every finger / pressed mouse on this canvas, in
 	// canvas CSS-pixel coordinates, as one snapshot that re-fires on change
 	// (coalesced per frame; self-heals on pointercancel / blur). `id` is a small
 	// stable integer per pointer. This is the multi-touch state channel; the
@@ -783,7 +783,7 @@ func baseBindings() map[string]Type {
 			To:   TAttr(TAttrCanvasHost()),
 		},
 	}
-	// onRelease : (Int -> Int -> msg) -> Attr Canvas — the pointer-up companion
+	// onRelease : (Int -> Int -> msg) -> Attr Canvas, the pointer-up companion
 	// to onTap (which is pointer-down). Together they enable hold-to-move
 	// controls: onTap starts, onRelease stops. Same msg-threading shape.
 	out["onRelease"] = TForall{
@@ -793,7 +793,7 @@ func baseBindings() map[string]Type {
 			To:   TAttr(TAttrCanvasHost()),
 		},
 	}
-	// onDrag : (Int -> Int -> msg) -> Attr Canvas — pointer MOVE while pressed.
+	// onDrag : (Int -> Int -> msg) -> Attr Canvas, pointer MOVE while pressed.
 	// Fires (x, y) as the finger/mouse drags across the canvas between an onTap
 	// (down) and onRelease (up). Enables an on-screen joystick you can steer.
 	out["onDrag"] = TForall{
@@ -804,8 +804,8 @@ func baseBindings() map[string]Type {
 		},
 	}
 	// Desktop-input trio (opt-in, null on touch). onHover : (Int -> Int -> msg)
-	// -> Attr Canvas — pointer MOVE with NO button (edge-scroll, placement
-	// ghost, hover tooltips). onAltTap : (Int -> Int -> msg) -> Attr Canvas —
+	// -> Attr Canvas: pointer MOVE with NO button (edge-scroll, placement
+	// ghost, hover tooltips). onAltTap : (Int -> Int -> msg) -> Attr Canvas:
 	// right-click / two-finger tap, contextmenu preventDefault'd (SC2-style
 	// orders). Both share onDrag's msg-threading shape.
 	out["onHover"] = TForall{
@@ -822,7 +822,7 @@ func baseBindings() map[string]Type {
 			To:   TAttr(TAttrCanvasHost()),
 		},
 	}
-	// onWheel : (Int -> Int -> msg) -> Attr Canvas — scroll delta as (dx, dy);
+	// onWheel : (Int -> Int -> msg) -> Attr Canvas, scroll delta as (dx, dy);
 	// signs are stable across devices. Horizontal (dx) enables lateral scroll on
 	// trackpads; keyboard callers can ignore whichever axis they don't use.
 	out["onWheel"] = TForall{
@@ -833,7 +833,7 @@ func baseBindings() map[string]Type {
 		},
 	}
 
-	// Transform / Align / Blend constructors — qualified-only bindings. These
+	// Transform / Align / Blend constructors: qualified-only bindings. These
 	// dotted names are the ONLY way to reach them: open-exposing a builtin
 	// union is unimplemented, so `exposing (Transform(..))` parses and then
 	// leaves `Translate` unbound.
@@ -858,15 +858,15 @@ func baseBindings() map[string]Type {
 	// own); Multiply darkens by the backdrop (one grey reads as a shadow over
 	// ANY background, instead of a hand-picked "background × 0.7" constant
 	// that breaks the moment it crosses a line); Screen lightens without
-	// clipping; Erase punches holes — and Erase alone always composites the
+	// clipping; Erase punches holes, and Erase alone always composites the
 	// group as one stamp, so overlapping erasers cut a single clean silhouette
 	// instead of eating the seam twice.
 	out["Canvas.Blend"] = TArrow{From: TBlend, To: TTransform}
-	// === Decimal (docs/proposals/decimal.md) — exact base-10 numbers ===
+	// === Decimal (docs/proposals/decimal.md): exact base-10 numbers ===
 	//
 	// Rounding-mode constructors are qualified-only (Decimal.HalfEven):
 	// Up / Down / Floor / Ceiling are far too ordinary to reserve as
-	// bare global names — half the app unions ever written use them.
+	// bare global names: half the app unions ever written use them.
 	out["Decimal.HalfEven"] = TRounding
 	out["Decimal.HalfUp"] = TRounding
 	out["Decimal.Down"] = TRounding
@@ -875,7 +875,7 @@ func baseBindings() map[string]Type {
 	out["Decimal.Ceiling"] = TRounding
 
 	// Conversions and arithmetic helpers. round uses banker's
-	// (HalfEven) — Mar's round exists mostly for money; toIntWith
+	// (HalfEven): Mar's round exists mostly for money; toIntWith
 	// covers the other modes.
 	out["Decimal.fromInt"] = TArrow{From: TInt, To: TDecimal}
 	out["Decimal.fromCents"] = TArrow{From: TInt, To: TDecimal}
@@ -893,7 +893,7 @@ func baseBindings() map[string]Type {
 	out["Decimal.fromString"] = TArrow{From: TString, To: TMaybe(TDecimal)}
 	out["Decimal.toString"] = TArrow{From: TDecimal, To: TString}
 
-	// Division resolvers — the ONLY exits from Decimal.Division, and
+	// Division resolvers: the ONLY exits from Decimal.Division, and
 	// the place the rounding decision is written. withRemainder is the
 	// lossless one: quotient truncated to the scale plus the exact
 	// remainder (q * b + r == a), for the split-the-bill class of
@@ -913,11 +913,11 @@ func baseBindings() map[string]Type {
 	out["Canvas.Center"] = TAlign
 	out["Canvas.Right"] = TAlign
 
-	// === Device (docs/proposals/device.md) — capabilities, not identities ===
+	// === Device (docs/proposals/device.md): capabilities, not identities ===
 	//
 	// Device.watch : (Device -> msg) -> Sub msg. Fires immediately with the
 	// current device record on subscribe (Canvas.onResize's precedent), then a
-	// fresh record whenever ANY axis changes — window resize, tablet rotation,
+	// fresh record whenever ANY axis changes: window resize, tablet rotation,
 	// split-view, a mouse getting plugged into an iPad, dark mode flipping at
 	// sunset. Everything is read from CSS media queries (pointer / any-pointer /
 	// hover / prefers-color-scheme / prefers-reduced-motion) + the viewport
@@ -925,14 +925,14 @@ func baseBindings() map[string]Type {
 	// `Device` record shape is a builtin alias (builtinTypeAliases) so an app
 	// can store it as `dev : Device`. Web-first; iOS deferred (iosDeferred).
 	out["deviceWatch"] = TForall{Vars: []int{b.ID}, Body: TArrow{From: TArrow{From: TDeviceRecord(), To: b}, To: TSub(b)}}
-	// Device.touchOnly : Device -> Bool — finger-only hardware (coarse pointer,
+	// Device.touchOnly : Device -> Bool, finger-only hardware (coarse pointer,
 	//   nothing fine attached, no hover). iPhone yes, iPad yes; iPad+trackpad NO,
 	//   touch-laptop NO. The blessed replacement for seasons-gp's usedTouch guess.
-	// Device.canHover : Device -> Bool — a real hover story exists (tooltips and
+	// Device.canHover : Device -> Bool, a real hover story exists (tooltips and
 	//   hover-reveal buttons are usable).
 	out["deviceTouchOnly"] = TArrow{From: TDeviceRecord(), To: TBool}
 	out["deviceCanHover"] = TArrow{From: TDeviceRecord(), To: TBool}
-	// Pointer constructors — global (like Order's LT / Method's GET), so a game
+	// Pointer constructors: global (like Order's LT / Method's GET), so a game
 	// writes `d.pointer == Coarse` without an import.
 	out["Coarse"] = TPointer
 	out["Fine"] = TPointer
@@ -1013,7 +1013,7 @@ func stdlibBindings() map[string]Type {
 		// List.move : Int -> Int -> List a -> List a
 		// Pure list-splice helper. Removes the element at `from` and
 		// inserts it at `to`. Returns the input unchanged when
-		// from == to or either index is out of range — defensive so
+		// from == to or either index is out of range: defensive so
 		// stale Msgs (race conditions) don't corrupt the list.
 		"listMove": TForall{
 			Vars: []int{a.ID},
@@ -1120,7 +1120,7 @@ func stdlibBindings() map[string]Type {
 			},
 		},
 		// listSortWith : (a -> a -> Order) -> List a -> List a
-		// Comparator returns LT / EQ / GT — same convention as Elm.
+		// Comparator returns LT / EQ / GT: same convention as Elm.
 		// (Earlier drafts used Int -1/0/1; using a named sum type
 		// makes the result self-documenting and prevents the "I
 		// returned 1 but meant LT" foot-gun.)
@@ -1239,7 +1239,7 @@ func stdlibBindings() map[string]Type {
 				To:   TArrow{From: TMaybe(a), To: TMaybe(a)},
 			},
 		},
-		// Tuple — 2-tuple helpers. The tvars a, b are the two element
+		// Tuple: 2-tuple helpers. The tvars a, b are the two element
 		// positions; ' (prime) suffix on output names tracks the
 		// mapBoth/mapFirst/mapSecond renames cleanly.
 		"tupleFirst": TForall{
@@ -1301,7 +1301,7 @@ func stdlibBindings() map[string]Type {
 			To:   TArrow{From: TString, To: TArrow{From: TString, To: TString}},
 		},
 		"stringRepeat": TArrow{From: TInt, To: TArrow{From: TString, To: TString}},
-		// padLeft / padRight take a Char (Elm-style) — see stringPadLeft
+		// padLeft / padRight take a Char (Elm-style): see stringPadLeft
 		// in internal/runtime/stdlib.go for the rationale.
 		"stringPadLeft": TArrow{
 			From: TInt,
@@ -1339,7 +1339,7 @@ func stdlibBindings() map[string]Type {
 			To:   TArrow{From: TString, To: TBool},
 		},
 
-		// Char module — monomorphic. Unicode code point semantics.
+		// Char module: monomorphic. Unicode code point semantics.
 		"charToCode":   TArrow{From: TChar, To: TInt},
 		"charFromCode": TArrow{From: TInt, To: TChar},
 		"charIsDigit":  TArrow{From: TChar, To: TBool},
@@ -1349,10 +1349,10 @@ func stdlibBindings() map[string]Type {
 		"charToUpper":  TArrow{From: TChar, To: TChar},
 		"charToLower":  TArrow{From: TChar, To: TChar},
 
-		// Task — the value-monad ("await"): the backend's currency and any
+		// Task, the value-monad ("await"): the backend's currency and any
 		// value-producing effect. Task.andThen threads the produced value
 		// (do A, then with A's result do B); a service handler runs a Task
-		// and the value becomes the response. One type parameter — failure
+		// and the value becomes the response. One type parameter: failure
 		// is a value (Task.fail's String, surfaced as Service.Error), never a
 		// type index. Lives on both sides; on the frontend a Task reaches the
 		// MVU loop through Cmd.perform.
@@ -1398,15 +1398,15 @@ func stdlibBindings() map[string]Type {
 				To:   TTask(TList(b)),
 			},
 		},
-		// Cmd — the frontend message-monoid: what init/update return, which
+		// Cmd, the frontend message-monoid: what init/update return, which
 		// the runtime performs to deliver a msg back into the MVU loop.
 		//
-		// Cmd.batch : List (Cmd msg) -> Cmd msg — fire-and-forget fan-out:
+		// Cmd.batch : List (Cmd msg) -> Cmd msg, fire-and-forget fan-out:
 		//   launch several independent Service.calls from one update, each
-		//   delivering through its own toMsg. Produces no aggregate value —
+		//   delivering through its own toMsg. Produces no aggregate value:
 		//   the children's messages ARE the output.
-		// Cmd.none : Cmd msg — the identity (do nothing).
-		// Cmd.perform : (a -> msg) -> Task a -> Cmd msg — the Task→Cmd bridge:
+		// Cmd.none : Cmd msg, the identity (do nothing).
+		// Cmd.perform : (a -> msg) -> Task a -> Cmd msg, the Task→Cmd bridge:
 		//   run a Task and deliver its produced value as a msg (Elm's
 		//   Task.perform). The only way a Task reaches the frontend loop.
 		"effectBatch": TForall{
@@ -1440,10 +1440,10 @@ func stdlibBindings() map[string]Type {
 			Body: TSub(b),
 		},
 
-		// Random — Elm-style generators. `Generator a` is a recipe for a random
+		// Random: Elm-style generators. `Generator a` is a recipe for a random
 		// value; Random.generate runs it via the runtime RNG and delivers the value
 		// as a Msg (a Cmd, like Service.call). Combinators build recipes purely.
-		// (No float/weighted — Mar has no Float; Decimal analogs can come later. No
+		// (No float/weighted: Mar has no Float; Decimal analogs can come later. No
 		// Seed/step API yet.)
 		"randomGenerate": TForall{
 			Vars: []int{a.ID, -70},
@@ -1466,7 +1466,7 @@ func stdlibBindings() map[string]Type {
 		"randomAndThen": TForall{Vars: []int{a.ID, b.ID}, Body: TArrow{From: TArrow{From: a, To: TGenerator(b)}, To: TArrow{From: TGenerator(a), To: TGenerator(b)}}},
 
 		// Pure stepping (Elm's Seed API). A Seed runs a Generator with no effect,
-		// so randomness works on ANY side and replays deterministically — which
+		// so randomness works on ANY side and replays deterministically, which
 		// is why Random is usable on the server, not just the frontend.
 		//   Random.initialSeed : Int -> Seed
 		//   Random.step        : Generator a -> Seed -> (a, Seed)
@@ -1475,7 +1475,7 @@ func stdlibBindings() map[string]Type {
 		// Real OS entropy → a Seed, as a Task (runs on client and server).
 		//   Random.seed : Task Seed
 		"randomSeed": TTask(TSeed()),
-		// Time — a small Duration type with unit-named smart constructors.
+		// Time: a small Duration type with unit-named smart constructors.
 		//
 		//   Time.seconds : Int -> Duration
 		//   Time.minutes : Int -> Duration
@@ -1500,10 +1500,10 @@ func stdlibBindings() map[string]Type {
 		"timeWeeks":     TArrow{From: TInt, To: TDuration},
 		"timeToSeconds": TArrow{From: TDuration, To: TInt},
 
-		// Math — deterministic integer trigonometry and roots
+		// Math: deterministic integer trigonometry and roots
 		// (docs/proposals/math.md). Every runtime reads the SAME
 		// generated quarter-wave table, so `Math.sin` gives the same
-		// integer on Go, on the browser and on iOS — which is what a
+		// integer on Go, on the browser and on iOS, which is what a
 		// replayed rules engine, a recorded bot run and time travel all
 		// depend on. No libm anywhere; no floats in the answer.
 		//
@@ -1523,7 +1523,7 @@ func stdlibBindings() map[string]Type {
 		// valid argument and negative angles work. The algebra ships WITH
 		// the type on purpose: an angle you cannot add is not a safer Int,
 		// it is one every caller converts out of, adds, and converts back
-		// — restoring the hazard with more ceremony.
+		//: restoring the hazard with more ceremony.
 		"mathDegrees":     TArrow{From: TInt, To: TAngle},
 		"mathDeciDegrees": TArrow{From: TInt, To: TAngle},
 		"mathTurns":       TArrow{From: TInt, To: TAngle},
@@ -1538,12 +1538,12 @@ func stdlibBindings() map[string]Type {
 		// about quantities that carry a unit, not about wrapping every Int.
 		"mathIsqrt": TArrow{From: TInt, To: TInt},
 
-		// Time — absolute moments. Stored as Unix milliseconds.
+		// Time: absolute moments. Stored as Unix milliseconds.
 		// Time.now is a Task because it reads the wall clock;
 		// .add / .sub shift a moment by a Duration; .diff gives
 		// the Duration between two moments.
 		//
-		//   Time.now      : Effect e Time
+		//   Time.now      : Task Time
 		//   Time.add      : Time -> Duration -> Time
 		//   Time.sub      : Time -> Duration -> Time
 		//   Time.diff     : Time -> Time -> Duration
@@ -1552,7 +1552,7 @@ func stdlibBindings() map[string]Type {
 		//   Time.toIso    : Time -> String              -- ISO 8601 ("2026-05-05T13:45:30Z")
 		//   Time.fromIso  : String -> Maybe Time        -- parse; Nothing on bad format
 		//   Time.toMillis : Time -> Int                 -- escape hatch; Unix ms since 1970
-		// Time.now : Task Time — the current time as a value-task. On the
+		// Time.now : Task Time, the current time as a value-task. On the
 		// backend you thread it with Task.andThen; on the frontend you reach
 		// the MVU loop with Cmd.perform GotNow Time.now. (Elm's Time.now.)
 		"timeNow": TForall{
@@ -1572,7 +1572,7 @@ func stdlibBindings() map[string]Type {
 		"timeFromIso":  TArrow{From: TString, To: TMaybe(TTime)},
 		"timeToMillis": TArrow{From: TTime, To: TInt},
 
-		// Calendar-aware constructors and arithmetic — different from
+		// Calendar-aware constructors and arithmetic: different from
 		// Duration-based shifts because months and years aren't
 		// fixed-length. `Time.add t (Time.days 30)` jumps exactly 30
 		// days; `Time.addMonths t 1` honors variable month length and
@@ -1587,10 +1587,10 @@ func stdlibBindings() map[string]Type {
 		"timeAddMonths": TArrow{From: TTime, To: TArrow{From: TInt, To: TTime}},
 		"timeAddYears":  TArrow{From: TTime, To: TArrow{From: TInt, To: TTime}},
 
-		// Component getters — extract calendar fields from a Time
+		// Component getters: extract calendar fields from a Time
 		// (interpreted in UTC). Useful for rendering ("Posted on May
 		// 5, 2026") and conditional logic ("if hour >= 18 then…").
-		// Month is 1-indexed (1 = January, 12 = December) — matching
+		// Month is 1-indexed (1 = January, 12 = December): matching
 		// human convention rather than JavaScript's 0-indexed quirk.
 		//
 		//   Time.year   : Time -> Int
@@ -1606,14 +1606,14 @@ func stdlibBindings() map[string]Type {
 		"timeMinute": TArrow{From: TTime, To: TInt},
 		"timeSecond": TArrow{From: TTime, To: TInt},
 
-		// Dict k v / Set k — Elm-style polymorphic containers with a
+		// Dict k v / Set k: Elm-style polymorphic containers with a
 		// Comparable constraint on the key. The constraint lives on
 		// the TVar itself (KindComparable); the unifier rejects any
 		// attempt to bind it to a Record / custom type / tuple /
 		// function at the call site. This catches `Dict.fromList
 		// [({name: "bob"}, 1)]` at compile time with a message like
 		// "a record is not comparable; allowed key types are Int,
-		// Float, String, Char" — no more waiting for a runtime
+		// Float, String, Char": no more waiting for a runtime
 		// "comparison: unsupported types" surprise.
 		//
 		// k / j are the Comparable-marked vars (IDs -20 / -21).
@@ -1734,7 +1734,7 @@ func stdlibBindings() map[string]Type {
 			Body: TArrow{From: TDict(dictK, b), To: TArrow{From: TDict(dictK, b), To: TDict(dictK, b)}},
 		},
 
-		// Set k — same Comparable constraint as Dict's key.
+		// Set k: same Comparable constraint as Dict's key.
 		"setEmpty":     TForall{Vars: []int{dictK.ID}, Body: TSet(dictK)},
 		"setSingleton": TForall{Vars: []int{dictK.ID}, Body: TArrow{From: dictK, To: TSet(dictK)}},
 		"setInsert": TForall{
@@ -1756,7 +1756,7 @@ func stdlibBindings() map[string]Type {
 			Vars: []int{dictK.ID},
 			Body: TArrow{From: TList(dictK), To: TSet(dictK)},
 		},
-		// setMap : (k -> j) -> Set k -> Set j — BOTH sides comparable
+		// setMap : (k -> j) -> Set k -> Set j, BOTH sides comparable
 		// (the output set re-sorts and needs comparable keys too).
 		"setMap": TForall{
 			Vars: []int{dictK.ID, setJ.ID},
@@ -1812,7 +1812,7 @@ func stdlibBindings() map[string]Type {
 		// only ever see Time, never raw integers.
 		"entityTimestamp": TArrow{From: TConstraint(), To: TColumn(TTime)},
 
-		// JSON (untyped — encode any value, decode produces "any" record/list/etc)
+		// JSON (untyped: encode any value, decode produces "any" record/list/etc)
 		"jsonEncode": TForall{
 			Vars: []int{a.ID},
 			Body: TArrow{From: a, To: TString},
@@ -1869,7 +1869,7 @@ func stdlibBindings() map[string]Type {
 		// first Repo call that the schema's keys/types are compatible
 		// with the row record. Trade-off documented in mar.md.
 		//
-		// `uniques` is required even when empty (`[]`) — Mar has no
+		// `uniques` is required even when empty (`[]`): Mar has no
 		// default-argument story, so explicit "none here" is the rule.
 		"entityDefine": TForall{
 			Vars: []int{a.ID, b.ID},
@@ -1894,7 +1894,7 @@ func stdlibBindings() map[string]Type {
 		"entityBool":   TArrow{From: TConstraint(), To: TColumn(TBool)},
 		// Entity.decimal : Int -> Constraint -> Column Decimal
 		//
-		// Fixed-scale exact decimal. Stored as INTEGER in SQLite — the
+		// Fixed-scale exact decimal. Stored as INTEGER in SQLite: the
 		// coefficient at the column's scale (scale 2 → cents), which
 		// makes the storage institutionalized cents rather than a
 		// lossy REAL. Writes with a finer scale than the column abort
@@ -1904,8 +1904,8 @@ func stdlibBindings() map[string]Type {
 		// Entity.enum : List a -> Constraint -> Column a
 		//
 		// Stored as TEXT in SQLite (the ctor's tag) plus a CHECK
-		// constraint listing the accepted tags. The list literal —
-		// e.g. `[Member, Admin]` — pins the type variable to the
+		// constraint listing the accepted tags. The list literal:
+		// e.g. `[Member, Admin]`: pins the type variable to the
 		// enum's custom type, so misspelling a variant fails at
 		// compile time.
 		"entityEnum": TForall{
@@ -1975,20 +1975,20 @@ func stdlibBindings() map[string]Type {
 		// names start with `view` for historical reasons; the UI
 		// qualified aliases are what user code actually reaches for.
 		//
-		//   UI.email       — type=email, autocomplete=email, inputmode=email
-		//   UI.password    — type=password, autocomplete=current-password
-		//   UI.newPassword — type=password, autocomplete=new-password (signup/change)
-		//   UI.numeric     — inputmode=numeric (10-key pad on mobile)
-		//   UI.oneTimeCode — autocomplete=one-time-code (iOS Code-from-Mail)
-		//   UI.numericCode — bundle of `numeric + oneTimeCode` for OTP/2FA
-		//   UI.submit      — declarative submit-on-Enter / Return / Done / Go.
+		//   UI.email       - type=email, autocomplete=email, inputmode=email
+		//   UI.password    - type=password, autocomplete=current-password
+		//   UI.newPassword: type=password, autocomplete=new-password (signup/change)
+		//   UI.numeric     - inputmode=numeric (10-key pad on mobile)
+		//   UI.oneTimeCode: autocomplete=one-time-code (iOS Code-from-Mail)
+		//   UI.numericCode: bundle of `numeric + oneTimeCode` for OTP/2FA
+		//   UI.submit      - declarative submit-on-Enter / Return / Done / Go.
 		//
 		// Without an input-kind, browsers/keychains guess from page
-		// context — usually wrong on auth screens, where Safari treats
+		// context: usually wrong on auth screens, where Safari treats
 		// the first un-typed input as a password field.
 		// submit : forall msg. msg -> Attr Input
 		// Polymorphic in the message (so it composes with any page's Msg);
-		// host pinned to Input — only applies to text fields / text
+		// host pinned to Input: only applies to text fields / text
 		// areas / pickers.
 		"viewSubmit": TForall{
 			Vars: []int{a.ID},
@@ -2000,7 +2000,7 @@ func stdlibBindings() map[string]Type {
 		"viewNumeric":     TAttr(TAttrInputHost()),
 		"viewOneTimeCode": TAttr(TAttrInputHost()),
 
-		// chars / lines / fill — sizing values. `chars 6` returns a
+		// chars / lines / fill: sizing values. `chars 6` returns a
 		// `Size Width` (≈ 6 character columns at the current font);
 		// `lines 5` a `Size Height` (≈ 5 lines at the current
 		// line-height); `fill` is polymorphic in the axis ("take the
@@ -2014,7 +2014,7 @@ func stdlibBindings() map[string]Type {
 			Body: TSize(a),
 		},
 
-		// width / height : Size axis -> Attr a — the universal sizing
+		// width / height : Size axis -> Attr a, the universal sizing
 		// attrs. Polymorphic in the host (like `disabled`), so any
 		// view's attr list accepts them. What each value means:
 		//   - chars n / lines n: content-box sizing (inputs keep their
@@ -2023,7 +2023,7 @@ func stdlibBindings() map[string]Type {
 		//     `width fill` is the equal-columns workhorse; in a vstack,
 		//     `height fill` creates the slack that spacer / centered
 		//     distribute. Sizing is "how big"; where a non-filling
-		//     child SITS in the cross axis is `align` — a separate,
+		//     child SITS in the cross axis is `align`: a separate,
 		//     position-only attr.
 		"uiWidth": TForall{
 			Vars: []int{a.ID},
@@ -2034,13 +2034,13 @@ func stdlibBindings() map[string]Type {
 			Body: TArrow{From: THeight(), To: TAttr(a)},
 		},
 
-		// align : Alignment -> Attr Stack — cross-axis alignment for a
+		// align : Alignment -> Attr Stack, cross-axis alignment for a
 		// stack's hugging children. vstack: leading / center / trailing
 		// (horizontal placement); hstack: top / center / bottom
 		// (vertical placement). Wrong-axis values are ignored by the
 		// renderer rather than split into two host types. A child with
 		// `width fill` has no cross-axis slack, so align doesn't move
-		// it — alignment is position, fill is size.
+		// it: alignment is position, fill is size.
 		"uiAlign":    TArrow{From: TAlignment(), To: TAttr(TAttrStackHost())},
 		"uiLeading":  TAlignment(),
 		"uiCenter":   TAlignment(),
@@ -2048,20 +2048,20 @@ func stdlibBindings() map[string]Type {
 		"uiTop":      TAlignment(),
 		"uiBottom":   TAlignment(),
 
-		// px : Int -> Pixels — pixel sizing unit for images. Separate
+		// px : Int -> Pixels, pixel sizing unit for images. Separate
 		// from chars/lines so `px` only flows into image attrs and
 		// chars/lines only into input attrs (enforced by the type).
 		"uiPx": TArrow{From: TInt, To: TPixels()},
 
-		// size : Pixels -> Pixels -> Attr Image — fixed width + height
+		// size : Pixels -> Pixels -> Attr Image, fixed width + height
 		// for an image (e.g. a 64x64 avatar). Without it the image fills
 		// its container width and keeps its aspect ratio.
 		"uiSize": TArrow{From: TPixels(), To: TArrow{From: TPixels(), To: TAttr(TAttrImageHost())}},
 
-		// fit / cover : Attr Image — how the image fills its frame.
+		// fit / cover : Attr Image, how the image fills its frame.
 		// fit (default) shows the whole image (letterboxed); cover
 		// crops to fill the frame. Named after CSS object-fit
-		// contain/cover — NOT "fill", which is the universal sizing
+		// contain/cover, NOT "fill", which is the universal sizing
 		// value (`width fill`); reusing the word for a crop mode
 		// would overload it with a second, unrelated meaning.
 		"uiFit":   TAttr(TAttrImageHost()),
@@ -2071,7 +2071,7 @@ func stdlibBindings() map[string]Type {
 		//
 		// Mirrors SwiftUI's container model so iOS gets `NavigationStack
 		// { Form { Section { ... } } }` natively (with safe areas, swipe,
-		// pull-to-refresh, dark mode, autofill — all of it free), and
+		// pull-to-refresh, dark mode, autofill: all of it free), and
 		// web gets HTML5 semantic elements + Form-card-style CSS that
 		// reads as a "card sections" layout familiar from iOS.
 		//
@@ -2135,14 +2135,14 @@ func stdlibBindings() map[string]Type {
 		// Section-shaped container for HOMOGENEOUS items with
 		// stable identity. Mirrors `section` visually (rounded card,
 		// optional header/footer), but its children must be
-		// `KeyedView msg` (produced by `UI.keyed`) — not regular
+		// `KeyedView msg` (produced by `UI.keyed`), not regular
 		// Views. This dedicated children type is what makes
 		// `onMove` and `onDelete` safe: the reconciler always has a
 		// key to match each row across mutations, so deleting row
 		// 0 actually removes row 0\'s DOM (not, say, row N\'s DOM
 		// with row 1\'s text patched into row 0).
 		//
-		// Composes with `list` like `section` does — you can mix
+		// Composes with `list` like `section` does: you can mix
 		// keyedList and section as siblings inside a `list` for
 		// pages that have both editable collections AND static
 		// grouped content.
@@ -2220,7 +2220,7 @@ func stdlibBindings() map[string]Type {
 		// UI.datePicker : List Attr -> Time -> (Time -> msg) -> View msg
 		// Date-only field, and PURE: it shows exactly the Time you pass and
 		// fires `(Time -> msg)` with the chosen day at local midnight. The
-		// program owns the value — there is no renderer-invented default.
+		// program owns the value: there is no renderer-invented default.
 		// Seed "today" on the frontend with `Cmd.perform GotToday Time.now`
 		// (hold the field as `Maybe Time`, render the picker once seeded).
 		// iOS: SwiftUI DatePicker(.date). Web: <input type="date">. Use
@@ -2279,7 +2279,7 @@ func stdlibBindings() map[string]Type {
 		// topBarTrailing / topBarLeading : forall msg. View msg -> Attr NavStack
 		// Add a toolbar item to the top bar of the navigation stack.
 		// Names match SwiftUI's `.topBarTrailing` / `.topBarLeading`
-		// placement (iOS 17+) — positional, not coupled to the
+		// placement (iOS 17+): positional, not coupled to the
 		// "navigation" semantics, so future top-bar uses (chat
 		// headers, custom dashboards) can reuse the same vocabulary.
 		"uiTopBarTrailing": TForall{
@@ -2295,7 +2295,7 @@ func stdlibBindings() map[string]Type {
 		// Text label for the top / bottom of a section-shaped container.
 		// Honored by `section` and `keyedList` (both render the rounded
 		// card with optional header eyebrow + footer caption). Other
-		// hosts silently ignore — declared universal so the same attr
+		// hosts silently ignore: declared universal so the same attr
 		// name works in both contexts without requiring a typeclass.
 		// iOS: Section's header/footer slots. Web: <h2>/<small> in the
 		// section card chrome.
@@ -2312,7 +2312,7 @@ func stdlibBindings() map[string]Type {
 		// Plain text leaf. The attrs list follows the same first-arg
 		// convention as every other view (button, textField, hstack);
 		// today only the universal layout attrs (width / height) are
-		// meaningful here — `text [ width fill ] "..."` claims the
+		// meaningful here: `text [ width fill ] "..."` claims the
 		// row's free space, the workhorse of the equal-columns idiom.
 		// No text-specific style attrs exist (per-leaf styling lives
 		// on the section / form parent).
@@ -2340,7 +2340,7 @@ func stdlibBindings() map[string]Type {
 		},
 
 		// UI.disabled : forall h. Bool -> Attr h
-		// Universal attr — works on any host. Greys out the view and
+		// Universal attr: works on any host. Greys out the view and
 		// suppresses interaction (dispatch / submit). Inputs, buttons,
 		// links, toggles all honor it. Containers ignore it (no
 		// interaction to suppress) but still typecheck because the
@@ -2354,18 +2354,18 @@ func stdlibBindings() map[string]Type {
 		// Wraps a regular View in a stable identity (the String key)
 		// so it can be a child of UI.keyedList. The reconciler uses
 		// the key to match this row to its previous DOM / SwiftUI
-		// node across reorders / deletes / inserts — preserving
+		// node across reorders / deletes / inserts: preserving
 		// animation, input focus, and scroll position.
 		//
 		// The key MUST be a stable identifier of the row's content
-		// (record id, unique label, etc.) — NOT the row's position
+		// (record id, unique label, etc.), NOT the row's position
 		// in the list. Index-based keys shift when the list mutates
 		// and the reconciler ends up patching content into the wrong
 		// DOM nodes (e.g. delete row 0 → row 0\'s DOM stays, gets
 		// row 1\'s text; row N\'s DOM gets removed → looks like both
 		// row 0 AND row N were deleted).
 		//
-		// Returns the dedicated KeyedView type — keyedList only
+		// Returns the dedicated KeyedView type: keyedList only
 		// accepts these, and `keyed` is the only way to produce one.
 		// This makes it impossible to pass a plain `View` into a
 		// `keyedList` (compile error) or to forget the key entirely.
@@ -2379,7 +2379,7 @@ func stdlibBindings() map[string]Type {
 
 		// UI.onMove : Bool -> (Int -> Int -> msg) -> Attr KeyedList
 		// Makes a `keyedList` reorderable. The Bool is "is edit mode
-		// currently active" — when False, no drag affordance shows
+		// currently active", when False, no drag affordance shows
 		// and the callback never fires; when True, rows render a
 		// drag handle (web) / become `.onMove`-enabled (iOS).
 		//
@@ -2388,12 +2388,12 @@ func stdlibBindings() map[string]Type {
 		// The app is responsible for applying the move to its model
 		// (typically via `List.move`) and, if persistence is
 		// desired, calling whatever Service updates the backend.
-		// The framework does NOT touch the model — view is purely a
+		// The framework does NOT touch the model: view is purely a
 		// function of the children order.
 		//
 		// Bundling Bool + callback into a single attr (instead of
 		// two separate attrs like `editing` and `onMove`) makes it
-		// impossible to declare one without the other — eliminates
+		// impossible to declare one without the other: eliminates
 		// a class of "edit mode toggled but no handler wired"
 		// silent bugs.
 		//
@@ -2413,7 +2413,7 @@ func stdlibBindings() map[string]Type {
 
 		// UI.onDelete : Bool -> (Int -> msg) -> Attr KeyedList
 		// Makes a `keyedList`'s rows deletable. The Bool is the
-		// "editing mode" flag — when True, every row shows a
+		// "editing mode" flag, when True, every row shows a
 		// permanent delete affordance (web: red `−` on the left,
 		// iOS: native edit-mode minus button); when False, web
 		// reveals the affordance on hover and iOS surfaces swipe-
@@ -2421,7 +2421,7 @@ func stdlibBindings() map[string]Type {
 		// returns the Msg to dispatch.
 		//
 		// Bundling Bool + callback into one attr (same shape as
-		// onMove) ensures both are always declared together —
+		// onMove) ensures both are always declared together:
 		// catches "deletion enabled but no handler" at compile
 		// time.
 		//
@@ -2483,7 +2483,7 @@ func stdlibBindings() map[string]Type {
 		//
 		// Inline text run, used ONLY inside `paragraph`. Distinct
 		// name from `UI.text` (which is the existing block-level
-		// leaf `String -> View msg`) to avoid overloading — Mar
+		// leaf `String -> View msg`) to avoid overloading: Mar
 		// binds one name to one type. Mental model: <span> in
 		// HTML, AttributedString.Run on iOS.
 		//
@@ -2511,10 +2511,10 @@ func stdlibBindings() map[string]Type {
 		},
 
 		// UI.errorText : String -> View msg
-		// Error message — semantically distinct from `text` so the
+		// Error message: semantically distinct from `text` so the
 		// renderer can style it with destructive intent (red foreground
 		// + semi-bold weight). Use for "couldn't reach the server",
-		// "invalid code", form-validation feedback, etc — anywhere the
+		// "invalid code", form-validation feedback, etc: anywhere the
 		// user needs to see what went wrong at a glance. iOS: Text with
 		// .foregroundStyle(.red).fontWeight(.semibold). Web: <p> with
 		// the `.mar-error-text` class.
@@ -2527,12 +2527,12 @@ func stdlibBindings() map[string]Type {
 		// Displays an image from a URL (remote) or app path (served from
 		// dist/ or the project's public/ folder). `alt` is REQUIRED (a
 		// record field, not an optional attr) so every image carries a
-		// text description — for screen readers and a future text/CLI
+		// text description: for screen readers and a future text/CLI
 		// renderer where alt IS the rendering. An empty alt ("") is the
 		// deliberate "decorative, ignore me" escape.
 		// Attrs (Image-hosted): `size (px w) (px h)`, `fit`, `fill`.
 		//
-		// RASTER ONLY: PNG / JPEG / WebP / GIF — the formats all three
+		// RASTER ONLY: PNG / JPEG / WebP / GIF, the formats all three
 		// runtimes decode natively (web <img>, iOS UIImage/AsyncImage,
 		// Android). SVG is NOT supported: iOS and Android can't decode it
 		// without a third-party library, and "works on every runtime" is
@@ -2557,7 +2557,7 @@ func stdlibBindings() map[string]Type {
 		// SwiftUI's `NavigationLink(value:){content}`: the typed
 		// Path + record build the destination URL via the same
 		// machinery as `linkTo`, and the content View becomes the
-		// label — single-line `text` for a plain text link, or a
+		// label: single-line `text` for a plain text link, or a
 		// multi-line `vstack` for a list-style row with the
 		// chevron auto-centered. The leading attrs list carries
 		// `disabled` (and future modifiers) so a link can be
@@ -2574,7 +2574,7 @@ func stdlibBindings() map[string]Type {
 		//
 		// Deliberately not called `link`: "link" connotes a web
 		// anchor (open URL, possibly external), whereas
-		// `navigationLink` says exactly what it does — push a new
+		// `navigationLink` says exactly what it does: push a new
 		// page onto the navigation stack. External URLs are not
 		// this builtin's concern (they'd use a separate primitive).
 		"uiNavigationLink": TForall{
@@ -2592,7 +2592,7 @@ func stdlibBindings() map[string]Type {
 		},
 
 		// UI.spacer : View msg
-		// Pure SwiftUI primitive — `Spacer()` — that expands to fill
+		// Pure SwiftUI primitive, `Spacer()`, that expands to fill
 		// the available space along a stack's main axis. The classic
 		// "label on the left, action on the right" pattern is
 		// `hstack [ text "..." , spacer , button [] ... ]`. On web,
@@ -2628,7 +2628,7 @@ func stdlibBindings() map[string]Type {
 
 		// UI.empty : View msg
 		// No-op placeholder. Useful in `case` branches that have
-		// nothing to render — avoids an `if/else` ladder.
+		// nothing to render: avoids an `if/else` ladder.
 		"uiEmpty": TForall{
 			Vars: []int{a.ID},
 			Body: TView(a),
@@ -2637,15 +2637,15 @@ func stdlibBindings() map[string]Type {
 		// UI.sheet : { open, onDismiss, outlet } -> List (View msg) -> View msg
 		//
 		// Modal sheet that slides up from the bottom (iOS-style page sheet).
-		// Lives as a view modifier on the parent page — the parent owns
+		// Lives as a view modifier on the parent page: the parent owns
 		// open/closed state in its own Model. Mirrors SwiftUI's
 		// `.sheet(isPresented:)` modifier API.
 		//
-		//   open      : Bool         — whether the sheet is currently visible
-		//   onDismiss : msg          — dispatched when the user dismisses
+		//   open      : Bool         - whether the sheet is currently visible
+		//   onDismiss : msg          - dispatched when the user dismisses
 		//                              (swipe down, Escape, backdrop click,
 		//                              browser back button)
-		//   outlet    : String       — identifier for this sheet in the
+		//   outlet    : String       - identifier for this sheet in the
 		//                              navigation state. Required so the
 		//                              browser history can capture
 		//                              open/close transitions; iOS uses
@@ -2672,7 +2672,7 @@ func stdlibBindings() map[string]Type {
 		// Pure two-axis alignment: fills whatever space its PARENT
 		// provides (it never invents a size of its own) and centers
 		// the child in it. Sugar for the full-screen states (Loading,
-		// Empty, Error) — the decomposed spelling would be a vstack
+		// Empty, Error): the decomposed spelling would be a vstack
 		// with `height fill` + `align center` + spacers. iOS:
 		// frame(maxWidth: .infinity, maxHeight: .infinity, alignment:
 		// .center). Web: flex: 1 in the page's height-propagating
@@ -2687,21 +2687,21 @@ func stdlibBindings() map[string]Type {
 		//                onConfirm, onCancel } -> View msg
 		//
 		// Modal destructive-action confirmation dialog. Renders as
-		// a floating overlay with a backdrop — iOS maps to
+		// a floating overlay with a backdrop: iOS maps to
 		// `.confirmationDialog` (the system sheet that pops from
 		// the bottom on iPhone, anchored centered on iPad), web
 		// renders a centered alert-style dialog with backdrop blur.
 		//
-		//   title        : String  — primary question, e.g.
+		//   title        : String  - primary question, e.g.
 		//                            "Delete \"Buy milk\"?"
-		//   confirmLabel : String  — label on the destructive button,
+		//   confirmLabel : String  - label on the destructive button,
 		//                            e.g. "Delete"
-		//   destructive  : Bool    — True → confirm button is red
+		//   destructive  : Bool    - True → confirm button is red
 		//                            (iOS .destructive role; web red
 		//                            tint). False → system accent
 		//                            (blue) for benign confirms.
-		//   onConfirm    : msg     — dispatched when user taps confirm
-		//   onCancel     : msg     — dispatched when user taps cancel,
+		//   onConfirm    : msg     - dispatched when user taps confirm
+		//   onCancel     : msg     - dispatched when user taps cancel,
 		//                            OR taps backdrop / swipes down /
 		//                            presses Escape (web).
 		//
@@ -2727,14 +2727,14 @@ func stdlibBindings() map[string]Type {
 			},
 		},
 
-		// Page — a single MVU screen bound to a URL path.
+		// Page: a single MVU screen bound to a URL path.
 		//
 		// Page.create takes a record describing the page:
 		//
 		//   { path   : String                              -- URL pattern (use "/" for single-page)
 		//   , title  : String                              -- (optional) browser tab / nav title
-		//   , init   : (Model, Effect e Msg)
-		//   , update : Msg -> Model -> (Model, Effect e Msg)
+		//   , init   : (Model, Cmd Msg)
+		//   , update : Msg -> Model -> (Model, Cmd Msg)
 		//   , view   : Model -> View Msg
 		//   }
 		//
@@ -2758,7 +2758,7 @@ func stdlibBindings() map[string]Type {
 			},
 		},
 
-		// Page.protected — like Page.create, but the framework runs
+		// Page.protected: like Page.create, but the framework runs
 		// Auth.me before mounting. If no session, navigates to the
 		// `signInPage` declared in Auth.config. Otherwise threads
 		// the User into init/update/view as the first argument, so
@@ -2766,14 +2766,14 @@ func stdlibBindings() map[string]Type {
 		//
 		//   { path     : String
 		//   , title    : String                              -- (optional)
-		//   , init     : User -> (Model, Effect e Msg)
-		//   , update   : User -> Msg -> Model -> (Model, Effect e Msg)
+		//   , init     : User -> (Model, Cmd Msg)
+		//   , update   : User -> Msg -> Model -> (Model, Cmd Msg)
 		//   , view     : User -> Model -> View Msg
 		//   }
 		//
 		// `User` is the same row carried by Auth.config, so the page
 		// gets typed access to the logged-in user without redeclaring
-		// the shape. The redirect destination is *not* per-page —
+		// the shape. The redirect destination is *not* per-page:
 		// it's centralized in Auth.config so renaming the sign-in
 		// page only changes one line.
 		"pageProtected": TForall{
@@ -2794,17 +2794,17 @@ func stdlibBindings() map[string]Type {
 			},
 		},
 
-		// Page.adminProtected — like Page.protected, but gated by the
+		// Page.adminProtected: like Page.protected, but gated by the
 		// framework's *admin* session (the operators in mar.json["admins"]),
 		// not the app's user auth. Threads an opaque AdminSession into
 		// init/update/view as the first argument. Because the Mar.Admin.*
 		// functions require an AdminSession, they're reachable only from an
-		// admin page — a normal page can't call them, caught at compile time.
+		// admin page: a normal page can't call them, caught at compile time.
 		//
 		//   { path  : String
 		//   , title : String                                       -- (optional)
-		//   , init  : AdminSession -> (Model, Effect e Msg)
-		//   , update: AdminSession -> Msg -> Model -> (Model, Effect e Msg)
+		//   , init  : AdminSession -> (Model, Cmd Msg)
+		//   , update: AdminSession -> Msg -> Model -> (Model, Cmd Msg)
 		//   , view  : AdminSession -> Model -> View Msg
 		//   }
 		"pageAdminProtected": TForall{
@@ -2827,10 +2827,10 @@ func stdlibBindings() map[string]Type {
 
 		// The Mar.Admin.* services are shaped EXACTLY like Service.call:
 		//
-		//   AdminSession -> (Result String resp -> msg) -> Effect String msg
+		//   AdminSession -> (Result String resp -> msg) -> Cmd msg
 		//
 		// The AdminSession argument is the capability gate (see
-		// Page.adminProtected) — only an admin page can supply one, so a
+		// Page.adminProtected): only an admin page can supply one, so a
 		// normal page can't call these (compile error). The trailing toMsg is
 		// because the panel performs them as frontend Cmds: a frontend effect
 		// delivers its result by dispatching a Msg (it can't return one
@@ -2838,7 +2838,7 @@ func stdlibBindings() map[string]Type {
 		// returned directly. msg is the only free variable (the error channel
 		// is always String).
 
-		// Mar.Admin.serverInfo : AdminSession -> (Result String ServerInfo -> msg) -> Effect String msg
+		// Mar.Admin.serverInfo : AdminSession -> (Result String ServerInfo -> msg) -> Cmd msg
 		"marAdminServerInfo": TForall{
 			Vars: []int{-30},
 			Body: TArrow{
@@ -2860,7 +2860,7 @@ func stdlibBindings() map[string]Type {
 			},
 		},
 
-		// Mar.Admin.dbStats : AdminSession -> (Result String DbStats -> msg) -> Effect String msg
+		// Mar.Admin.dbStats : AdminSession -> (Result String DbStats -> msg) -> Cmd msg
 		"marAdminDbStats": TForall{
 			Vars: []int{-31},
 			Body: TArrow{
@@ -2880,7 +2880,7 @@ func stdlibBindings() map[string]Type {
 			},
 		},
 
-		// Mar.Admin.recentRequests : AdminSession -> (Result String (List Request) -> msg) -> Effect String msg
+		// Mar.Admin.recentRequests : AdminSession -> (Result String (List Request) -> msg) -> Cmd msg
 		"marAdminRecentRequests": TForall{
 			Vars: []int{-32},
 			Body: TArrow{
@@ -2902,8 +2902,8 @@ func stdlibBindings() map[string]Type {
 			},
 		},
 
-		// Mar.Admin.listEntities : AdminSession -> (Result String (List Entity) -> msg) -> Effect String msg
-		// Schema introspection — every table name + its columns.
+		// Mar.Admin.listEntities : AdminSession -> (Result String (List Entity) -> msg) -> Cmd msg
+		// Schema introspection: every table name + its columns.
 		"marAdminListEntities": TForall{
 			Vars: []int{-33},
 			Body: TArrow{
@@ -2918,9 +2918,9 @@ func stdlibBindings() map[string]Type {
 			},
 		},
 
-		// Mar.Admin.listBackups : AdminSession -> (Result String (List Backup) -> msg) -> Effect String msg
+		// Mar.Admin.listBackups : AdminSession -> (Result String (List Backup) -> msg) -> Cmd msg
 		// Lists the database backup catalog. The panel renders each entry with
-		// a plain <a href> to /_mar/admin/api/database-backups/<id> — the
+		// a plain <a href> to /_mar/admin/api/database-backups/<id>: the
 		// download itself is a normal browser download, not a Mar.Admin.* call.
 		"marAdminListBackups": TForall{
 			Vars: []int{-35},
@@ -2936,7 +2936,7 @@ func stdlibBindings() map[string]Type {
 			},
 		},
 
-		// Mar.Admin.listEntityRows : AdminSession -> String -> (Result String (List (Dict String String)) -> msg) -> Effect String msg
+		// Mar.Admin.listEntityRows : AdminSession -> String -> (Result String (List (Dict String String)) -> msg) -> Cmd msg
 		// Generic row browser for ANY table. Cells are stringified
 		// server-side (v1) so a single Dict shape covers every column.
 		"marAdminListEntityRows": TForall{
@@ -2953,7 +2953,7 @@ func stdlibBindings() map[string]Type {
 			},
 		},
 
-		// Page.dynamic — pattern path with typed `{name:Type}` params.
+		// Page.dynamic, pattern path with typed `{name:Type}` params.
 		// The runtime matches the URL against the pattern and threads
 		// a Params record through init/update/view. The pattern's
 		// param names + types become the record's fields exactly:
@@ -2962,7 +2962,7 @@ func stdlibBindings() map[string]Type {
 		//   path = "/notes/{id:Int}"           →  params : { id : Int }
 		//   path = "/teams/{t:Int}/users/{u:String}" →  params : { t : Int, u : String }
 		//
-		// `path` is a `Path r` value — produced from a String literal
+		// `path` is a `Path r` value: produced from a String literal
 		// at compile time (the typechecker parses the pattern and
 		// synthesizes `r`). The same `r` flows into the handlers.
 		// Bare `:id` (Express-style) is rejected; `{id}` without a
@@ -2985,7 +2985,7 @@ func stdlibBindings() map[string]Type {
 			},
 		},
 
-		// Page.dynamicProtected — like Page.dynamic but auth-gated.
+		// Page.dynamicProtected: like Page.dynamic but auth-gated.
 		// init/update/view receive User AND Params, in that order
 		// (mirrors Page.protected which puts User first).
 		"pageDynamicProtected": TForall{
@@ -3007,11 +3007,11 @@ func stdlibBindings() map[string]Type {
 		},
 
 		// Admin sign-in flow. Unlike the introspection functions above, these
-		// do NOT take an AdminSession — they're the bootstrap that PRODUCES the
+		// do NOT take an AdminSession: they're the bootstrap that PRODUCES the
 		// session (login can't require what it mints). They POST to the
 		// existing /_mar/admin/auth/* endpoints. Shaped like the user Auth.*.
 
-		// Mar.Admin.requestCode : { email : String } -> (Result String () -> msg) -> Effect e msg
+		// Mar.Admin.requestCode : { email : String } -> (Result String () -> msg) -> Cmd msg
 		"marAdminRequestCode": TForall{
 			Vars: []int{-50, -51},
 			Body: TArrow{
@@ -3023,7 +3023,7 @@ func stdlibBindings() map[string]Type {
 			},
 		},
 
-		// Mar.Admin.verifyCode : { email, code } -> (Result String { email : String } -> msg) -> Effect e msg
+		// Mar.Admin.verifyCode : { email, code } -> (Result String { email : String } -> msg) -> Cmd msg
 		// On success the server sets the admin session cookie.
 		"marAdminVerifyCode": TForall{
 			Vars: []int{-52, -53},
@@ -3036,7 +3036,7 @@ func stdlibBindings() map[string]Type {
 			},
 		},
 
-		// Mar.Admin.signOut : (Result String () -> msg) -> Effect e msg
+		// Mar.Admin.signOut : (Result String () -> msg) -> Cmd msg
 		"marAdminSignOut": TForall{
 			Vars: []int{-54, -55},
 			Body: TArrow{
@@ -3045,7 +3045,7 @@ func stdlibBindings() map[string]Type {
 			},
 		},
 
-		// Page.dynamicAdminProtected — like Page.dynamicProtected, but gated
+		// Page.dynamicAdminProtected: like Page.dynamicProtected, but gated
 		// by the framework admin session (AdminSession) instead of the app's
 		// User. Threads AdminSession + Params (in that order) into
 		// init/update/view. Powers the admin panel's per-table drill-down
@@ -3072,15 +3072,15 @@ func stdlibBindings() map[string]Type {
 		//
 		// Marks a page as PRESENTED rather than pushed: navigating to it
 		// keeps the page you came from on screen and lays this one over
-		// it in a sheet. The route is unchanged — same path, same history
-		// entry, same deep link — only the presentation differs. Back,
+		// it in a sheet. The route is unchanged: same path, same history
+		// entry, same deep link: only the presentation differs. Back,
 		// Escape, and a tap outside dismiss it.
 		//
 		//   page = Page.sheet (Page.dynamicProtected { path = ..., ... })
 		//
 		// A decorator instead of six more constructors: `Page.sheet` wraps
 		// any of create / protected / dynamic / dynamicProtected without
-		// multiplying their names, and reads as what it is — a
+		// multiplying their names, and reads as what it is: a
 		// presentation choice layered on a page that already exists.
 		//
 		// Use it for a bounded task the user finishes or abandons (take
@@ -3096,14 +3096,14 @@ func stdlibBindings() map[string]Type {
 			Body: TArrow{From: TPage(), To: TPage()},
 		},
 
-		// App.shared / Page.withShared / Cmd.toShared — one app-wide client
+		// App.shared / Page.withShared / Cmd.toShared: one app-wide client
 		// model that outlives navigation.
 		//
 		// Page models live on the nav stack and die on every forward
 		// navigation (ADR 0009). That is deliberate, and it leaves one
 		// question open: where does state that must survive the trip live?
 		// Here. The profile fetched once at boot, the theme, the unread
-		// count — anything twenty screens would otherwise each refetch in
+		// count: anything twenty screens would otherwise each refetch in
 		// their own init.
 		//
 		//   App.shared :
@@ -3119,7 +3119,7 @@ func stdlibBindings() map[string]Type {
 		// The def value is the whole type story. It is an ordinary top-level
 		// binding in an ordinary app module, and every use site names THAT
 		// binding, so a page reading the model and a page sending a message
-		// cannot disagree about either type — there is nothing to keep in
+		// cannot disagree about either type: there is nothing to keep in
 		// sync. Same shape as Auth.config, Entity.define and Service.declare:
 		// a capability you hold, not a module the framework looks up by name.
 		//
@@ -3155,7 +3155,7 @@ func stdlibBindings() map[string]Type {
 		// Page.withShared wraps ANY of the six page constructors rather than
 		// adding a seventh and eighth flavor of each. The builder receives
 		// the model and returns a Page, so the shared value reaches
-		// init/update/view by ordinary partial application — `view global`
+		// init/update/view by ordinary partial application: `view global`
 		// already has the type Page.create wants.
 		//
 		// The builder is re-applied whenever the shared model changes, so a
@@ -3176,7 +3176,7 @@ func stdlibBindings() map[string]Type {
 		// exactly like a page owns its own.
 		//
 		// A message issued by page A that resolves after navigating to page B
-		// still applies — shared is page-independent, so unlike a page msg it
+		// still applies: shared is page-independent, so unlike a page msg it
 		// has no stale-foreign-message problem and the dispatch boundary does
 		// not drop it.
 		"cmdToShared": TForall{
@@ -3190,7 +3190,7 @@ func stdlibBindings() map[string]Type {
 			},
 		},
 
-		// Nav.push : String -> Effect e msg
+		// Nav.push : String -> Cmd msg
 		// Pushes a URL onto the browser history and re-renders the
 		// matching Page. For dynamic pages prefer Nav.pushTo, which
 		// builds the URL from a typed Path + record so refactors of
@@ -3200,14 +3200,14 @@ func stdlibBindings() map[string]Type {
 			Body: TArrow{From: TString, To: TCmd(b)},
 		},
 
-		// Nav.dismiss : Effect e msg
+		// Nav.dismiss : Cmd msg
 		//
 		// Closes a route that is being PRESENTED (see Page.sheet): the
 		// verb a sheet's own Cancel / Done button needs, matching what
 		// the backdrop, Escape and Back already do.
 		//
 		// With nothing presented it steps back one entry inside the app,
-		// and at the app's first entry it does nothing — so a sheet route
+		// and at the app's first entry it does nothing, so a sheet route
 		// opened cold (full-screen, nothing behind it) cannot walk the
 		// reader out of the site.
 		//
@@ -3218,8 +3218,8 @@ func stdlibBindings() map[string]Type {
 			Body: TCmd(b),
 		},
 
-		// Nav.replace : String -> Effect e msg
-		// Like Nav.push but replaces the current history entry — the
+		// Nav.replace : String -> Cmd msg
+		// Like Nav.push but replaces the current history entry: the
 		// back button won't return to the previous URL. Right for
 		// post-login / post-logout flows.
 		"navReplace": TForall{
@@ -3227,11 +3227,11 @@ func stdlibBindings() map[string]Type {
 			Body: TArrow{From: TString, To: TCmd(b)},
 		},
 
-		// Auth.completeSignIn : Effect e msg
+		// Auth.completeSignIn : Cmd msg
 		// Use as the navigation step after Auth.verifyCode succeeds.
-		// Reads the framework-managed `next` slot — set when a 401
+		// Reads the framework-managed `next` slot: set when a 401
 		// from a Service.call sent the user here, or when a deep link
-		// landed on the sign-in page — and goes there. Falls back to
+		// landed on the sign-in page, and goes there. Falls back to
 		// "/" when no return target was captured. Web validates that
 		// the captured path is same-origin to prevent open-redirect
 		// abuse via crafted ?next= parameters.
@@ -3245,7 +3245,7 @@ func stdlibBindings() map[string]Type {
 			Body: TCmd(b),
 		},
 
-		// Nav.pushTo : Path r -> r -> Effect e msg
+		// Nav.pushTo : Path r -> r -> Cmd msg
 		// Type-safe alternative to Nav.push for dynamic pages. The
 		// record `r` carries exactly the params declared by the path
 		// pattern, so refactoring `"/notes/{id:Int}"` into
@@ -3259,8 +3259,8 @@ func stdlibBindings() map[string]Type {
 			},
 		},
 
-		// Nav.replaceTo : Path r -> r -> Effect e msg
-		// Same as Nav.pushTo but uses history.replaceState — for
+		// Nav.replaceTo : Path r -> r -> Cmd msg
+		// Same as Nav.pushTo but uses history.replaceState: for
 		// post-login / post-logout flows where the previous URL
 		// shouldn't be reachable via "back".
 		"navReplaceTo": TForall{
@@ -3273,7 +3273,7 @@ func stdlibBindings() map[string]Type {
 
 		// linkTo : Path r -> r -> String
 		// Build a URL string from a typed Path + the params record.
-		// Pure (no Effect) — meant for `href` attributes on anchor
+		// Pure (no Cmd): meant for `href` attributes on anchor
 		// tags. Compile-time fails if the record is missing fields,
 		// has extras, or has the wrong types.
 		"linkTo": TForall{
@@ -3284,12 +3284,12 @@ func stdlibBindings() map[string]Type {
 			},
 		},
 
-		// App.frontend : List Page -> Effect String ()
+		// App.frontend : List Page -> Cmd ()
 		// Pure frontend: ships an MVU app (one or many pages) to the browser.
 		// Port comes from <projectDir>/mar.json (server.port, default 3000).
 		"appFrontend": TArrow{From: TList(TPage()), To: TCmd(TUnit{})},
 
-		// App.backend : { services } -> Effect String ()
+		// App.backend : { services } -> Cmd ()
 		// Headless API server: `services` exposes typed RPC services, each
 		// mounted at the verb and path it was declared with. Port from
 		// mar.json (server.port, default 3000).
@@ -3303,7 +3303,7 @@ func stdlibBindings() map[string]Type {
 			To: TCmd(TUnit{}),
 		},
 
-		// App.fullstack : { services, pages } -> Effect String ()
+		// App.fullstack : { services, pages } -> Cmd ()
 		// Unified server. `services` mounts typed RPC services at the verb
 		// and path each was declared with; `pages` ships the browser MVU
 		// app. Port from mar.json.
@@ -3338,7 +3338,7 @@ func stdlibBindings() map[string]Type {
 			Body: TArrow{From: TMethod, To: TArrow{From: TString, To: TService(a, b)}},
 		},
 
-		// Service.implement : Service req resp -> (req -> Effect String resp) -> ExposedService
+		// Service.implement : Service req resp -> (req -> Task resp) -> ExposedService
 		//
 		// Pairs a contract with its handler, returning an
 		// already-exposed value for the services list. Reads
@@ -3360,10 +3360,10 @@ func stdlibBindings() map[string]Type {
 			},
 		},
 
-		// Service.call : Service req resp -> req -> (Result String resp -> msg) -> Effect e msg
+		// Service.call : Service req resp -> req -> (Result String resp -> msg) -> Cmd msg
 		// Client-side: encodes req as JSON, fetches, decodes resp.
-		// Returns Effect that dispatches msg with Ok resp / Err message.
-		// Service.call : Service req resp -> req -> (Result Service.Error resp -> msg) -> Effect msg
+		// Returns a Cmd that dispatches msg with Ok resp / Err message.
+		// Service.call : Service req resp -> req -> (Result Service.Error resp -> msg) -> Cmd msg
 		// The toMsg receives a Result whose Err is a Service.Error union
 		// (Offline / Unauthorized / ServerError String), not a bare String:
 		// transport failure is a value you case on, the Elm way.
@@ -3394,7 +3394,7 @@ func stdlibBindings() map[string]Type {
 		//
 		// The record's `entity` field carries the user entity; the runtime
 		// also reads `identify`, `email`, `signup`, `sessionDuration`. Type
-		// row is intentionally permissive — every field is opaque to the
+		// row is intentionally permissive: every field is opaque to the
 		// type checker and we don't reject extra fields, since the runtime
 		// only inspects the known names.
 		"authConfig": TForall{
@@ -3405,7 +3405,7 @@ func stdlibBindings() map[string]Type {
 			},
 		},
 
-		// Auth.protect : Service req resp -> (req -> user -> Effect String resp) -> ExposedService
+		// Auth.protect : Service req resp -> (req -> user -> Task resp) -> ExposedService
 		//
 		// Auth analog of Service.implement. Reads contract-first,
 		// handler-second so the call site reads as a sentence:
@@ -3442,7 +3442,7 @@ func stdlibBindings() map[string]Type {
 		// RequiresUser=true and the dispatcher (ExposedServiceToRoute)
 		// checks the role before invoking the handler. Applying this to a
 		// raw `Service.implement` (not an `Auth.protect`ed one) now still
-		// requires auth — the decorator sets RequiresUser itself, so a
+		// requires auth: the decorator sets RequiresUser itself, so a
 		// role-gated service can never serve public.
 		"authRequireRole": TForall{
 			Vars: []int{-30},
@@ -3456,7 +3456,7 @@ func stdlibBindings() map[string]Type {
 		},
 
 		// Auth.authorize :
-		//   (input -> User -> Effect String (Maybe resource))
+		//   (input -> User -> Task (Maybe resource))
 		//   -> (input -> User -> resource -> Bool)
 		//   -> ExposedService
 		//   -> ExposedService
@@ -3468,7 +3468,7 @@ func stdlibBindings() map[string]Type {
 		"authAuthorize": TForall{
 			Vars: []int{-31, -32, -33},
 			Body: TArrow{
-				// loader: input -> User -> Effect String (Maybe resource)
+				// loader: input -> User -> Task (Maybe resource)
 				From: TArrow{
 					From: TVar{ID: -31},
 					To: TArrow{
@@ -3494,7 +3494,7 @@ func stdlibBindings() map[string]Type {
 		},
 
 		// Auth.requireOwner :
-		//   (input -> User -> Effect String (Maybe resource))
+		//   (input -> User -> Task (Maybe resource))
 		//   -> (resource -> Int)
 		//   -> ExposedService
 		//   -> ExposedService
@@ -3523,8 +3523,8 @@ func stdlibBindings() map[string]Type {
 			},
 		},
 
-		// Auth.requestCode : { email : String } -> (Result String () -> msg) -> Effect e msg
-		// Auth.requestCode : { email } -> (Result Service.Error Auth.RequestOutcome -> msg) -> Effect msg
+		// Auth.requestCode : { email : String } -> (Result String () -> msg) -> Cmd msg
+		// Auth.requestCode : { email } -> (Result Service.Error Auth.RequestOutcome -> msg) -> Cmd msg
 		// Domain outcomes (CodeSent / InvalidEmail / RateLimited) ride in
 		// the Ok; the Err stays pure transport. CodeSent never reveals
 		// whether the email has an account.
@@ -3539,7 +3539,7 @@ func stdlibBindings() map[string]Type {
 			},
 		},
 
-		// Auth.verifyCode : { email, code } -> (Result Service.Error (Auth.VerifyOutcome user) -> msg) -> Effect msg
+		// Auth.verifyCode : { email, code } -> (Result Service.Error (Auth.VerifyOutcome user) -> msg) -> Cmd msg
 		// SignedIn carries the app's own user record; WrongCode /
 		// TooManyAttempts are the only other outcomes this endpoint
 		// produces.
@@ -3557,7 +3557,7 @@ func stdlibBindings() map[string]Type {
 			},
 		},
 
-		// Auth.logout : (Result String () -> msg) -> Effect e msg
+		// Auth.logout : (Result String () -> msg) -> Cmd msg
 		"authLogout": TForall{
 			Vars: []int{-18, -19},
 			Body: TArrow{
@@ -3566,7 +3566,7 @@ func stdlibBindings() map[string]Type {
 			},
 		},
 
-		// Auth.me : (Result String (Maybe user) -> msg) -> Effect e msg
+		// Auth.me : (Result String (Maybe user) -> msg) -> Cmd msg
 		"authMe": TForall{
 			Vars: []int{a.ID, -20, -21},
 			Body: TArrow{
@@ -3846,18 +3846,18 @@ func qualifiedAliases(flat map[string]Type) map[string]Type {
 		// Re-expose a handful of View.* attrs under UI.* so user code
 		// that lives entirely in the SwiftUI-style vocabulary doesn't
 		// need a second `import View exposing (...)`. These are pure
-		// aliases — same runtime builtin, same shape.
+		// aliases: same runtime builtin, same shape.
 		"UI.email":       "viewEmail",
 		"UI.password":    "viewPassword",
 		"UI.newPassword": "viewNewPassword",
 		"UI.numeric":     "viewNumeric",
 		"UI.oneTimeCode": "viewOneTimeCode",
 		"UI.submit":      "viewSubmit",
-		// Sizing — width / height accept Size values built via chars /
+		// Sizing: width / height accept Size values built via chars /
 		// lines / fill. Type-safe axes: `chars` only builds Size Width,
 		// `lines` only Size Height (`height (chars 6)` is a compile
 		// error); `fill` is axis-polymorphic so the one constant works
-		// in both. Alignment — cross-axis position for stack children.
+		// in both. Alignment: cross-axis position for stack children.
 		"UI.chars":    "uiChars",
 		"UI.lines":    "uiLines",
 		"UI.fill":     "uiFill",
@@ -3875,7 +3875,7 @@ func qualifiedAliases(flat map[string]Type) map[string]Type {
 		"UI.size":  "uiSize",
 		"UI.fit":   "uiFit",
 		"UI.cover": "uiCover",
-		// Canvas (v0.0.7) — the 2D draw-list module. Functions only; the
+		// Canvas (v0.0.7): the 2D draw-list module. Functions only; the
 		// Color / Shape / Transform / Align type names resolve globally as
 		// opaque TCons, and the Transform / Align constructors come in via
 		// `exposing (Transform(..), Align(..))`.
@@ -3927,14 +3927,14 @@ func qualifiedAliases(flat map[string]Type) map[string]Type {
 		"Auth.completeSignIn":        "authCompleteSignIn",
 		"Nav.pushTo":                 "navPushTo",
 		"Nav.replaceTo":              "navReplaceTo",
-		// linkTo is a top-level builtin (no qualifier) — same vibe as
+		// linkTo is a top-level builtin (no qualifier): same vibe as
 		// the standalone `text`, `column`, etc. that the View module
 		// exports without a prefix. It's the everyday way to build a
 		// URL from a typed Path.
 		"linkTo": "linkTo",
-		// always : a -> b -> a — Elm's Basics.always (bare, no module).
+		// always : a -> b -> a, Elm's Basics.always (bare, no module).
 		"always": "always",
-		// not : Bool -> Bool — Elm's Basics.not (bare, no module).
+		// not : Bool -> Bool, Elm's Basics.not (bare, no module).
 		"not": "not",
 		// The numeric kit, also bare and also Elm-named.
 		"max":         "max",

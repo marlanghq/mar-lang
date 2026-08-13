@@ -61,7 +61,7 @@ settings:
     # default -Onone it runs 10-30x slower (every ARC retain/release,
     # enum match and Dictionary probe unelided), which turns 60fps
     # canvas games into a slideshow. The generated project is a build
-    # artifact — nobody step-debugs its Swift — so we trade debugger
+    # artifact, nobody step-debugs its Swift, so we trade debugger
     # fidelity for the interpreter running at full speed out of the
     # box. #if DEBUG paths (Bonjour discovery, localhost fallback) are
     # untouched: SWIFT_ACTIVE_COMPILATION_CONDITIONS still carries
@@ -82,7 +82,7 @@ targets:
     sources:
       - path: Sources
       # Resources/program.json is the embedded snapshot of the user's
-      # mar code (Approach C — instant cold-start). MarLoader reads
+      # mar code (Approach C: instant cold-start). MarLoader reads
       # this synchronously at boot via Bundle.main; the network fetch
       # then refreshes it in the background.
       #
@@ -103,14 +103,14 @@ targets:
       path: Info.plist
       properties:
         # CFBundleDisplayName is the home-screen / app-switcher label.
-        # Allowed to differ from the SwiftIdentifier target name —
+        # Allowed to differ from the SwiftIdentifier target name:
         # spaces and accents are fine here.
         CFBundleDisplayName: __MAR_DISPLAY_NAME__
         # CFBundleShortVersionString / CFBundleVersion are the
         # user-facing version and internal build counter. Wired to
         # the MARKETING_VERSION / CURRENT_PROJECT_VERSION build
         # settings via $(...) so Xcode substitutes them at build
-        # time — operator only needs to bump the values once, in
+        # time: operator only needs to bump the values once, in
         # mar.json's ios.{marketingVersion,buildNumber}.
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
@@ -135,7 +135,7 @@ targets:
         # `mar build --target ios` to change it.
         MarBaseURL: __MAR_DEFAULT_BASE_URL__
 
-        # MarAppName is the raw mar.json `name` — exactly what
+        # MarAppName is the raw mar.json `name`: exactly what
         # `mar dev` advertises as its mDNS instance name. The DEBUG
         # Bonjour auto-connect only adopts servers whose name matches,
         # so another project's dev server on the same LAN can't hijack
@@ -143,7 +143,7 @@ targets:
         MarAppName: __MAR_PROJECT_NAME__
 
         # MarRuntimeVersion is the mar version that generated this
-        # app — the version of the Swift runtime compiled into the
+        # app: the version of the Swift runtime compiled into the
         # binary. The server stamps the same value on every response
         # as `X-Mar-Runtime`, and the app compares the two before
         # applying a downloaded program.json: the AST is data, but
@@ -153,7 +153,7 @@ targets:
         # "apply and hope".
         MarRuntimeVersion: __MAR_RUNTIME_VERSION__
 
-        # Bonjour / mDNS discovery — the backend publishes
+        # Bonjour / mDNS discovery: the backend publishes
         # `_mar._tcp` when it starts (jsserve.publishBonjour); the
         # app browses for it via NWBrowser and auto-connects when
         # exactly one server is found on the LAN. Both keys below

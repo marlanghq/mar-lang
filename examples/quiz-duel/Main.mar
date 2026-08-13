@@ -14,7 +14,7 @@ import Frontend.Result
 import Frontend.Rivals
 
 
--- Quiz Duel — an async 1v1 trivia game and the fullstack showcase for
+-- Quiz Duel: an async 1v1 trivia game and the fullstack showcase for
 -- Mar: email-code Auth, REST services, SQLite entities, and an App UI,
 -- all in one app. Backend modules own the tables + service handlers;
 -- Frontend modules are the pages. Shared is the contract between them.
@@ -32,7 +32,7 @@ auth =
         , signInPage = Frontend.SignIn.page
         , email      =
             -- `body` overrides the framework's default (English) email
-            -- body — same generic transactional message, in pt-BR. It's
+            -- body: same generic transactional message, in pt-BR. It's
             -- a `code -> minutes -> String` function.
             { subject = "Seu código de acesso ao Quiz Duel"
             , body =

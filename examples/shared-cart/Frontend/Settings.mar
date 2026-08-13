@@ -16,7 +16,7 @@ import Frontend.Routes
 -- reads".
 --
 -- Toggle it here and walk back to the cart: the total is already right. No
--- refetch, no message passed between pages, no copy to keep in sync — the
+-- refetch, no message passed between pages, no copy to keep in sync: the
 -- cart's view function simply reads a value that changed.
 
 

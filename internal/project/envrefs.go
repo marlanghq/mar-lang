@@ -10,7 +10,7 @@
 // Centralized here so the regex stays consistent. Env var names
 // follow the POSIX convention: uppercase letters + digits +
 // underscore, must start with letter or underscore. Anything else
-// (lowercase, hyphens, etc.) is rejected — matches the shape of
+// (lowercase, hyphens, etc.) is rejected: matches the shape of
 // mar.json[*].env:NAME references that would actually resolve at
 // runtime, so backup metadata accurately reflects what restore
 // will need.
@@ -25,7 +25,7 @@ import (
 )
 
 // envRefRegex matches `"env:VAR_NAME"` inside JSON text. The string
-// scan is intentional rather than parsing the JSON — future fields
+// scan is intentional rather than parsing the JSON: future fields
 // may gain env:VAR support without us needing to enumerate them
 // here, and the regex's POSIX-name constraint avoids spurious
 // matches inside string content (which would have to look like
@@ -34,7 +34,7 @@ var envRefRegex = regexp.MustCompile(`"env:([A-Z_][A-Z0-9_]*)"`)
 
 // EnvRefsFromBytes scans raw mar.json content and returns the
 // distinct env:VAR names it references, sorted alphabetically.
-// Returns nil (not an empty slice) when no refs are found —
+// Returns nil (not an empty slice) when no refs are found:
 // matches the Go convention of "no items" being a nil slice and
 // the prior behavior of the regex caller in fly.go.
 func EnvRefsFromBytes(raw []byte) []string {

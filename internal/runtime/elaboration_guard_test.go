@@ -9,7 +9,7 @@ import (
 	"mar/internal/typecheck"
 )
 
-// The runtime cannot re-derive what the typechecker decided — this package
+// The runtime cannot re-derive what the typechecker decided: this package
 // deliberately does not import the typechecker, so types are gone by the time
 // Eval runs. An unelaborated tree therefore does not fail loudly; it produces
 // a confident wrong answer: an Int where the checker proved a Decimal, or
@@ -23,7 +23,7 @@ func TestLoadModuleRefusesUnelaboratedTree(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	// Parsed but never checked — the exact shape the guard exists for.
+	// Parsed but never checked: the exact shape the guard exists for.
 	_, err = LoadModule(mod)
 	if err == nil {
 		t.Fatal("loading an unchecked module should be refused")

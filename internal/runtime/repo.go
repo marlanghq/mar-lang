@@ -14,12 +14,12 @@ import (
 //
 // Public surface (deliberately small):
 //
-//	Repo.all        : Entity a -> Effect String (List a)
-//	Repo.findById   : Entity a -> Int -> Effect String (Maybe a)
-//	Repo.findBy     : Entity a -> r -> Effect String (List a)
-//	Repo.create     : Entity a -> r -> Effect String a
-//	Repo.update     : Entity a -> Int -> r -> Effect String (Maybe a)
-//	Repo.deleteById : Entity a -> Int -> Effect String ()
+//	Repo.all        : Entity a -> Task (List a)
+//	Repo.findById   : Entity a -> Int -> Task (Maybe a)
+//	Repo.findBy     : Entity a -> r -> Task (List a)
+//	Repo.create     : Entity a -> r -> Task a
+//	Repo.update     : Entity a -> Int -> r -> Task (Maybe a)
+//	Repo.deleteById : Entity a -> Int -> Task ()
 //
 // Filters / payloads (`r`) are records whose fields are a subset of the
 // entity's columns with matching value types. Cross-checking happens at
@@ -267,7 +267,7 @@ func repoDeleteByID(args []Value) (Value, error) {
 
 // migrationCache prevents repeated migration work per process. Keyed by
 // the entity's table name. Safe because entity schemas don't change at
-// runtime within a process — hot-reload swaps the entire registry and
+// runtime within a process: hot-reload swaps the entire registry and
 // resets the cache via ResetMigrationCache.
 var migrationCache = struct {
 	done map[string]bool
@@ -288,7 +288,7 @@ func ResetMigrationCache() {
 // hot-path. This per-entity fallback exists for two cases:
 //
 //  1. Tests that exercise Repo.* directly without going through `mar
-//     dev` / `mar build` — boot migrations don't run in that path.
+//     dev` / `mar build`: boot migrations don't run in that path.
 //  2. Defensive: a future Repo call against an entity that wasn't in
 //     the boot-time registry (shouldn't happen, but the safety net is
 //     worth the trivial cost).
@@ -473,7 +473,7 @@ func marValueToSQLForField(field *EntityField, v Value) (any, error) {
 		return x.V, nil
 	case VTime:
 		// Caller didn't pass a field (e.g. filter without column
-		// info). Fall back to milliseconds — same wire format.
+		// info). Fall back to milliseconds: same wire format.
 		return x.Millis, nil
 	}
 	return nil, fmt.Errorf("unsupported value type %T", v)
@@ -481,7 +481,7 @@ func marValueToSQLForField(field *EntityField, v Value) (any, error) {
 
 // scanRow reads one row from rows and produces a record value shaped per
 // the entity's fields. Each column is decoded according to its declared
-// SQLType — INTEGER → VInt, TEXT → VString, BOOLEAN → VBool.
+// SQLType: INTEGER → VInt, TEXT → VString, BOOLEAN → VBool.
 func scanRow(rows *sql.Rows, entity VEntity) (VRecord, error) {
 	vals := make([]any, len(entity.Fields))
 	ptrs := make([]any, len(entity.Fields))
@@ -506,13 +506,13 @@ func scanRow(rows *sql.Rows, entity VEntity) (VRecord, error) {
 
 // decodeColumn maps a raw SQL value into a runtime Value typed per the
 // entity's column declaration. NULL on a NOT NULL column is treated as
-// the zero value (defensive — schema should prevent this in practice).
+// the zero value (defensive: schema should prevent this in practice).
 //
 // It can fail for exactly one reason: SQLite's INTEGER is 64 bits wide and
 // Mar's Int is 53, so a row can hold a number the language cannot represent.
-// That is not a bad request from anyone — it is our own storage disagreeing
+// That is not a bad request from anyone: it is our own storage disagreeing
 // with the language, whether from data written before the bound existed, a
-// restore from another tool, or an external 64-bit id — so it raises rather
+// restore from another tool, or an external 64-bit id, so it raises rather
 // than rounding, and reaches the caller as a failed request.
 //
 // TIMESTAMP and DECIMAL are deliberately not bounded: they decode to VTime

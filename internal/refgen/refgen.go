@@ -1,7 +1,7 @@
 // Package refgen derives the Mar stdlib function reference (categories, type
 // signatures, descriptions, and worked examples) from the one source that owns
 // the signatures: the typecheck package's BaseEnv. It mirrors internal/ctorgen
-// — the signatures are NOT hand-written, they are read from the compiler and
+// : the signatures are NOT hand-written, they are read from the compiler and
 // pretty-printed, so they can never drift from the language.
 //
 // The authored parts (which category a function belongs to, its prose
@@ -34,11 +34,11 @@ const DataMarRelPath = "examples/mar-website/Frontend/Reference/Data.mar"
 // Modules covered by the reference, in display order: the data core first, then
 // what an app is built out of. Every export of a listed module has to be
 // categorized and described, so a module is in here all of it or not at all.
-// Mar.Admin is deliberately absent — it is the admin panel's own API, not one
+// Mar.Admin is deliberately absent: it is the admin panel's own API, not one
 // apps call.
 var Modules = []string{"Basics", "List", "String", "Maybe", "Result", "Tuple", "Char", "Dict", "Set", "Decimal", "Math", "Time", "Random", "App", "Page", "Nav", "UI", "Canvas", "Sound", "Keyboard", "Gamepad", "Device", "Cmd", "Sub", "Task", "Service", "Entity", "Repo", "Auth", "Http", "JSON"}
 
-// BasicsModule is the display name for the builtins that live in no module —
+// BasicsModule is the display name for the builtins that live in no module:
 // the ones written bare, without a qualifier. There is no `import Basics` in
 // Mar and no `Basics.not`: the name is a shelf for the reference to put them
 // on, so they are not the only part of the stdlib the site cannot show.
@@ -111,7 +111,7 @@ func entryOf(mod, name string, exps map[string]typecheck.Type) (FnEntry, bool) {
 // that enforces it. Same reason the signature is not hand-written either.
 //
 // `Basics` is the reference's name for the bare globals and is not a module you
-// can import, so its entries are looked up unqualified — that is how they are
+// can import, so its entries are looked up unqualified: that is how they are
 // spelled in `BaseEnv`, and how `SideOf` expects them.
 func sideLabel(mod, name, qualified string) string {
 	lookup := qualified
@@ -220,7 +220,7 @@ func marStringList(items []string) string {
 	return "[ " + strings.Join(parts, ", ") + " ]"
 }
 
-// marNestedStringList renders `List (List String)` — one inner list per worked
+// marNestedStringList renders `List (List String)`: one inner list per worked
 // example, holding that example's lines.
 func marNestedStringList(groups [][]string) string {
 	if len(groups) == 0 {

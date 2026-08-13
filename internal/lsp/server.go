@@ -154,7 +154,7 @@ func (s *Server) handle(msg *message) {
 	case "initialize":
 		s.handleInitialize(msg)
 	case "initialized":
-		// Notification — no response.
+		// Notification: no response.
 	case "textDocument/didOpen":
 		s.handleDidOpen(msg)
 	case "textDocument/didChange":
@@ -249,7 +249,7 @@ func (s *Server) handleInitialize(msg *message) {
 
 // scanWorkspace walks the workspace root for .mar files and seeds the
 // document index. The user's open documents already get indexed via
-// didOpen — this just covers files that haven't been opened yet so
+// didOpen: this just covers files that haven't been opened yet so
 // references / rename / workspace symbols can see them.
 func (s *Server) scanWorkspace(p initializeParams) {
 	roots := []string{}
@@ -682,7 +682,7 @@ func (s *Server) handleWorkspaceSymbol(msg *message) {
 	}
 	// Include stdlib symbols so users can fuzzy-search built-ins like
 	// "Auth.config" or "UI.button" from the workspace symbol picker.
-	// They have no source location — point them at a sentinel URI the
+	// They have no source location: point them at a sentinel URI the
 	// client treats as unnavigable.
 	for _, sym := range StdlibSymbols() {
 		if q != "" && !strings.Contains(strings.ToLower(sym.Name), q) {
@@ -926,7 +926,7 @@ func (s *Server) handleCodeAction(msg *message) {
 }
 
 // didYouMeanFix produces a quickfix for "unknown identifier: X" /
-// "unknown qualified name: X" diagnostics — when there's a known
+// "unknown qualified name: X" diagnostics, when there's a known
 // symbol whose name is close (edit distance ≤ 2), suggest renaming X
 // to it.
 func didYouMeanFix(msgText, uri string, _ lspRange, diag map[string]any, idx *DocIndex) any {
@@ -1180,7 +1180,7 @@ func (s *Server) handleFormatting(msg *message) {
 		s.respond(msg.ID, []any{})
 		return
 	}
-	// LSP wants TextEdit[] — return a single edit replacing the whole
+	// LSP wants TextEdit[]: return a single edit replacing the whole
 	// document. End range covers a generous max-line/col so any valid
 	// document is fully replaced.
 	lines := strings.Split(source, "\n")
@@ -1203,7 +1203,7 @@ func (s *Server) handleFormatting(msg *message) {
 // where `name` appears as a whole-word identifier. "Whole word" means
 // the surrounding characters can't be identifier-continuation chars
 // (alphanumeric / underscore / dot); strings and comments are scanned
-// crudely — refine if false-positives become a real issue.
+// crudely: refine if false-positives become a real issue.
 type occurrence struct{ line, col int }
 
 func findIdentifierOccurrences(src, name string) []occurrence {
@@ -1217,7 +1217,7 @@ func findIdentifierOccurrences(src, name string) []occurrence {
 	}
 	lines := strings.Split(src, "\n")
 	for i, line := range lines {
-		// Strip line comments — anything from "--" to end-of-line.
+		// Strip line comments: anything from "--" to end-of-line.
 		commentIdx := strings.Index(line, "--")
 		scan := line
 		if commentIdx >= 0 {
@@ -1280,7 +1280,7 @@ func (s *Server) publishDiagnostics(uri, content string) {
 	path, _ := uriToPath(uri)
 	diags := s.analyze(path, content)
 	if diags == nil {
-		// LSP requires an array — nil marshals as JSON null which some
+		// LSP requires an array: nil marshals as JSON null which some
 		// clients treat as "no update" instead of "clear diagnostics".
 		diags = []lspDiagnostic{}
 	}

@@ -1,5 +1,5 @@
-// Package mathgen computes the one table the `Math` module is built on — a
-// quarter wave of sine, sampled every deci-degree — and emits it as literal
+// Package mathgen computes the one table the `Math` module is built on: a
+// quarter wave of sine, sampled every deci-degree, and emits it as literal
 // source into all three runtimes.
 //
 // The point is that the table is computed ONCE, here, at generation time, and
@@ -18,7 +18,7 @@
 //   - internal/iosbundle/template/Sources/MarMathTable.swift    (whole file)
 //
 // and the staleness test in this package fails whenever a committed copy
-// disagrees with what this code produces — the same lock ctorgen puts on the
+// disagrees with what this code produces: the same lock ctorgen puts on the
 // builtin constructor registry. To change the table, edit this file and run
 //
 //	go generate ./internal/mathgen
@@ -36,7 +36,7 @@ import (
 // Quarter is the number of deci-degrees in a quarter turn, and Full the
 // number in a whole one. Deci-degrees is the internal resolution of `Angle`:
 // with a ×1000 output, sine near 0° moves about 1.7 units per deci-degree, so
-// whole degrees would waste output resolution (17 units per step — visible
+// whole degrees would waste output resolution (17 units per step: visible
 // stutter when a raycaster turns) and milli-degrees would be false precision.
 // See docs/proposals/math.md, "Why deci-degrees is the internal resolution".
 const (
@@ -45,13 +45,13 @@ const (
 	// Scale is the output scale of sin/cos: ×1000, not ×1024. The power of
 	// two buys nothing without a shift operator (`// 1024` costs exactly what
 	// `// 1000` costs and reads worse), and every other continuous quantity
-	// in the language is already decimal — Canvas.Alpha, Canvas.Scale and
+	// in the language is already decimal: Canvas.Alpha, Canvas.Scale and
 	// Sound.volume all speak percent.
 	Scale = 1000
 )
 
 // SinQuarter returns sin sampled at every deci-degree from 0.0° to 90.0°
-// inclusive — 901 entries, each roundHalfEven(sin(θ) × 1000), so 0 at the
+// inclusive: 901 entries, each roundHalfEven(sin(θ) × 1000), so 0 at the
 // start and exactly 1000 at the end.
 //
 // Half-even rounding, because that is `Decimal`'s default (ADR 0004) and the
@@ -116,7 +116,7 @@ func GoFile() string {
 // JS region markers in internal/jsserve/runtime.js. The generator replaces
 // everything between them; the marker lines themselves stay.
 const (
-	JSBegin = "  // BEGIN GENERATED SINE TABLE (go generate ./internal/mathgen) — DO NOT EDIT"
+	JSBegin = "  // BEGIN GENERATED SINE TABLE (go generate ./internal/mathgen), DO NOT EDIT"
 	JSEnd   = "  // END GENERATED SINE TABLE"
 )
 

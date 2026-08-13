@@ -1,4 +1,4 @@
-// CLI color helpers — small, opinionated, self-disabling.
+// CLI color helpers: small, opinionated, self-disabling.
 //
 // Two design rules:
 //
@@ -11,18 +11,18 @@
 //
 // Three color groups exposed:
 //
-//   - Status: red / green / yellow — error / success / warning.
-//   - Identifier: cyan / magenta    — values, paths, names.
-//   - Emphasis: bold                — headers and key labels.
+//   - Status: red / green / yellow, error / success / warning.
+//   - Identifier: cyan / magenta    - values, paths, names.
+//   - Emphasis: bold                - headers and key labels.
 //
 // Each color carries one semantic role (see docs/cli-style.md §3):
 //
-//   colorRed     — error headlines, dangerous actions
-//   colorGreen   — success messages, commands the user should run
-//   colorYellow  — "Hint:" labels, recoverable warnings
-//   colorCyan    — app names, resource codes, fly region codes
-//   colorMagenta — file paths, env variable names
-//   colorBold    — section headers (e.g. "Fly app name", "Next steps")
+//   colorRed     - error headlines, dangerous actions
+//   colorGreen   - success messages, commands the user should run
+//   colorYellow  - "Hint:" labels, recoverable warnings
+//   colorCyan    - app names, resource codes, fly region codes
+//   colorMagenta: file paths, env variable names
+//   colorBold    - section headers (e.g. "Fly app name", "Next steps")
 //
 // All helpers take a writer-aware decision via the package-level
 // `colorEnabled` flag. The flag is computed once at first use,
@@ -52,16 +52,16 @@ const (
 	ansiCyan    = "\x1b[36m"
 	ansiMagenta = "\x1b[35m"
 
-	// Dim — 256-color medium gray (xterm code 245, RGB ~138/138/138,
+	// Dim: 256-color medium gray (xterm code 245, RGB ~138/138/138,
 	// roughly 54% brightness). Replaces the standard `\x1b[2m`
 	// (faint) attribute, which renders nearly invisible on dark
 	// themes. Calibrated to stay clearly "secondary" against
 	// regular text without disappearing on dark backgrounds.
-	// Matches internal/jsserve/banner.go's choice — keep them in
+	// Matches internal/jsserve/banner.go's choice: keep them in
 	// sync.
 	ansiDim = "\x1b[38;5;245m"
 
-	// Bright variants — used when we want emphasis stronger than
+	// Bright variants: used when we want emphasis stronger than
 	// the default-intensity color, e.g. the bold red `Error:` prefix
 	// against a dark terminal where dim red would disappear.
 	ansiBoldRed     = "\x1b[1;31m"
@@ -134,7 +134,7 @@ func colorDim(s string) string { return wrap(ansiDim, s) }
 //   - the literal `mar` binary name in green
 //   - literal command parts in bold
 //   - <placeholder> segments in cyan (the "identifier" semantic from
-//     cli-style.md §3 — same color emails, app names, and codes get
+//     cli-style.md §3: same color emails, app names, and codes get
 //     when rendered as actual values)
 //
 // Pass the command WITHOUT the leading "mar". Examples:
@@ -151,7 +151,7 @@ func colorDim(s string) string { return wrap(ansiDim, s) }
 // cyan attributes don't bleed across the space between them.
 //
 // Why the helper exists: before it, the codebase mixed two patterns
-// for runnable commands — `colorGreen("mar X Y")` (whole-command
+// for runnable commands: `colorGreen("mar X Y")` (whole-command
 // green) in errors/hints, and the green-mar + bold-rest palette in
 // help screens. Funneling every "type this" through cmdSuggest
 // pins one convention so the two surfaces can't drift apart.
@@ -206,7 +206,7 @@ func hintPrefix() string {
 }
 
 // warnPrefix is the standard "this looks off, but we're proceeding"
-// prefix for non-fatal warnings. Bold yellow — same color family as
+// prefix for non-fatal warnings. Bold yellow: same color family as
 // Hint: (both yellow per cli-style.md §3) since both are recoverable
 // signals; the difference is that Warn: surfaces something the
 // runtime detected, while Hint: nudges the user toward a next step.
@@ -217,7 +217,7 @@ func warnPrefix() string {
 // emitFprintBlock is the shared writer for the three helpers. It
 // honors the shared blank-line state in internal/clio (no leading
 // blank when a previous block already left a trailing one), writes
-// `<prefix> <body>\n`, and always emits a trailing blank — so a
+// `<prefix> <body>\n`, and always emits a trailing blank, so a
 // single helper call followed by `return` produces the
 // docs/cli-style.md §1 shape automatically without the caller
 // having to remember.
@@ -236,7 +236,7 @@ func emitFprintBlock(prefix, format string, args ...any) {
 }
 
 // fprintError writes a formatted error to stderr with the standard
-// red `Error:` prefix. Format args are printed plain — color the
+// red `Error:` prefix. Format args are printed plain, color the
 // caller-provided strings explicitly via colorMagenta / colorCyan
 // when desired.
 //
@@ -251,7 +251,7 @@ func fprintError(format string, args ...any) {
 // fprintHint writes a hint line to stderr. Caller is responsible for
 // any inline coloring of the hint body (path, command, etc.).
 //
-// Same blank-line semantics as fprintError — see that doc.
+// Same blank-line semantics as fprintError: see that doc.
 func fprintHint(format string, args ...any) {
 	emitFprintBlock(hintPrefix(), format, args...)
 }
@@ -276,7 +276,7 @@ func fprintHint(format string, args ...any) {
 //     dim, recedes visually
 //
 //  3. Trailing punctuation on a token (`;`, `,`) stays in the
-//     dim color even when the token body is cyan/yellow — so
+//     dim color even when the token body is cyan/yellow, so
 //     `position;` reads as a cyan word with a dim semicolon.
 //
 // Safe for non-TTY: colorXxx return plain text when colors are
@@ -285,7 +285,7 @@ func fprintHint(format string, args ...any) {
 func colorizeHint(body string) string {
 	// First pass: extract identifiers from backtick spans. These
 	// drive the cyan highlight in BOTH the prose AND the code
-	// block — keeping the same word colored in both places makes
+	// block: keeping the same word colored in both places makes
 	// the eye match them.
 	identifiers := extractBacktickIdentifiers(body)
 
@@ -328,7 +328,7 @@ func stripBackticks(s string) string {
 
 // isCodeLine returns true for lines that should be tokenized and
 // rendered as code (SQL snippets, command examples). 4+ leading
-// spaces is the threshold — high enough to skip standard 2-space
+// spaces is the threshold: high enough to skip standard 2-space
 // bullet indents, low enough to catch typical code-block indent.
 //
 // Lines that ALREADY contain ANSI escape sequences are treated as
@@ -337,7 +337,7 @@ func stripBackticks(s string) string {
 // deploy") inside a multi-line hintedError), and tokenizing
 // them would split the escape sequences mid-word and dim-wrap the
 // fragments. Runtime-emitted hints (where colorizeHint actually
-// adds value — SQL code blocks marked by indentation alone) never
+// adds value: SQL code blocks marked by indentation alone) never
 // contain ANSI, so this guard doesn't affect them.
 func isCodeLine(line string) bool {
 	if strings.Contains(line, "\x1b[") {
@@ -436,13 +436,13 @@ func colorizeCodeToken(token string, identifiers map[string]bool) string {
 		return colorDim(trail)
 	}
 	if token == "<value>" {
-		// Placeholder — bright so the user spots "I fill this in".
+		// Placeholder: bright so the user spots "I fill this in".
 		return colorYellow(token) + colorDim(trail)
 	}
 	if identifiers[token] {
 		return colorCyan(token) + colorDim(trail)
 	}
-	// Plain SQL keyword / type / etc. — recede visually.
+	// Plain SQL keyword / type / etc.: recede visually.
 	return colorDim(token) + colorDim(trail)
 }
 
@@ -450,7 +450,7 @@ func colorizeCodeToken(token string, identifiers map[string]bool) string {
 // yellow `Warn:` prefix. For "this is probably wrong but we're
 // going to keep running" signals.
 //
-// Same blank-line semantics as fprintError — see that doc.
+// Same blank-line semantics as fprintError: see that doc.
 func fprintWarn(format string, args ...any) {
 	emitFprintBlock(warnPrefix(), format, args...)
 }

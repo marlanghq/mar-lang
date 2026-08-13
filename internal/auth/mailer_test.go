@@ -105,7 +105,7 @@ func TestSendUsesStdoutSinkWhenAllowed(t *testing.T) {
 
 // Complete() is the single definition both Send and the boot guard use.
 // A half-configured host (no password) cannot authenticate against any
-// real provider, so it must NOT count as usable — otherwise the guard
+// real provider, so it must NOT count as usable: otherwise the guard
 // would let such a deploy boot and every send would fall through to the
 // refusal at request time.
 func TestCompleteRequiresHostAndPassword(t *testing.T) {

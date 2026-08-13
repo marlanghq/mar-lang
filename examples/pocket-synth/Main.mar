@@ -1,7 +1,7 @@
 module Main exposing (main)
 
 
--- Pocket Synth — a playable two-octave synthesizer.
+-- Pocket Synth: a playable two-octave synthesizer.
 --
 -- The face is borrowed from the classic panel-of-knobs synths (the Minimoog's
 -- three-section layout: OSCILLATOR / MODIFIERS / CONTROL): pick a preset, then
@@ -10,20 +10,20 @@ module Main exposing (main)
 -- diagram of the audio engine:
 --
 --   WAVE            -> Sound.tone's wave (Square / Triangle / Sawtooth / Noise)
---   PULSE           -> Sound.duty (square pulse width — the PWM knob)
+--   PULSE           -> Sound.duty (square pulse width: the PWM knob)
 --   OCTAVE          -> transposes the keyboard
 --   ENSEMBLE        -> two extra voices detuned ± (Juno-style chorus)
 --   SUB             -> a sub-octave triangle under every note
 --   LENGTH          -> note duration (the envelope, chip style)
 --   BEND            -> Sound.sweep (pitch glides up or down across the note)
---   LFO DEPTH/RATE  -> Sound.vibrato (cents, Hz) — off for struck notes
+--   LFO DEPTH/RATE  -> Sound.vibrato (cents, Hz): off for struck notes
 --   ARP             -> a real arpeggiator: Sound.sequence of chord tones, looped
 --   VOLUME          -> Sound.volume
 --   GLIDE           -> Sound.glide instead of Sound.voice: ONE monophonic voice
 --                      that slides between notes (portamento), the way glide
 --                      works on the synths this panel is borrowed from
 --   TONE (presets)  -> Sound.lowCut / Sound.highCut, set per preset rather than
---                      by a slider — see shapeCuts for why that is not taste
+--                      by a slider: see shapeCuts for why that is not taste
 --
 -- A control that cannot reach the sound in the current mode is drawn dim and
 -- ignores taps (sliderActive). PULSE off a square wave is the permanent case;
@@ -41,12 +41,12 @@ module Main exposing (main)
 -- starts it and releasing stops it. SUSTAIN patches (organ, strings, pads) hold
 -- via Sound.loop while down; the rest ring out once like a piano (Sound.once,
 -- which the runtime fades cleanly when you lift the key early). Polyphony is the
--- natural kind: the held voices are read straight off two input MIRRORS —
+-- natural kind: the held voices are read straight off two input MIRRORS:
 -- Canvas.watchPointers (every finger on the canvas: one note per finger, and a
--- finger sliding across keys bends its own note — glissando) and Keyboard.watch
+-- finger sliding across keys bends its own note: glissando) and Keyboard.watch
 -- (the computer keyboard: Z-row = low octave, Q-row = high octave). No per-finger
 -- bookkeeping, and a stuck note is impossible by construction. The panel knobs
--- stay on the tap/drag OCCURRENCES (onTap/onDrag/onRelease) — a tap toggles, a
+-- stay on the tap/drag OCCURRENCES (onTap/onDrag/onRelease): a tap toggles, a
 -- drag moves a slider; there is no "held" state to mirror there.
 
 
@@ -79,11 +79,11 @@ type alias Patch =
     , vibR : Int        -- LFO rate in Hz, 1..12
     , arp : Int         -- 0 off, 1 up-maj, 2 up-min, 3 up/down, 4 octaves, 5 maj7
     , vol : Int         -- 10..80
-    , struck : Bool     -- True: hammer-struck (piano) — bright attack + a body that decays
+    , struck : Bool     -- True: hammer-struck (piano), bright attack + a body that decays
     , sustain : Bool    -- True: sounds while HELD (loop); False: rings once then decays (piano)
     , glide : Bool      -- True: ONE monophonic voice that slides between notes (see glideActive)
-    , lowCut : Int      -- Sound.lowCut Hz, 0 = off — trims rumble below it
-    , highCut : Int     -- Sound.highCut Hz, 0 = off — trims fizz above it: the patch's TONE
+    , lowCut : Int      -- Sound.lowCut Hz, 0 = off: trims rumble below it
+    , highCut : Int     -- Sound.highCut Hz, 0 = off, trims fizz above it: the patch's TONE
     }
 
 
@@ -106,7 +106,7 @@ presets =
       }
       -- vibD was 7 here and did nothing: struck notes never reached the LFO. It
       -- is 0 now rather than wired, because Sound.vibrato wobbles the PITCH and
-      -- the electric-piano sound that 7 was reaching for is TREMOLO — amplitude,
+      -- the electric-piano sound that 7 was reaching for is TREMOLO: amplitude,
       -- not pitch. Pitch wobble on a struck note reads as warped tape, not as a
       -- Rhodes. The honest fix is a Sound.tremolo the module does not have yet.
     , { name = "E-PIANO"
@@ -124,7 +124,7 @@ presets =
       -- The old BASS was an accidental raspberry, and each ingredient earned it:
       -- a narrow 38% pulse an octave down (thin and reedy where you want body),
       -- a sub-octave under THAT, and bend -5 gliding the pitch down across every
-      -- note — which a 700ms sustain patch re-attacks twice a second. Low, buzzy,
+      -- note, which a 700ms sustain patch re-attacks twice a second. Low, buzzy,
       -- falling, in repeated bursts is how you synthesize a fart on purpose. Now
       -- it is a straight Moog-ish bass: 50% pulse for a fat fundamental, no
       -- glide, and a note long enough that holding one reads as held, not
@@ -145,7 +145,7 @@ presets =
       -- been a dead switch. Now the note resamples the clip, so the low keys
       -- rumble and the high ones hiss, and the keyboard actually plays it: run
       -- your finger up for surf, hold the bottom for thunder. LENGTH, BEND and
-      -- the LFO all shape it — noise follows the note now, so it bends and
+      -- the LFO all shape it: noise follows the note now, so it bends and
       -- wobbles like any other wave. PULSE is the one that cannot: duty is the
       -- on/off ratio of a SQUARE's cycle, and noise has no cycle. The panel dims
       -- it here rather than letting you move a control that does nothing.
@@ -158,7 +158,7 @@ presets =
       -- Was ARP OCT, a second arpeggio next to ARP UP (and CHIME is a third):
       -- three of twelve slots spent on one idea, and the octave pattern is still
       -- one press of the ARP button away, so nothing is actually lost. The row
-      -- had no LEAD instead — the voice you play a melody ON. A narrow 25% pulse
+      -- had no LEAD instead: the voice you play a melody ON. A narrow 25% pulse
       -- an octave up cuts through, a little ensemble thickens it, and the deep
       -- vibrato is what makes a lead sing rather than sit there.
     , { name = "LEAD"
@@ -288,7 +288,7 @@ shapeDuty p s =
 
 -- The patch's TONE, applied to one voice. Sound.lowCut / Sound.highCut patch the
 -- LAST voice of a Sound, so this belongs at each single-voice construction site,
--- never on an assembled chord — on a chord it would filter one layer and leave
+-- never on an assembled chord: on a chord it would filter one layer and leave
 -- the rest bright.
 --
 -- These are set per PRESET and not by a slider, and that is a framework limit
@@ -330,7 +330,7 @@ subLayer p hz =
 
 
 -- a hammer-struck note: a short bright transient (the strike) over a body of
--- layers whose lengths are staggered — the upper, shorter ones die first, so the
+-- layers whose lengths are staggered: the upper, shorter ones die first, so the
 -- tone loses brightness as well as volume. That is what makes the piano a piano.
 --
 -- Every layer DECAYS from the moment it is struck, which it did not always do.
@@ -364,11 +364,11 @@ struckLayers p hz =
     in
     List.concat
         [ -- the strike: one short bright transient. Never doubled and never
-          -- bent — a hammer hits once, and detuning the attack would smear the
+          -- bent: a hammer hits once, and detuning the attack would smear the
           -- very edge that makes the note read as struck.
           --
           -- 30ms, and it decays across all 30. It used to be 130ms holding FLAT
-          -- at half the body's level, which is not a transient — at that length
+          -- at half the body's level, which is not a transient: at that length
           -- and that level the ear hears a separate pitched event, an octave-up
           -- sawtooth blip laid over the note. A real hammer transient is a few
           -- milliseconds of noise, so the honest direction was shorter and
@@ -394,7 +394,7 @@ struckLayers p hz =
           else
             []
         , -- an octave above, short: it decays fastest of all, so the note loses
-          -- brightness before it loses body — the upper partials of a real
+          -- brightness before it loses body: the upper partials of a real
           -- string die first, and that falling brightness IS the piano.
           [ octaveLayer p hz ]
         ]
@@ -416,7 +416,7 @@ octaveLayer p hz =
 
 -- arpeggiator patterns: per-mille frequency ratios over the base note. Walked
 -- as a real SEQUENCE of separate notes (looped while held), not the one-
--- oscillator chiptune pitch-blur — so you hear the chord climb, note by note.
+-- oscillator chiptune pitch-blur, so you hear the chord climb, note by note.
 arpSteps : Int -> List Int
 arpSteps mode =
     if mode == 1 then [ 1000, 1260, 1498, 2000 ]                 -- up: major triad + octave
@@ -454,7 +454,7 @@ buildNote p hz0 =
             --
             -- Its length is the run's own length ON PURPOSE. A HELD patch plays
             -- this through Sound.loop, and every voice of a looped sound has to
-            -- total exactly the same ms — otherwise the channels slip a little
+            -- total exactly the same ms: otherwise the channels slip a little
             -- further apart on each pass until they are playing different music.
             Sound.chord
                 [ run
@@ -497,7 +497,7 @@ buildNote p hz0 =
 
 -- every semitone currently sounding, read straight off the two input mirrors:
 -- each finger on the canvas mapped through the key under it (keyAt, -1 = not on a
--- key), plus each computer key mapped to its semitone — de-duplicated so a note
+-- key), plus each computer key mapped to its semitone: de-duplicated so a note
 -- shared by both is one voice. The Sound subscriptions are rebuilt from this, so
 -- a note sounds exactly while its finger/key is down, several at once = polyphony,
 -- and a finger sliding to another key just changes its own semitone = glissando.
@@ -519,7 +519,7 @@ voices model =
 
 
 -- A held voice as a subscription. Which of the three lifetimes a note gets is a
--- function of the PATCH PARAMETERS alone — never of which preset is selected —
+-- function of the PATCH PARAMETERS alone, never of which preset is selected:
 -- so every sound stays somewhere you could have walked to on the panel:
 --
 --   sustain off              -> Sound.once    rings once and decays, like a piano
@@ -528,7 +528,7 @@ voices model =
 --                                             arpeggio run, or the mandolin ROLL
 --                                             that re-strikes while you hold it.
 --   sustain, plain           -> Sound.voice one voice per key, held for as long
---                                             as that key is down — a true
+--                                             as that key is down: a true
 --                                             organ/strings/pad sustain, with no
 --                                             repeat, and polyphonic because a
 --                                             voice's PITCH is part of its
@@ -755,15 +755,15 @@ sliderIds =
 -- The three gaps are not the same kind of gap, and it is worth keeping them
 -- straight:
 --
---   PULSE off a square wave  — CANNOT work. Pulse width is the on/off ratio of a
+--   PULSE off a square wave  - CANNOT work. Pulse width is the on/off ratio of a
 --     square's cycle; a triangle or a sawtooth has no such thing to set. Nothing
 --     to wire, now or ever.
---   Anything under ARP       — STRUCTURAL. The arpeggiator replaces the note with
+--   Anything under ARP       - STRUCTURAL. The arpeggiator replaces the note with
 --     a run of short steps, so the modifiers that shape ONE note have no note to
 --     shape. SUB is the exception and is wired (see buildNote).
---   The LFO under STRUCK     — a DECISION. Sound.vibrato wobbles the PITCH, and a
+--   The LFO under STRUCK     - a DECISION. Sound.vibrato wobbles the PITCH, and a
 --     struck note with a wobbling pitch reads as warped tape, not as an electric
---     piano. The Rhodes sound people expect is TREMOLO — amplitude, not pitch —
+--     piano. The Rhodes sound people expect is TREMOLO, amplitude, not pitch:
 --     which the Sound module does not have. Rather than wire an effect that is
 --     not the one this control implies, it stays off here.
 sliderActive : Patch -> Int -> Bool
@@ -776,10 +776,10 @@ sliderActive p id =
     else True
 
 
--- VOICE: what the note DOES over time. Two independent switches in the patch —
+-- VOICE: what the note DOES over time. Two independent switches in the patch:
 -- `struck` picks the synthesis (hammered layers that decay, or a plain
 -- oscillator) and `sustain` picks the lifetime (loops while held, or rings once)
--- — but a player hears one decision, so they ride one button.
+--, but a player hears one decision, so they ride one button.
 --
 -- They rode NO button until now, and that was the bug: a preset could set them,
 -- the panel could not, so GRAND (struck, rings once) and ORGAN (plain, held)
@@ -797,7 +797,7 @@ voiceMode p =
 
 -- The label offers only what the current mode can actually do.
 --
--- With the arpeggiator on, buildNote never reads `struck` — the run of steps
+-- With the arpeggiator on, buildNote never reads `struck`: the run of steps
 -- REPLACES the note that flag would have shaped. Only the sustain half survives,
 -- because it is read somewhere else entirely (heldSound picks Sound.loop or
 -- Sound.once around whatever buildNote returned). So four labels would collapse
@@ -805,7 +805,7 @@ voiceMode p =
 --
 -- Rather than let the button lie, it offers two states there. Nothing is blocked
 -- and nothing is lost: `struck` keeps its stored value, quietly, and comes back
--- the moment ARP goes off — so trying an arpeggio does not cost you the hammer
+-- the moment ARP goes off, so trying an arpeggio does not cost you the hammer
 -- you had picked.
 voiceLabel : Patch -> String
 voiceLabel p =
@@ -823,7 +823,7 @@ voiceLabel p =
 
 
 -- Tapping VOICE: the full four-way cycle normally, and just the sustain flip
--- while the arpeggiator is on — the two states the label is showing.
+-- while the arpeggiator is on: the two states the label is showing.
 nextVoice : Patch -> Patch
 nextVoice p =
     if p.arp > 0 then
@@ -953,8 +953,8 @@ whiteRect m i =
 
 
 -- Black keys are NOT centred on the seam between two whites, which is where a
--- quick drawing puts them. On a real piano they sit inside their GROUP — C#/D#
--- share the three whites C-D-E, F#/G#/A# share the four of F-G-A-B — spaced so
+-- quick drawing puts them. On a real piano they sit inside their GROUP: C#/D#
+-- share the three whites C-D-E, F#/G#/A# share the four of F-G-A-B: spaced so
 -- the white "tails" left between them all come out the SAME width. That evenness
 -- is the comb the eye recognises as a piano.
 --
@@ -974,7 +974,7 @@ blackRect m after =
         ww = whiteW m
 
         -- 55% of a white key's width, 52% of its length. A real piano sits at
-        -- ~58% and ~60%, but drawn flat — no bevel, no shadow to slim them —
+        -- ~58% and ~60%, but drawn flat, no bevel, no shadow to slim them:
         -- black keys read heavier than those numbers suggest, so a touch under
         -- the acoustic ratio on both axes is what looks right on screen.
         bw = ww * 55 // 100
@@ -1074,7 +1074,7 @@ update msg model =
         Dragged x y ->
             -- only the panel sliders care about drags now; the musical keys are
             -- driven by the pointer mirror (a finger sliding across keys bends
-            -- its own note there, per finger — no code needed here).
+            -- its own note there, per finger: no code needed here).
             --
             -- onDrag carries no finger id, so EVERY moving finger arrives here.
             -- Without the zone test, a finger resting on a key would drive
@@ -1089,7 +1089,7 @@ update msg model =
             -- a finger lifting is NOT enough to end a slider drag: onRelease has
             -- no id either, so the key hand lifting would cancel the knob hand's
             -- drag. The mirror ends it instead (see PointersChanged). Notes stop
-            -- on their own — a lifted finger just leaves the mirror.
+            -- on their own: a lifted finger just leaves the mirror.
             ( model, Cmd.none )
 
         KeysChanged st ->
@@ -1121,7 +1121,7 @@ press x y model =
     in
     if k >= 0 then
         -- a key tap: the pointer mirror (watchPointers) already sounds it, so
-        -- there is nothing to do here — panel taps and key taps stay separate.
+        -- there is nothing to do here: panel taps and key taps stay separate.
         ( model, Cmd.none )
     else
         case tappedPreset model x y of
@@ -1137,7 +1137,7 @@ press x y model =
 
 -- Which preset the panel is ON, DERIVED: a preset is selected exactly while the
 -- patch still equals it, index or -1. The Model used to STORE this, and that is
--- what made the row lie — the stored index stayed lit through every slider move,
+-- what made the row lie: the stored index stayed lit through every slider move,
 -- so the panel claimed GRAND while the patch was somewhere else entirely.
 -- Derived, a single edit un-lights it and tapping the preset again re-lights it,
 -- with nothing to keep in sync. The field is gone: it existed only to be shown,
@@ -1255,13 +1255,13 @@ textOff = rgb 88 84 96
 --   accent    engaged: this setting is on, or this is the selected one
 --   textMain  a control you can press, whether or not it is engaged
 --   textOff   a control you cannot press in the current mode
---   textDim   NOT a button state at all — captions, section titles, the hint line
+--   textDim   NOT a button state at all: captions, section titles, the hint line
 --
 -- It used to be muddled. The PRESET row already drew unselected buttons in
 -- textMain, but the wave row and the toggles drew their off state in textDim, so
 -- the same idea had two colours; and because textDim (152) sits between textMain
--- (236) and textOff (88), the difference that actually matters — can I press this
--- — was carried by the SMALLER gap. A button that was merely off looked much like
+-- (236) and textOff (88), the difference that actually matters, can I press this
+--, was carried by the SMALLER gap. A button that was merely off looked much like
 -- one that was unavailable, and the unavailable GLIDE looked broken.
 --
 -- Turning off buttons white does not lose the engaged/idle read: that is carried
@@ -1284,12 +1284,12 @@ view model =
 
 header : Model -> List Shape
 header model =
-    -- nothing to draw where headerH is 0 (landscape) — the row does not exist
+    -- nothing to draw where headerH is 0 (landscape): the row does not exist
     if isShort model then
         []
     else
         -- No caption naming the patch. The lit button already says which preset
-        -- is loaded, and no lit button already says the patch is nobody's — a
+        -- is loaded, and no lit button already says the patch is nobody's: a
         -- line of text repeating that would only be a second place to keep true.
         [ text 14 28 19 Canvas.Left accent "POCKET SYNTH" ]
 
@@ -1504,7 +1504,7 @@ subscriptions model =
 
 -- Which note GLIDE follows: the one that arrived LAST, which is what a
 -- monophonic synth does and what your hands expect. Press a note, press a second
--- one, and the voice slides to the second — whether it is above or below.
+-- one, and the voice slides to the second: whether it is above or below.
 --
 -- Highest-note priority came first here and was wrong for a plain reason: it can
 -- only ever slide UP. Press something lower while the first key is still down and
@@ -1512,7 +1512,7 @@ subscriptions model =
 -- is dead, and that is not a convention, it is a missing feature.
 --
 -- The mirror does give us this, contrary to the first read of ADR-0005. A mirror
--- hands over the SET of keys down, with no ordering — but the model sees a mirror
+-- hands over the SET of keys down, with no ordering, but the model sees a mirror
 -- BEFORE and AFTER each change, and the difference between two sets is exactly
 -- "what just arrived". No press-order needs to come from the runtime.
 --
@@ -1590,7 +1590,7 @@ glideActive p =
 -- The scale is 1/sqrt(n), the usual choice, and what it holds constant is POWER:
 -- n voices at a/sqrt(n) each sum to n * (a/sqrt n)^2 = a^2. So the chord sits at
 -- the same LEVEL as a single note while its PEAK is still free to grow as the
--- phases line up — measured on the organ, peaks went 0.21 / 0.27 / 0.31 for one,
+-- phases line up: measured on the organ, peaks went 0.21 / 0.27 / 0.31 for one,
 -- two and three notes with the level flat inside half a dB. That is the point: a
 -- chord reads as fuller rather than louder, and the headroom is preserved.
 -- Written as a table because the stdlib has no sqrt and, at this size, a table is

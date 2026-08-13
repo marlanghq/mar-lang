@@ -1,4 +1,4 @@
-// Request log ring buffer — powers Mar.Admin.recentRequests.
+// Request log ring buffer: powers Mar.Admin.recentRequests.
 //
 // In-memory only (no DB persistence): the panel is a live debugging
 // tool, not a historical analytics surface. Each new request
@@ -57,7 +57,7 @@ func NewRequestLogger(cap int) *RequestLogger {
 // Record appends a request log entry. When the buffer is full, the
 // oldest entry is overwritten (ring semantics).
 //
-// Path is sanitized before storage — emails, bearer tokens, and the
+// Path is sanitized before storage: emails, bearer tokens, and the
 // common sensitive query-param names (token, api_key, password,
 // secret, access_token) get replaced with <omitted>. See
 // SanitizeForLog for the full pattern list and rationale on

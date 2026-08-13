@@ -3,7 +3,7 @@
 // Every runtime error a checked Mar program can still raise is a bug:
 // runaway recursion, a `case` over literals with no catch-all, or an integer
 // leaving the 53-bit range. All three are deterministic, so the message never
-// offers a retry the way `Service.errorToString` does — there the network
+// offers a retry the way `Service.errorToString` does: there the network
 // really does come back, and here nothing changes until someone fixes it.
 //
 // The strings must stay identical to the JS runtime's; see

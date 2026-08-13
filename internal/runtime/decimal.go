@@ -1,6 +1,6 @@
 package runtime
 
-// Decimal — the exact base-10 number (docs/proposals/decimal.md).
+// Decimal: the exact base-10 number (docs/proposals/decimal.md).
 //
 // A VDecimal is an integer coefficient (big.Int, bounded to 34
 // significant digits, the decimal128 significand) plus a scale: the
@@ -11,7 +11,7 @@ package runtime
 //
 // + - * are exact and closed: add/sub align scales, mul adds them,
 // and nothing in them ever rounds. Division does not even produce a
-// number — `/` builds a VDivision, the inert exact quotient, and only
+// number: `/` builds a VDivision, the inert exact quotient, and only
 // the two resolvers (Decimal.rounded / withRemainder) turn
 // it into a value. That is where the rounding decision is written,
 // and the only place any digit can be dropped.
@@ -268,7 +268,7 @@ func intFromValue(op string, v Value) (int64, error) {
 }
 
 // decToScale rescales a decimal to `scale` places under `mode`.
-// Widening is exact (append zeros); narrowing rounds per mode — the
+// Widening is exact (append zeros); narrowing rounds per mode: the
 // same divmod machinery as the resolvers, dividing by one.
 func decToScale(v VDecimal, scale int, mode string) (VDecimal, error) {
 	if scale < 0 {
@@ -302,7 +302,7 @@ func decimalFromInt(n int64) VDecimal {
 }
 
 // decimalCoefficientAtScale returns the integer coefficient of d at
-// the given fixed scale — the storage form of an Entity.decimal
+// the given fixed scale: the storage form of an Entity.decimal
 // column. Exact only: a value with more fractional digits than the
 // scale errors instead of silently rounding.
 func decimalCoefficientAtScale(d VDecimal, scale int) (int64, error) {

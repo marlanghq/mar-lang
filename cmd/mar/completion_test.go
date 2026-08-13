@@ -22,7 +22,7 @@ var topLevelCommands = []string{
 // completion through these guards against two regression modes:
 // forgetting to register a new subcommand, or feeding `_describe`
 // loose args (zsh interprets them as helper-function names and
-// leaks `__tmp_*` into the candidate list — the array-indirection
+// leaks `__tmp_*` into the candidate list: the array-indirection
 // pattern in zshCompletion prevents this). Shipping is the top-level
 // `mar deploy` command, so it's NOT in this fly-subcommand set.
 var flySubcommands = []string{
@@ -130,7 +130,7 @@ func TestZshFlyAndMigrateUseArrayIndirection(t *testing.T) {
 // fly third-level subs (admin / database / secrets).
 func TestBashFlyAndMigrateSubs(t *testing.T) {
 	out := bashCompletion()
-	// Top-level fly subs — string-literal embedded as flySubcommandList.
+	// Top-level fly subs: string-literal embedded as flySubcommandList.
 	for _, sub := range flySubcommands {
 		// Match the word boundary inside the compgen -W "..." list.
 		if !strings.Contains(out, " "+sub+" ") && !strings.Contains(out, " "+sub+"\"") && !strings.Contains(out, "\""+sub+" ") {
@@ -205,7 +205,7 @@ func TestAllShells_listAdminSubs(t *testing.T) {
 	}
 }
 
-// TestAllShells_offerDeployCommand — `mar deploy` is the single ship
+// TestAllShells_offerDeployCommand: `mar deploy` is the single ship
 // command; it routes to Fly or Cloudflare Pages from mar.json. Each
 // shell should list it as a top-level command so users discover the
 // path via tab. (topLevelCommands above also covers presence; this
@@ -222,7 +222,7 @@ func TestAllShells_offerDeployCommand(t *testing.T) {
 	}
 }
 
-// TestAllShells_haveNoOpenFlag — the --no-open flag was added to
+// TestAllShells_haveNoOpenFlag: the --no-open flag was added to
 // `mar dev` and `mar deploy` after MAR_NO_OPEN was removed.
 // Each shell should advertise it so users discover it via tab.
 func TestAllShells_haveNoOpenFlag(t *testing.T) {

@@ -43,7 +43,7 @@ type VService struct {
 	// dispatcher fetches the user's role via CurrentAuth().Role and
 	// compares structurally with equalValues. Mismatch → 403.
 	//
-	// LoadResource is `input -> User -> Effect String (Maybe resource)`.
+	// LoadResource is `input -> User -> Task (Maybe resource)`.
 	// The dispatcher runs it before invoking the handler. Nothing → 404;
 	// Just resource → fed to Policy.
 	//
@@ -55,7 +55,7 @@ type VService struct {
 	// InputShape is the declared request type, reduced to what checking a
 	// decoded JSON value needs. It is stamped by the project loader (which
 	// can see both the checker's types and this package) rather than derived
-	// here, because types are erased at this boundary — see wire.go and
+	// here, because types are erased at this boundary: see wire.go and
 	// ADR 0016. Nil means "not stamped", and then nothing is checked: the
 	// admin panel and the tests build services by hand.
 	InputShape *WireShape
@@ -84,10 +84,10 @@ func (e VExposedService) Display() string {
 //
 //	Service.declare   : Method -> String -> Service req resp
 //	Service.implement : Service req resp -> (req -> Effect resp) -> ExposedService
-//	Service.call      : Service req resp -> req -> (Result Service.Error resp -> msg) -> Effect msg
+//	Service.call      : Service req resp -> req -> (Result Service.Error resp -> msg) -> Cmd msg
 //
 // Service.declare records the verb and path on the contract. Service.call
-// on the Go side errors out — the server dispatches locally; the JS
+// on the Go side errors out: the server dispatches locally; the JS
 // runtime re-implements call with fetch.
 func serviceBuiltins() map[string]Value {
 	return map[string]Value{

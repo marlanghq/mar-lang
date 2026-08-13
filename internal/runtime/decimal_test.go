@@ -11,7 +11,7 @@ import (
 
 // Conformance vectors for the Decimal model (docs/proposals/decimal.md).
 // The same vectors are exercised against the JS runtime in the E2E
-// harness — if a value here changes, the runtimes have drifted.
+// harness, if a value here changes, the runtimes have drifted.
 
 func TestDecimalLiteralDisplay(t *testing.T) {
 	cases := map[string]string{
@@ -120,7 +120,7 @@ func TestDecimalRoundedResolver(t *testing.T) {
 func TestDecimalWithRemainderResolver(t *testing.T) {
 	// The lossless decomposition: quotient * divisor + remainder == dividend.
 	// The remainder's scale derives from the exact ops that computed it
-	// (a - q*b, so max(aScale, asked + bScale)) — same convention as
+	// (a - q*b, so max(aScale, asked + bScale)): same convention as
 	// Java's BigDecimal.divideAndRemainder. Divide by a whole-number
 	// Decimal (scale 0) and the remainder lands at the asked scale.
 	cases := map[string]string{
@@ -130,7 +130,7 @@ func TestDecimalWithRemainderResolver(t *testing.T) {
 		"Decimal.withRemainder 2 (10.0 / 4.0)":                 "{ quotient = 2.50, remainder = 0.000 }",
 		"Decimal.withRemainder 0 (7.0 / 2.0)":                  "{ quotient = 3, remainder = 1.0 }",
 		// Negative dividend: quotient truncates toward zero, remainder
-		// keeps the dividend's sign — the invariant still holds.
+		// keeps the dividend's sign: the invariant still holds.
 		"Decimal.withRemainder 2 (-100.00 / Decimal.fromInt 3)": "{ quotient = -33.33, remainder = -0.01 }",
 		// Zero divisor: q = 0, r = dividend (0 * 0 + a == a).
 		"Decimal.withRemainder 2 (5.0 / 0.0)": "{ quotient = 0.00, remainder = 5.000 }",
@@ -232,7 +232,7 @@ func TestDecimalJSONRoundTrip(t *testing.T) {
 		t.Fatalf("round-trip: got %s", decString(rd))
 	}
 
-	// A plain fractional JSON number decodes textually — exactly.
+	// A plain fractional JSON number decodes textually: exactly.
 	v, err := decodeJSON(`{"price": 19.99}`)
 	if err != nil {
 		t.Fatal(err)

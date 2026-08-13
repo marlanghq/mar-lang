@@ -124,7 +124,7 @@ check r =
 // a rule invented for literals.
 //
 // Before this, `case n of 1 -> ...` compiled and produced `no case branch
-// matched` at runtime — the last error a checked program could raise that was
+// matched` at runtime: the last error a checked program could raise that was
 // a mistake in its own logic rather than a budget being exceeded.
 func TestCaseOverUnboundedScalarsNeedsACatchAll(t *testing.T) {
 	subjects := map[string][2]string{
@@ -183,8 +183,8 @@ f m =
 	}
 }
 
-// A list's patterns CAN be exhaustive — `[]` together with `x :: rest` names
-// every list there is — which is exactly why leaving one out is an error
+// A list's patterns CAN be exhaustive, `[]` together with `x :: rest` names
+// every list there is, which is exactly why leaving one out is an error
 // rather than something the checker has to tolerate. This was the last way a
 // checked program could still reach `no case branch matched`.
 func TestListPatternsMustCoverEveryLength(t *testing.T) {

@@ -53,7 +53,7 @@ func echoRoute() runtime.Value {
 	}
 }
 
-// TestSetMaxBodyBytes_PinsOutOfRange — defensive callers that pass
+// TestSetMaxBodyBytes_PinsOutOfRange: defensive callers that pass
 // a value below MinMaxBodyBytes or above MaxMaxBodyBytes get
 // silently pinned to the documented default rather than crashing.
 // validateServer is the canonical gatekeeper; this is the safety net
@@ -82,7 +82,7 @@ func TestSetMaxBodyBytes_PinsOutOfRange(t *testing.T) {
 	}
 }
 
-// TestDispatchBackend_Rejects413OverLimit — when the request body
+// TestDispatchBackend_Rejects413OverLimit, when the request body
 // exceeds the configured cap, dispatchBackend responds with 413
 // before invoking the user's handler. Without this, a malicious
 // client could send arbitrarily large bodies and exhaust server
@@ -112,7 +112,7 @@ func TestDispatchBackend_Rejects413OverLimit(t *testing.T) {
 	}
 }
 
-// TestDispatchBackend_AllowsUnderLimit — bodies within the cap go
+// TestDispatchBackend_AllowsUnderLimit: bodies within the cap go
 // through cleanly. Pins the happy path so future tightenings of the
 // limiter don't accidentally lock out legitimate traffic.
 func TestDispatchBackend_AllowsUnderLimit(t *testing.T) {
@@ -136,7 +136,7 @@ func TestDispatchBackend_AllowsUnderLimit(t *testing.T) {
 	}
 }
 
-// TestIsHTTPS — the helper used to set the Secure cookie flag must
+// TestIsHTTPS: the helper used to set the Secure cookie flag must
 // recognize both direct TLS connections and the X-Forwarded-Proto
 // header (the standard proxy hint). The header is honored only from a
 // trusted proxy (see TestIsHTTPS_ForwardedProtoGatedByTrust); these

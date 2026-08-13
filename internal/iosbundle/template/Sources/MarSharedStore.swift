@@ -6,7 +6,7 @@ import Observation
 ///
 /// The web keys a store by the IDENTITY OF THE DEF VALUE: `App.shared { ... }`
 /// is a top-level binding, so it evaluates once and everyone holding it holds
-/// the same object. `MarValue` is an enum — a value type — so object identity
+/// the same object. `MarValue` is an enum, a value type, so object identity
 /// does not exist here. Instead `App.shared` stamps a key onto the ctor it
 /// returns, in evaluation order, exactly the way the web's `__originKey`
 /// (`shared:0`, `shared:1`) does. Top-level evaluation is dependency-sorted and
@@ -60,7 +60,7 @@ final class MarSharedStore {
 
     /// The store's subscriptions, resolved against the CURRENT model. Callers
     /// tag each item so a delivered message comes back to `dispatch` rather
-    /// than to whichever page happened to mount the subscription — the web hit
+    /// than to whichever page happened to mount the subscription: the web hit
     /// exactly this and had to carry the destination per tagger.
     func subscriptions() -> MarValue {
         guard case .fn = subscriptionsFn else { return subscriptionsFn }
@@ -69,7 +69,7 @@ final class MarSharedStore {
 }
 
 /// Every store in the app, by key. A global because the stores outlive every
-/// page and the app has exactly one of each — the same reason the web keeps a
+/// page and the app has exactly one of each: the same reason the web keeps a
 /// module-level Map.
 enum MarSharedRegistry {
     private static var stores: [String: MarSharedStore] = [:]
@@ -90,7 +90,7 @@ enum MarSharedRegistry {
     /// Mounted pages that want to hear about a shared change, keyed by the
     /// page runtime's identity. A SET rather than one slot, because a pushed
     /// stack keeps the screens beneath it alive and every one of them is a
-    /// function of this model. Registered by `mount`, dropped by `unmount` —
+    /// function of this model. Registered by `mount`, dropped by `unmount`:
     /// never by `init`, which SwiftUI runs on throwaway instances every time
     /// a parent view's body is re-evaluated.
     private static var observers: [ObjectIdentifier: () -> Void] = [:]
@@ -98,7 +98,7 @@ enum MarSharedRegistry {
     /// Called before a program's top level is evaluated. The keys are minted
     /// in evaluation order, so the counter has to start over or the second
     /// run mints `shared:1` for the same def and every page ends up bound to
-    /// a brand-new empty store. The MODELS survive — that is the whole point
+    /// a brand-new empty store. The MODELS survive: that is the whole point
     /// of keying them by declaration order. Mirrors `marReload` on the web.
     static func beginProgramLoad() {
         stores = [:]
@@ -119,7 +119,7 @@ enum MarSharedRegistry {
         key: String, initFn: MarValue, updateFn: MarValue, subscriptionsFn: MarValue
     ) -> MarSharedStore {
         if let existing = stores[key] { return existing }
-        // `init` is a VALUE of `(model, Cmd)`, not a function — the same shape
+        // `init` is a VALUE of `(model, Cmd)`, not a function: the same shape
         // Page.create uses, so the unwrap is the same too.
         var initial: MarValue = initFn
         var initEffect: MarValue? = nil

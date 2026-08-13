@@ -10,7 +10,7 @@
 // requirements.
 //
 // At a fresh checkout the binaries directory is empty (only a .keep
-// placeholder) — `go build ./cmd/mar` succeeds but `mar build` will
+// placeholder): `go build ./cmd/mar` succeeds but `mar build` will
 // report missing stubs until `make stubs` runs.
 package stubs
 
@@ -45,7 +45,7 @@ func HostTarget() string {
 
 // Get returns the embedded mar-runtime stub bytes for the given target
 // (e.g. "linux-amd64", "darwin-arm64"). Returns an error when no stub
-// was bundled — typically because `make stubs` didn't run before `mar`
+// was bundled: typically because `make stubs` didn't run before `mar`
 // was compiled.
 func Get(target string) ([]byte, error) {
 	if !validTarget(target) {

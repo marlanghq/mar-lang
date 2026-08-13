@@ -15,7 +15,7 @@ import Backend.Activities
 import Shared exposing (Role(..), IssueStatus(..), IssuePriority(..))
 
 
--- Issues — the central entity. Every other table either points to an
+-- Issues: the central entity. Every other table either points to an
 -- issue (Comment, IssueLabel) or provides metadata that issues
 -- attach to (Label, Milestone). The `number` field is per-project
 -- ("PROJ-42"); the framework's `Repo.create` returns the auto-
@@ -178,7 +178,7 @@ remove input user =
             )
 
 
--- listOpenForAssignee — every Open/InProgress issue assigned to the
+-- listOpenForAssignee: every Open/InProgress issue assigned to the
 -- caller, used by the Dashboard and the MyIssues page. Sorted by
 -- updatedAt descending so the freshest activity floats to the top.
 listOpenForAssignee : Shared.User -> Task (List Shared.IssueView)
@@ -196,7 +196,7 @@ listOpenForAssignee user =
             )
 
 
--- listRecent — every issue in the user's team, sorted by updatedAt
+-- listRecent: every issue in the user's team, sorted by updatedAt
 -- descending, capped to a generous default. Used by Dashboard's
 -- "Recently updated" tile.
 listRecent : Shared.User -> Task (List Shared.IssueView)
@@ -220,7 +220,7 @@ listIssuesForProject pid =
     Repo.findBy issues { projectId = pid }
 
 
--- countOpenForAssignee — small helper consumed by the team-members
+-- countOpenForAssignee: small helper consumed by the team-members
 -- view to show "N open issues" per teammate. Just a length over the
 -- filtered set.
 countOpenForAssignee : Int -> Task Int
@@ -236,7 +236,7 @@ countOpenForAssignee userId =
             )
 
 
--- search — naive substring scan over title + description. Adequate
+-- search: naive substring scan over title + description. Adequate
 -- for an example app; a production tracker would index in FTS5 or
 -- a separate search engine.
 search : Shared.SearchIssues -> Shared.User -> Task (List Shared.IssueView)
@@ -408,7 +408,7 @@ sameProjectTeam _ user issue =
         -- the simplification.
 
 
--- For the `listForProject` route we don't have an issue to load —
+-- For the `listForProject` route we don't have an issue to load:
 -- but we can load the project and check its team.
 loadProjectForList : Shared.ListProjectIssues -> Shared.User -> Task (Maybe Shared.Project)
 loadProjectForList input _ =
@@ -420,7 +420,7 @@ projectInTeam _ user project =
     project.teamId == user.teamId
 
 
--- issueProjectId — exported helper so other backend modules
+-- issueProjectId: exported helper so other backend modules
 -- (Comments, Labels) can read "what project does this issue
 -- belong to" without re-implementing the join.
 issueProjectId : Int -> Task Int

@@ -1,27 +1,27 @@
 module Main exposing (main)
 
 
--- SEASONS GP — a pseudo-3D endless racer in the tradition of early-80s
+-- SEASONS GP: a pseudo-3D endless racer in the tradition of early-80s
 -- endurance racers, drawn somewhere between the NES and the SNES: gradient
 -- skies, two parallax mountain ranges that reshuffle every year, snow-capped
 -- peaks, roadside trees and bushes, shaded two-tone cars. Built with ZERO
--- language changes — a `Time.every` tick drives the sim, `Keyboard`/`Gamepad`
+-- language changes: a `Time.every` tick drives the sim, `Keyboard`/`Gamepad`
 -- feed input, touch steers on mobile, and the whole scene is rects: the road
 -- is 64 horizontal strips with true 1/z perspective (all Int fixed-point).
 --
 -- You race forever through repeating conditions, dodging slower traffic,
 -- drifting outward in curves. Each SEASON is a timed stage: reach the
--- checkered flags before the clock runs out. Four seasons make a year —
+-- checkered flags before the clock runs out. Four seasons make a year:
 -- SPRING (gentle), SUMMER (heavy traffic), AUTUMN (night: you only see
 -- taillights), WINTER (snow: the wheel goes sluggish, the car gets away from
--- you) — then a new year starts, a bit harder: faster rivals, denser traffic,
+-- you), then a new year starts, a bit harder: faster rivals, denser traffic,
 -- sharper curves, a tighter clock. An F1-style gantry counts the race in:
 -- three red lights, then lights out and away you go.
 --
 -- Controls: arrows/WASD steer, Space or Up = gas, Down = brake, M = mute.
 --   Gamepad: stick or d-pad steers, A = gas, B = brake, Start = start.
 --   Touch:   two-thumb pads (shown after your first touch) in the LETTERBOX
---            around the picture — drag STEER (left) to turn, hold GAS / BRAKE
+--            around the picture: drag STEER (left) to turn, hold GAS / BRAKE
 --            (right). Steering is independent of the throttle, so you can turn
 --            while coasting or braking. Tap top-right corner to mute.
 --
@@ -647,7 +647,7 @@ update msg model =
                     Race -> ( applyTouch model x y, Cmd.none )
                     -- The pads are gated on Device.touchOnly (see
                     -- touchControlsShapes), so on a phone they're already on
-                    -- screen the moment the race begins — no provisional flag,
+                    -- screen the moment the race begins: no provisional flag,
                     -- and a desktop mouse click never summons them.
                     _ -> emit (startRace model)
 
@@ -718,10 +718,10 @@ update msg model =
 -- each touch by WHERE it lands: a press/drag in a pad sets that control. Two
 -- thumbs work because they sit in different zones. A release clears whichever
 -- HALF of the screen it lifted from (each thumb owns a half → unambiguous in
--- practice). Steering is DECOUPLED from the throttle — you can turn while
+-- practice). Steering is DECOUPLED from the throttle: you can turn while
 -- coasting or braking.
 --
--- The pads live in SCREEN space, in the LETTERBOX around the picture — never
+-- The pads live in SCREEN space, in the LETTERBOX around the picture, never
 -- on top of the game. Wide side bezels (landscape phone) put the steer pad in
 -- the left bezel and the pedals in the right one; a tall bottom bezel
 -- (portrait) puts a control row under the picture; only when the window has
@@ -763,7 +763,7 @@ padRects m =
         }
     else if botH >= 100 then
         -- portrait: a control row anchored to the BOTTOM of the screen (where
-        -- the thumbs rest), under the raised picture — steer on the left,
+        -- the thumbs rest), under the raised picture: steer on the left,
         -- brake then gas on the right. Sizes are CAPPED in absolute pixels
         -- (a tablet's huge bottom bezel must not inflate the pedals into
         -- billboards); pedals anchor to the right EDGE so thumbs always
@@ -782,7 +782,7 @@ padRects m =
     else
         -- no bezel worth using (tablet landscape: the picture fills the
         -- screen). Compact FIXED-SIZE pads overlaid on the picture's bottom
-        -- corners, in screen coordinates — never scaled by the stage (a 3.7x
+        -- corners, in screen coordinates, never scaled by the stage (a 3.7x
         -- iPad scale once inflated these into half-screen slabs).
         let
             ph = 92
@@ -911,7 +911,7 @@ stepRace model =
 
 
 -- the start gantry: three red lights come on one second apart, then lights
--- out — GO. The car is held on the grid (engine idling) and the clock waits.
+-- out: GO. The car is held on the grid (engine idling) and the clock waits.
 stepCountdown : Model -> Model
 stepCountdown m =
     let
@@ -1004,11 +1004,11 @@ stepSteer m =
         vx = m.playerVx + (target - m.playerVx) // ease
         -- steering authority follows speed: ZERO when stopped (you can't turn a
         -- parked car), rising fast then saturating near 94 at top speed. It's
-        -- hyperbolic, not linear — low speeds already steer well, but there's
+        -- hyperbolic, not linear: low speeds already steer well, but there's
         -- always some influence and no motion means no turn.
         eff = 118 * m.speed // (m.speed + 60)
         -- smaller divisor = the curve flings harder; a slide (smoke) drops grip
-        -- another notch so it washes toward the outside. NOT stronger in winter —
+        -- another notch so it washes toward the outside. NOT stronger in winter:
         -- the ice penalty is the laggy wheel (ease) alone; doubling both was brutal
         fling = 5 - (if sliding then 1 else 0)
         drift = (0 - m.curve) * m.speed // (fling * 180)
@@ -1035,7 +1035,7 @@ stepWorld m =
 stepCurve : Model -> Model
 stepCurve m =
     let
-        -- the road bends toward its target 2 units/tick — fast enough that even a
+        -- the road bends toward its target 2 units/tick: fast enough that even a
         -- tight target is reached before the segment ends (so sharp curves bite)
         c =
             if m.curve < m.curveTarget then min m.curveTarget (m.curve + 2)
@@ -1061,7 +1061,7 @@ stepCurve m =
         { m | curve = c }
 
 
--- Grip: hold a sharp curve at high speed and the tyres start to slide — the slip
+-- Grip: hold a sharp curve at high speed and the tyres start to slide, the slip
 -- timer ramps up; past a threshold it squeals (CueScreech) and puffs smoke (see
 -- smokeShapes). While the tyres are scrubbing it also bleeds a little speed each
 -- tick, which eases you back under the slide threshold (self-correcting) so you
@@ -1092,7 +1092,7 @@ stepRivals m =
                         rel = r.z - m.camZ
                         close = m.speed - r.spd
                         -- ease the final APPROACH only. Closing z is constant, but the
-                        -- 1/z projection makes a near rival ahead BALLOON — so while
+                        -- 1/z projection makes a near rival ahead BALLOON, so while
                         -- you're gaining (close > 0) and the rival is still AHEAD of the
                         -- pass line, damp the closing (down to ~45% right at the pass) so
                         -- it glides in instead of rushing. The moment it's level or behind
@@ -1115,7 +1115,7 @@ stepRivals m =
             List.filter (\r -> r.z > m.camZ - 2600 && r.z < m.camZ + viewDist + 4000) moved
         -- count the CROSSINGS this tick, at the PLAYER's plane (camZ+passPlane),
         -- not the camera, so the pass registers the instant a rival draws level
-        -- with you — the whoosh fires right then. (Culling must never un-count a
+        -- with you: the whoosh fires right then. (Culling must never un-count a
         -- pass; a crash can still let a rival repass, which counts back down.)
         line = m.camZ + passPlane
         crossedFwd =
@@ -1172,7 +1172,7 @@ stepRivals m =
 
 -- a rival crossing our nose while overlapping our lane = crash: the speed dies
 -- (no lives, just lost seconds), the rival is shoved ahead, the car flashes
--- for a moment (colour only — the screen never shakes) and you are briefly
+-- for a moment (colour only: the screen never shakes) and you are briefly
 -- immune.
 stepCollide : Model -> Model
 stepCollide m =
@@ -1250,12 +1250,12 @@ stepClock m =
 
 
 -- ===== sound =====
--- The engine is a Sub: a Sound.glide — ONE continuously-held triangle
+-- The engine is a Sub: a Sound.glide, ONE continuously-held triangle
 -- oscillator that the sound runtime slides in place (Sound.glide keys ignore
--- freq, so a new pitch each frame glides the same node — see soundBedSet), a
+-- freq, so a new pitch each frame glides the same node: see soundBedSet), a
 -- smooth rev with no clicks/crossfade. The pitch simulates a 2-SPEED GEARBOX:
 -- within each gear the "rpm" climbs, then at the single shift it dips and climbs
--- again — and because the runtime glides the transition, it sounds like a quick
+-- again, and because the runtime glides the transition, it sounds like a quick
 -- downshift rather than a step. The gear floor creeps up so 2nd sits higher.
 -- Volume tracks speed (kept fairly low). Mute via Sound.setMuted.
 engineSound : Int -> Sound
@@ -1274,7 +1274,7 @@ engineSound speed =
 -- car is in neutral: the pitch and volume follow the throttle blip (rev) with no
 -- gears and no motion. Once the lights go out it's the gearbox tracking speed.
 -- Both are a single triangle voice, so the runtime glides seamlessly from the
--- last rev pitch into the launch — no restart, no click.
+-- last rev pitch into the launch: no restart, no click.
 engineNote : Model -> Sound
 engineNote m =
     if m.countT > 0 then
@@ -1387,10 +1387,10 @@ view model =
 -- On-screen touch controls, revealed once the player has used touch: an analog
 -- STEER pad (with a knob that tracks your finger) and GAS / BRAKE pedals.
 -- Drawn at ROOT level in SCREEN coordinates, in the letterbox around the
--- picture (see padRects) — they never cover the game.
+-- picture (see padRects): they never cover the game.
 -- True on finger-only hardware (phone / tablet): coarse pointer, no fine
 -- pointer attached, no hover. Desktop and touch-laptops read False, so a mouse
--- click never summons the pads — the capability, not a past tap, is the gate.
+-- click never summons the pads: the capability, not a past tap, is the gate.
 padsWanted : Maybe Device -> Bool
 padsWanted dev =
     case dev of
@@ -1459,7 +1459,7 @@ halfWPx i =
 
 
 -- Per-strip geometry (screen y, world-z, half-width, i squared) is a pure
--- function of the strip INDEX — it carries no model state — so the whole
+-- function of the strip INDEX, it carries no model state, so the whole
 -- 64-entry table is built ONCE at load rather than recomputing stripY / zOf /
 -- halfWPx / i*i for every strip every frame (zOf and halfWPx each cost a
 -- divide; that was ~128 divides a frame doing identical work). The road loop
@@ -1480,7 +1480,7 @@ stripGeom =
 
 -- The road. The four season colours (asphalt, the two rumble shades, dash)
 -- depend only on phaseIx, so they're derived ONCE per frame here and threaded
--- into every strip — they used to be re-derived inside each strip (~256
+-- into every strip: they used to be re-derived inside each strip (~256
 -- redundant colour lookups a frame). The ground is one solid rect (drawn in
 -- sceneShapes) so the field never seams; each strip is drawn 1px TALLER (sh) so
 -- neighbours overlap and no sub-pixel gaps show at non-integer canvas zoom.
@@ -1526,10 +1526,10 @@ stripCellShapes camZ curve roadCol rumA rumB dashCol cell =
 
 
 -- how far the car visually points into the steer, in degrees: the eased wheel
--- velocity scaled by the SAME speed authority the physics uses — so a parked
+-- velocity scaled by the SAME speed authority the physics uses, so a parked
 -- car holding the wheel stays straight, and on ice the nose swings lazily
 -- (playerVx lags behind the stick there). Kept DISCREET: full lock at top
--- speed is only ~7 deg — a hint of yaw, not a spin.
+-- speed is only ~7 deg: a hint of yaw, not a spin.
 playerYaw : Model -> Int
 playerYaw m =
     let
@@ -1539,7 +1539,7 @@ playerYaw m =
 
 
 -- the headlights: at night a pool of lighter road projects UP the road AHEAD of
--- the car — from the car's lane (near plane) toward the vanishing point,
+-- the car: from the car's lane (near plane) toward the vanishing point,
 -- following the curve, brightest nearby and reaching partway up; the far road
 -- and edges stay dark.
 -- A headlight cone thrown AHEAD of the car: its apex sits at the nose (narrow)
@@ -1565,7 +1565,7 @@ headlightShapes m =
                         band = mod2 ((m.camZ + zOf i) // 700)
                         -- bolted to the nose HEADING: the beam sweeps with the
                         -- car's yaw (each strip is 2px further up, so the tilt
-                        -- grows with distance — slightly steeper than true tan
+                        -- grows with distance: slightly steeper than true tan
                         -- so the sweep reads on screen). It still does NOT
                         -- follow the road's curve: on a bend the untouched
                         -- beam points off toward the outside, like real lamps
@@ -1875,7 +1875,7 @@ flagShapes m =
 
 
 -- The car is drawn around its own centre and the whole sprite ROTATES with the
--- steer (playerYaw), SNES-style — the nose points into the corner instead of
+-- steer (playerYaw), SNES-style: the nose points into the corner instead of
 -- the car sliding sideways while facing straight up. The rects keep their old
 -- straight-pose pixels at yaw 0. The 1px body `lean` stays on top as chassis
 -- roll. Dust puffs are ground debris, so they stay outside the rotated group.
@@ -1887,7 +1887,7 @@ playerShapes m =
         yaw = playerYaw m
         flash = m.crashT > 0 && mod2 (m.tick // 3) == 0
         body = if flash then hudRed else bodyWhite
-        -- the body only leans while ACTUALLY rolling — a stopped car holding
+        -- the body only leans while ACTUALLY rolling: a stopped car holding
         -- the wheel shouldn't animate a turn it can't make
         lean =
             if m.speed <= 0 then 0
@@ -1968,7 +1968,7 @@ snowShapes m =
 
 
 -- --- the start gantry: three red lights come on one by one, then all three
--- flash GREEN for the GO (no "GO" text — the green lights are the signal) ---
+-- flash GREEN for the GO (no "GO" text: the green lights are the signal) ---
 
 
 gantryShapes : Model -> List Shape
@@ -2120,7 +2120,7 @@ overShapes m =
         ]
 
 
--- ===== pixel font (3x5 glyphs drawn as rects — same table as the other Mar
+-- ===== pixel font (3x5 glyphs drawn as rects: same table as the other Mar
 -- canvas games; Canvas.text would use the system sans and break the retro look)
 
 

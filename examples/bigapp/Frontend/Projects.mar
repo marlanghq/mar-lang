@@ -12,13 +12,13 @@ import UI exposing
     )
 
 
--- Projects list — every project the team owns. The "+ New" button in
+-- Projects list: every project the team owns. The "+ New" button in
 -- the toolbar opens a sheet (UI.sheet, iOS-style modal) with the
 -- create form. The lista stays visible behind the sheet, and dismissing
 -- the sheet (Cancel, backdrop tap, swipe-down, browser back) returns
 -- here without losing state.
 --
--- The sheet's state — open flag plus draft fields — lives in this
+-- The sheet's state, open flag plus draft fields, lives in this
 -- Model. Same pattern SwiftUI uses for sheet-bound state: parent owns,
 -- sheet content is just view (newProjectForm below).
 
@@ -70,7 +70,7 @@ update _ msg model =
             ( { model | error = Just why }, Cmd.none )
 
         OpenSheet ->
-            -- Fresh form every time the sheet opens — clears any
+            -- Fresh form every time the sheet opens: clears any
             -- leftover values from a previous cancelled attempt.
             ( { model
                 | sheetOpen = True
@@ -106,7 +106,7 @@ update _ msg model =
                 )
 
         ProjectCreated (Ok _) ->
-            -- Created — close the sheet and refresh the list. Same
+            -- Created: close the sheet and refresh the list. Same
             -- update function so no cross-page coordination needed.
             ( { model
                 | sheetOpen = False

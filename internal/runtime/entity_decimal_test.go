@@ -28,7 +28,7 @@ func TestEntityDecimalColumn(t *testing.T) {
 	if err != nil || coef != 1234 {
 		t.Fatalf("12.340 at scale 2: got %d, %v", coef, err)
 	}
-	// A finer NONZERO digit aborts — no implicit rounding at the DB door.
+	// A finer NONZERO digit aborts: no implicit rounding at the DB door.
 	_, err = decimalCoefficientAtScale(VDecimal{Coef: big.NewInt(12345), Scale: 3}, 2)
 	if err == nil || !strings.Contains(err.Error(), "round explicitly") {
 		t.Fatalf("12.345 at scale 2 should error with explicit-rounding hint, got %v", err)

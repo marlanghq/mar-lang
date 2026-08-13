@@ -10,7 +10,7 @@ import Shared
 -- Four tables, five handlers, no analysis. Everything the app reports
 -- is derived on the client from the pure functions in Shared, so this
 -- module's entire job is: keep the rows, keep them the caller's own,
--- and enforce the two rules that only the server can enforce — one row
+-- and enforce the two rules that only the server can enforce: one row
 -- per day, and no rewriting a day older than the edit window.
 --
 -- Ownership works the same way in every handler: reads filter by
@@ -36,7 +36,7 @@ entries =
             }
         -- One entry per person per day. This is what makes saving an
         -- upsert rather than a growing pile of second opinions about
-        -- the same Tuesday — and it is also what keeps the reports
+        -- the same Tuesday, and it is also what keeps the reports
         -- honest, since a day can never be counted twice.
         , uniques = [ [ "userId", "dayKey" ] ]
         }
@@ -88,7 +88,7 @@ cycleStarts =
 --
 -- There is no "profile completed" column. Setup always writes at least
 -- the three factors everyone gets, so a person with no rows is a person
--- who has not been through setup — one fact, stored once.
+-- who has not been through setup: one fact, stored once.
 
 
 getSetupImpl : () -> Shared.User -> Task Shared.SetupState
@@ -114,7 +114,7 @@ saveSetupImpl input user =
     let
         -- The three everyone gets are added here rather than trusted
         -- from the request, so a client can never leave somebody with
-        -- an empty log — or with an empty tracked set, which would read
+        -- an empty log, or with an empty tracked set, which would read
         -- as "never set up" and bounce them back to setup forever.
         fromCatalogue =
             List.map (\f -> f.key)

@@ -18,7 +18,7 @@ import (
 var ErrNoNode = errors.New("node is not installed")
 
 // Compile turns one of the fixture sources into the program.json both runtimes
-// consume. Same bytes to node and to the iOS bundle — the point of the
+// consume. Same bytes to node and to the iOS bundle: the point of the
 // exercise is that the two are given identical input.
 //
 // The serializer is passed in rather than imported: internal/jsserve owns it,
@@ -83,7 +83,7 @@ func RunWeb(runtimeJS string, programJSON []byte, driver string) (string, error)
 // the runtime takes its synchronous swap path and every assertion below reads a
 // settled DOM. And `history.back()` fires popstate inline rather than on a
 // later task, which a real browser would not do but which makes the test
-// deterministic — the runtime's popstate handler is a plain render() call, so
+// deterministic: the runtime's popstate handler is a plain render() call, so
 // nothing about the behavior under test depends on the delay.
 const FakeBrowser = `
 // A DOM element, faked only as far as the renderer actually reaches.
@@ -268,7 +268,7 @@ function bump(node) {
 `
 
 // SurfaceDriver reports what a single-page fixture shows, and what it shows
-// after one tap — the same two questions AppViewModel.routeSmoke answers on
+// after one tap: the same two questions AppViewModel.routeSmoke answers on
 // iOS, printed in the same shape so the two can be compared line for line.
 //
 // Both halves deliberately read a rendered artefact rather than the model: the

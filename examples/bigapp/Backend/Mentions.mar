@@ -10,7 +10,7 @@ import Backend.Users
 import Shared exposing (Role(..))
 
 
--- Mentions — explicit "I @-tagged you" rows backed by a UNIQUE on
+-- Mentions: explicit "I @-tagged you" rows backed by a UNIQUE on
 -- (commentId, mentionedUserId) so a comment containing five
 -- "@marcio"s still produces one inbox entry for marcio.
 --
@@ -45,7 +45,7 @@ mentions =
 -- before "@"), and inserts one Mention row per distinct user found.
 -- Same user mentioned twice in one comment? One row.
 --
--- Self-mentions are dropped — no inbox entry for the author when
+-- Self-mentions are dropped: no inbox entry for the author when
 -- they tag themselves. Misses (typo, ex-member) silently skip.
 parseAndStoreMentions : Shared.Comment -> Task ()
 parseAndStoreMentions comment =
@@ -113,7 +113,7 @@ candidateHandle token =
                     Just stripped
 
 
--- isHandleChar — letter, digit, dot, underscore, or hyphen.
+-- isHandleChar: letter, digit, dot, underscore, or hyphen.
 -- Mirrors the charset we accept in the email-prefix derivation
 -- of a user's handle.
 isHandleChar : Char -> Bool

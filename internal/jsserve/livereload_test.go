@@ -8,7 +8,7 @@ import (
 // The dev server pipes compile errors through `jsonError` and broadcasts
 // them via SSE to every connected browser. The source string comes from
 // `diag.Format(err)`, which adds ANSI color escapes when stderr is a
-// TTY — and stderr is ALWAYS a TTY when the user runs `mar dev`
+// TTY, and stderr is ALWAYS a TTY when the user runs `mar dev`
 // interactively. The browser overlay just renders text, so without
 // stripping these codes the user sees garbage like
 // `[1;31mType error:[0m argument has the wrong type: ...` instead of

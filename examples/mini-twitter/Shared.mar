@@ -4,7 +4,7 @@ module Shared exposing (..)
 -- Domain types and service contracts for mini-twitter.
 --
 -- The shape is deliberately small (3 entities: User, Tweet, Follow)
--- but exercises the framework's full surface — auth, multi-page
+-- but exercises the framework's full surface: auth, multi-page
 -- navigation, RBAC-ish ownership policies, typed routes, and the
 -- service contract pattern that makes refactoring URLs and request
 -- shapes a compile-time conversation instead of a manual hunt.
@@ -12,7 +12,7 @@ module Shared exposing (..)
 
 -- A user is identified to the framework by their email (the
 -- passwordless code lands at this address) but everywhere else in
--- the app uses `handle` — the visible @-name. New users come in
+-- the app uses `handle`: the visible @-name. New users come in
 -- with an empty handle and the SignUp page nudges them to pick one
 -- before the rest of the app appears.
 type alias User =
@@ -45,7 +45,7 @@ type alias Follow =
     }
 
 
--- View types — what flows over the wire to the frontend. Distinct
+-- View types: what flows over the wire to the frontend. Distinct
 -- from the entity rows because the wire shape carries denormalized
 -- author info + flags ("am I following them?", "did I like this?")
 -- the page needs to render without a second round-trip.
@@ -161,7 +161,7 @@ unfollow = Service.declare POST "/unfollow"
 
 -- Profile setup: called once after sign-in if the user's handle is
 -- still empty. Subsequent updates would go through a separate
--- `editProfile` service (not in this minimal example — keeping the
+-- `editProfile` service (not in this minimal example: keeping the
 -- service list short so the security policy stays readable).
 -- Setup outcome: every validation the backend enforces is a case
 -- the form can point at the right field.

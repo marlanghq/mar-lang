@@ -2,7 +2,7 @@
 // runtime's IIFE-level helpers so the same `Path r` value behaves
 // identically across the three runtimes.
 //
-// At runtime a `Path r` is just a String — the typechecker enforces
+// At runtime a `Path r` is just a String: the typechecker enforces
 // the surface contract, and this helper lazily parses on demand
 // (cached so repeat calls in a list render don't re-walk the same
 // pattern N times).
@@ -44,7 +44,7 @@ enum MarPathError: Error, LocalizedError {
 
 enum MarPath {
     /// Cache parsed patterns by source string. Bounded only by the
-    /// number of distinct Path values in the app — typically dozens.
+    /// number of distinct Path values in the app: typically dozens.
     private static var cache: [String: MarPathPattern] = [:]
 
     /// Custom-enum registry. Populated by MarLoader on every
@@ -54,7 +54,7 @@ enum MarPath {
     private static var enumTypes: [String: [String]] = [:]
 
     /// Register a custom enum type for use in `{name:Type}` segments.
-    /// Idempotent — re-registration overwrites (so hot reload picks
+    /// Idempotent: re-registration overwrites (so hot reload picks
     /// up renames cleanly).
     #if DEBUG
     /// The ctor names registered for a path-enum type. Read by the route
@@ -165,7 +165,7 @@ enum MarPath {
         case "String":
             return .string(decoded)
         case "Int":
-            // Reject leading zeros / spaces / non-numeric — same
+            // Reject leading zeros / spaces / non-numeric: same
             // rules as Go's strconv.ParseInt and JS's regex check.
             if let n = Int(decoded), String(n) == decoded || (decoded.hasPrefix("-") && String(n) == decoded) {
                 return .int(n)

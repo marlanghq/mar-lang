@@ -12,7 +12,7 @@ import UI exposing
 
 
 -- The one-time questions that decide which fields exist for this
--- person — and, much more importantly, which ones never appear.
+-- person, and, much more importantly, which ones never appear.
 --
 -- A daily form is abandoned by a thousand small irrelevances. Somebody
 -- who does not drink should not scroll past an alcohol row every
@@ -159,7 +159,7 @@ cycleSection model =
 
 
 -- No cap on how many of these you take. The cost of another factor is
--- another row every evening, and that cost is the tracker's to weigh —
+-- another row every evening, and that cost is the tracker's to weigh:
 -- so the footer counts the rows out loud instead of the app deciding
 -- for them.
 extrasSection : Model -> View Msg

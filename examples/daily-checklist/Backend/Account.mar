@@ -17,7 +17,7 @@ import Backend.Tasks
 --   2. Repo.deleteById on the users entity removes the account itself.
 --
 -- Auth.protect injects `user` as the caller, so a request can only
--- ever delete its OWN account — there's no id to spoof. After the
+-- ever delete its OWN account: there's no id to spoof. After the
 -- row is gone the framework's session for it stops resolving (the
 -- users lookup misses), and the client follows up with Auth.logout to
 -- drop the current session + cookie. Expired auth codes are swept on

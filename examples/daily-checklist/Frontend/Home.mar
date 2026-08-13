@@ -39,7 +39,7 @@ import UI exposing
 -- per-row delete affordance arms `confirmingDelete` with the task;
 -- the view conditionally renders a `UI.confirm` dialog over the
 -- page. The user explicitly taps "Delete" to commit or "Cancel"
--- (or backdrop / Escape) to abort. No undo path — the dialog itself
+-- (or backdrop / Escape) to abort. No undo path: the dialog itself
 -- is the rate of error correction. Matches what Apple Music does
 -- for "Delete from Library".
 
@@ -112,7 +112,7 @@ update _ msg model =
             -- Auto-edit on the FIRST fetch when the list comes back
             -- empty (new user signing in, or someone who once cleared
             -- their list entirely). The reasoning: an empty checklist
-            -- is a setup state, not a usage state — dropping straight
+            -- is a setup state, not a usage state: dropping straight
             -- into edit mode means the "New task" input is visible
             -- immediately and the user can add several rows in a row
             -- without first discovering the Edit affordance.
@@ -172,7 +172,7 @@ update _ msg model =
             -- immediately so the user doesn't see a delay between
             -- tap and visual response. We pass `(id, newValue)` to
             -- the response Msg so the failure branch can undo *this
-            -- specific flip* locally — no need for a refetch, which
+            -- specific flip* locally: no need for a refetch, which
             -- might also fail (offline / network blip) and leave
             -- the UI permanently out of sync with the server.
             ( { model
@@ -207,7 +207,7 @@ update _ msg model =
         DeleteRowAt idx ->
             -- The native delete affordance (swipe on iOS, minus
             -- circle in edit mode on web) fired. Don't delete
-            -- immediately — open the confirmation dialog by stashing
+            -- immediately: open the confirmation dialog by stashing
             -- the task in `confirmingDelete`. Actual removal happens
             -- in DeleteConfirmed below.
             case model.items of
@@ -296,7 +296,7 @@ update _ msg model =
             -- Optimistic local reorder: apply List.move to model.items
             -- immediately so the user sees the new order without
             -- waiting for the server. Then persist by sending the
-            -- full re-ordered ID list to the backend — the server
+            -- full re-ordered ID list to the backend: the server
             -- rewrites position columns in a single pass.
             case model.items of
                 Just items ->
@@ -330,7 +330,7 @@ update _ msg model =
             ( { model | error = Just (Service.errorToString why) }, Cmd.none )
 
         EditClicked ->
-            -- Entering edit mode starts clean — no row armed.
+            -- Entering edit mode starts clean: no row armed.
             ( { model | editing = True }
             , Cmd.none
             )
@@ -374,7 +374,7 @@ update _ msg model =
 
         AccountDeleted (Ok ()) ->
             -- Account + data are gone. Drop the local session and land
-            -- on /sign-in — same logout path the Sign out button uses
+            -- on /sign-in: same logout path the Sign out button uses
             -- (Auth.logout clears the cookie, SignedOut then navigates).
             ( model, Auth.logout SignedOut )
 
@@ -434,7 +434,7 @@ confirmDialog model =
 
 
 -- accountConfirmDialog is the second destructive modal: the account
--- wipe. Same pattern as confirmDialog — `empty` when not armed, a
+-- wipe. Same pattern as confirmDialog: `empty` when not armed, a
 -- `UI.confirm` (destructive = red confirm button) when it is. The
 -- update logic never arms both at once, so at most one modal is ever
 -- non-empty.
@@ -523,7 +523,7 @@ errorSection model =
 
 
 -- addSectionIfNeeded shows the new-task input in edit mode. The
--- section header is always "New task" — earlier versions special-
+-- section header is always "New task": earlier versions special-
 -- cased the empty list with a "Get started by adding a task"
 -- variant, but that created a "first-task screen" that looked
 -- structurally different from the "N tasks screen", making the
@@ -545,7 +545,7 @@ addSectionIfNeeded model items =
         -- only the button disabled, the user could keep typing into
         -- the field after pressing Add, then have their post-submit
         -- keystrokes silently land in the model.draft AFTER the
-        -- service returns and resets draft=""  — a confusing
+        -- service returns and resets draft=""  - a confusing
         -- "where did my text go" moment. Disabling the input freezes
         -- the form as a single atomic unit while the server thinks.
         [ section [ header "New task" ]
@@ -564,7 +564,7 @@ addSectionIfNeeded model items =
 -- Y done" counter (default mode, focuses you on progress) or just
 -- "Tasks" (edit mode, where the counter is irrelevant).
 --
--- In edit mode it ALWAYS renders, including the empty case — with
+-- In edit mode it ALWAYS renders, including the empty case: with
 -- a "No tasks yet." placeholder so the section card stays present
 -- and the screen structure doesn't change shape when the user adds
 -- their first row. In default mode an empty list hides the section
@@ -589,7 +589,7 @@ tasksSection model items =
                     in
                     String.fromInt done ++ " of " ++ String.fromInt total ++ " done"
         in
-        -- onMove only wires its editing flag in edit mode — outside
+        -- onMove only wires its editing flag in edit mode: outside
         -- edit, no drag handles / listeners. Inside edit, each row
         -- gets a drag handle on the right + keyboard grab via
         -- Space/arrow keys. Same `TaskMoved` Msg both ways.
@@ -618,13 +618,13 @@ renderTaskRow : Model -> Shared.TodoItem -> KeyedView Msg
 renderTaskRow model task =
     -- `keyed` wraps the inner view with a stable identity (task.id)
     -- so the reconciler can track this row across reorders / deletes
-    -- / inserts — preserving animation, focus, and (on iOS) the row
+    -- / inserts: preserving animation, focus, and (on iOS) the row
     -- identity for VoiceOver. The KeyedView return type is required
-    -- by `keyedList` — passing a raw View is a compile error, so
+    -- by `keyedList`: passing a raw View is a compile error, so
     -- forgetting the key is impossible.
     keyed (String.fromInt task.id)
         (if model.editing then
-            -- Edit mode: drop the toggle — it's locked and adds
+            -- Edit mode: drop the toggle, it's locked and adds
             -- visual noise. Just the task name; the per-row delete
             -- affordance lives on the surrounding keyedList's
             -- `onDelete` attr. On web a red `−` slides in from the
@@ -639,7 +639,7 @@ renderTaskRow model task =
         )
 
 
--- footerSection — only the daily "Clear ticks" affordance, and only
+-- footerSection: only the daily "Clear ticks" affordance, and only
 -- in default mode. In edit mode there's no footer affordance; the
 -- orientation message lives at the top via editIntroSection and the
 -- exit is the "Done" button in the navigation bar.
@@ -653,7 +653,7 @@ footerSection model items =
         resetActionSection
 
 
--- resetActionSection — the daily "I'm done for today, clear the
+-- resetActionSection: the daily "I'm done for today, clear the
 -- toggles for tomorrow" affordance. Used rarely (once a day) and
 -- shouldn't compete with the toggle list for attention, so it's a
 -- single tight section: no header, short label, one-line footer.
@@ -664,7 +664,7 @@ resetActionSection =
     ]
 
 
--- accountSection — the in-app account-deletion affordance. Rendered
+-- accountSection: the in-app account-deletion affordance. Rendered
 -- unconditionally once the list has loaded (independent of edit mode
 -- or task count) so it's reliably findable, which the App Store
 -- requires: any app offering account creation must let the user

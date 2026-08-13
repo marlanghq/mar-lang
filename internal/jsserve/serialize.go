@@ -81,7 +81,7 @@ func serializeDecl(d ast.Decl) any {
 }
 
 // withImpl attaches the implementation the typechecker chose for a reference,
-// and omits the key entirely when it had nothing to say — which is all but a
+// and omits the key entirely when it had nothing to say, which is all but a
 // handful of nodes, so the wire stays the size it was.
 func withImpl(m map[string]any, impl string) map[string]any {
 	if impl != "" {
@@ -109,7 +109,7 @@ func serializeExpr(e ast.Expr) any {
 	case *ast.EString:
 		return map[string]any{"kind": "EString", "value": n.Value}
 	case *ast.EChar:
-		// Ship the integer code point — the JS runtime reconstructs a
+		// Ship the integer code point: the JS runtime reconstructs a
 		// VChar via VChar(value). Sending an int avoids any UTF-16
 		// surrogate weirdness on the way through JSON.
 		return map[string]any{"kind": "EChar", "value": int(n.Value)}
@@ -257,7 +257,7 @@ func serializePattern(p ast.Pattern) any {
 			"tail": serializePattern(n.Tail),
 		}
 	case *ast.PRecord:
-		// Record destructuring pattern — list of field names to bind.
+		// Record destructuring pattern: list of field names to bind.
 		// The JS / iOS runtimes pull each field's value out of the
 		// matched VRecord and bind it under the same name in the
 		// branch's scope. Partial-match (Elm-style): extra fields on

@@ -1,17 +1,17 @@
 import Foundation
 
-/// Math — deterministic integer trigonometry and roots.
+/// Math: deterministic integer trigonometry and roots.
 ///
 /// Semantics mirror `internal/runtime/math.go` and the "Math (integer
 /// trigonometry)" section of `runtime.js` exactly; the conformance vectors
 /// hold all three to the same integers. Everything reads the one generated
-/// quarter-wave table in MarMathTable.swift — no `sin` from Foundation
+/// quarter-wave table in MarMathTable.swift: no `sin` from Foundation
 /// anywhere, because three libms would be three answers and a rules engine
 /// replayed on both sides needs one.
 enum MarMath {
     static let deciFull = 3600
     static let deciQuarter = 900
-    /// brads — the 256-step turn seasons-gp and vortex already count in.
+    /// brads: the 256-step turn seasons-gp and vortex already count in.
     static let bradsPerTurn = 256
     /// atan2 halves its legs below this so a product with a table entry
     /// (< 2^10) stays inside the 53 bits an Int has (ADR 0021).
@@ -48,7 +48,7 @@ enum MarMath {
     }
 
     /// The angle of the vector (x, y) in deci-degrees, 0..3599, searching the
-    /// SAME table sin reads — which is what makes the two structurally unable
+    /// SAME table sin reads, which is what makes the two structurally unable
     /// to disagree about where 45.0° is. See math.go for the derivation of the
     /// nearest-by-cross-product rule; this is a line-for-line port.
     static func atan2Deci(_ y: Int, _ x: Int) -> Int {

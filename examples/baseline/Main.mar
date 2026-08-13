@@ -14,13 +14,13 @@ import Frontend.DayEntry
 import Frontend.Settings
 
 
--- Baseline — a daily mood log that reports what moves it.
+-- Baseline: a daily mood log that reports what moves it.
 --
 -- Sign in with an email and a one-time code, answer a few setup
 -- questions that decide which fields exist for you, then log a mood, an
 -- energy level and a handful of surroundings once a day. After enough
 -- days the app compares your best days against your worst and reports
--- what showed up on each side — at the same day and at the next, since
+-- what showed up on each side: at the same day and at the next, since
 -- sleep and alcohol land the morning after.
 --
 -- This is the only module that sees both halves. Auth.config picks up
@@ -31,7 +31,7 @@ import Frontend.Settings
 -- The unusual shape of this app is worth naming: the backend is four
 -- tables and six handlers, and every number the app reports is computed
 -- on the client by pure functions in Shared. That is not laziness about
--- the server, it is where the value is — the reporting rules are the
+-- the server, it is where the value is: the reporting rules are the
 -- product, and keeping them in one readable file next to the wire
 -- types is what makes "it never claims more than the data supports"
 -- something a reader can check rather than take on faith.

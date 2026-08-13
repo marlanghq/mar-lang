@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 #
-# update_all_demos.sh — rebuild mar, then redeploy every demo app in parallel.
+# update_all_demos.sh: rebuild mar, then redeploy every demo app in parallel.
 #
 # What it does:
-#   1. `make`  — builds ./mar (embedded runtime stubs + iOS template). This is
+#   1. `make`  - builds ./mar (embedded runtime stubs + iOS template). This is
 #      the FULL build, so the deploy stubs carry the current runtime.js.
 #   2. `./mar deploy examples/<app> --no-open` for each app below, all AT ONCE.
 #
@@ -41,11 +41,11 @@ say() { printf '%s\n' "$*"; }
 # === 1. Build ===============================================================
 say "${BOLD}==> Building mar (make)${RESET}"
 if ! make; then
-  say "${RED}✗ make failed — aborting, nothing deployed.${RESET}"
+  say "${RED}✗ make failed: aborting, nothing deployed.${RESET}"
   exit 1
 fi
 if [ ! -x ./mar ]; then
-  say "${RED}✗ ./mar missing after make — aborting.${RESET}"
+  say "${RED}✗ ./mar missing after make: aborting.${RESET}"
   exit 1
 fi
 say "${GREEN}✓ build ok${RESET}"

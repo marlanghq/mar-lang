@@ -1,6 +1,6 @@
 // Int is 53 bits wide, and leaving that range is an error rather than a number
 // nobody asked for. Mirrors internal/runtime/intrange.go and the checkedInt in
-// internal/jsserve/runtime.js — including the message, which the conformance
+// internal/jsserve/runtime.js: including the message, which the conformance
 // corpus compares across the three.
 //
 // Swift is the runtime that TRAPPED on overflow before this: an uncatchable
@@ -39,7 +39,7 @@ enum MarInt {
     }
 
     /// A product of two in-range operands reaches 2^106, which DOES overflow
-    /// Int64 — and in Swift overflowing is a trap, not a wrap, so the range
+    /// Int64, and in Swift overflowing is a trap, not a wrap, so the range
     /// check would never get to run. `multipliedReportingOverflow` is the only
     /// form that survives long enough to report.
     static func mul(_ a: Int, _ b: Int) throws -> Int {

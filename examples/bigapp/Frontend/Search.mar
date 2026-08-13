@@ -11,8 +11,8 @@ import UI exposing
     )
 
 
--- Search — global issue search across every project in the team.
--- The query gets debounced server-side (well, naively scanned —
+-- Search: global issue search across every project in the team.
+-- The query gets debounced server-side (well, naively scanned:
 -- see Backend.Issues.search). The page is a tiny state machine
 -- with a debounce-free input that fires on every Enter.
 

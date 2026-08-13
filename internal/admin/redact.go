@@ -6,9 +6,9 @@
 // Applied at WRITE time (inside RequestLogger.Record), not at read.
 // Write-time means the in-memory buffer never holds the sensitive
 // data: a pprof heap dump, debugger session, or any future code
-// that learns to read the buffer won't leak. The cost — debugging
+// that learns to read the buffer won't leak. The cost: debugging
 // flows that need the raw path/sql have to add a separate,
-// non-buffered log path — is acceptable because the buffer is
+// non-buffered log path, is acceptable because the buffer is
 // intentionally not a debugging tool. It's a "what's hitting my app"
 // view; deeper inspection belongs on its own surface.
 //
@@ -64,7 +64,7 @@ var (
 //
 // What is intentionally NOT touched:
 //   - The dedicated UserEmail field on RequestLog (lives outside this
-//     function — the admin needs to see who made the request).
+//     function: the admin needs to see who made the request).
 //   - Method, status, durations, atMs.
 //
 // Empty / whitespace-only input is returned unchanged so the caller

@@ -22,7 +22,7 @@ func openTestDB(t *testing.T) *sql.DB {
 	return db
 }
 
-// TestEnsureSchema_Idempotent — calling twice is a no-op (real boot
+// TestEnsureSchema_Idempotent: calling twice is a no-op (real boot
 // scenario: every restart re-runs EnsureSchema).
 func TestEnsureSchema_Idempotent(t *testing.T) {
 	db := openTestDB(t)
@@ -31,7 +31,7 @@ func TestEnsureSchema_Idempotent(t *testing.T) {
 	}
 }
 
-// TestSyncAdmins_AddOnEmptyDB — typical first-boot case. mar.json
+// TestSyncAdmins_AddOnEmptyDB: typical first-boot case. mar.json
 // declares two admins; DB is empty; both get inserted.
 func TestSyncAdmins_AddOnEmptyDB(t *testing.T) {
 	db := openTestDB(t)
@@ -58,7 +58,7 @@ func TestSyncAdmins_AddOnEmptyDB(t *testing.T) {
 	}
 }
 
-// TestSyncAdmins_Idempotent — running twice with the same desired
+// TestSyncAdmins_Idempotent: running twice with the same desired
 // list adds nothing on the second call (boot every time = no churn).
 func TestSyncAdmins_Idempotent(t *testing.T) {
 	db := openTestDB(t)
@@ -73,7 +73,7 @@ func TestSyncAdmins_Idempotent(t *testing.T) {
 		t.Errorf("idempotent sync should be zero churn; got +%d -%d", added, removed)
 	}
 	// createdAt for the existing row must NOT be bumped to nowMs (2000)
-	// — re-sync of the same email should not appear as "the user was
+	//: re-sync of the same email should not appear as "the user was
 	// just added".
 	got, _ := ListAdmins(db)
 	if got[0].CreatedAtMs != 1000 {
@@ -81,7 +81,7 @@ func TestSyncAdmins_Idempotent(t *testing.T) {
 	}
 }
 
-// TestSyncAdmins_RemoveAlsoRevokesCodesAndSessions — the security
+// TestSyncAdmins_RemoveAlsoRevokesCodesAndSessions: the security
 // guarantee from §4.1: removing an admin from mar.json wipes any
 // pending codes + active sessions in the same transaction.
 func TestSyncAdmins_RemoveAlsoRevokesCodesAndSessions(t *testing.T) {
@@ -92,7 +92,7 @@ func TestSyncAdmins_RemoveAlsoRevokesCodesAndSessions(t *testing.T) {
 		t.Fatalf("seed sync: %v", err)
 	}
 	// Forge a code + session for each. The hashes are arbitrary
-	// blobs — we're testing the sync's DELETE, not auth flow.
+	// blobs: we're testing the sync's DELETE, not auth flow.
 	for _, email := range []string{"keep@x.com", "remove@x.com"} {
 		_, err := db.Exec(`
 			INSERT INTO _mar_admin_codes (codeHash, email, expiresAt, createdAt)
@@ -143,7 +143,7 @@ func TestSyncAdmins_RemoveAlsoRevokesCodesAndSessions(t *testing.T) {
 	}
 }
 
-// TestSyncAdmins_LowercasesAndTrims — admins list might have mixed
+// TestSyncAdmins_LowercasesAndTrims: admins list might have mixed
 // casing or stray whitespace from manual mar.json edits. The sync
 // canonicalizes so "Foo@X.com" and "foo@x.com" don't double-insert.
 func TestSyncAdmins_LowercasesAndTrims(t *testing.T) {
@@ -161,7 +161,7 @@ func TestSyncAdmins_LowercasesAndTrims(t *testing.T) {
 	}
 }
 
-// TestSyncAdmins_AddAndRemoveTogether — typical mid-life sync where
+// TestSyncAdmins_AddAndRemoveTogether: typical mid-life sync where
 // some admins come, others go.
 func TestSyncAdmins_AddAndRemoveTogether(t *testing.T) {
 	db := openTestDB(t)

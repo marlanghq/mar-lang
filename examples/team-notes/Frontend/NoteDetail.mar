@@ -14,7 +14,7 @@ import UI exposing
 --
 -- Demonstrates Page.dynamicProtected:
 --
---   - `path = Frontend.Routes.noteDetail` — typed Path, not String.
+--   - `path = Frontend.Routes.noteDetail`: typed Path, not String.
 --     The framework matches the URL against the pattern and decodes
 --     `{id:Int}` into a typed `params : { id : Int }` record.
 --
@@ -22,7 +22,7 @@ import UI exposing
 --     leading args, in that order.
 --
 --   - Refactoring `Frontend.Routes.noteDetail` (e.g. switching to
---     `{slug:String}`) breaks this file in compile time — both the
+--     `{slug:String}`) breaks this file in compile time, both the
 --     `params : { id : Int }` annotations and the Service.call use
 --     stop typing.
 

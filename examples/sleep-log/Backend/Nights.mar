@@ -28,7 +28,7 @@ nights =
 
         -- COMPOSITE, and it has to be. One row per night PER PERSON. A unique
         -- index on `date` alone would mean the first person to log the 20th
-        -- locks that whole date for everybody else — a bug that only exists
+        -- locks that whole date for everybody else: a bug that only exists
         -- once the app has more than one user, which is exactly the kind that
         -- ships unnoticed.
         , uniques = [ [ "userId", "date" ] ]

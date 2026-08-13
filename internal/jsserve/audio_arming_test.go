@@ -15,7 +15,7 @@ import (
 // An open AudioContext wired to the destination is what makes a browser put the
 // "playing audio" speaker on a tab. The web runtime used to open one on the
 // first click of EVERY app, to satisfy the autoplay policy before any sound was
-// asked for — so a CRUD app that never makes a noise wore the speaker forever
+// asked for, so a CRUD app that never makes a noise wore the speaker forever
 // after the first click.
 //
 // Now the unlock listeners are armed only for programs that reference Sound,

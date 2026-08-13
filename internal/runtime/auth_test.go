@@ -99,7 +99,7 @@ func stubUser(id int64, role string, extras map[string]Value) VRecord {
 func vJust(v Value) Value { return VCtor{Tag: "Just", Args: []Value{v}} }
 func vNothing() Value     { return VCtor{Tag: "Nothing"} }
 
-// TestAuthConfig_RejectsEmailFrom — the runtime parser must reject
+// TestAuthConfig_RejectsEmailFrom: the runtime parser must reject
 // `email.from` in Auth.config. The From: address lives in mar.json's
 // `mail.from` (the one verified with the SMTP provider); accepting
 // it in Mar source too would invite typos that silently shadow the
@@ -265,7 +265,7 @@ func TestDispatcher_RequireRole_Deny(t *testing.T) {
 }
 
 func TestDispatcher_RequireRole_NoRoleGetterIs500(t *testing.T) {
-	// Auth.config without a role getter — using requireRole is a misconfiguration.
+	// Auth.config without a role getter: using requireRole is a misconfiguration.
 	RegisterAuth(VAuth{Role: nil})
 
 	exposed := stubExposed()

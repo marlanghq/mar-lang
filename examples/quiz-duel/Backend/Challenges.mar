@@ -8,7 +8,7 @@ import Shared exposing (Status(..), Role(..), Outcome(..))
 
 -- The heart of Quiz Duel: the duel + per-answer tables and every
 -- service that drives a match. Timing and scoring are entirely
--- server-authoritative — the client's countdown is cosmetic. `serve`
+-- server-authoritative: the client's countdown is cosmetic. `serve`
 -- stamps when a question was shown (idempotently, so a refresh can't
 -- reset the clock); `answer` measures elapsed against that stamp and
 -- clamps it to the limit, so a slow network or a timeout can never

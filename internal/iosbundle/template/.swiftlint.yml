@@ -1,6 +1,6 @@
 # SwiftLint config for the generated iOS app.
 #
-# The Swift code under Sources/ is the mar runtime ported to iOS — an
+# The Swift code under Sources/ is the mar runtime ported to iOS: an
 # interpreter that walks user-supplied Mar values, environments, and
 # expressions. Several of SwiftLint's defaults conflict with idioms
 # common to interpreters; this file relaxes those without weakening

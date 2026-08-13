@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-// TestSanitizeForLog_Patterns — pin each redaction pattern. Cases
+// TestSanitizeForLog_Patterns: pin each redaction pattern. Cases
 // are paired: each "before" goes through SanitizeForLog and the
 // result must (a) not contain the secret, and (b) contain
 // `<omitted>` somewhere.
@@ -54,7 +54,7 @@ func TestSanitizeForLog_Patterns(t *testing.T) {
 	}
 }
 
-// TestSanitizeForLog_PreservesContext — sanitization replaces only
+// TestSanitizeForLog_PreservesContext: sanitization replaces only
 // the sensitive value, leaving the surrounding key visible so the
 // log is still useful for debugging "what kind of thing was here".
 func TestSanitizeForLog_PreservesContext(t *testing.T) {
@@ -78,7 +78,7 @@ func TestSanitizeForLog_PreservesContext(t *testing.T) {
 	}
 }
 
-// TestSanitizeForLog_NoOpOnBenign — strings without anything
+// TestSanitizeForLog_NoOpOnBenign: strings without anything
 // sensitive pass through unchanged. Confirms we're not over-
 // scrubbing routine paths and error messages.
 func TestSanitizeForLog_NoOpOnBenign(t *testing.T) {
@@ -97,7 +97,7 @@ func TestSanitizeForLog_NoOpOnBenign(t *testing.T) {
 	}
 }
 
-// TestRequestLogger_SanitizesPathOnRecord — integration test. A
+// TestRequestLogger_SanitizesPathOnRecord: integration test. A
 // request log entry recorded with a sensitive Path (email in URL,
 // token in query) must come out of Snapshot with the secret
 // redacted. The Method/Status/UserEmail/etc. fields stay intact.
@@ -133,7 +133,7 @@ func TestRequestLogger_SanitizesPathOnRecord(t *testing.T) {
 	if got.Status != 200 {
 		t.Errorf("status changed: %d", got.Status)
 	}
-	// UserEmail is intentionally preserved — admins need to see
+	// UserEmail is intentionally preserved: admins need to see
 	// who made the request. SanitizeForLog must not touch it.
 	if got.UserEmail != "admin@op.com" {
 		t.Errorf("UserEmail should be preserved verbatim, got %q", got.UserEmail)

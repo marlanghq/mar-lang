@@ -33,7 +33,7 @@ func TestComputeFirstDelay(t *testing.T) {
 	mustTouch(t, filepath.Join(dir, NewCatalogID(tenMinAgo)+".tar.gz"))
 	got = computeFirstDelay(dir, interval, func() time.Time { return time.Now() })
 	want := 50 * time.Minute
-	// Allow ±2s slack — the catalog timestamp loses sub-second precision.
+	// Allow ±2s slack: the catalog timestamp loses sub-second precision.
 	if got < want-2*time.Second || got > want+2*time.Second {
 		t.Errorf("recent backup: got %v, want ~%v", got, want)
 	}
@@ -48,7 +48,7 @@ func TestComputeFirstDelay(t *testing.T) {
 	}
 }
 
-// TestScheduler_TicksAndPrunes — end-to-end with a fake snapshot
+// TestScheduler_TicksAndPrunes: end-to-end with a fake snapshot
 // function. Spins up the scheduler with a tiny interval (50ms) and
 // retention=2, fires a few cycles, then verifies the catalog has
 // exactly 2 entries.
@@ -61,7 +61,7 @@ func TestScheduler_TicksAndPrunes(t *testing.T) {
 		mu.Lock()
 		calls++
 		mu.Unlock()
-		// Write a tiny placeholder file — the scheduler doesn't
+		// Write a tiny placeholder file: the scheduler doesn't
 		// inspect its content.
 		f, err := os.Create(outPath)
 		if err != nil {
@@ -113,7 +113,7 @@ func TestScheduler_TicksAndPrunes(t *testing.T) {
 	}
 }
 
-// TestScheduler_StopsOnContextCancel — cancelling the parent
+// TestScheduler_StopsOnContextCancel: cancelling the parent
 // context terminates the goroutine cleanly.
 func TestScheduler_StopsOnContextCancel(t *testing.T) {
 	dir := t.TempDir()
@@ -143,7 +143,7 @@ func TestScheduler_StopsOnContextCancel(t *testing.T) {
 	}
 }
 
-// TestScheduler_SnapshotErrorDoesntKillLoop — a transient failure
+// TestScheduler_SnapshotErrorDoesntKillLoop: a transient failure
 // in the snapshot func is logged but the scheduler keeps running.
 func TestScheduler_SnapshotErrorDoesntKillLoop(t *testing.T) {
 	dir := t.TempDir()

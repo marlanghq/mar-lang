@@ -8,7 +8,7 @@ import (
 )
 
 // Page models die on forward navigation (ADR 0009). A shared store is the one
-// thing that does not, and these tests drive the real runtime to prove it —
+// thing that does not, and these tests drive the real runtime to prove it:
 // same fake browser as nav_lifecycle_test.go, same reason: the only honest
 // assertion is what the screen SHOWS, because that is the only thing a stale
 // or frozen model can lie about.
@@ -188,7 +188,7 @@ process.stdout.write(seen.join(' '));
 // Page.withShared a live read rather than a snapshot taken at mount: the
 // builder is re-applied with the new model before the view is rebuilt.
 //
-// Pressing `share` from page B is the sharper version of the same check — B's
+// Pressing `share` from page B is the sharper version of the same check: B's
 // button sends to the store, and B's text is only correct if B was rebuilt.
 func TestSharedChangeRepaintsTheCurrentPage(t *testing.T) {
 	got := runSharedDriver(t, sharedDriverPrelude+`

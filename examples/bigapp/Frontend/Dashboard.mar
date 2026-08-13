@@ -11,7 +11,7 @@ import UI exposing
     )
 
 
--- Dashboard — the landing page after sign-in. Pulls everything via
+-- Dashboard: the landing page after sign-in. Pulls everything via
 -- a single `Shared.loadDashboard` Service call to avoid a fetch
 -- waterfall on first paint. The page is a state machine over
 -- Loading / Loaded / Failed so the typechecker forces every branch

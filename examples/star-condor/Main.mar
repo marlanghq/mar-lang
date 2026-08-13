@@ -1,18 +1,18 @@
 module Main exposing (main)
 
 
--- STAR CONDOR — a vertical shoot-em-up in the spirit of the cute 16-bit
+-- STAR CONDOR: a vertical shoot-em-up in the spirit of the cute 16-bit
 -- arcade shooters (TwinBee-class): bright colors, chunky sprites, bell-like
 -- powerups, bosses with big silly silhouettes. Built with ZERO language
 -- changes on the Mar Canvas draw-list.
 --
 -- STORY (an optimistic Latin America, played straight): the nations of the
--- continent pooled their engineers into A.L.A.S. — the Alianza
+-- continent pooled their engineers into A.L.A.S.: the Alianza
 -- Latinoamericana del Espacio ("alas" = wings). When a swarm of derelict
 -- war-machines from a forgotten century wakes up over the continent's
 -- greatest places, A.L.A.S. launches its first defender: the CONDOR.
--- Ten stages sweep the map — the Amazon, Iguazu, the Pampas, Patagonia,
--- Atacama, Uyuni, Machu Picchu, Galapagos, Panama, Teotihuacan — each with
+-- Ten stages sweep the map: the Amazon, Iguazu, the Pampas, Patagonia,
+-- Atacama, Uyuni, Machu Picchu, Galapagos, Panama, Teotihuacan: each with
 -- its own parallax scenery, groove and boss. The ending does not blow the
 -- enemy up: A.L.A.S. rewires the old machine to watch the weather.
 --
@@ -20,17 +20,17 @@ module Main exposing (main)
 --   Keyboard: arrows / WASD move, SPACE fire (hold = autofire), M mute,
 --             ENTER pause.
 --   Gamepad:  stick or d-pad moves, A fires, Start pauses.
---   Touch:    drag anywhere to fly (the ship follows your finger) —
+--   Touch:    drag anywhere to fly (the ship follows your finger):
 --             autofire is always on while touching.
 --
 -- POWERUPS (kept simple: color = weapon, gold = stronger):
 --   GOLD star  = power +1 (up to 3)      BLUE star = BEAM  (fast, narrow)
 --   RED star   = SPREAD (wide fan)       GREEN star = WAVE (weaving pair)
 --   PINK heart = +1 hull ENERGY
---   Stars drop from the striped pinata drones — pop them!
+--   Stars drop from the striped pinata drones: pop them!
 --
 -- PACING: the ship flies on 5 cells of ENERGY. A hit costs one cell, the
--- ship keeps its position and blinks through a grace window — no snap-back.
+-- ship keeps its position and blinks through a grace window: no snap-back.
 -- Everything moves deliberately (slow orbs in numbers, dodge the weave);
 -- enemies arrive in SCRIPTED FORMATIONS (V / row / column / pincer / arc)
 -- from a fixed per-stage battle plan, plus scrolling stone BARRIERS with a
@@ -547,7 +547,7 @@ startGame m =
 
 
 -- reading screens hold the button for a beat first, so nothing skips
--- before it can be read — and nothing advances without a button press
+-- before it can be read, and nothing advances without a button press
 holdFor : Mode -> Int
 holdFor mode =
     case mode of
@@ -1462,7 +1462,7 @@ stepBoss m =
             }
 
 
--- direction table in 15-degree steps (cos * 1024) — fine enough for the
+-- direction table in 15-degree steps (cos * 1024): fine enough for the
 -- rings, loops and snakes the squadrons fly
 dirX : Int -> Int
 dirX a =
@@ -1928,7 +1928,7 @@ p2 a b =
 
 -- one beat of backing groove. The 32-beat cycle walks bars Am F Dm G, the
 -- kit BUILDS a layer every 32 beats (drums -> hats -> arp+ghosts -> open
--- hats), and every cycle ends on a snare fill — the track evolves instead
+-- hats), and every cycle ends on a snare fill: the track evolves instead
 -- of looping one bar. Boss: Am/E drive, double kick, no arp.
 grooveBeat : Int -> Sound
 grooveBeat key =
@@ -2249,7 +2249,7 @@ cueSound cue =
             Sound.volume 20 (Sound.duty 25 (Sound.tone Sound.Square (Sound.g 5) 60))
 
 
--- ===== pixel font (3x5 glyphs — the shared Mar canvas-game table) =====
+-- ===== pixel font (3x5 glyphs: the shared Mar canvas-game table) =====
 
 
 pixText : Int -> Int -> Int -> Color -> String -> List Shape
@@ -2500,7 +2500,7 @@ farLayer s th scroll =
             (List.range 0 3))
 
 
--- mid features: trees, floes, reeds, waves — per-stage shapes
+-- mid features: trees, floes, reeds, waves, per-stage shapes
 midLayer : Int -> Theme -> Int -> List Shape
 midLayer s th scroll =
     List.concat
@@ -2963,7 +2963,7 @@ partColor k =
 
 -- Sparks are LIGHT, so they go in an Add group: each one adds to the sky
 -- instead of covering it, and where several land on the same pixel the
--- channels saturate one at a time — the core of a burst goes orange, then
+-- channels saturate one at a time: the core of a burst goes orange, then
 -- gold, then white, without a single one of those colours being drawn. Over
 -- the dark sky it reads as heat. (No layer: Blend without Alpha is free.)
 partShapes : Model -> List Shape
@@ -3585,7 +3585,7 @@ bossFallShapes m =
         ]
 
 
--- the ship's death: a flash, an expanding fireball, debris — then quiet
+-- the ship's death: a flash, an expanding fireball, debris, then quiet
 dyingShapes : Model -> List Shape
 dyingShapes m =
     List.concat
@@ -3723,7 +3723,7 @@ subscriptions model =
         , Gamepad.watch PadChanged
         , Device.watch DeviceChanged
         -- the whole soundtrack is fired by the game loop (CBeat / CMel), so
-        -- it pauses with the game and never drifts — no Sound.loop here
+        -- it pauses with the game and never drifts: no Sound.loop here
         ]
 
 

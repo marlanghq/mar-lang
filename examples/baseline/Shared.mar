@@ -1,7 +1,7 @@
 module Shared exposing (..)
 
 
--- Baseline — a daily mood log that tells you what actually moves it.
+-- Baseline: a daily mood log that tells you what actually moves it.
 --
 -- The product is an experiment you run on yourself: log a mood and a
 -- handful of surroundings once a day, and after enough days the app
@@ -13,14 +13,14 @@ module Shared exposing (..)
 -- This module is the contract both halves agree on, and it carries
 -- more than usual: besides the shared types and the Service
 -- declarations, it owns the whole reporting engine. The backend is
--- deliberately thin — it stores rows and hands a window of them back.
+-- deliberately thin: it stores rows and hands a window of them back.
 -- Every number the app reports is computed by the pure functions
 -- below, on the client, from that window.
 --
 -- Putting the analysis here rather than behind an endpoint is a
 -- product decision as much as an architectural one: the reports are
 -- the reason the app exists, and being able to read exactly how each
--- one is derived — in the same file that declares the wire types — is
+-- one is derived, in the same file that declares the wire types, is
 -- what makes the claim "it never says more than the data supports"
 -- checkable instead of promised.
 
@@ -42,7 +42,7 @@ type alias User =
 --
 -- `dayKey` is a day normalized to midnight (see dayKeyOf) and stored
 -- as an Int. It is what the unique indexes match on, what the reports
--- join by, and — because every day is exactly `dayMillis` apart — what
+-- join by, and, because every day is exactly `dayMillis` apart, what
 -- makes "the day after" a plain addition.
 
 
@@ -82,7 +82,7 @@ type alias Tracked =
 
 
 -- The first day of a period, recorded as an event. The app never asks
--- which phase you are in — nobody lives their life in "luteal" — it
+-- which phase you are in, nobody lives their life in "luteal", it
 -- derives the phase from the most recent start.
 type alias CycleStart =
     { id     : Int
@@ -104,7 +104,7 @@ type alias CycleStart =
 --    for a typed number. Besides being faster, it is more honest:
 --    people remember their days in rough bands, not in measurements,
 --    so asking for a band asks for what they actually have. It also
---    means the reports never invent a cutoff — the bands people
+--    means the reports never invent a cutoff: the bands people
 --    answered in ARE the groups being compared.
 --
 -- 2. Option labels are short on purpose: they sit in a row of choices,
@@ -112,7 +112,7 @@ type alias CycleStart =
 --
 -- 3. Every scale that can not apply opens with the option that says
 --    so: "none", "off". That is what makes a skip button unnecessary,
---    and it is why there is not one — a second way to say "it did not
+--    and it is why there is not one: a second way to say "it did not
 --    happen" would split the same fact between an answer the reports
 --    count and a missing row they ignore.
 
@@ -161,7 +161,7 @@ catalogue =
     -- The one factor answered in a count rather than in words, because a
     -- count is what people actually have for this: nobody knows what
     -- "a lot of caffeine" means, everybody knows they had three coffees.
-    -- The question has to carry the unit, though — bare "1-2" under
+    -- The question has to carry the unit, though: bare "1-2" under
     -- "how much caffeine?" is a number with nothing attached to it.
     , { key = "caffeine"
       , name = "Caffeine"
@@ -265,7 +265,7 @@ extraFactors =
 --
 -- Setup shows this number rather than capping the list. An earlier
 -- version allowed three opt-in factors and no more, which was both
--- patronising and incoherent — the questions in the first group were
+-- patronising and incoherent: the questions in the first group were
 -- never capped, so somebody who drinks, smokes, works and takes
 -- medication already ended up with eight rows and nothing stopped
 -- them. The cost of one more factor is one more row every evening. It
@@ -344,7 +344,7 @@ moodLabel value =
 -- has learned it.
 --
 -- A first draft put all of them on one scrolling screen. It was eleven
--- questions stacked in a form, and a form reads as work — which is
+-- questions stacked in a form, and a form reads as work, which is
 -- fatal for a product whose only real failure mode is being abandoned
 -- in week three. One question per screen is also fewer actions, not
 -- more: a tap answers and advances, so there is nothing to scroll and
@@ -479,7 +479,7 @@ weekdayName d =
         Nothing   -> "?"
 
 
--- "Sunday 3 August" — the header on the entry screen.
+-- "Sunday 3 August": the header on the entry screen.
 longDate : Int -> String
 longDate key =
     let
@@ -502,7 +502,7 @@ shortDate key =
 
 -- How far back a day can still be filled in. Three days, because
 -- forgetting happens and a hole in the middle of the series hurts the
--- comparisons — and only three, because memory for mood past that is
+-- comparisons, and only three, because memory for mood past that is
 -- bad enough that a late entry is worse than no entry, and because
 -- being able to rewrite the past indefinitely turns a log into a
 -- story.

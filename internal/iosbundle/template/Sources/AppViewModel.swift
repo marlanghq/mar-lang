@@ -19,15 +19,15 @@
 //     mar.json's `ios.serverUrl`). Bonjour is compiled out.
 //   - DEBUG: same baked URL by default, but the Bonjour discovery
 //     loop overrides it when a `_mar._tcp` service appears on the
-//     LAN — typically `mar dev` running on the laptop. Two guards
+//     LAN: typically `mar dev` running on the laptop. Two guards
 //     keep the convenience from turning into a trap:
 //       * the service's mDNS instance name must equal this app's
 //         MarAppName (mar dev advertises its mar.json `name`), so
 //         another project's dev server on the same LAN is ignored
 //         instead of silently hijacking the backend;
-//       * every adoption is announced — a banner in the UI
+//       * every adoption is announced: a banner in the UI
 //         (devOverrideLabel, rendered by ContentView) and a console
-//         line — so "I could swear it was pointing at production"
+//         line, so "I could swear it was pointing at production"
 //         can't happen again.
 
 import Foundation
@@ -113,7 +113,7 @@ final class AppViewModel {
 
         #if DEBUG
         // Bonjour discovery is debug-only. App Store / TestFlight
-        // builds never browse the local network — that would be
+        // builds never browse the local network: that would be
         // both wasteful (cellular networks have no _mar._tcp peer)
         // and a privacy / spoofing concern (a hostile WiFi could
         // advertise a fake mar backend).
@@ -143,7 +143,7 @@ final class AppViewModel {
         print("[mar] ROUTE SMOKE \(pages.count) page(s)")
         for page in pages {
             // A Page.protected view takes the app's OWN user entity as its
-            // first argument, and that type is different in every app — there
+            // first argument, and that type is different in every app: there
             // is no generic User to hand it. Say so instead of rendering it
             // without one and reporting the resulting partial application as
             // a failure of the page.
@@ -179,7 +179,7 @@ final class AppViewModel {
             print("[mar] ROUTE \(url) -> \(view.tag) titled \"\(title)\"")
             // Everything this screen puts in front of a person, as a set. The
             // web runtime can be asked the same question about the same
-            // program, and the two answers have to agree — that comparison is
+            // program, and the two answers have to agree: that comparison is
             // what "equivalent", rather than "it also rendered", means.
             print("[mar] TEXT \(url) \(AppViewModel.visibleText(view))")
             // One interaction, so the check covers responding and not just
@@ -189,7 +189,7 @@ final class AppViewModel {
             // A canvas screen puts no words on screen, so the line above says
             // the same empty thing on both platforms and "matches" by having
             // nothing to say. What it DOES produce is a draw list, built by
-            // the same Mar code from the same model — so print that too.
+            // the same Mar code from the same model, so print that too.
             if let shapes = AppViewModel.drawList(view) {
                 print("[mar] SHAPES \(url) \(shapes)")
             }
@@ -216,7 +216,7 @@ final class AppViewModel {
     /// Canonical, not pretty: the web half prints the same shape list the same
     /// way, and the two strings are compared character for character. Which is
     /// why this dumps everything it is given instead of deciding what matters
-    /// — "what matters" is a judgement, and two judgements drift. There is no
+    ///: "what matters" is a judgement, and two judgements drift. There is no
     /// judgement here, only structure.
     private static func drawList(_ view: MarView) -> String? {
         if view.tag == "canvas",
@@ -238,7 +238,7 @@ final class AppViewModel {
     /// to a program: a colour is one constructor with three or four arguments
     /// here and two constructors on the web, and the canvas text shape is
     /// registered under a different name on each side. Both are internal
-    /// bookkeeping — a Mar program cannot pattern-match a Shape — so they are
+    /// bookkeeping, a Mar program cannot pattern-match a Shape, so they are
     /// folded together HERE rather than silently, and the same folding is
     /// spelled out in the web driver.
     ///
@@ -288,7 +288,7 @@ final class AppViewModel {
     /// step left on screen. Off unless MAR_NAV_LIFECYCLE names a script.
     ///
     /// This is the iOS half of the navigation-lifecycle check that
-    /// internal/jsserve/nav_lifecycle_test.go runs against runtime.js — same
+    /// internal/jsserve/nav_lifecycle_test.go runs against runtime.js: same
     /// program (navfixture.Source), same steps, same expected strings. Until
     /// it existed, ADR-0009 was verified on the web by a test and on iOS by a
     /// person clicking, which is not a thing you can put in a suite.
@@ -302,8 +302,8 @@ final class AppViewModel {
     /// SwiftUI would be testing the stand-in.
     ///
     /// So the driver only pokes and reads: it moves the app through
-    /// AppContext — the same calls Nav.push, Nav.replace and a Back gesture
-    /// make — waits for SwiftUI to settle, and reports what the mounted pages
+    /// AppContext: the same calls Nav.push, Nav.replace and a Back gesture
+    /// make: waits for SwiftUI to settle, and reports what the mounted pages
     /// are showing.
     /// The app reloads its program in the background right after cold start,
     /// and the driver must not run twice against the same launch.
@@ -316,7 +316,7 @@ final class AppViewModel {
         // SwiftUI rebuilds on the run loop, so every step has to hand control
         // back before the next read. This is a wait, not a poll, because the
         // thing being waited on (mount/unmount having run) is exactly what is
-        // under test — polling until it looked right would hide a page that
+        // under test: polling until it looked right would hide a page that
         // mounts late.
         func settle() async {
             try? await Task.sleep(nanoseconds: 300_000_000)
@@ -326,7 +326,7 @@ final class AppViewModel {
         // renderer would. "-" means nothing is there, which is a real answer:
         // it is what a dismissed sheet should report.
         // The fixture's page labels. Named once so adding a page to the
-        // fixture cannot silently start reporting "?" for it — which is how
+        // fixture cannot silently start reporting "?" for it, which is how
         // the nested-sheet case first read as a runtime bug.
         let parity: Set<Character> = ["A", "B", "S", "N"]
         func counter(_ runtime: PageRuntime?) -> String {
@@ -345,15 +345,15 @@ final class AppViewModel {
         // that path.
         //
         // Not "the last thing that mounted", which is the obvious reading and
-        // is wrong. A pop destroys the pushed host, but `onDisappear` — and so
-        // `unmount` — lands only after the pop animation finishes, so for a
+        // is wrong. A pop destroys the pushed host, but `onDisappear`, and so
+        // `unmount`: lands only after the pop animation finishes, so for a
         // few hundred milliseconds the page being dismissed is still the most
         // recently mounted one. Reading it made Back look like it had shown
         // the wrong screen when the app was doing the right thing.
         //
         // Asking by route removes the race instead of sleeping past it: the
         // answer is a function of navPath, which moves synchronously. It keeps
-        // every failure the naive version could catch — a Back that re-inits
+        // every failure the naive version could catch: a Back that re-inits
         // finds a NEW runtime at that path (counter 0), and a push that reused
         // a model finds the OLD one (counter still 2).
         //
@@ -367,7 +367,7 @@ final class AppViewModel {
         // A pushed stack keeps the screen underneath mounted too, so "more
         // than one page is alive" does NOT mean one is presented.
         //
-        // And the route table cannot answer it either — asking it whether the
+        // And the route table cannot answer it either: asking it whether the
         // top path is a sheet route only says what the shell was SUPPOSED to
         // do. A shell that resolved the route correctly and then pushed it
         // would pass that check while showing the wrong thing (found by
@@ -380,7 +380,7 @@ final class AppViewModel {
 
         func topRuntime() -> PageRuntime? { live(ctx.navPath.last) }
 
-        // One tap on whatever the screen offers first — the same thing the
+        // One tap on whatever the screen offers first: the same thing the
         // web driver does by clicking the button it finds by label.
         func bump() {
             guard let runtime = topRuntime(), let view = runtime.currentView(),
@@ -481,9 +481,9 @@ final class AppViewModel {
         // Attributes carry three different kinds of thing, and only two of
         // them are on screen:
         //
-        //   views  (a toolbar's leading/trailing items) — recurse
-        //   lists  (a picker's `options`)               — recurse
-        //   plain strings — ONLY the few that render as text
+        //   views  (a toolbar's leading/trailing items): recurse
+        //   lists  (a picker's `options`)               - recurse
+        //   plain strings: ONLY the few that render as text
         //
         // Both halves of this had to be learned from a failed run. Reading
         // just a whitelist of names missed pickers and toolbars; reading
@@ -501,7 +501,7 @@ final class AppViewModel {
         }
         func walk(_ v: MarView) {
             add(v.text)
-            // A picker shows `toLabel option`, never the option itself — the
+            // A picker shows `toLabel option`, never the option itself: the
             // options can be Ints or custom-type ctors with no text in them at
             // all. Reading the raw list found nothing on screens where the web
             // (which renders the label into each <option>) found nineteen
@@ -527,13 +527,13 @@ final class AppViewModel {
     /// Buttons specifically, not "anything tappable", because the web half of
     /// this comparison has to pick the same thing and a DOM node cannot say
     /// whether a tap sends a message or follows a link. Both sides say "the
-    /// first button" — a definition that means the same on each — so a
+    /// first button", a definition that means the same on each, so a
     /// difference in the result is a difference in the runtimes.
     private static func firstMessage(_ view: MarView) -> MarValue? {
         // A disabled button is skipped, because the web half cannot press one
         // either: there the click lands on a disabled DOM node and does
         // nothing. Dispatching its msg here goes around the UI entirely and
-        // reports a difference — the showcase's "tap is ignored" demo counted
+        // reports a difference: the showcase's "tap is ignored" demo counted
         // up on iOS and stayed put on the web for exactly this reason.
         let disabled = view.attrs.contains { attr in
             guard attr.name == "disabled" else { return false }
@@ -557,7 +557,7 @@ final class AppViewModel {
 
     /// Reads the embedded program.json from Bundle.main if present.
     /// Returns nil when scaffolds without Resources/program.json are
-    /// running (older builds or corrupt installs) — callers must
+    /// running (older builds or corrupt installs): callers must
     /// gracefully fall through to the network path.
     private static func loadEmbeddedProgram() -> Data? {
         guard let url = Bundle.main.url(forResource: "program", withExtension: "json") else {
@@ -599,7 +599,7 @@ final class AppViewModel {
     #if DEBUG
     /// The baked Info.plist `MarAppName`: the raw mar.json `name`,
     /// which is exactly what `mar dev` advertises as its mDNS instance
-    /// name. Empty on scaffolds generated before the key existed —
+    /// name. Empty on scaffolds generated before the key existed:
     /// those keep the historical accept-any behavior.
     private static func bakedAppName() -> String {
         (Bundle.main.object(forInfoDictionaryKey: "MarAppName") as? String) ?? ""
@@ -646,7 +646,7 @@ final class AppViewModel {
     func loadAll() async {
         // If we already have a program loaded (typically from the
         // embedded snapshot, but also from a previous successful
-        // fetch), this fetch is a *refresh* — don't flash the
+        // fetch), this fetch is a *refresh*: don't flash the
         // loading screen. Failure stays silent: keep showing what we
         // already have rather than wiping it for an offline user.
         let hadProgram = !pages.isEmpty
@@ -659,7 +659,7 @@ final class AppViewModel {
             // THE AST IS DATA; THE BUILTINS IT NAMES ARE NOT.
             //
             // Over-the-air update means the program travels and the
-            // Swift runtime does not — it is compiled into this binary
+            // Swift runtime does not: it is compiled into this binary
             // and can only change through the App Store. So a program
             // built by a different mar can name a builtin this app has
             // never heard of, and the failure would land far from here:
@@ -668,9 +668,9 @@ final class AppViewModel {
             // failure with nothing actionable in it.
             //
             // Refusing up front turns that into one honest sentence.
-            // The app keeps running the program it already has — the
+            // The app keeps running the program it already has: the
             // embedded snapshot from the .ipa, or whatever it fetched
-            // before — which is by construction a program this binary
+            // before, which is by construction a program this binary
             // CAN run.
             //
             // Deliberately an exact-match check rather than semver
@@ -718,13 +718,13 @@ final class AppViewModel {
     /// Decode + execute the user's mar program. Side-effect: fills
     /// `pages` with whatever `main` captured via App.frontend /
     /// App.fullstack. Synchronous because the body is all CPU work
-    /// (decode + interpreter eval) — the async wrapper is kept on
+    /// (decode + interpreter eval): the async wrapper is kept on
     /// the public loadAll caller for the network fetch.
     ///
     /// Cheap to call repeatedly: when `data` matches the bytes from
     /// the last successful load, we no-op entirely. This matters
     /// because the cold-start flow loads the embedded snapshot AND
-    /// fires a background fetch of /_mar/program.json — the two are
+    /// fires a background fetch of /_mar/program.json: the two are
     /// usually identical, and re-running main on identical bytes
     /// would needlessly tear down the user's navigation / auth
     /// state (currentPath, currentUser, etc. in AppContext).
@@ -735,14 +735,14 @@ final class AppViewModel {
         let program = try MarJSONCodec.decodeProgram(data)
         // First load (no pages yet) gets a clean slate so we don't
         // inherit stale state from a corrupted previous attempt.
-        // Subsequent loads preserve navigation + auth state — losing
+        // Subsequent loads preserve navigation + auth state: losing
         // them on every background refresh would bounce a
         // mid-session user back to the sign-in screen.
         let isInitialLoad = AppContext.shared.pages.isEmpty
         if isInitialLoad {
             AppContext.shared.reset()
         }
-        // Auth metadata from the server-resolved Auth.config — the
+        // Auth metadata from the server-resolved Auth.config: the
         // mobile bundle doesn't include Main.mar, so the JS+Swift
         // runtimes can't run `auth = Auth.config { ... }` themselves.
         if !program.authSignInPath.isEmpty {
@@ -754,7 +754,7 @@ final class AppViewModel {
         // `shared:1` for the same def: the pages decoded from the new program
         // bind to a fresh empty store while the screen already on the stack
         // still reads the old one, and the two silently disagree. The MODELS
-        // are preserved across the reload — a refresh should no more empty the
+        // are preserved across the reload: a refresh should no more empty the
         // cart than a `mar dev` save should.
         MarSharedRegistry.beginProgramLoad()
         let env = MarBuiltins.makeEnv()
@@ -762,7 +762,7 @@ final class AppViewModel {
             try MarLoader.load(module: module, into: env)
         }
 
-        // Resolve the entry — typically `main`. The Go side stamps
+        // Resolve the entry: typically `main`. The Go side stamps
         // entry as "main" or the synthetic "__entry" depending on
         // load path. Try both.
         let entry: MarValue
@@ -777,7 +777,7 @@ final class AppViewModel {
         guard case .effect(let eff) = entry else {
             throw MarRuntimeError.message("entry is not an Effect")
         }
-        // Run main — captures pages into AppContext.shared.
+        // Run main: captures pages into AppContext.shared.
         _ = try eff.run()
 
         let decoded = AppContext.shared.decodedPages()
@@ -789,7 +789,7 @@ final class AppViewModel {
         self.pages = decoded
         // Seed the navigation stack only on the initial load. On a
         // refresh (program changed but user was already navigating),
-        // keep wherever they are — but if the user's current top-of-
+        // keep wherever they are, but if the user's current top-of-
         // stack no longer exists in the new program, reset to a
         // sensible root so the renderer doesn't blank out on a
         // missing match.

@@ -9,7 +9,7 @@ import UI exposing ( navigationStack, navigationTitle
 
 -- Start a duel: pick a rival (from the roster of other players) and a
 -- theme, then fire createChallenge. On success we replace straight
--- into the quiz runner — the challenger always answers first.
+-- into the quiz runner: the challenger always answers first.
 
 
 type alias Model =

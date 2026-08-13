@@ -13,7 +13,7 @@ import UI exposing
 
 -- Code-entry half of the sign-in flow, mounted at the dynamic path
 -- /sign-in/verify/{email:String}. The email rides in the URL, so
--- there's no cross-page state to thread — the address is decoded into
+-- there's no cross-page state to thread: the address is decoded into
 -- a typed params record for us.
 
 

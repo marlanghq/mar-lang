@@ -11,7 +11,7 @@ import Foundation
 enum MarBuiltins {
 
     // makeEnv defines every runtime builtin in one place, organized
-    // by section markers. The length is intentional — this is the
+    // by section markers. The length is intentional: this is the
     // dispatch table for the language; splitting it would scatter
     // related entries.
     // swiftlint:disable:next function_body_length
@@ -21,7 +21,7 @@ enum MarBuiltins {
         // MARK: Booleans / Maybe / Result / Order
         //
         // Order (LT/EQ/GT) is the three-way comparison result returned
-        // by List.sortWith comparators. Same convention as Elm — using
+        // by List.sortWith comparators. Same convention as Elm: using
         // a named sum type beats raw -1/0/1 Ints because the call site
         // reads as "compareName a b -> LT" instead of "-> -1".
         env.define("True",  .bool(true))
@@ -34,7 +34,7 @@ enum MarBuiltins {
         env.define("EQ",    .ctor(tag: "EQ", args: [], origin: nil))
         env.define("GT",    .ctor(tag: "GT", args: [], origin: nil))
 
-        // HTTP Method constructors — the verbs passed to Service.declare.
+        // HTTP Method constructors: the verbs passed to Service.declare.
         // Bare nullary ctors like LT/EQ/GT; Service.declare reads the tag
         // off the chosen one to record the contract's verb. Mirrors the
         // Go runtime (Method ctors) and JS (`def('GET', VCtor('GET'))`).
@@ -44,7 +44,7 @@ enum MarBuiltins {
         env.define("PATCH",  .ctor(tag: "PATCH",  args: [], origin: nil))
         env.define("DELETE", .ctor(tag: "DELETE", args: [], origin: nil))
 
-        // Service.Error constructors — the transport failure a Service.call
+        // Service.Error constructors: the transport failure a Service.call
         // delivers in its Err. MarHTTP builds these directly. The
         // Service.Error and Auth outcome constructors themselves come from
         // the generated registry (MarBuiltinCtors.swift). Keep the
@@ -64,7 +64,7 @@ enum MarBuiltins {
         env.define("serviceErrorToString", .fn(serviceErrorToString))
         env.define("Service.errorToString", .fn(serviceErrorToString))
 
-        // MARK: Arithmetic — `+ - *` close over both Int and Decimal
+        // MARK: Arithmetic, `+ - *` close over both Int and Decimal
         // (the typechecker's `number` constraint guarantees the
         // operands agree); matches runtime.js and the Go runtime.
         env.define("+", .fn(MarFn.native(2) { args in
@@ -85,12 +85,12 @@ enum MarBuiltins {
             }
             return .int(try MarInt.mul(asInt(args[0]), asInt(args[1])))
         }))
-        // `//` — truncating Int division, total: /0 yields 0 on every runtime.
+        // `//`, truncating Int division, total: /0 yields 0 on every runtime.
         env.define("//", .fn(MarFn.native(2) { args in
             let b = asInt(args[1])
             return .int(b == 0 ? 0 : asInt(args[0]) / b)
         }))
-        // `/` — Decimal-only; produces the inert exact quotient,
+        // `/`: Decimal-only; produces the inert exact quotient,
         // resolved only by Decimal.rounded / exact / withRemainder.
         env.define("/", .fn(MarFn.native(2) { args in
             guard case .decimal(let a) = args[0], case .decimal(let b) = args[1] else {
@@ -107,18 +107,18 @@ enum MarBuiltins {
         env.define("<=", .fn(MarFn.native(2) { args in .bool(args[0].compareMar(args[1]) <= 0) }))
         env.define(">=", .fn(MarFn.native(2) { args in .bool(args[0].compareMar(args[1]) >= 0) }))
 
-        // always : a -> b -> a — Elm's Basics.always (constant function).
+        // always : a -> b -> a, Elm's Basics.always (constant function).
         env.define("always", .fn(MarFn.native(2) { args in args[0] }))
 
         // MARK: Logic
         env.define("&&", .fn(MarFn.native(2) { args in .bool(asBool(args[0]) && asBool(args[1])) }))
         env.define("||", .fn(MarFn.native(2) { args in .bool(asBool(args[0]) || asBool(args[1])) }))
-        // not : Bool -> Bool — Elm's Basics.not. Mar has no prefix operator,
+        // not : Bool -> Bool, Elm's Basics.not. Mar has no prefix operator,
         // so negation is an ordinary function.
         env.define("not", .fn(MarFn.native(1) { args in .bool(!asBool(args[0])) }))
 
         // The numeric kit, bare and Elm-named. max/min/clamp go through
-        // compareMar — the same ordering `<` uses — so Comparable is one
+        // compareMar, the same ordering `<` uses, so Comparable is one
         // definition of order across Int, Decimal, String and Char.
         env.define("max", .fn(MarFn.native(2) { args in
             args[0].compareMar(args[1]) >= 0 ? args[0] : args[1]
@@ -177,7 +177,7 @@ enum MarBuiltins {
         env.define("|>", .fn(MarFn.native(2) { args in try Eval.apply(args[1], args[0]) }))
         env.define("<|", .fn(MarFn.native(2) { args in try Eval.apply(args[0], args[1]) }))
 
-        // MARK: Decimal stdlib — semantics match internal/runtime/
+        // MARK: Decimal stdlib, semantics match internal/runtime/
         // decimal.go and runtime.js exactly (conformance vectors in
         // decimal_test.go are the contract).
         func asDec(_ v: MarValue, _ op: String) throws -> MarDec {
@@ -291,7 +291,7 @@ enum MarBuiltins {
         env.define("decimalToString", .fn(decimalToString))
         env.define("Decimal.toString", .fn(decimalToString))
 
-        // Division resolvers — the ONLY exits from Decimal.Division,
+        // Division resolvers: the ONLY exits from Decimal.Division,
         // and the only places rounding can happen.
         let decimalRounded = MarFn.native(3) { args in
             let mode = try DecMath.roundingTag(args[0])
@@ -342,7 +342,7 @@ enum MarBuiltins {
         env.define("String.length", .fn(stringLength))
 
         // String.contains : String -> String -> Bool
-        // First arg is the needle, second is the haystack —
+        // First arg is the needle, second is the haystack:
         // pipe-friendly: `haystack |> String.contains "foo"`.
         let stringContains = MarFn.native(2) { args in
             guard case .string(let needle) = args[0],
@@ -394,7 +394,7 @@ enum MarBuiltins {
             }
             let parts: [String]
             if sep.isEmpty {
-                // Mirror strings.Split(s, "") — emit one element per
+                // Mirror strings.Split(s, ""): emit one element per
                 // Unicode scalar so behaviour matches across runtimes.
                 parts = s.map { String($0) }
             } else {
@@ -446,7 +446,7 @@ enum MarBuiltins {
         env.define("stringEndsWith",  .fn(stringEndsWith))
         env.define("String.endsWith", .fn(stringEndsWith))
 
-        // String.toInt : Maybe-returning parser — Nothing on any parse
+        // String.toInt : Maybe-returning parser, Nothing on any parse
         // failure (empty / non-digit / overflow).
         let stringToInt = MarFn.native(1) { args in
             guard case .string(let s) = args[0] else {
@@ -455,7 +455,7 @@ enum MarBuiltins {
             // A number too big to BE an Int is a parse failure like any other,
             // not an error: the type already says this text might not be a
             // number. Missing this check is what the conformance corpus caught
-            // — the arithmetic was bounded and this was not.
+            //: the arithmetic was bounded and this was not.
             if let n = Int(s.trimmingCharacters(in: .whitespacesAndNewlines)), MarInt.inRange(n) {
                 return .ctor(tag: "Just", args: [.int(n)], origin: nil)
             }
@@ -487,7 +487,7 @@ enum MarBuiltins {
         env.define("stringRepeat",  .fn(stringRepeat))
         env.define("String.repeat", .fn(stringRepeat))
 
-        // String.padLeft / padRight — pad with a Char (Elm-style).
+        // String.padLeft / padRight: pad with a Char (Elm-style).
         // Stays in sync with the Go/JS sides where `pad` is a single
         // code point repeated to fill.
         func padString(_ s: String, _ width: Int, _ pad: Unicode.Scalar, _ left: Bool) -> String {
@@ -519,7 +519,7 @@ enum MarBuiltins {
         env.define("stringPadRight",  .fn(stringPadRight))
         env.define("String.padRight", .fn(stringPadRight))
 
-        // String.indexes : needle -> s -> List Int — non-overlapping
+        // String.indexes : needle -> s -> List Int, non-overlapping
         // byte offsets of every occurrence. Matches Elm + the Go/JS
         // runtimes.
         let stringIndexes = MarFn.native(2) { args in
@@ -592,7 +592,7 @@ enum MarBuiltins {
         env.define("List.filter", .fn(listFilter))
 
         // MARK: List.reverse
-        // Returns a new reversed list — does not mutate the source.
+        // Returns a new reversed list, does not mutate the source.
         let listReverse = MarFn.native(1) { args in
             guard case .list(let xs) = args[0] else {
                 throw MarRuntimeError.typeMismatch(expected: "List", got: Eval.typeOf(args[0]))
@@ -619,7 +619,7 @@ enum MarBuiltins {
         env.define("listFoldl",  .fn(listFoldl))
         env.define("List.foldl", .fn(listFoldl))
 
-        // List.range : Int -> Int -> List Int — inclusive of both
+        // List.range : Int -> Int -> List Int, inclusive of both
         // endpoints; empty list when from > to (matches the Go runtime).
         let listRange = MarFn.native(2) { args in
             guard case .int(let from) = args[0],
@@ -715,7 +715,7 @@ enum MarBuiltins {
         env.define("listDrop",  .fn(listDrop))
         env.define("List.drop", .fn(listDrop))
 
-        // MARK: List.move — pure splice (from → to). Mirrors the Go
+        // MARK: List.move, pure splice (from → to). Mirrors the Go
         // and JS impls: no-op on from == to or out-of-bounds indices
         // so stale Msgs (race between client and server where the
         // list shrunk) don't corrupt the data.
@@ -733,7 +733,7 @@ enum MarBuiltins {
         env.define("listMove",  .fn(listMove))
         env.define("List.move", .fn(listMove))
 
-        // MARK: List.member — structural equality.
+        // MARK: List.member, structural equality.
         let listMember = MarFn.native(2) { args in
             guard case .list(let xs) = args[1] else {
                 throw MarRuntimeError.typeMismatch(expected: "List", got: Eval.typeOf(args[1]))
@@ -744,7 +744,7 @@ enum MarBuiltins {
         env.define("listMember",  .fn(listMember))
         env.define("List.member", .fn(listMember))
 
-        // MARK: List.any / List.all — short-circuit.
+        // MARK: List.any / List.all, short-circuit.
         let listAny = MarFn.native(2) { args in
             guard case .list(let xs) = args[1] else {
                 throw MarRuntimeError.typeMismatch(expected: "List", got: Eval.typeOf(args[1]))
@@ -1145,7 +1145,7 @@ enum MarBuiltins {
         env.define("maybeFilter",  .fn(maybeFilter))
         env.define("Maybe.filter", .fn(maybeFilter))
 
-        // MARK: Tuple — 2-tuple helpers.
+        // MARK: Tuple, 2-tuple helpers.
         let tupleFirst = MarFn.native(1) { args in
             guard case .tuple(let xs) = args[0], xs.count >= 2 else {
                 throw MarRuntimeError.typeMismatch(expected: "2-tuple", got: Eval.typeOf(args[0]))
@@ -1246,7 +1246,7 @@ enum MarBuiltins {
         // runtimes are compared.
         //
         // `App.shared` stamps a positional key onto the value it returns
-        // because MarValue is an enum and has no object identity — the web
+        // because MarValue is an enum and has no object identity: the web
         // keys its stores by the identity of the def value itself.
         let appShared = MarFn.native(1) { args in
             guard case .record(let fs, _) = args[0] else {
@@ -1263,7 +1263,7 @@ enum MarBuiltins {
         env.define("appShared", .fn(appShared))
         env.define("App.shared", .fn(appShared))
 
-        // Page.withShared def builder — the page is a FUNCTION of the shared
+        // Page.withShared def builder: the page is a FUNCTION of the shared
         // model, so the wrapper carries the builder unapplied. decodedPages()
         // resolves it, and MarPageRuntime re-resolves it on every read.
         let pageWithShared = MarFn.native(2) { args in
@@ -1276,7 +1276,7 @@ enum MarBuiltins {
         env.define("pageWithShared", .fn(pageWithShared))
         env.define("Page.withShared", .fn(pageWithShared))
 
-        // Cmd.toShared def msg — an effect that lands in the store's update
+        // Cmd.toShared def msg: an effect that lands in the store's update
         // rather than the page's. It returns unit: a shared message has no
         // reply, which is what keeps the two update loops from interleaving.
         let cmdToShared = MarFn.native(2) { args in
@@ -1301,7 +1301,7 @@ enum MarBuiltins {
         // from `__Page`) so AppContext can detect protected pages,
         // gate them on Auth.me, and thread the User into
         // init/update/view as the first argument. The redirect
-        // destination is centralized in Auth.config.signInPage —
+        // destination is centralized in Auth.config.signInPage:
         // the renderer reads it from AppContext at render time.
         let pageProtected = MarFn.native(1) { args in
             guard case .record(let fs, _) = args[0] else {
@@ -1322,7 +1322,7 @@ enum MarBuiltins {
 
         // MARK: Page.adminProtected (web-only)
         //
-        // The built-in admin panel is a web-target tool — there is no iOS
+        // The built-in admin panel is a web-target tool: there is no iOS
         // admin app. We register the name so the builtin-coverage drift test
         // passes, but it errors if ever invoked on iOS.
         let pageAdminProtected = MarFn.native(1) { _ in
@@ -1342,7 +1342,7 @@ enum MarBuiltins {
         // Presentation, not a fifth page kind: takes a page built by any
         // of the constructors here and marks it as PRESENTED over the
         // screen it was reached from rather than pushed onto the stack.
-        // The route is unchanged — same path, same navPath entry — so
+        // The route is unchanged, same path, same navPath entry, so
         // only ContentView's StackShell reads this, to hand the top entry
         // to `.sheet` instead of `.navigationDestination`.
         //
@@ -1365,7 +1365,7 @@ enum MarBuiltins {
         env.define("pageSheet",  .fn(pageSheet))
         env.define("Page.sheet", .fn(pageSheet))
 
-        // Mar.Admin.* — privileged server-introspection for the web admin
+        // Mar.Admin.*: privileged server-introspection for the web admin
         // panel. No iOS admin app, so these are web-only: registered (each
         // name spelled literally for the builtin-coverage drift test) but they
         // error if ever invoked on iOS.
@@ -1397,7 +1397,7 @@ enum MarBuiltins {
         // so AppContext can match URLs against the pattern at
         // navigation time and thread a Params record through
         // init/update/view as the leading argument. Same record shape
-        // as Page.create — only the ctor tag differs.
+        // as Page.create: only the ctor tag differs.
         let pageDynamic = MarFn.native(1) { args in
             guard case .record(let fs, _) = args[0] else {
                 throw MarRuntimeError.typeMismatch(expected: "record", got: Eval.typeOf(args[0]))
@@ -1467,7 +1467,7 @@ enum MarBuiltins {
 
         // MARK: Nav.dismiss
         //
-        // Closes a presented route (Page.sheet) — the verb a sheet's own
+        // Closes a presented route (Page.sheet): the verb a sheet's own
         // Cancel / Done needs, matching the swipe-down the system already
         // gives. With a pushed route on top it pops that instead, and at
         // the app's first screen it does nothing. A VALUE, not a function.
@@ -1478,7 +1478,7 @@ enum MarBuiltins {
         env.define("navDismiss",  navDismiss)
         env.define("Nav.dismiss", navDismiss)
 
-        // Auth.completeSignIn : Effect e msg
+        // Auth.completeSignIn : Cmd msg
         // Drains the framework-managed `pendingReturnPath` set when a
         // 401 redirected the user to sign-in; navigates there. Falls
         // back to "/" when no return target was captured (user landed
@@ -1510,14 +1510,14 @@ enum MarBuiltins {
         // MARK: linkTo / Nav.pushTo / Nav.replaceTo
         //
         // Type-safe navigation built on top of `Path r`. The user
-        // passes a Path (a String at runtime — the typechecker
+        // passes a Path (a String at runtime: the typechecker
         // enforces the surface contract) plus the params record;
         // MarPath parses the pattern, validates the record's shape,
         // and renders the URL.
         //
         // linkTo is pure (returns the URL string); Nav.pushTo and
         // Nav.replaceTo wrap the result in an Effect that drives
-        // AppContext.navigate(path:replace:) — same hook used by
+        // AppContext.navigate(path:replace:), same hook used by
         // the older Nav.push / Nav.replace.
         let linkTo = MarFn.native(2) { args in
             guard case .string(let src) = args[0] else {
@@ -1599,14 +1599,14 @@ enum MarBuiltins {
         env.define("appFullstack",  .fn(appFullstack))
         env.define("App.fullstack", .fn(appFullstack))
 
-        // MARK: Effect.* — sync helpers
+        // MARK: Effect.*, sync helpers
         let effectSucceed = MarFn.native(1) { args in
             .effect(MarEffect(tag: "pure") { args[0] })
         }
         env.define("effectSucceed",  .fn(effectSucceed))
         env.define("Task.succeed", .fn(effectSucceed))
 
-        // Effect.fail : e -> Effect e a — throws when run, carrying
+        // Task.fail : e -> Task a, throws when run, carrying
         // the user-supplied error value. Mirror of the Go runtime's
         // effectError; if the failure isn't caught upstream, it
         // surfaces as a dispatcher-level error.
@@ -1628,8 +1628,8 @@ enum MarBuiltins {
         env.define("effectFail",  .fn(effectFail))
         env.define("Task.fail", .fn(effectFail))
 
-        // Effect.forEach : (a -> Effect e ()) -> List a -> Effect e ()
-        // Sequential — each effect runs in order, halting on the first
+        // Task.forEach : (a -> Task ()) -> List a -> Task ()
+        // Sequential: each effect runs in order, halting on the first
         // error. Returns unit on success.
         let effectForEach = MarFn.native(2) { args in
             let fn = args[0]
@@ -1650,7 +1650,7 @@ enum MarBuiltins {
         env.define("effectForEach",  .fn(effectForEach))
         env.define("Task.forEach", .fn(effectForEach))
 
-        // Effect.sequence : List (Effect e a) -> Effect e (List a)
+        // Task.sequence : List (Task a) -> Task (List a)
         // Runs each effect, collecting the results into a list.
         let effectSequence = MarFn.native(1) { args in
             guard case .list(let xs) = args[0] else {
@@ -1671,7 +1671,7 @@ enum MarBuiltins {
         env.define("effectSequence",  .fn(effectSequence))
         env.define("Task.sequence", .fn(effectSequence))
 
-        // Effect.batch : List (Effect e msg) -> Effect e msg
+        // Cmd.batch : List (Cmd msg) -> Cmd msg
         // Fire-and-forget fan-out (the Cmd.batch of Mar). Each child's
         // run() starts its own work and delivers through its own toMsg
         // (Service.call effects dispatch via MarDispatcher when their
@@ -1727,7 +1727,7 @@ enum MarBuiltins {
         env.define("effectNone",  .effect(MarEffect(tag: "none") { .unit }))
         env.define("Cmd.none", .effect(MarEffect(tag: "none") { .unit }))
 
-        // Sub.none / Sub.batch — the frontend subscription monoid. A Sub is a
+        // Sub.none / Sub.batch: the frontend subscription monoid. A Sub is a
         // declarative value (a "__Sub" ctor carrying its items); the page
         // runtime's reconcileSubs reads it (see MarPageRuntime).
         env.define("subNone",  .ctor(tag: "__Sub", args: [], origin: nil))
@@ -1747,13 +1747,13 @@ enum MarBuiltins {
         env.define("subBatch",  .fn(subBatch))
         env.define("Sub.batch", .fn(subBatch))
 
-        // Random — PURE, seedable core. A Generator a is Seed -> (a, Seed):
+        // Random, PURE, seedable core. A Generator a is Seed -> (a, Seed):
         // MarFn.native(1) taking a Seed, returning .tuple([value, nextSeed]).
         // PCG-XSH-RR (UInt64 state) mirrors internal/runtime/random.go
-        // bit-for-bit — the golden vectors in random_test.go are the contract.
+        // bit-for-bit: the golden vectors in random_test.go are the contract.
         // A Seed rides in a .tuple of two 32-bit halves, opaque at the type
         // level, so no new MarValue case is needed. NOTE: not compiled in CI
-        // (no xcode) — verify on a real iOS build.
+        // (no xcode): verify on a real iOS build.
         let PCG_MUL: UInt64 = 6364136223846793005
         let PCG_INC: UInt64 = 1442695040888963407
         func pcgStep(_ state: UInt64) -> (UInt64, UInt32) {
@@ -1931,7 +1931,7 @@ enum MarBuiltins {
         env.define("cmdPerform",  .fn(cmdPerform))
         env.define("Cmd.perform", .fn(cmdPerform))
 
-        // MARK: Time — Duration type + unit smart constructors
+        // MARK: Time, Duration type + unit smart constructors
         let mkDuration: (Double) -> MarFn = { mult in
             MarFn.native(1) { args in
                 guard case .int(let n) = args[0] else {
@@ -1972,7 +1972,7 @@ enum MarBuiltins {
         env.define("timeNow",  .effect(timeNow))
         env.define("Time.now", .effect(timeNow))
 
-        // Time.every : Duration -> (Time -> msg) -> Sub msg — a recurring
+        // Time.every : Duration -> (Time -> msg) -> Sub msg, a recurring
         // subscription. Identity is the interval; the tagger is the payload.
         // The page runtime reconciles it into a repeating Timer that delivers
         // the current Time each tick (fires first after one interval, Elm's
@@ -2078,7 +2078,7 @@ enum MarBuiltins {
 
         // Calendar-aware constructors and arithmetic. Uses
         // Calendar(.gregorian) pinned to UTC so behavior matches
-        // the Go and JS runtimes — months/years normalize the same
+        // the Go and JS runtimes: months/years normalize the same
         // way (Jan 31 + 1 month = Mar 3) and there's no DST
         // weirdness since everything's UTC.
         var utcCalendar = Calendar(identifier: .gregorian)
@@ -2122,7 +2122,7 @@ enum MarBuiltins {
         env.define("Time.addYears",  .fn(mkCalendarShift(.year)))
 
         // Component getters (UTC). Calendar.component returns the
-        // calendar field for a Date — month is 1-indexed natively,
+        // calendar field for a Date: month is 1-indexed natively,
         // matching what the Go and JS runtimes expose.
         let mkComponent: (Calendar.Component) -> MarFn = { component in
             MarFn.native(1) { args in
@@ -2165,7 +2165,7 @@ enum MarBuiltins {
                 // `.sortedKeys` is not cosmetic. marToJSON hands back Swift
                 // Dictionaries, whose iteration order is unspecified and
                 // reseeded per process, so without it the SAME value encodes
-                // differently on different runs of the same app — and
+                // differently on different runs of the same app, and
                 // differently from the Go and JS runtimes, which emit their
                 // keys sorted. JSON.encode is a pure function; equal values
                 // have to give equal strings.
@@ -2229,7 +2229,7 @@ enum MarBuiltins {
         }))
         env.define("Repo.create",      env.lookup("repoCreate")!)
 
-        // MARK: Service — RPC over HTTP
+        // MARK: Service, RPC over HTTP
 
         // Service.declare VERB "path" : a typed RPC contract carrying the
         // HTTP verb and URL pattern. The client never runs the handler; it
@@ -2249,7 +2249,7 @@ enum MarBuiltins {
         env.define("Service.declare", .fn(serviceDeclare))
 
         // Service.implement : Service req resp -> (req -> Effect resp) -> ExposedService
-        // Browser/iOS-side, the handler never runs — service handlers
+        // Browser/iOS-side, the handler never runs: service handlers
         // live on the server. We just return the contract back so the
         // value evaluates and Service.call still sees the verb + path.
         let serviceImplement = MarFn.native(2) { args in args[0] }
@@ -2307,11 +2307,11 @@ enum MarBuiltins {
         env.define("httpPost",  .fn(httpPost))
         env.define("Http.post", .fn(httpPost))
 
-        // MARK: Auth — passwordless email-code
+        // MARK: Auth, passwordless email-code
 
         // Auth.config: server-side this captures the user entity +
         // signup hook into a global. iOS-side we additionally pull the
-        // `signInPage` field's path off — Page.protected reads it as
+        // `signInPage` field's path off: Page.protected reads it as
         // the redirect target when the user has no session. Stashed
         // into AppContext so StackShell can read it at render time.
         let authConfig = MarFn.native(1) { args in
@@ -2331,7 +2331,7 @@ enum MarBuiltins {
 
         // Auth.protect : Service -> (req -> user -> Effect) -> ExposedService
         // Server-side wraps the handler with a session-validating
-        // middleware. iOS-side, just returns the contract — handlers
+        // middleware. iOS-side, just returns the contract: handlers
         // run on the server, never on the device.
         let authProtect = MarFn.native(2) { args in args[0] }
         env.define("authProtect",  .fn(authProtect))
@@ -2410,7 +2410,7 @@ enum MarBuiltins {
         // all logout-then-navigate before the server responds.
         //
         // We post directly via URLSession rather than going through
-        // MarHTTP.fireAuth — that helper couples the request to the
+        // MarHTTP.fireAuth: that helper couples the request to the
         // dispatch, which is exactly the coupling we want to break.
         let authLogout = MarFn.native(1) { args in
             let toMsg = args[0]
@@ -2422,7 +2422,7 @@ enum MarBuiltins {
                         // Carry the Bearer so the server can identify
                         // which session row to delete. Without this,
                         // the request would arrive anonymous and the
-                        // server couldn't revoke the right token —
+                        // server couldn't revoke the right token:
                         // session would linger until natural expiry.
                         if let tok = MarKeychain.load(forKey: MarKeychain.sessionTokenKey) {
                             req.setValue("Bearer \(tok)", forHTTPHeaderField: "Authorization")
@@ -2434,7 +2434,7 @@ enum MarBuiltins {
                         // logged out either way.
                         URLSession.shared.dataTask(with: req) { _, _, _ in }.resume()
                     }
-                    // Drop the local credential first — covers the
+                    // Drop the local credential first: covers the
                     // network-failure case where the server POST
                     // never lands. On the next request the absence
                     // of a Bearer + the server having seen no logout
@@ -2523,7 +2523,7 @@ enum MarBuiltins {
             }
         }
 
-        // Shared helper: builds a `{name, value}` record — the runtime
+        // Shared helper: builds a `{name, value}` record, the runtime
         // shape of an Attr. Used by submit / input-kind attrs below
         // and by the UI.* container modifiers further down.
         func makeAttr(_ name: String, _ value: MarValue) -> MarValue {
@@ -2534,7 +2534,7 @@ enum MarBuiltins {
         }
         let flagAttr: (String) -> MarValue = { name in makeAttr(name, .unit) }
 
-        // UI.submit : msg -> Attr — declarative event hookup. The
+        // UI.submit : msg -> Attr, declarative event hookup. The
         // renderer reads this attr and wires it to SwiftUI's
         // `.onSubmit` modifier (Return/Done/Go on the keyboard).
         let viewSubmit = MarFn.native(1) { args in makeAttr("submit", args[0]) }
@@ -2542,8 +2542,8 @@ enum MarBuiltins {
 
         // Input-kind attrs (UI.email / .password / .newPassword /
         // .numeric / .oneTimeCode). MarRenderer translates these into
-        // SwiftUI modifiers — `.keyboardType`, `.textContentType`,
-        // `.autocapitalization`, etc. — so iOS keyboards and Keychain
+        // SwiftUI modifiers: `.keyboardType`, `.textContentType`,
+        // `.autocapitalization`, etc., so iOS keyboards and Keychain
         // behave the same way Safari/Chrome do on the web.
         env.define("viewEmail",       flagAttr("inputKindEmail"))
         env.define("viewPassword",    flagAttr("inputKindPassword"))
@@ -2562,8 +2562,8 @@ enum MarBuiltins {
         // the JS runtime emits ("navigationStack", "form", "uiList",
         // "uiSection", "hstack", "vstack", "textField"). The iOS
         // renderer (MarRenderer.swift) recognizes these tags and
-        // produces real SwiftUI primitives — NavigationStack, Form,
-        // List, Section, HStack/VStack, TextField — with platform
+        // produces real SwiftUI primitives: NavigationStack, Form,
+        // List, Section, HStack/VStack, TextField: with platform
         // chrome (safe areas, swipe-back, table styling) for free.
 
         // Helper: 1-arg container that takes only children (no attrs).
@@ -2679,7 +2679,7 @@ enum MarBuiltins {
         env.define("datePicker",    .fn(uiDatePicker))
         env.define("UI.datePicker", .fn(uiDatePicker))
 
-        // text — plain text leaf. The attrs list carries the
+        // text: plain text leaf. The attrs list carries the
         // universal layout attrs (width / height); `text [width
         // fill] "..."` is the equal-columns idiom.
         let uiText = MarFn.native(2) { args in
@@ -2709,7 +2709,7 @@ enum MarBuiltins {
         env.define("uiButton",  .fn(uiButton))
         env.define("UI.button", .fn(uiButton))
 
-        // UI.disabled : Bool -> Attr — greys out an interactive view
+        // UI.disabled : Bool -> Attr, greys out an interactive view
         // (today: button) and suppresses dispatch. Symmetric for
         // true/false so user code can pass a derived Bool without
         // building the attrs list conditionally.
@@ -2722,7 +2722,7 @@ enum MarBuiltins {
         // UI.keyed : String -> View msg -> KeyedView msg
         // Wraps a regular View with a stable identity (the key
         // string) so it can be a child of UI.keyedList. The
-        // distinction is compile-time only — at runtime we just
+        // distinction is compile-time only: at runtime we just
         // append a `key` attr to the inner MarView. MarRenderer
         // reads it back when feeding rows into SwiftUI's ForEach
         // as the row\'s `.id`, so .onMove / .onDelete animate the
@@ -2777,7 +2777,7 @@ enum MarBuiltins {
         //
         // Same packing shape as onMove so both can be set on the same
         // section without conflict. The Swift renderer wires this to
-        // SwiftUI's native `.onDelete` modifier on ForEach — which
+        // SwiftUI's native `.onDelete` modifier on ForEach, which
         // gives swipe + edit-mode + accessibility for free.
         let uiOnDelete = MarFn.native(2) { args in
             var fields: [String: MarValue] = [:]
@@ -2788,7 +2788,7 @@ enum MarBuiltins {
         env.define("uiOnDelete",  .fn(uiOnDelete))
         env.define("UI.onDelete", .fn(uiOnDelete))
 
-        // title / subtitle — heading + secondary heading. Reuse the
+        // title / subtitle: heading + secondary heading. Reuse the
         // existing "title" / "subtitle" tags so the renderer's
         // existing branches apply (.font(.title2) / .font(.headline)).
         let uiTitle = MarFn.native(1) { args in
@@ -2807,7 +2807,7 @@ enum MarBuiltins {
         env.define("uiSubtitle",  .fn(uiSubtitle))
         env.define("UI.subtitle", .fn(uiSubtitle))
 
-        // errorText — destructive-intent message (red + semi-bold).
+        // errorText: destructive-intent message (red + semi-bold).
         // Same leaf shape as text/title/subtitle; MarRenderer's
         // "errorText" case applies the visual treatment.
         let uiErrorText = MarFn.native(1) { args in
@@ -2889,7 +2889,7 @@ enum MarBuiltins {
         env.define("inlineLink",  .fn(inlineLink))
         env.define("UI.link",     .fn(inlineLink))
 
-        // chars / lines — sizing units. Build a record with __unit
+        // chars / lines: sizing units. Build a record with __unit
         // and amount fields; the renderer dispatches on __unit to
         // pick .frame(maxWidth:) (chars) or .frame(idealHeight:)
         // (lines). Type-level the Mar code already prevents mixing
@@ -2916,7 +2916,7 @@ enum MarBuiltins {
         env.define("uiLines", .fn(uiLines))
         env.define("UI.lines", .fn(uiLines))
 
-        // fill — the axis-polymorphic "take the available space"
+        // fill: the axis-polymorphic "take the available space"
         // sizing value. Same __unit-tagged shape as chars/lines so
         // the renderer dispatches on one field; amount unused.
         let uiFillVal: MarValue = .record(
@@ -2926,7 +2926,7 @@ enum MarBuiltins {
         env.define("uiFill", uiFillVal)
         env.define("UI.fill", uiFillVal)
 
-        // width / height — the universal sizing attrs. The renderer
+        // width / height: the universal sizing attrs. The renderer
         // reads the Size value via attrLength helpers: chars/lines
         // map to .frame sizes on inputs, fill to .frame(maxWidth/
         // maxHeight: .infinity) on any view.
@@ -2941,7 +2941,7 @@ enum MarBuiltins {
         env.define("uiHeight", .fn(uiHeight))
         env.define("UI.height", .fn(uiHeight))
 
-        // align — cross-axis alignment for a stack's hugging
+        // align: cross-axis alignment for a stack's hugging
         // children. Value is a plain alignment-name string; the
         // renderer maps it onto the VStack/HStack alignment
         // parameter, honoring only the axis that matches the stack.
@@ -2961,9 +2961,9 @@ enum MarBuiltins {
         env.define("uiBottom", .string("bottom"))
         env.define("UI.bottom", .string("bottom"))
 
-        // px — pixel sizing unit for images (mirrors chars/lines,
-        // tagged "px"). size — fixed width+height attr for an image.
-        // fit/cover — content-mode flags (CSS object-fit vocabulary;
+        // px: pixel sizing unit for images (mirrors chars/lines,
+        // tagged "px"). size: fixed width+height attr for an image.
+        // fit/cover: content-mode flags (CSS object-fit vocabulary;
         // "cover", not "fill", which is the sizing value above).
         // MarRenderer's "image" case reads these.
         let uiPx = MarFn.native(1) { args in
@@ -2992,7 +2992,7 @@ enum MarBuiltins {
         // path-pattern machinery as linkTo; the child View is the
         // tappable label. The renderer wires this to
         // `NavigationLink(value:){content}` which pushes onto the
-        // ambient NavigationStack — swipe-back and the chevron come
+        // ambient NavigationStack: swipe-back and the chevron come
         // for free.
         let uiNavigationLink = MarFn.native(4) { args in
             var attrs = collectAttrs(args[0])
@@ -3017,7 +3017,7 @@ enum MarBuiltins {
         env.define("uiNavigationLink",  .fn(uiNavigationLink))
         env.define("UI.navigationLink", .fn(uiNavigationLink))
 
-        // empty : View msg — no-op placeholder (renders as
+        // empty : View msg, no-op placeholder (renders as
         // EmptyView / display:none).
         let uiEmptyView = MarValue.view(MarView(
             tag: "empty", attrs: [], children: [], text: "", msg: nil, key: nil
@@ -3025,7 +3025,7 @@ enum MarBuiltins {
         env.define("uiEmpty",  uiEmptyView)
         env.define("UI.empty", uiEmptyView)
 
-        // spacer : View msg — SwiftUI's `Spacer()`. Expands along
+        // spacer : View msg, SwiftUI's `Spacer()`. Expands along
         // the containing stack's main axis to push siblings apart.
         let uiSpacerView = MarValue.view(MarView(
             tag: "spacer", attrs: [], children: [], text: "", msg: nil, key: nil
@@ -3061,7 +3061,7 @@ enum MarBuiltins {
         env.define("UI.toggle", .fn(uiToggle))
 
         // centered : View msg -> View msg
-        // Wraps the child in a "centered" view tag — renderer maps
+        // Wraps the child in a "centered" view tag: renderer maps
         // to .frame(maxWidth: .infinity, maxHeight: .infinity,
         // alignment: .center) on iOS, flex-center on web.
         let uiCentered = MarFn.native(1) { args in
@@ -3086,7 +3086,7 @@ enum MarBuiltins {
         // The renderer (MarRenderer.swift) reads the open/outlet attrs
         // and the dismiss Msg, and applies `.sheet(isPresented:)` to
         // the parent view with the sheet's children as content. Same
-        // semantic as web — parent owns open/closed state.
+        // semantic as web: parent owns open/closed state.
         let uiSheet = MarFn.native(2) { args in
             guard case .record(let fs, _) = args[0] else {
                 throw MarRuntimeError.typeMismatch(expected: "{ open, onDismiss, outlet }", got: Eval.typeOf(args[0]))
@@ -3151,13 +3151,13 @@ enum MarBuiltins {
         env.define("uiConfirm",  .fn(uiConfirm))
         env.define("UI.confirm", .fn(uiConfirm))
 
-        // Modifier attrs — produce VAttr values consumed by the
+        // Modifier attrs: produce VAttr values consumed by the
         // matching container's renderer.
         let navTitleCtor = MarFn.native(1) { args in makeAttr("navigationTitle", args[0]) }
         env.define("navigationTitle",    .fn(navTitleCtor))
         env.define("UI.navigationTitle", .fn(navTitleCtor))
 
-        // topBarTrailing / topBarLeading — toolbar items at the
+        // topBarTrailing / topBarLeading: toolbar items at the
         // trailing / leading edge of the top bar. Match SwiftUI's
         // `.topBarTrailing` / `.topBarLeading` placement (iOS 17+).
         let topBarTrailingCtor = MarFn.native(1) { args in makeAttr("topBarTrailing", args[0]) }
@@ -3177,7 +3177,7 @@ enum MarBuiltins {
         env.define("UI.footer", .fn(footerCtor))
 
         // numericCode bundles `numeric` + `oneTimeCode` as a single
-        // flag — common OTP / 2FA case. Renderer expands it.
+        // flag: common OTP / 2FA case. Renderer expands it.
         env.define("numericCode",    flagAttr("inputKindNumericCode"))
         env.define("UI.numericCode", flagAttr("inputKindNumericCode"))
 
@@ -3308,7 +3308,7 @@ enum MarBuiltins {
     }()
 
     /// One name over two element types. The elements decide for a non-empty
-    /// list — they all share a type, so the first one settles it — which keeps
+    /// list, they all share a type, so the first one settles it, which keeps
     /// this right even where a call site was never elaborated. `empty` is the
     /// answer no value can supply, so the typechecker supplies it.
     static func numericFold(

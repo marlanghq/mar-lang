@@ -1,4 +1,4 @@
-// DB lock holder — keeps the *os.File returned by LockDB alive for
+// DB lock holder: keeps the *os.File returned by LockDB alive for
 // the process lifetime, so GC doesn't close the underlying fd and
 // release the flock prematurely.
 //
@@ -7,7 +7,7 @@
 // process exits, at which point the kernel releases it.
 //
 // Short-lived CLIs that just need to peek (mar-runtime backup,
-// admin list) deliberately skip this — they coexist with a running
+// admin list) deliberately skip this: they coexist with a running
 // server. Restore is the only operation that *requires* exclusivity,
 // and it calls LockDB directly (holding a local *os.File for the
 // duration of the swap).
@@ -20,7 +20,7 @@ var heldDBLock *os.File
 
 // HoldDBLock acquires an exclusive advisory lock on the database
 // file at path and stashes the handle in a package var for the
-// process lifetime. Idempotent — subsequent calls with the same
+// process lifetime. Idempotent: subsequent calls with the same
 // path are no-ops.
 //
 // Returns ErrDBLocked if another process holds the lock (e.g. a

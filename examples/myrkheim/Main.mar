@@ -1,7 +1,7 @@
 module Main exposing (main)
 
 
--- MYRKHEIM — a Wolfenstein-3D-class first-person shooter in Mar, with ZERO
+-- MYRKHEIM: a Wolfenstein-3D-class first-person shooter in Mar, with ZERO
 -- language changes. The draugr jarl Skalli Half-Rot stole the Dawn Rune and
 -- the sun cannot rise; you are Vigdis, last shieldmaiden of the waystone,
 -- descending three barrows to take it back. Your spear carries Gungnir's
@@ -89,7 +89,7 @@ walkS = 45                -- strafe / backpedal speed
 -- weapon ids: 0 seax (melee, a arma inicial), 1 Gungnir spear (hitscan,
 -- FOUND on a pedestal), 2 hunting bow (found; uses arrows), 3 hewing axe
 -- (heavy projectile), 4 Surtr-fire flask (lobbed, explodes). Everything
--- past the seax is FOUND in the barrows — classic FPS progression
+-- past the seax is FOUND in the barrows: classic FPS progression
 wcool : Int -> Int
 wcool w =
     case w of
@@ -120,7 +120,7 @@ range n =
 
 
 -- octagonal length approximation: within ~7% of the true distance and
--- needs no square root — plenty for ranges, pickups and normalization
+-- needs no square root: plenty for ranges, pickups and normalization
 octDist : Int -> Int -> Int
 octDist dx dy =
     let
@@ -161,7 +161,7 @@ dirAt h =
     }
 
 
--- ===== the five barrows (generated + validated — see tools/) =====
+-- ===== the five barrows (generated + validated: see tools/) =====
 -- '#' stone  '%' carved  'T' torch wall  '.' floor  'd' plain door
 -- 'D' rune door  'P' spawn  'X' waystone  'R' rune  'H' mead horn
 -- 'G' gold ring  'E' draugr  'W' wraith  'J' the Jarl  'y' draug-archer
@@ -545,7 +545,7 @@ type alias Bolt =
 
 
 -- player-side projectiles: kind 1 arrow, 2 axe, 3 flask, 9 spear tracer
--- (pure light, no damage — the hit already resolved by hitscan)
+-- (pure light, no damage: the hit already resolved by hitscan)
 type alias PBolt =
     { x : Int, y : Int, vx : Int, vy : Int, kind : Int, t : Int }
 
@@ -1109,7 +1109,7 @@ update msg model =
                 Won -> emit { model | tick = model.tick + 1, modeT = model.modeT + 1 }
                 _ ->
                     -- between-screens (Intro / Cleared / Dead) only advance
-                    -- the clock; the phase NEVER starts on its own — the
+                    -- the clock; the phase NEVER starts on its own: the
                     -- player presses a key to descend (see advance / Tapped)
                     ( { model | tick = model.tick + 1, modeT = model.modeT + 1 }, Cmd.none )
 
@@ -1137,7 +1137,7 @@ update msg model =
             -- Play so a menu-dismiss key can't seed a step or a spear-throw
             -- into the barrow's first frame); weapon/mute/menu actions fire
             -- on the press-edge (keys NEW to the set). Releases are automatic
-            -- — a key simply leaves the set, so syncHeld drops it next frame.
+            --: a key simply leaves the set, so syncHeld drops it next frame.
             let
                 pressed = List.filter (\k -> List.member k model.keysDown == False) st.down
                 m1 = { model | keysDown = st.down }
@@ -1165,7 +1165,7 @@ update msg model =
 -- raw key/button sets. Called only while playing, so a menu-dismiss press
 -- can never seed movement or a spear-throw into the first frame of a barrow.
 -- The analog sticks (padX/padY/padRX) are set straight from the snapshot in
--- update; releases need no code — a key just leaves keysDown/padDown and the
+-- update; releases need no code: a key just leaves keysDown/padDown and the
 -- next syncHeld drops it (keyboard AND gamepad feed their own bools, summed
 -- later in stepMove: keys are digital, the sticks analog).
 syncHeld : Model -> Model
@@ -1203,7 +1203,7 @@ playKeyEdge key m =
 -- Cmd). M mutes in any mode; otherwise Play switches weapons, Title moves
 -- the saga cursor / starts, and a between-screen advances once its hold has
 -- elapsed. Play edges queue their click in sfx for the next Tick (exactly as
--- the old KeyDown did — Cmd.none); menu edges emit right away.
+-- the old KeyDown did: Cmd.none); menu edges emit right away.
 applyKeyPress : Keyboard.Key -> (Model, Cmd Msg) -> (Model, Cmd Msg)
 applyKeyPress key acc =
     let
@@ -1371,7 +1371,7 @@ startGame model =
 -- how long a between-screen must stay up before ANY input can dismiss
 -- it. Most screens just debounce a key held over from the frame before
 -- (12 ticks); the death screen holds ~3.5s so it can breathe while the
--- funeral march opens — you were fighting, holding fire, and shouldn't
+-- funeral march opens: you were fighting, holding fire, and shouldn't
 -- blink past your own death.
 holdTicks : Mode -> Int
 holdTicks mode =
@@ -1418,7 +1418,7 @@ advance model =
                         }
                     -- the rollback can un-own the selected weapon (axes /
                     -- flasks picked up THIS run roll back to the entry
-                    -- snapshot) — a dead slot must not stay selected. Fall
+                    -- snapshot): a dead slot must not stay selected. Fall
                     -- back to Gungnir if she has it, else the seax
                     rearmed =
                         if hasAmmo restored.weapon restored then
@@ -1446,7 +1446,7 @@ layout model =
     let
         -- Touch-only hardware with a TALL canvas (tablets): reserve a bottom
         -- strip so the twin sticks get a real bezel instead of sitting on top
-        -- of the view and the weapon HUD (iPad landscape has no side bezels —
+        -- of the view and the weapon HUD (iPad landscape has no side bezels:
         -- its 4:3-ish aspect lets the picture fill the screen). Phones in
         -- landscape are too short to give anything up (their side bezels
         -- already host the sticks); desktop never shows pads.
@@ -1459,7 +1459,7 @@ layout model =
     , ox = (model.w - gameW * s // 100) // 2
     -- Portrait phones: seat the picture in the UPPER area (top margin = 1/6 of
     -- the vertical slack) instead of dead centre, so the roomy space BELOW
-    -- holds the touch controls — padSpots already drops the pads into that
+    -- holds the touch controls: padSpots already drops the pads into that
     -- bottom bezel. Landscape (wider than tall) stays vertically centred.
     , oy = if model.h > model.w then slack // 6 else slack // 2
     }
@@ -1510,7 +1510,7 @@ inBox x y cx cy r =
 
 
 -- isPress = a fresh touch-down (Tapped); drags re-aim the sticks but must
--- NOT retrigger the SWITCH button — a button fires once per press
+-- NOT retrigger the SWITCH button: a button fires once per press
 applyTouch : Bool -> Model -> Int -> Int -> Model
 applyTouch isPress m x y =
     let
@@ -1690,7 +1690,7 @@ stepDoors m =
     }
 
 
--- the spear: hitscan along the center ray. Gungnir's blessing — if it is
+-- the spear: hitscan along the center ray. Gungnir's blessing, if it is
 -- aimed at flesh with a clear line, it hits, whatever the range
 stepFire : Model -> Model
 stepFire m =
@@ -1721,7 +1721,7 @@ stepFire m =
                             perp = (d.x * relY - d.y * relX) // k1
                             rad = if a.kind == 2 then 470 else 310
                             -- point-blank forgiveness: inside ~1.5 cells the
-                            -- sprite fills the view, so the body counts —
+                            -- sprite fills the view, so the body counts:
                             -- without this you can whiff through a draugr
                             -- that is chewing on your face
                             blank = dot // k1 < 1500 && absI perp < (if a.kind == 2 then 980 else 760)
@@ -1759,7 +1759,7 @@ stepFire m =
                 hurtActorN m1 t 1
 
 
--- seax: swing curto e largo. Sem alcance, sem munição — a fiel companheira
+-- seax: swing curto e largo. Sem alcance, sem munição, a fiel companheira
 -- do primeiro corredor (e do pânico)
 seaxSwing : Model -> Model
 seaxSwing m =
@@ -1809,7 +1809,7 @@ loose m kind speed cues left spend =
             thrown = spend { m | cool = wcool kind, sfx = cues, pbolts = b :: m.pbolts }
         in
         -- if that was the LAST shot (this weapon's ammo was 1 before the
-        -- throw), auto-fall-back to the seax (weapon 0) — you're never left
+        -- throw), auto-fall-back to the seax (weapon 0): you're never left
         -- holding a spent weapon that only clicks. cycleWeapon already hides
         -- empty weapons; this covers the one you deplete in your own hand.
         -- Covers arrows / axes / flasks alike, since `left` is the real count.
@@ -2128,7 +2128,7 @@ windupResolve m acc a d relX relY =
         }
 
 
--- wake up to two bone piles as fresh draugr — including the piles the
+-- wake up to two bone piles as fresh draugr: including the piles the
 -- player just made. The dead are a resource down here
 summon : Model -> ActAcc -> Actor -> ActAcc
 summon m acc a =
@@ -2257,7 +2257,7 @@ vargChase m acc a d relX relY =
                     (relX * 34 // n + (0 - relY) * weave * 10 // n)
                     (relY * 34 // n + relX * weave * 10 // n)
             -- a hunting hound BARKS: every ~2.3s per varg, staggered by idx
-            -- so a pack sounds like scattered yaps, and only in earshot —
+            -- so a pack sounds like scattered yaps, and only in earshot:
             -- barking IS the warning that the pack is coming
             barks = modBy 140 (m.tick + a.idx * 29) == 0 && d < 11264
         in
@@ -2353,7 +2353,7 @@ blinkOffset i =
 
 -- axis-separated slide with wall checks and a little body-blocking so a
 -- pack does not collapse into one sprite. If BOTH axes are blocked (wedged
--- on a corner with the other component rounded to zero — the classic
+-- on a corner with the other component rounded to zero: the classic
 -- pursuit deadlock), sidestep perpendicular to the desired move so the
 -- draugr shuffles along the wall until the opening lines up.
 slideActor : Dict Int Int -> List Actor -> Int -> Actor -> Int -> Int -> Actor
@@ -2524,7 +2524,7 @@ stepPickups m =
     List.foldl touchItem m m.items
 
 
--- pickups are grabbed within ~0.7 of a cell now (was ~0.4) — you no
+-- pickups are grabbed within ~0.7 of a cell now (was ~0.4): you no
 -- longer have to stand ON the thing. Each grab drops a discreet on-screen
 -- note (pickMsg/pickT) so you can tell WHAT you just picked up.
 pickupR : Int
@@ -2603,7 +2603,7 @@ touchItem it m =
                 if m.armor >= 8 then noted "ARMOR FULL" m else noted "IRON BYRNIE" { take | armor = 8, sfx = CArmor :: take.sfx }
 
             _ ->
-                -- the waystone: barrow cleared — or, at the bottom, dawn
+                -- the waystone: barrow cleared, or, at the bottom, dawn
                 if m.barrow >= lastBarrow then
                     { take | mode = Won, modeT = 0, sfx = CTriumph :: CDawn :: take.sfx }
                 else
@@ -2661,7 +2661,7 @@ cueSound c =
         CDieD ->
             -- a death SCENE, not a blip (~0.8s): the creature's long guttural
             -- groan sags from mid pitch down into the floor under a rough,
-            -- slow vibrato — a chest subharmonic underneath — while ragged
+            -- slow vibrato, a chest subharmonic underneath, while ragged
             -- noise pulses gurgle in the throat (blood), and only at the END
             -- of the groan the body thuds down onto the barrow stone.
             Sound.chord
@@ -2831,7 +2831,7 @@ cueSound c =
 
         CDeathCry ->
             -- Vigdis falls: a long, throat-deep dying groan that sags in
-            -- pitch under a wide, failing vibrato as the breath runs out —
+            -- pitch under a wide, failing vibrato as the breath runs out:
             -- it plays the whole time the eyes are sliding shut. A hiss of
             -- escaping air rides over it, and near the end the dull thud of
             -- the body settling on the barrow floor.
@@ -2870,7 +2870,7 @@ cueSound c =
         CBlink ->
             -- the volva's blink: a warbling whoosh as she tears out of here,
             -- then a bright rising shimmer as she snaps back into being
-            -- somewhere else — loud enough to catch across the room
+            -- somewhere else: loud enough to catch across the room
             Sound.sequence
                 [ Sound.vibrato 45 22 (Sound.volume 28 (Sound.sweep 170 (Sound.tone Sound.Sawtooth 780 150)))
                 , Sound.volume 10 (Sound.tone Sound.Noise 0 60)
@@ -3075,12 +3075,12 @@ stripShape m pal dawn i hit =
         wallC = shade dawn base f
     in
     -- the COMMON column (plain stone/torch) takes the single-cons fast
-    -- path: no empty crack/door lists, no List.concat — this runs 160
+    -- path: no empty crack/door lists, no List.concat, this runs 160
     -- times a frame, so the allocations it skips are the frame budget
     if hit.code == 4 || hit.code == 5 then
         -- doors read as DOORS: bright timber frame down both edges, iron
         -- straps + centre seam up close, and the rune door's violet
-        -- sigil, which ignores distance — the lock glows in the dark
+        -- sigil, which ignores distance: the lock glows in the dark
         let
             ironC = shade dawn { r = 34, g = 34, b = 44 } f
         in
@@ -3163,7 +3163,7 @@ spriteShapes : Model -> CastEnv -> List Hit -> Int -> List Shape
 spriteShapes m env cols dawn =
     let
         -- past the last fog band (12% shade) ground clutter is invisible:
-        -- don't build shapes for it at all. Glowing things are exempt —
+        -- don't build shapes for it at all. Glowing things are exempt:
         -- the rune (kind 0) is MEANT to be seen across the dark
         pileS =
             List.filterMap
@@ -3280,7 +3280,7 @@ itemShape m pr kind =
     in
     case kind of
         0 ->
-            -- the rune: a bright glyph, pulsing — ignores fog, it GLOWS
+            -- the rune: a bright glyph, pulsing, ignores fog, it GLOWS
             let
                 s = pr.size * 26 // 100
                 p = modBy 4 (m.tick // 6)
@@ -3548,7 +3548,7 @@ actorShape m pr a =
         wounded = a.hp * 2 <= maxHpOf a.kind
         armY = if wind then y - h // 8 else y + h // 4
         -- past the last fog band only the EYES survive (they already
-        -- ignore fog by design) — the body would render at 12% of its
+        -- ignore fog by design): the body would render at 12% of its
         -- color, unreadable, and cost a dozen clipped rects per actor
         farDark = pr.d > 8704 && dying == 12
         walking = a.st == AChase && a.kind /= 1 && a.kind /= 5 && a.kind /= 6
@@ -3871,12 +3871,12 @@ pickupNote m =
         pixTextC 160 158 1 (rgb (150 + g * 70 // 100) (140 + g * 66 // 100) (110 + g * 40 // 100)) m.pickMsg
 
 
--- top-right: the whole barrow at 1.5px per cell (36px panel — between the
+-- top-right: the whole barrow at 1.5px per cell (36px panel, between the
 -- 2px \"too big\" and the 1px \"too small\"). Cell edges land on the exact
--- grid (v*3/2 both ends), so rows/columns alternate 1px and 2px — it reads
+-- grid (v*3/2 both ends), so rows/columns alternate 1px and 2px: it reads
 -- as parchment grain, not error. Walls in stone, shut doors in their own
 -- colors (the purple one is what your rune is FOR), you as a steady white
--- arrowhead pointing where you face — and once you hold the rune, the
+-- arrowhead pointing where you face, and once you hold the rune, the
 -- waystone glints gold: the rune knows the way home
 miniMap : Model -> List Shape
 miniMap m =
@@ -4233,8 +4233,8 @@ clearedShapes m =
 
 
 -- the death moment: the world stays in view while the dark closes over it
--- SLOWLY, like eyelids sliding shut from above and below — ~3.2s to meet,
--- a thin sliver of blood-red light at each lid's edge — and only on full
+-- SLOWLY, like eyelids sliding shut from above and below, ~3.2s to meet,
+-- a thin sliver of blood-red light at each lid's edge, and only on full
 -- black does the barrow pronounce its verdict. The long dying groan plays
 -- the whole time the eyes are closing. Color and shape carry the weight;
 -- the frame itself never shakes or tilts.
@@ -4242,7 +4242,7 @@ dieShapes : Model -> List Shape
 dieShapes m =
     let
         -- each lid grows to 100px (half the 200-tall screen) over 190 ticks
-        -- (~3.2s at 60fps) — the deliberate, heavy slide of eyes giving up
+        -- (~3.2s at 60fps): the deliberate, heavy slide of eyes giving up
         lid = min 100 (m.modeT * 100 // 190)
     in
     List.concat
@@ -4260,7 +4260,7 @@ dieShapes m =
         ]
 
 
--- a scrap of barrow-lore shown on death — a different one each time,
+-- a scrap of barrow-lore shown on death: a different one each time,
 -- teaching a mechanic the player may have missed. Keyed off run stats so
 -- it stays fixed while the death screen is up but varies between deaths.
 -- Two short lines so each fits inside the panel (the pixel font has no
@@ -4323,7 +4323,7 @@ statLines2 m =
         ]
 
 
--- ===== pixel font (3x5 glyphs drawn as rects — same table as the other
+-- ===== pixel font (3x5 glyphs drawn as rects: same table as the other
 -- Mar canvas games) =====
 
 

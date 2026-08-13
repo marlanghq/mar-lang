@@ -284,7 +284,7 @@ summarySection today recent =
 -- The run of consecutive nights rated Good or better, counting back from today.
 --
 -- Two decisions worth naming. It walks CALENDAR days, not the list, so a gap
--- breaks the run instead of being skipped over — a week you did not log is not
+-- breaks the run instead of being skipped over: a week you did not log is not
 -- a week you slept well. And if today has no entry yet it starts from
 -- yesterday, because otherwise every morning would report a broken streak
 -- before you have had the chance to log anything.

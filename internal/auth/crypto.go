@@ -39,7 +39,7 @@ func Code(length int) (string, error) {
 }
 
 // Token returns a 32-byte cryptographically random token, encoded as
-// URL-safe base64 (no padding) — the value handed to the client as the
+// URL-safe base64 (no padding): the value handed to the client as the
 // session cookie / Bearer token.
 func Token() (string, error) {
 	buf := make([]byte, 32)

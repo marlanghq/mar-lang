@@ -2,7 +2,7 @@ package runtime
 
 import "fmt"
 
-// Math — deterministic integer trigonometry and roots
+// Math: deterministic integer trigonometry and roots
 // (docs/proposals/math.md). Every function here is total and every answer
 // comes from the one generated quarter-wave table in math_table_gen.go, so
 // Go, the browser and iOS return the same integer for the same input. That
@@ -20,7 +20,7 @@ import "fmt"
 const (
 	deciFull    = 3600 // deci-degrees in a full turn
 	deciQuarter = 900  // deci-degrees in a quarter turn
-	// brads — the 256-step turn seasons-gp and vortex already count in.
+	// brads: the 256-step turn seasons-gp and vortex already count in.
 	bradsPerTurn = 256
 	// atan2 halves its legs below this so a product with a table entry
 	// (< 2^10) stays inside the 53 bits an Int has (ADR 0021).
@@ -66,7 +66,7 @@ func isqrtInt(n int64) int64 {
 }
 
 // atan2Deci returns the angle of the vector (x, y) in deci-degrees, 0..3599,
-// searching the SAME table sin reads — which is what makes the two
+// searching the SAME table sin reads, which is what makes the two
 // structurally unable to disagree about where 45.0° is.
 //
 // The angle is chosen as the nearer of the two table entries the direction
@@ -143,7 +143,7 @@ func mathBuiltins() map[string]Value {
 		// going to land in 0..3599.
 		"mathDegrees":     nativeFn(1, angleFrom("Math.degrees", 360, 10)),
 		"mathDeciDegrees": nativeFn(1, angleFrom("Math.deciDegrees", deciFull, 1)),
-		// turns counts in brads — 256 to the turn, the unit seasons-gp and
+		// turns counts in brads: 256 to the turn, the unit seasons-gp and
 		// vortex already use. 3600/256 is not a whole number of
 		// deci-degrees, so a single brad floors; a full turn is exact.
 		"mathTurns": nativeFn(1, func(args []Value) (Value, error) {

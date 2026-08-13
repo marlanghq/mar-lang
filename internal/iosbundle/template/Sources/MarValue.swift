@@ -1,4 +1,4 @@
-// Runtime values for the mar interpreter — direct port of the JS
+// Runtime values for the mar interpreter: direct port of the JS
 // `VInt / VString / VRecord / VCtor / VFn / VView / VEffect / ...`
 // constructors in internal/jsserve/runtime.js.
 //
@@ -13,7 +13,7 @@ import Foundation
 // (MarFn / MarEffect) that hold native closures the compiler can't
 // prove are concurrency-safe. In practice they're treated as
 // immutable values: once constructed, no mutation crosses actor
-// boundaries — the dispatch loop reads them on @MainActor and
+// boundaries: the dispatch loop reads them on @MainActor and
 // URLSession completion handlers re-enter @MainActor before
 // touching them again. Letting Swift 6 infer Sendable would force
 // us to refactor the runtime model unnecessarily; this conformance
@@ -21,13 +21,13 @@ import Foundation
 // NOT `indirect enum` as a whole: a blanket `indirect` heap-boxes EVERY value,
 // including `.int`, behind an allocation + ARC retain/release. A canvas frame
 // builds millions of MarValues (every `rect x y w h c` is 5 scalar args, times
-// hundreds of shapes), so that boxing dominated the interpreter — it's why iOS
+// hundreds of shapes), so that boxing dominated the interpreter: it's why iOS
 // native (20fps) trailed the same tree-walk running on JavaScriptCore in the
 // web view (30fps): JSC tags small ints and doesn't refcount them; we were
 // heap-allocating them. Only `.view` embeds a MarValue BY VALUE directly
 // (MarView.msg is `MarValue?`), so only it needs `indirect` to break the
 // size recursion. Every other case holds MarValues through an Array /
-// Dictionary / class (`.list`, `.record`, `.ctor`, `.fn`, …) — those are
+// Dictionary / class (`.list`, `.record`, `.ctor`, `.fn`, …): those are
 // already references, so the enum stays finite-sized and scalars live inline
 // on the stack with no allocation and no ARC traffic.
 enum MarValue: @unchecked Sendable {
@@ -46,20 +46,20 @@ enum MarValue: @unchecked Sendable {
     /// A rotation, carried as deci-degrees in 0..3599. Built only via
     /// Math.degrees / .deciDegrees / .turns, so the unit is named at
     /// construction and nowhere else (ADR 0029). The representation is
-    /// normative — it fixes the resolution — but not observable, since no
+    /// normative, it fixes the resolution, but not observable, since no
     /// builtin hands it back. Wire format: `{"__angle": 450}`.
     case angle(Int)
-    /// A single Unicode code point — Elm-style Char, NOT a grapheme
+    /// A single Unicode code point: Elm-style Char, NOT a grapheme
     /// cluster. We use `Unicode.Scalar` (not Swift's default
     /// `Character`) so semantics line up exactly with Go's `rune` and
     /// JS code points: `String.toList "🇧🇷"` yields two Chars, not
     /// one. Wire format: `{"__char": "x"}`.
     case char(Unicode.Scalar)
     /// Exact base-10 number (see MarDecimal.swift). Wire format:
-    /// `{"__dec": "1.50"}` — a string, never a JSON number.
+    /// `{"__dec": "1.50"}`, a string, never a JSON number.
     case decimal(MarDec)
     /// The inert exact quotient `/` produces. Opaque: no codec, no
-    /// arithmetic, not comparable — only Decimal.rounded / exact /
+    /// arithmetic, not comparable: only Decimal.rounded / exact /
     /// withRemainder turn it into a value.
     case division(num: MarDec, den: MarDec)
     case list([MarValue])
@@ -100,7 +100,7 @@ struct ServiceOrigin: Hashable {
 /// Reference type so `applied` accumulates across partial applications
 /// without copying the whole closure on every step. Mirrors the JS
 /// `apply` function's `concat([arg])` pattern but in-place isn't safe
-/// because the caller might re-apply the same partial twice — so we
+/// because the caller might re-apply the same partial twice, so we
 /// always return a fresh MarFn from `apply` instead of mutating.
 final class MarFn {
     let arity: Int
@@ -124,14 +124,14 @@ final class MarFn {
         self.native = native
     }
 
-    /// Native function constructor — used by Builtins to register
+    /// Native function constructor: used by Builtins to register
     /// arithmetic, view ctors, effect helpers, etc.
     static func native(_ arity: Int,
                        _ fn: @escaping ([MarValue]) throws -> MarValue) -> MarFn {
         MarFn(arity: arity, applied: [], params: nil, body: nil, env: nil, native: fn)
     }
 
-    /// Interpreted closure — produced by `ELambda` evaluation.
+    /// Interpreted closure: produced by `ELambda` evaluation.
     static func closure(params: [String], body: Expr, env: Env) -> MarFn {
         MarFn(arity: params.count,
               applied: [],
@@ -144,7 +144,7 @@ final class MarFn {
 
 // MARK: - View nodes
 
-/// View AST — produced by UI.* builtins, consumed by the SwiftUI
+/// View AST: produced by UI.* builtins, consumed by the SwiftUI
 /// renderer. Mirrors the JS `VView` shape exactly so the wire
 /// semantics (which lives entirely in the user's mar code) translates
 /// to native rendering without surprises.
@@ -172,7 +172,7 @@ struct MarView {
 /// An Effect is a thunk that may have side-effects (HTTP, DB, etc.)
 /// and produces a value. Async effects (Service.call, Http.get) start
 /// a background task in `run` and dispatch a Msg via the global
-/// MarDispatcher when the response arrives — `run` itself returns
+/// MarDispatcher when the response arrives: `run` itself returns
 /// `.unit` synchronously.
 final class MarEffect {
     let tag: String
@@ -206,7 +206,7 @@ enum MarRuntimeError: Error, LocalizedError {
 
 // MARK: - Equality / Comparison
 //
-// Mirrors `eqValues` and `cmpValues` in runtime.js — used to implement
+// Mirrors `eqValues` and `cmpValues` in runtime.js: used to implement
 // `==`, `/=`, `<`, `>`, `<=`, `>=` builtins.
 
 extension MarValue {
@@ -229,7 +229,7 @@ extension MarValue {
         // Time.seconds 60 and Time.minutes 1 ARE the same interval. A
         // Time is the same moment when it is the same Unix
         // millisecond. Both fell through to `default: return false`
-        // here, in Go and in JS too — the three runtimes agreed on the
+        // here, in Go and in JS too: the three runtimes agreed on the
         // wrong answer, which is exactly what a drift test cannot see.
         case (.duration(let a), .duration(let b)): return a == b
         case (.time(let a),   .time(let b)):   return a == b

@@ -131,8 +131,8 @@ desafiarImpl input user =
 
 
 -- A bot match is born already Ativa (auto-accepted): the bot picks its deck
--- from the seed, and you still play first (turnA = True). Everything after —
--- your opening turn, the bot's reply — flows through the normal move gate.
+-- from the seed, and you still play first (turnA = True). Everything after:
+-- your opening turn, the bot's reply: flows through the normal move gate.
 createBotGame : Int -> String -> Task Shared.DesafiarResult
 createBotGame challengerId deck =
     Time.now
@@ -334,7 +334,7 @@ buildPartida g souA =
 
 
 -- ====================================================================
--- jogar  (POST /partidas/{id}/jogar) — the authoritative move gate
+-- jogar  (POST /partidas/{id}/jogar): the authoritative move gate
 -- ====================================================================
 
 
@@ -355,8 +355,8 @@ jogarImpl input user =
                             Just souA ->
                                 -- The CHALLENGER may play their opening turn while the
                                 -- challenge still awaits an accept: turn-1 moves never
-                                -- depend on B's (yet unchosen) deck — B has no board,
-                                -- and B's life / hand SIZE are deck-independent — so
+                                -- depend on B's (yet unchosen) deck: B has no board,
+                                -- and B's life / hand SIZE are deck-independent, so
                                 -- the log replays identically once the real deck B is
                                 -- set. B, who hasn't picked a deck, must accept first.
                                 if g.status == Ativa || (g.status == Desafio && souA) then
@@ -408,7 +408,7 @@ judgeMove g souA input mvs =
 
 
 -- Play out the bot's (B's) turn: pick a move, apply it through the SAME
--- engine, append it, recurse — until the bot ends its turn (turnA flips back
+-- engine, append it, recurse, until the bot ends its turn (turnA flips back
 -- to A), the game ends, or the fuel runs out (a backstop against a stuck
 -- move). State + index are threaded so we don't re-read the log each step.
 runBotTurn : Shared.Game -> Shared.GState -> Int -> Int -> Task ()

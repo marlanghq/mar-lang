@@ -28,14 +28,14 @@ struct MarPageHost: View {
     // .onAppear/.mount() wouldn't fire again (SwiftUI considers
     // the route's identity stable). MarDispatcher.shared.current
     // would still reference the now-orphaned old PageRuntime via
-    // `[weak self]` and silently no-op once it deallocates — any
+    // `[weak self]` and silently no-op once it deallocates: any
     // in-flight HTTP response would land on a dead runtime and the
     // UI would freeze (e.g. "Working…" forever after Auth.verifyCode).
     //
     // With @State, the runtime survives re-renders. Navigation
     // between distinct paths still works because each entry in
     // NavigationStack's path is a fresh navigationDestination,
-    // which produces a new MarPageHost — @State is initialized
+    // which produces a new MarPageHost, and @State is initialized
     // anew per path, so the new page gets its own PageRuntime.
     @State private var runtime: PageRuntime
 
@@ -48,7 +48,7 @@ struct MarPageHost: View {
             if let view = runtime.currentView() {
                 if Self.isNativeContainer(view) {
                     // The root view is a `navigationStack`, `form`,
-                    // `list`, or `centered` — each renders to a
+                    // `list`, or `centered`: each renders to a
                     // SwiftUI primitive that already provides its own
                     // scrolling and layout. Wrapping them in
                     // ScrollView+VStack would collapse Form/List to
@@ -59,7 +59,7 @@ struct MarPageHost: View {
                         runtime.dispatch(msg)
                     }
                 } else {
-                    // Bare leaf or stack at the root — wrap in a
+                    // Bare leaf or stack at the root: wrap in a
                     // ScrollView so long content is reachable.
                     ScrollView {
                         VStack(alignment: .leading, spacing: 0) {
@@ -113,7 +113,7 @@ struct MarPageHost: View {
             // that fills its container and reports that size via onResize.
             // Wrapping it in the ScrollView+VStack branch below would
             // collapse the GeometryReader to its ~10pt ideal height (the
-            // classic "GeometryReader inside a ScrollView" trap) — which
+            // classic "GeometryReader inside a ScrollView" trap), which
             // rendered the whole game as a thin strip at the top. Render it
             // directly so it takes the full content area.
             return true
@@ -123,7 +123,7 @@ struct MarPageHost: View {
     }
 }
 
-/// One-page shell — a NavigationStack so the title bar shows up
+/// One-page shell: a NavigationStack so the title bar shows up
 /// consistently with the multi-page case.
 struct MarSinglePageView: View {
     let page: DecodedPage

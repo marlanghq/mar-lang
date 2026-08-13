@@ -12,7 +12,7 @@ import (
 // "Is this `case` missing a possibility?" is "would one more branch, matching
 // anything, still be useful?". "Is this branch dead?" is "is it useful against
 // the branches above it?". Maranget's usefulness algorithm answers both, which
-// is why they live in one file and share one specialization step — and why
+// is why they live in one file and share one specialization step, and why
 // implementing lists fixed reachability for free.
 //
 // The shape is a pattern MATRIX: one row per branch, one column per value
@@ -86,7 +86,7 @@ func typeSignature(t Type, env *TypeEnv) (sigs []ctorSig, complete bool) {
 
 // headCtor reads a pattern as a constructor applied to sub-patterns. A
 // wildcard or a binding name is not a constructor, which is what `ok = false`
-// means — those are the patterns that match everything.
+// means: those are the patterns that match everything.
 //
 // A fixed-length list pattern is read as a cons cell whose tail is the rest of
 // the list, so `[ a, b ]` and `a :: b :: []` are literally the same thing to
@@ -99,7 +99,7 @@ func headCtor(p ast.Pattern) (key string, args []ast.Pattern, ok bool) {
 		// Record patterns only bind fields; there is nothing to refute.
 		return "", nil, false
 	case *ast.PCtor:
-		// Name is already the bare tag — PCtor keeps the qualifier in Module —
+		// Name is already the bare tag, PCtor keeps the qualifier in Module:
 		// so a qualified pattern lines up with the signature without stripping.
 		return pat.Name, pat.Args, true
 	case *ast.PUnit:
@@ -127,7 +127,7 @@ func headCtor(p ast.Pattern) (key string, args []ast.Pattern, ok bool) {
 func wildcardAt(pos ast.Pos) ast.Pattern { return &ast.PWildcard{Pos: pos} }
 
 // specialize keeps only the rows whose first pattern can match `sig`, and
-// replaces that pattern with its arguments — so the matrix moves one
+// replaces that pattern with its arguments, so the matrix moves one
 // constructor deeper. A wildcard row matches every constructor and
 // contributes wildcards in place of the arguments it never looked at.
 func specialize(rows [][]ast.Pattern, sig ctorSig) [][]ast.Pattern {
@@ -189,7 +189,7 @@ func rootKeys(rows [][]ast.Pattern) map[string]bool {
 	return keys
 }
 
-// useful reports whether `q` matches any value the rows above it do not — the
+// useful reports whether `q` matches any value the rows above it do not: the
 // definition of a branch being reachable.
 func useful(rows [][]ast.Pattern, types []Type, q []ast.Pattern, env *TypeEnv) bool {
 	if len(types) == 0 {
@@ -340,8 +340,8 @@ func checkExhaustive(subjectType Type, branches []ast.CaseBranch, env *TypeEnv, 
 	if len(witness) == 0 {
 		return errorf(pos, "non-exhaustive case: some values are not matched")
 	}
-	// A bare `_` witness means the type has values that cannot be named —
-	// Int, String, Char — so the useful thing to ask for is the catch-all.
+	// A bare `_` witness means the type has values that cannot be named:
+	// Int, String, Char, so the useful thing to ask for is the catch-all.
 	if witness[0] == "_" {
 		if unbounded, ok := unboundedScalarName(subjectType); ok {
 			return errorf(pos, "non-exhaustive case: %s has more values than a list of patterns can cover, so this case needs a catch-all branch (`_ ->` or a name)", unbounded)

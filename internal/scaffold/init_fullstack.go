@@ -6,12 +6,12 @@ import "fmt"
 // operator picks the fullstack kind. Layout mirrors the canonical
 // multi-page examples (notes-fullstack, team-notes):
 //
-//	Main.mar              — wires App.fullstack
-//	Shared.mar            — types + Service contracts
-//	Backend.mar           — Entity + Service implementations
-//	Frontend/Routes.mar   — centralized typed Paths
-//	Frontend/Home.mar     — Home page (list + add form)
-//	Frontend/About.mar    — About page (static info)
+//	Main.mar              - wires App.fullstack
+//	Shared.mar            - types + Service contracts
+//	Backend.mar           - Entity + Service implementations
+//	Frontend/Routes.mar   - centralized typed Paths
+//	Frontend/Home.mar     - Home page (list + add form)
+//	Frontend/About.mar    - About page (static info)
 //
 // Splitting pages into one-file-per-module from day one matches how
 // real Mar projects grow.

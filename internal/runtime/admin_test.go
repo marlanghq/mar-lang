@@ -3,7 +3,7 @@ package runtime
 import "testing"
 
 // adminIdentityToMsg is a toMsg that returns the Result it's handed, so the
-// performed effect yields the raw Ok/Err the dispatch produced — convenient
+// performed effect yields the raw Ok/Err the dispatch produced: convenient
 // for asserting on the outcome.
 func adminIdentityToMsg() Value {
 	return nativeFn(1, func(args []Value) (Value, error) { return args[0], nil })
@@ -34,8 +34,8 @@ func runAdminBuiltin(t *testing.T, name string, args ...Value) Value {
 
 // The Mar.Admin.* builtins resolve in BaseEnv (so the LSP sees them and the
 // type system can gate them), but their bodies are injected by the server at
-// boot via RegisterAdminServices. Each is shaped like Service.call —
-// AdminSession -> (Result String resp -> msg) -> Effect String msg — so this
+// boot via RegisterAdminServices. Each is shaped like Service.call:
+// AdminSession -> (Result String resp -> msg) -> Cmd msg, so this
 // pins that contract: unregistered → toMsg (Err …); registered → toMsg (Ok …);
 // and listEntityRows forwards its entity argument.
 func TestAdminServicesInjection(t *testing.T) {

@@ -9,7 +9,7 @@ import (
 
 // A type is identified by its module (ADR 0027). Before that, a user type
 // became TCon{base name} with the module discarded, so two modules that each
-// declared `Color` produced ONE type — and a `case` the checker had proven
+// declared `Color` produced ONE type, and a `case` the checker had proven
 // total fell through at runtime.
 //
 // These drive the real multi-module path, because that is the only place the
@@ -107,7 +107,7 @@ oops = A.describe B.Blue
 	}, "A.Color")
 }
 
-// The same two modules, used correctly, must still compile — otherwise the
+// The same two modules, used correctly, must still compile: otherwise the
 // test above would pass on a checker that simply refused everything.
 func TestSameNamedCustomsDoNotBlockCorrectUse(t *testing.T) {
 	mustPass(t, "A.Color used with A's constructors", []modSrc{
@@ -132,8 +132,8 @@ const modBT = `module B exposing (T)
 type alias T = { b : String }
 `
 
-// A qualified alias resolves to ITS module. This used to land on B's `T` — a
-// module Main merely imported — and the answer flipped with the import order.
+// A qualified alias resolves to ITS module. This used to land on B's `T`: a
+// module Main merely imported, and the answer flipped with the import order.
 func TestQualifiedAliasResolvesToItsOwnModule(t *testing.T) {
 	main := `module Main exposing (readIt)
 import %s

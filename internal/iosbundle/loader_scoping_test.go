@@ -11,8 +11,8 @@ import (
 //
 // The Swift loader used to bind every module's BARE names into one shared Env.
 // Every page module in every example declares `init`, `update`, `view` and
-// `page`, so each module overwrote the one before it, and a closure — which
-// resolves its free names when it RUNS, not when it is built — ended up
+// `page`, so each module overwrote the one before it, and a closure, which
+// resolves its free names when it RUNS, not when it is built: ended up
 // reading whichever module happened to load last.
 //
 // What that looked like on a device: `examples/shared-cart` opened on the
@@ -23,7 +23,7 @@ import (
 // module its own frame (see loadModule in internal/jsserve/runtime.js, whose
 // comment records that the same bug was intermittent there); iOS never got
 // the same treatment, so the two platforms disagreed about what a program
-// means — the worst kind of drift there is.
+// means: the worst kind of drift there is.
 //
 // These are structural checks. They cannot run Swift, so they cannot prove
 // the scoping works; they can prove the per-module frame has not been

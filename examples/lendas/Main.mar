@@ -12,7 +12,7 @@ import Frontend.Match
 import Frontend.ComoJogar
 
 
--- LENDAS — an async two-player collectible card game about Latin
+-- LENDAS: an async two-player collectible card game about Latin
 -- American myth, and a Mar fullstack showcase with a CANVAS game page:
 -- email-code Auth, REST services, SQLite entities, an App UI lobby and
 -- a fully animated card table. The rules engine lives in Shared and is

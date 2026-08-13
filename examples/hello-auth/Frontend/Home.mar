@@ -14,7 +14,7 @@ import UI exposing
 --   2. If no session, redirects to the signInPage declared in
 --      Auth.config (here Frontend.SignIn.page → "/sign-in").
 --   3. If logged in, threads the User into init/update/view as the
---      first argument — no auth juggling in user code.
+--      first argument: no auth juggling in user code.
 --
 -- Model is trivially empty: this page has no local state worth
 -- tracking. Even Sign-out is a single-shot effect with no

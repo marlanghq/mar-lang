@@ -32,7 +32,7 @@ func LoadModule(mod *ast.Module) (*Module, error) {
 	env := BaseEnv()
 
 	// Pass 1: register custom-type constructors. Also opportunistically
-	// register zero-arg-ctor types in the path-pattern enum registry —
+	// register zero-arg-ctor types in the path-pattern enum registry:
 	// that's how Page.dynamic's `{role:Role}` syntax learns the URL ↔
 	// ctor mapping. Types with payload ctors are silently skipped
 	// (RegisterEnumType filters internally); the typechecker has
@@ -121,8 +121,8 @@ func (m *Module) Get(name string) (Value, error) {
 
 // requireElaborated refuses a tree the typechecker has not finished with.
 //
-// This package deliberately cannot import the typechecker — types are erased
-// at this boundary — so it cannot re-derive what elaboration decided: which
+// This package deliberately cannot import the typechecker: types are erased
+// at this boundary, so it cannot re-derive what elaboration decided: which
 // literals are Decimals, which reference means which implementation, what
 // order the values evaluate in. Running such a tree does not fail loudly; it
 // produces a confident wrong answer. Refusing is the only honest option.

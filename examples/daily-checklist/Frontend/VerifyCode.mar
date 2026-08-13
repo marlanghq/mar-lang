@@ -14,7 +14,7 @@ import UI exposing
 -- Code-entry half of the sign-in flow, mounted at
 -- /sign-in/verify/{email:String}. Path.dynamic decodes the
 -- `{email:String}` segment into a typed params record so we don't
--- have to read state from anywhere global — the URL is the source
+-- have to read state from anywhere global: the URL is the source
 -- of truth, and pasting the URL into a fresh tab still works.
 --
 -- Why a separate page (instead of an internal state machine)? The

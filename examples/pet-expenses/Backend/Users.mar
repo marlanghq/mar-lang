@@ -6,7 +6,7 @@ import Shared
 
 -- The users table backs Auth.config. The framework's Auth.* operations
 -- (requestCode, verifyCode, me, logout) read and write rows here via
--- the Entity handle below. We add no business logic of our own — the
+-- the Entity handle below. We add no business logic of our own: the
 -- framework owns the identity lifecycle; account deletion lives in
 -- Backend.Account.
 users : Entity Shared.User

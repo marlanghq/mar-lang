@@ -20,12 +20,12 @@ module Frontend.Routes exposing
 --   1. The whole route table fits on one screen
 --   2. Renaming a URL pattern surfaces every `Nav.pushTo` /
 --      `navigationLink` callsite as a compile error
---   3. Refactor-safe — the typed Path machinery checks that callers
+--   3. Refactor-safe: the typed Path machinery checks that callers
 --      pass records with the right field types
 --
 -- Routes that take parameters embed them as `{name:Type}` segments.
 -- `Path { id : Int }` means "callers must supply a record with an
--- `id` field of type Int" — the framework substitutes it into the
+-- `id` field of type Int": the framework substitutes it into the
 -- URL at link-build time and round-trips it back into the Params
 -- record at page-mount time.
 

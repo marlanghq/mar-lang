@@ -1,23 +1,23 @@
 // Post-deploy health check.
 //
 // `mar deploy` exits 0 the moment Fly accepts the image and assigns
-// it to a machine — which is BEFORE the app has actually booted. Many
+// it to a machine, which is BEFORE the app has actually booted. Many
 // real-world failures land in that gap: a broken migration, a missing
 // secret, an SMTP check that explodes on first boot. Without a probe,
 // the operator sees "deployed ✓" in the terminal and only discovers
 // the breakage later when a user reports the app is down.
 //
 // What we do: after `fly deploy` returns, poll `https://<app>.fly.dev/`
-// for up to 60 seconds. Mar's runtime is strict on boot — migrations,
+// for up to 60 seconds. Mar's runtime is strict on boot: migrations,
 // validateProductionConfig, SMTP check, DB lockfile all run before the
-// HTTP server starts listening — so a successful response (any status
+// HTTP server starts listening, so a successful response (any status
 // < 500) means the app fully booted. On failure, dump the last 50
 // lines from `fly logs` inline so the operator sees what crashed
 // without leaving the terminal.
 //
 // No flags. The probe is mandatory on every deploy. The only escape
 // is Ctrl+C, and even then the deploy itself completed before this
-// step started — interrupting just skips the verification.
+// step started: interrupting just skips the verification.
 
 package main
 
@@ -40,7 +40,7 @@ const (
 	// on top of the actual boot. Subsequent deploys are typically up
 	// within 10-15s because the edge already has the route cached.
 	// Apps that legitimately take longer than 90s (huge migrations,
-	// cold image pull on a fresh runner) will hit this and dump logs —
+	// cold image pull on a fresh runner) will hit this and dump logs:
 	// operator can then run `mar fly logs` to watch the rest.
 	healthCheckTimeout = 90 * time.Second
 
@@ -52,7 +52,7 @@ const (
 
 	// healthCheckRequestTimeout caps a single HTTP request. Kept
 	// generous because a freshly-routed Fly app sometimes needs a few
-	// seconds for the proxy to find the new machine — a tight 1s
+	// seconds for the proxy to find the new machine: a tight 1s
 	// timeout would falsely fail those first attempts.
 	healthCheckRequestTimeout = 5 * time.Second
 
@@ -68,7 +68,7 @@ const (
 // failure header and dumps the recent log buffer for appName.
 //
 // Returns true on success, false on failure. Caller decides the exit
-// code — this function never calls os.Exit itself.
+// code: this function never calls os.Exit itself.
 func runHealthCheck(appName, appURL string) bool {
 	if err := waitForAppHealthy(appURL, healthCheckTimeout); err != nil {
 		fmt.Println()
@@ -79,7 +79,7 @@ func runHealthCheck(appName, appURL string) bool {
 		dumpRecentLogs(appName, healthCheckLogTailLines)
 		fmt.Fprintln(os.Stderr)
 		// `mar fly logs` already streams by default (no `--follow`
-		// flag — fly logs tails out of the box). Suggesting
+		// flag: fly logs tails out of the box). Suggesting
 		// `--follow` would have the dispatcher treat the flag as a
 		// project path and stat it, which fails with a confusing
 		// "no such file" error.
@@ -103,7 +103,7 @@ func runHealthCheck(appName, appURL string) bool {
 // Progress feedback: when stdout is a TTY, redraws a single in-place
 // line with the elapsed time. When piped (CI, log capture), prints a
 // one-shot "waiting" line up front and the success/failure line at
-// the end — no in-place updates.
+// the end: no in-place updates.
 //
 // Output merging: on success, the success message replaces fly's
 // trailing "Visit your newly deployed app at <url>" line via ANSI
@@ -128,7 +128,7 @@ func waitForAppHealthy(appURL string, timeout time.Duration) error {
 			if isTTY {
 				mergeWithFlyVisitLine()
 			}
-			// Trailing blank per docs/cli-style.md §1 — the success
+			// Trailing blank per docs/cli-style.md §1: the success
 			// line is the last thing we print before
 			// printDeploySuccessSummary may decide to print nothing,
 			// so the blank here is what stands the success line off
@@ -166,7 +166,7 @@ func waitForAppHealthy(appURL string, timeout time.Duration) error {
 //
 // Why a gradient and not just "red at 50%": typical mar app boots
 // finish in 3–10s, so anything past ~12s already deserves a
-// "huh, slower than usual" signal — yellow says that without
+// "huh, slower than usual" signal: yellow says that without
 // implying failure. Red is reserved for the late stretch where
 // the operator should start mentally preparing to investigate.
 func colorizeElapsed(elapsed, timeout time.Duration) string {
@@ -190,13 +190,13 @@ func colorizeElapsed(elapsed, timeout time.Duration) string {
 // Layout fly leaves at the cursor when it exits:
 //
 //	line N:   Visit your newly deployed app at <url>
-//	line N+1: (blank — fly's trailing \n)
+//	line N+1: (blank, fly's trailing \n)
 //	line N+2: (cursor here, possibly with spinner residue)
 //
 // The ANSI sequence:
-//   - \r\033[K   — column 0, clear current line (wipes spinner)
-//   - \033[2A    — up 2 lines (cursor lands at start of fly's URL line)
-//   - \033[J     — clear from cursor to end of screen
+//   - \r\033[K   - column 0, clear current line (wipes spinner)
+//   - \033[2A    - up 2 lines (cursor lands at start of fly's URL line)
+//   - \033[J     - clear from cursor to end of screen
 //
 // After this, cursor is at the start of where fly's URL line was,
 // ready for our combined success message to be printed in its place.
@@ -207,8 +207,8 @@ func mergeWithFlyVisitLine() {
 }
 
 // probeHealthy returns true when the app responds with a non-5xx status.
-// Anything else — connection refused, TLS error, request timeout, 5xx
-// — counts as "not up yet". Errors are swallowed: probe failures are
+// Anything else: connection refused, TLS error, request timeout, 5xx
+// , counts as "not up yet". Errors are swallowed: probe failures are
 // expected during the warmup window.
 func probeHealthy(url string) bool {
 	ctx, cancel := context.WithTimeout(context.Background(), healthCheckRequestTimeout)

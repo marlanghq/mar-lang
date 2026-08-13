@@ -9,14 +9,14 @@ import (
 
 // What has to match across platforms is the page LIFECYCLE, not the chrome.
 //
-// A program says `App.frontend [a, b]` — these are the pages. How the user
+// A program says `App.frontend [a, b]`: these are the pages. How the user
 // gets between them is the platform's call, and it should differ: a stack and
 // a back button on iPhone, plausibly a sidebar on iPad, a drawer on Android, a
 // URL bar on the web. None of that is Mar's business.
 //
 // What IS Mar's business is ADR-0009: a page's model lives on the navigation
 // stack, so going somewhere new runs init and coming back restores what the
-// page had. An app can observe that directly — whether init re-runs, whether
+// page had. An app can observe that directly: whether init re-runs, whether
 // its effects fire again, whether the model it left is still there. If it
 // answers differently per platform, the same program is two programs.
 //
@@ -58,7 +58,7 @@ func TestTheShellResolvesRoutesAndDoesNotMountPages(t *testing.T) {
 		}
 	}
 
-	// And the multi-page shell has to actually read the nav path — a shell
+	// And the multi-page shell has to actually read the nav path: a shell
 	// that mounts through RouteView but picks the path from somewhere else
 	// (a @State selection, an index into `pages`) satisfies the check above
 	// and still detaches navigation from Nav.push/Nav.replace.
@@ -79,7 +79,7 @@ func TestTheShellResolvesRoutesAndDoesNotMountPages(t *testing.T) {
 
 // structBody returns the source between `struct <name>` and the closing brace
 // in column 0 that ends it. Swift top-level declarations always close there,
-// so no brace counting is needed — and matching too much is the failure mode
+// so no brace counting is needed, and matching too much is the failure mode
 // that lets a sabotage through, not too little.
 func structBody(source, name string) (string, bool) {
 	i := strings.Index(source, "struct "+name)

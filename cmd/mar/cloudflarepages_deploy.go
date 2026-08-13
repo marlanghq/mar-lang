@@ -1,4 +1,4 @@
-// `mar deploy` — push a static App.frontend bundle
+// `mar deploy`: push a static App.frontend bundle
 // to Cloudflare Pages via the Direct Upload API.
 //
 // Flow (all wrapped in progressStep so the operator sees what's
@@ -9,7 +9,7 @@
 //      hint if missing).
 //   3. Run `mar build` to produce dist/ (clean output, frontend-only
 //      target).
-//   4. Refuse if topology isn't App.frontend — hint at `mar fly
+//   4. Refuse if topology isn't App.frontend: hint at `mar fly
 //      deploy` for fullstack projects.
 //   5. Walk dist/, hash every file with blake3, build the upload
 //      manifest.
@@ -46,7 +46,7 @@ import (
 )
 
 func runCloudflarePagesDeploy(path string, noOpen bool) int {
-	// Resolve manifest first — surfaces missing mar.json /
+	// Resolve manifest first: surfaces missing mar.json /
 	// missing-block errors before we spend time on build or
 	// network calls. The resolver loads with env: resolution, so
 	// target.APIToken is the ACTUAL token bytes (not "env:VAR").
@@ -81,12 +81,12 @@ func runCloudflarePagesDeploy(path string, noOpen bool) int {
 
 	// Project existence check. If the project doesn't exist yet,
 	// offer to create it (interactive) or fail with a clear hint
-	// (non-interactive — typo-on-CI would silently create a stray
+	// (non-interactive: typo-on-CI would silently create a stray
 	// project, so we refuse to auto-create without a TTY).
 	//
 	// projectInfo carries the project's actual subdomain (which can
 	// differ from the project name if the obvious <name>.pages.dev
-	// was already taken on another account — CF appends a suffix
+	// was already taken on another account: CF appends a suffix
 	// like -1in to make it unique). We use it for the final success
 	// URL so the operator sees the address that actually serves
 	// their site.
@@ -105,7 +105,7 @@ func runCloudflarePagesDeploy(path string, noOpen bool) int {
 	}
 
 	// Build the bundle. We always build into a fresh dist/ next
-	// to the project — same path `mar build` produces — so a
+	// to the project, same path `mar build` produces, so a
 	// follow-up `mar build` shows the same output.
 	distDir := filepath.Join(target.ProjectDir, "dist")
 	entry := filepath.Join(target.ProjectDir, "Main.mar")
@@ -214,7 +214,7 @@ func runCloudflarePagesDeploy(path string, noOpen bool) int {
 	// label. So we use it verbatim instead of appending
 	// ".pages.dev" ourselves (which would produce
 	// "mar-website-1in.pages.dev.pages.dev"). The fallback path
-	// — when CF didn't return a subdomain for some reason —
+	//, when CF didn't return a subdomain for some reason:
 	// builds the host from target.App as best-effort.
 	prodHost := target.App + ".pages.dev"
 	if projectInfo != nil && projectInfo.Subdomain != "" {
@@ -239,13 +239,13 @@ func runCloudflarePagesDeploy(path string, noOpen bool) int {
 	// Even the pinned deployment URL serves Cloudflare's "Nothing is
 	// here yet" placeholder for the first few seconds after the
 	// deployment is created, so we poll until it actually serves OUR
-	// bundle before opening — otherwise the operator lands on the
+	// bundle before opening: otherwise the operator lands on the
 	// placeholder and has to refresh by hand.
 	if shouldOpenBrowser(noOpen) && deployment != nil && deployment.URL != "" {
 		// The entry document's content hash is our version signal:
 		// index.html inlines program.json (see scaffold.buildFrontendDist),
 		// so any change to the app changes this hash. Frontend-only
-		// sites have no backend /version endpoint — this IS the check.
+		// sites have no backend /version endpoint: this IS the check.
 		expectedIndexKey := ""
 		if a, ok := files["/index.html"]; ok {
 			expectedIndexKey = a.Key
@@ -284,7 +284,7 @@ func runCloudflarePagesDeploy(path string, noOpen bool) int {
 
 // errCFDeployNotLive signals that the freshly-created deployment did
 // not start serving our exact bundle within the poll window. It is NOT
-// a deploy failure (the upload already succeeded) — the caller treats
+// a deploy failure (the upload already succeeded): the caller treats
 // it as "open anyway, the page may briefly show a placeholder".
 var errCFDeployNotLive = errors.New("deployment not serving the new bundle yet")
 
@@ -302,7 +302,7 @@ const (
 	// cfDeployReadyInterval is the gap between readiness polls.
 	cfDeployReadyInterval = 1500 * time.Millisecond
 	// cfMaxIndexBytes caps how much of the served document we read
-	// before hashing — index.html inlines program.json, so it can be
+	// before hashing: index.html inlines program.json, so it can be
 	// large, but never close to this ceiling.
 	cfMaxIndexBytes = 64 << 20 // 64 MiB
 )
@@ -380,7 +380,7 @@ type pagesAsset struct {
 // and returns the assembled asset map keyed by URL path.
 //
 // Skips dotfiles (.DS_Store, .gitignore that snuck in) and
-// directories. Symlinks are dereferenced — if the operator
+// directories. Symlinks are dereferenced, if the operator
 // symlinked content into dist/, follow it.
 func collectDistAssets(distDir string) (map[string]*pagesAsset, error) {
 	out := make(map[string]*pagesAsset)
@@ -446,7 +446,7 @@ func uploadMissingAssets(client *cfClient, jwt string, files map[string]*pagesAs
 			a, ok := byKey[key]
 			if !ok {
 				// Server asked for a hash we don't have in the
-				// current dist/. Shouldn't happen — check-missing
+				// current dist/. Shouldn't happen: check-missing
 				// only returns hashes we sent it. Surface clearly
 				// so an upstream bug doesn't get swallowed.
 				return fmt.Errorf("internal: server requested hash %q not found in dist/", key)
@@ -469,7 +469,7 @@ func uploadMissingAssets(client *cfClient, jwt string, files map[string]*pagesAs
 
 // errCFProjectAborted is the sentinel returned by
 // ensureCloudflarePagesProjectExists when the operator declined
-// the auto-create prompt. The caller catches it and exits 0 —
+// the auto-create prompt. The caller catches it and exits 0:
 // declining is a clean abort, not a failure.
 var errCFProjectAborted = fmt.Errorf("operator declined to create the project")
 
@@ -484,7 +484,7 @@ var errCFProjectAborted = fmt.Errorf("operator declined to create the project")
 //  4. Other errors (auth, network) propagate unchanged.
 //
 // Returning the project info matters because Cloudflare Pages
-// subdomains are GLOBALLY unique — if "mar-website" is taken on
+// subdomains are GLOBALLY unique, if "mar-website" is taken on
 // another account, CF assigns you something like "mar-website-1in".
 // The caller needs info.Subdomain to print the right production
 // URL; hard-coding "<app>.pages.dev" would point operators (and
@@ -493,13 +493,13 @@ var errCFProjectAborted = fmt.Errorf("operator declined to create the project")
 // Idempotent: re-running after creation hits step 1's "exists"
 // branch and returns immediately.
 // The bool return is true only when this call CREATED the project (vs finding
-// it already there) — the first deploy waits longer for it to go live.
+// it already there): the first deploy waits longer for it to go live.
 func ensureCloudflarePagesProjectExists(client *cfClient, account, projectName string) (*cfProjectInfo, bool, error) {
 	var info *cfProjectInfo
 	if err := progressStepErr("Checking project", func() error {
 		got, err := client.cfGetProject(account, projectName)
 		if errors.Is(err, errCFProjectNotFound) {
-			return nil // not an error in this step — handled below
+			return nil // not an error in this step: handled below
 		}
 		if err != nil {
 			return err
@@ -571,7 +571,7 @@ func ensureCloudflarePagesProjectExists(client *cfClient, account, projectName s
 // secret per se, but it's the kind of detail operators don't want
 // flashing on screen during screencasts or pair-programming
 // sessions. The deploy is already pinned to the right account via
-// mar.json — repeating the ID on every run adds risk without
+// mar.json: repeating the ID on every run adds risk without
 // adding information the operator needs at deploy time.
 //
 // `source` is displayed as the project folder's basename rather
@@ -579,11 +579,11 @@ func ensureCloudflarePagesProjectExists(client *cfClient, account, projectName s
 // project unambiguously without flashing a full home-relative
 // path like /Users/<name>/dev/... in screencasts; (2) handles
 // the common `mar deploy .` case where the raw
-// input would just read "." — not useful for confirming the
+// input would just read ".", not useful for confirming the
 // target.
 //
 // The production URL is NOT shown in the banner. CF Pages
-// subdomains are globally unique — if "<app>.pages.dev" is taken
+// subdomains are globally unique, if "<app>.pages.dev" is taken
 // on another account, CF assigns a suffixed variant. We don't
 // know the real subdomain until the project-check API call
 // completes (a few seconds after the banner prints). Better to
@@ -604,11 +604,11 @@ func printCloudflarePagesBanner(app, projectDir string) {
 //   - "." (or "./" or "") expands to "./<cwd basename>" so the
 //     operator sees a meaningful folder identifier instead of
 //     just a dot.
-//   - Any other input is shown verbatim — the operator typed it
+//   - Any other input is shown verbatim: the operator typed it
 //     deliberately, and overriding their intent (e.g. collapsing
 //     a long path to just its basename) would lose context.
 //
-// Falls back to the raw input when the cwd lookup fails — better
+// Falls back to the raw input when the cwd lookup fails: better
 // to show something than to abort the banner over a stat error.
 func sourceFolderName(projectDir string) string {
 	if projectDir != "." && projectDir != "./" && projectDir != "" {

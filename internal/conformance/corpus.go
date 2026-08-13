@@ -1,8 +1,8 @@
 // Package conformance holds the one stdlib corpus every runtime has to agree
 // about, and the hand-written answers all of them are measured against.
 //
-// Every pure stdlib function is implemented three times — Go, JavaScript,
-// Swift — and nothing forces the three to agree. The drift tests check that
+// Every pure stdlib function is implemented three times: Go, JavaScript,
+// Swift, and nothing forces the three to agree. The drift tests check that
 // each layer DEFINES a name; they cannot see that the layers answer
 // differently. `==` was defined everywhere and returned False for every record
 // in the browser while Go and iOS said True, silently, for as long as it took
@@ -421,7 +421,7 @@ results =
 const Entry = "Conform.results"
 
 // Blocks names the blocks `results` joins, in that order. Case labels repeat
-// across modules — `map`, `foldl`, `filter`, `toList` — so a case is named for
+// across modules, `map`, `foldl`, `filter`, `toList`, so a case is named for
 // the block it landed in: `Dict.map`, not `map`.
 var Blocks = []string{
 	"Basics", "String", "List", "Maybe", "Result", "Tuple", "Char", "Dict", "Set", "JSON", "Math",
@@ -443,14 +443,14 @@ var Scope = map[string]bool{
 // OutOfScopeBare is the bare-global counterpart to OutOfScope: a name spelled
 // without a qualifier that cannot be compared as a value. Everything else in
 // typecheck.BareGlobals() has to appear in Source, which is the gate that was
-// missing when `modBy` diverged — the module walk skips dotless names, so the
+// missing when `modBy` diverged: the module walk skips dotless names, so the
 // numeric kit had never been compared across runtimes at all.
 var OutOfScopeBare = map[string]string{
 	"linkTo": "builds a UI link; compared by the renderer parity tests",
 }
 
 // OutOfScope is every other stdlib module, with the reason it is not compared
-// here. Together the two maps have to cover the whole stdlib — a module in
+// here. Together the two maps have to cover the whole stdlib: a module in
 // neither fails the build, so a new one cannot slip in untested by being
 // unnoticed.
 var OutOfScope = map[string]string{

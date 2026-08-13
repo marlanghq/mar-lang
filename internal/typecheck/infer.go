@@ -63,7 +63,7 @@ func Infer(e ast.Expr, env *TypeEnv, s *Subst) (Type, error) {
 
 // doInfer is the dispatcher Infer wraps. Split out so Infer can
 // record types post-recursion without every case-branch having to
-// remember to do so. Returns the raw inferred type — Infer applies
+// remember to do so. Returns the raw inferred type: Infer applies
 // the recording side-effect.
 func doInfer(e ast.Expr, env *TypeEnv, s *Subst) (Type, error) {
 	switch n := e.(type) {
@@ -72,7 +72,7 @@ func doInfer(e ast.Expr, env *TypeEnv, s *Subst) (Type, error) {
 		// which member it is, exactly as in Elm. Unconstrained, it
 		// generalizes and stays `number`; used at Decimal, elaborateLiterals
 		// rewrites the node so the runtime produces a Decimal. Note the
-		// asymmetry that keeps this safe — a literal WITH a point is
+		// asymmetry that keeps this safe: a literal WITH a point is
 		// TDecimal below, never `number`, so `1` can widen to Decimal but
 		// `1.5` can never narrow to Int.
 		return TVar{ID: int(atomicNextVarID()), Constraint: KindNumber}, nil
@@ -87,7 +87,7 @@ func doInfer(e ast.Expr, env *TypeEnv, s *Subst) (Type, error) {
 	case *ast.EVar:
 		return inferVar(n.Name, n.Pos, env)
 	case *ast.EQualified:
-		// Look up "Module.name" — for now, flatten to a single key.
+		// Look up "Module.name": for now, flatten to a single key.
 		key := joinName(n.Module, n.Name)
 		if t, ok := env.Lookup(key); ok {
 			return Instantiate(t), nil
@@ -190,7 +190,7 @@ func inferApp(n *ast.EApp, env *TypeEnv, s *Subst) (Type, error) {
 			who = fmt.Sprintf("the %s argument to `%s`", ordinalWord(argIdx), name)
 		}
 
-		// Kind violation (e.g. comparable key bound to a Record) —
+		// Kind violation (e.g. comparable key bound to a Record):
 		// the UnifyError's Reason already names the problem in
 		// user-facing terms, so keep it instead of re-wrapping with
 		// the generic "argument has the wrong type" framing. Still
@@ -302,7 +302,7 @@ func inferBinop(n *ast.EBinop, env *TypeEnv, s *Subst) (Type, error) {
 	tRet := FreshVar()
 	expected := TArrow{From: tLeft, To: TArrow{From: tRight, To: tRet}}
 	if err := Unify(tOp, expected, s); err != nil {
-		// Kind violation — e.g. `record < record` tries to bind a
+		// Kind violation: e.g. `record < record` tries to bind a
 		// Comparable TVar to a TRecord. The UnifyError's Reason
 		// already names the offending shape; surface it directly
 		// instead of wrapping with "operator < : cannot unify ..."
@@ -726,7 +726,7 @@ func inferPattern(p ast.Pattern, env *TypeEnv, s *Subst) (Type, *TypeEnv, error)
 		}
 		return s.Apply(listT), env2, nil
 	case *ast.PRecord:
-		// `{ field1, field2, ... }` — partial record pattern (Elm-style).
+		// `{ field1, field2, ... }`: partial record pattern (Elm-style).
 		//
 		// Each listed field becomes a fresh type variable + a binding
 		// in the extended env. The pattern's overall type is an OPEN
@@ -736,7 +736,7 @@ func inferPattern(p ast.Pattern, env *TypeEnv, s *Subst) (Type, *TypeEnv, error)
 		// against any record that HAS a `name` field, regardless of
 		// what else is there.
 		//
-		// We don't unify here against any specific scrutinee type —
+		// We don't unify here against any specific scrutinee type:
 		// that happens in the caller (inferCase / inferLet). We just
 		// return the pattern's own type + the new bindings.
 		//
@@ -792,7 +792,7 @@ func bindPattern(p ast.Pattern, t Type, env *TypeEnv) *TypeEnv {
 		// of the concrete TRecord underneath. If the binding's type
 		// isn't a record at all (typechecker upstream would have
 		// caught this, but be defensive), fall through with no
-		// bindings — the user already got a type error elsewhere.
+		// bindings: the user already got a type error elsewhere.
 		instantiated := t
 		if f, ok := instantiated.(TForall); ok {
 			instantiated = Instantiate(f)
@@ -807,7 +807,7 @@ func bindPattern(p ast.Pattern, t Type, env *TypeEnv) *TypeEnv {
 				newEnv = newEnv.Bind(fname, fieldT)
 			}
 			// Missing fields would have been caught by Unify in the
-			// caller — silently skipping here keeps the binder loop
+			// caller: silently skipping here keeps the binder loop
 			// robust if any future caller forgets to unify first.
 		}
 		return newEnv

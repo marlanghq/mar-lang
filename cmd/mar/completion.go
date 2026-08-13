@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-// runCompletion handles `mar completion <shell>` — emits a shell
+// runCompletion handles `mar completion <shell>`: emits a shell
 // completion script to stdout. Three shells are supported (zsh, bash,
 // fish) which together cover macOS / Linux defaults out of the box.
 //
@@ -52,12 +52,12 @@ func runCompletion(args []string) int {
 	return 0
 }
 
-// buildTargets — kept in lockstep with the runBuild flag handler in
+// buildTargets: kept in lockstep with the runBuild flag handler in
 // main.go. If you add a new target there (e.g. freebsd-amd64), append
 // it here so the shell offers it for `mar build --target <tab>`.
 const buildTargets = "darwin-amd64 darwin-arm64 linux-amd64 linux-arm64 windows-amd64 ios"
 
-// flySubcommandList — kept in lockstep with runFly's switch in fly.go.
+// flySubcommandList: kept in lockstep with runFly's switch in fly.go.
 // `db` is the alias for `database`; we list both so tab completes
 // either spelling. Shipping is the top-level `mar deploy` command, not
 // a fly subcommand. Order matches the typical lifecycle (preview →
@@ -65,7 +65,7 @@ const buildTargets = "darwin-amd64 darwin-arm64 linux-amd64 linux-arm64 windows-
 // preserve it in the menu.
 const flySubcommandList = "preview destroy logs status admin database db secrets"
 
-// flySecretsSubs / flyDatabaseSubs / flyAdminSubs — third-level
+// flySecretsSubs / flyDatabaseSubs / flyAdminSubs: third-level
 // subcommands under fly. Same lockstep contract: edit the
 // corresponding case-statement in fly_secrets.go / fly_database.go /
 // runFlyAdmin and remember to add the new sub here so the shell
@@ -74,15 +74,15 @@ const flySecretsSubs = "set list ls unset rm"
 const flyDatabaseSubs = "backup backups"
 const flyAdminSubs = "list ls"
 
-// adminSubs — `mar admin <add|remove|list>`. The aliases `rm` and
+// adminSubs: `mar admin <add|remove|list>`. The aliases `rm` and
 // `ls` are accepted by the CLI but skipped here to keep the menu
 // short; users who know the alias don't need the prompt.
 const adminSubs = "add remove list"
 
 // zshCompletion: zsh's _describe gives us "command: short description"
-// hints in the menu — the most informative experience of the three
+// hints in the menu: the most informative experience of the three
 // shells. Conditional logic uses zsh's `(( CURRENT == n ))` to figure
-// out "what argument am I completing right now" — n=2 means the
+// out "what argument am I completing right now": n=2 means the
 // subcommand slot, n=3 the first arg to the subcommand, etc.
 func zshCompletion() string {
 	return `#compdef mar
@@ -413,7 +413,7 @@ complete -F _mar_completion mar
 `
 }
 
-// fishCompletion: fish's completion DSL is declarative — one line
+// fishCompletion: fish's completion DSL is declarative, one line
 // per "when this condition holds, suggest these options". More verbose
 // than zsh/bash but easy to read top-to-bottom.
 func fishCompletion() string {

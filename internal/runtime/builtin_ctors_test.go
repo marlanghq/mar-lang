@@ -17,7 +17,7 @@ import (
 //	jumpKey = Keyboard.Space
 //
 // compiled clean and then killed the SERVER at boot with
-// `unbound constructor: Keyboard.Space` — 121 names one import away from
+// `unbound constructor: Keyboard.Space`, 121 names one import away from
 // taking a backend down. The set is generated for all three runtimes now; this
 // asserts the Go end of it actually resolves, rather than trusting that the
 // generated file is wired in.

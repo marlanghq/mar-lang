@@ -97,7 +97,7 @@ func TestGenerateMaterializesXcodeProject(t *testing.T) {
 	// (d) Info.plist substitutions: DisplayName goes in literally
 	// (Apple home-screen label), MarBaseURL is the production URL,
 	// MarAppName is the RAW manifest name (what mar dev advertises
-	// over Bonjour — the DEBUG auto-connect matches against it).
+	// over Bonjour: the DEBUG auto-connect matches against it).
 	infoBytes, err := os.ReadFile(filepath.Join(projectDir, "Info.plist"))
 	if err != nil {
 		t.Fatalf("read Info.plist: %v", err)

@@ -6,8 +6,8 @@ import "fmt"
 // number nobody asked for.
 //
 // The width is not arbitrary and not a Go decision: it is the widest integer
-// all three runtimes can agree on. JavaScript has no integers — `Int` is a
-// double there — so above 2^53 the browser stops being able to tell
+// all three runtimes can agree on. JavaScript has no integers: `Int` is a
+// double there, so above 2^53 the browser stops being able to tell
 // 9007199254740993 from 9007199254740992 and says nothing about it. Before
 // this bound, `Int` meant three different things: Go wrapped around, Swift
 // trapped, and JS quietly lost precision for values that were never near any
@@ -72,7 +72,7 @@ func mulInts(a, b int64) (int64, error) {
 	// A product of two in-range operands reaches 2^106, which DOES wrap an
 	// int64, so the range check alone would read a wrapped value as fine.
 	// The division identity catches the wrap first; `a == -1 && b ==
-	// math.MinInt64` — the one case it misses — cannot occur, because the
+	// math.MinInt64`, the one case it misses, cannot occur, because the
 	// operands are bounded well inside that.
 	c := a * b
 	if a != 0 && c/a != b {

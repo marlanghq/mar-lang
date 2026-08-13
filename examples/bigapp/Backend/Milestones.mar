@@ -4,7 +4,7 @@ module Backend.Milestones exposing (milestones, services)
 import Shared exposing (Role(..), MilestoneStatus(..))
 
 
--- Milestones — groups of issues shipped together. A milestone is
+-- Milestones: groups of issues shipped together. A milestone is
 -- "open" while you're still adding/closing issues; "closed" when
 -- the release is done. The dashboard can surface burn-down for the
 -- current open milestone.

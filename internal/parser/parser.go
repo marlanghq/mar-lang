@@ -715,7 +715,7 @@ func (p *parser) parsePattern() (ast.Pattern, error) {
 			}
 			ctor.Args = append(ctor.Args, arg)
 		}
-		// Allow `Just x :: rest` style — wrap ctor in cons if `::` follows.
+		// Allow `Just x :: rest` style, wrap ctor in cons if `::` follows.
 		return p.parsePatternConsTail(ctor)
 	}
 	atom, err := p.parsePatternAtom()
@@ -1245,7 +1245,7 @@ func (p *parser) parseCase() (ast.Expr, error) {
 	branchCol := p.peek().Column
 
 	// Inside a branch body, parseApp/parseExpr should stop at any token whose
-	// column <= branchCol — that's the next branch (or something outside).
+	// column <= branchCol: that's the next branch (or something outside).
 	saved := p.boundaryCol
 	p.boundaryCol = branchCol
 	defer func() { p.boundaryCol = saved }()

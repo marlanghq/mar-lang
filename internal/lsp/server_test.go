@@ -48,7 +48,7 @@ func TestFindProjectRoot(t *testing.T) {
 	}
 }
 
-// TestFindProjectRoot_NoMarker — random tmp dir without mar.json /
+// TestFindProjectRoot_NoMarker: random tmp dir without mar.json /
 // Main.mar returns ("", false) so the LSP falls back to single-file
 // analysis instead of running project mode against an unrelated tree.
 func TestFindProjectRoot_NoMarker(t *testing.T) {
@@ -60,7 +60,7 @@ func TestFindProjectRoot_NoMarker(t *testing.T) {
 	}
 }
 
-// TestFindProjectRoot_MainMarOnly — projects without mar.json (just
+// TestFindProjectRoot_MainMarOnly: projects without mar.json (just
 // Main.mar at the root) are also detected. Useful for `mar dev path`
 // invocations on simple example projects.
 func TestFindProjectRoot_MainMarOnly(t *testing.T) {
@@ -84,13 +84,13 @@ func mustWriteFile(t *testing.T, path, content string) {
 	}
 }
 
-// TestAnalyze_MultiModuleProject — end-to-end smoke against the
+// TestAnalyze_MultiModuleProject: end-to-end smoke against the
 // daily-checklist example. Mirrors what the LSP server does when the
 // editor opens Main.mar: read the file, hand it to `analyze` with
 // the path, expect zero diagnostics.
 //
-// A user-visible regression — "unknown qualified name:
-// Backend.Users.users" on a working project — would surface here as
+// A user-visible regression, "unknown qualified name:
+// Backend.Users.users" on a working project, would surface here as
 // a non-empty diags slice. Earlier this came back as a false positive
 // when the LSP fell through to single-file analysis instead of
 // running through projectAnalyze; the test ensures we stay in the

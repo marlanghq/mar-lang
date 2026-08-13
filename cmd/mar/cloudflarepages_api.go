@@ -4,15 +4,15 @@
 // `success` envelope; the helpers below unwrap it into a clean Go
 // value (or an error with the server's message preserved).
 //
-//   1. cfGetUploadJWT           — short-lived JWT to upload to the asset store
-//   2. cfCheckMissingHashes     — server tells us which file hashes it lacks
-//   3. cfUploadAssets           — upload missing files in batches
-//   4. cfUpsertHashes           — confirm uploads (commits to project's keyspace)
-//   5. cfCreateDeployment       — create a deployment from the asset manifest
+//   1. cfGetUploadJWT           - short-lived JWT to upload to the asset store
+//   2. cfCheckMissingHashes     - server tells us which file hashes it lacks
+//   3. cfUploadAssets           - upload missing files in batches
+//   4. cfUpsertHashes           - confirm uploads (commits to project's keyspace)
+//   5. cfCreateDeployment       - create a deployment from the asset manifest
 //
 // Hashing scheme: blake3(content || extension) → 32 hex chars. This
 // matches what wrangler does so the asset store keys are shared
-// across both tools — useful if the same project is deployed from
+// across both tools: useful if the same project is deployed from
 // wrangler AND mar (which shouldn't happen but is harmless if it does).
 
 package main
@@ -58,7 +58,7 @@ const (
 	// cfUploadBatchSize caps how many assets we upload per request.
 	// Cloudflare's documented limit is "max 5000 files OR 50 MB per
 	// batch". Mar dist/ bundles are tiny in both dimensions, so a
-	// single batch always fits — but we keep the constant explicit
+	// single batch always fits, but we keep the constant explicit
 	// so future bigger bundles surface the right limit without a
 	// magic number to chase.
 	cfUploadBatchSize = 100
@@ -179,7 +179,7 @@ func (c *cfClient) doJSON(method, url string, body any, context string, into any
 
 // doJSONWithJWT mirrors doJSON but uses an asset-upload JWT instead
 // of the long-lived API token. JWTs only work against
-// /pages/assets/* — for account/project endpoints, doJSON is right.
+// /pages/assets/*: for account/project endpoints, doJSON is right.
 func (c *cfClient) doJSONWithJWT(method, url, jwt string, body any, context string, into any) error {
 	var bodyReader io.Reader
 	if body != nil {
@@ -266,7 +266,7 @@ type cfProjectInfo struct {
 // 200 with an envelope error. We check both signals to be safe.
 //
 // CF error code reference: 8000007 = "Project not found". Pinning
-// the number rather than parsing the message text — codes are
+// the number rather than parsing the message text: codes are
 // the documented stable interface.
 func (c *cfClient) cfGetProject(accountID, projectName string) (*cfProjectInfo, error) {
 	url := fmt.Sprintf("%s/accounts/%s/pages/projects/%s",
@@ -328,26 +328,26 @@ func (c *cfClient) cfGetProject(accountID, projectName string) (*cfProjectInfo, 
 // shows up here, not embedded in conditional logic spread across
 // the file.
 const (
-	// 8000007 — Pages project not found (also used as a "doesn't
+	// 8000007: Pages project not found (also used as a "doesn't
 	// exist yet" signal by cfGetProject).
 	cfErrCodeProjectNotFound = 8000007
 
-	// 9106 — generic "Authentication failed". Returned when the
+	// 9106: generic "Authentication failed". Returned when the
 	// API token is wrong, expired, revoked, or doesn't carry the
 	// right permission scope.
 	cfErrCodeAuthFailed = 9106
 
-	// 10000 — "Authentication error". Alternate auth-rejection
+	// 10000: "Authentication error". Alternate auth-rejection
 	// code CF emits for some endpoints. Treat identically.
 	cfErrCodeAuthError = 10000
 )
 
 // cfCreateProject creates a new Pages project under `accountID`
 // configured for Direct Upload (no git integration, no build
-// config — all of which would be irrelevant since `mar build`
+// config: all of which would be irrelevant since `mar build`
 // produces the bundle locally).
 //
-// `productionBranch` is just metadata — we pass "main" because
+// `productionBranch` is just metadata: we pass "main" because
 // CF requires *some* string here, but for Direct Upload projects
 // the branch only affects which deployments get promoted to the
 // production URL. Since we always upload to production by
@@ -387,7 +387,7 @@ func (c *cfClient) cfGetUploadJWT(accountID, projectName string) (string, error)
 
 // cfCheckMissingHashes asks the asset store which of `hashes` it
 // doesn't already have. Returns the subset that still needs to be
-// uploaded — typically a small minority on subsequent deploys
+// uploaded: typically a small minority on subsequent deploys
 // where most assets haven't changed.
 func (c *cfClient) cfCheckMissingHashes(jwt string, hashes []string) ([]string, error) {
 	url := fmt.Sprintf("%s/pages/assets/check-missing", currentCFAPIBase())

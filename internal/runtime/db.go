@@ -34,14 +34,14 @@ func currentDBPath() string {
 }
 
 // CurrentDBPath is the exported counterpart for callers outside the
-// runtime package — used by `mar migrate plan/status` to decide
+// runtime package: used by `mar migrate plan/status` to decide
 // whether the project has a DB configured before opening it.
 func CurrentDBPath() string {
 	return currentDBPath()
 }
 
 // OpenDB exposes getDB to the cmd/mar package for the migrate
-// subcommand. Same lazy semantics — opens on first call, reuses the
+// subcommand. Same lazy semantics: opens on first call, reuses the
 // cached handle thereafter. Cleaner than re-implementing the open
 // logic in cmd/mar.
 func OpenDB() (*sql.DB, error) {
@@ -60,7 +60,7 @@ func displayPath(p string) string {
 
 // SetDBPath records the SQLite file the runtime should open on first use.
 // Called by `mar dev` / `mar build` after reading mar.json. Empty path is
-// allowed (and means "no DB available" — Repo calls will error out with a
+// allowed (and means "no DB available": Repo calls will error out with a
 // clear message, but the rest of the program runs fine).
 func SetDBPath(path string) {
 	dbMu.Lock()
@@ -99,7 +99,7 @@ func getDB() (*sql.DB, error) {
 	//
 	// SQLite allows only one writer at a time. With database/sql's
 	// default unbounded pool, two request handlers writing through
-	// different connections race for the write lock — and the classic
+	// different connections race for the write lock, and the classic
 	// failure mode is unrecoverable: both grab a read lock, both try
 	// to upgrade to a write lock, and SQLite returns "database is
 	// locked" immediately (busy_timeout can't retry a read-lock-
@@ -108,7 +108,7 @@ func getDB() (*sql.DB, error) {
 	//
 	// Reads serialize too. For Mar's target scale (solo apps, small
 	// teams) that's fine, and the one long-running recurring operation
-	// — the auto-backup's VACUUM INTO — runs on its own connection
+	//, the auto-backup's VACUUM INTO, runs on its own connection
 	// (OpenSnapshotDB) so it never stalls request handlers.
 	conn.SetMaxOpenConns(1)
 	if err := conn.Ping(); err != nil {
@@ -141,7 +141,7 @@ func appDSN(path string) string {
 }
 
 // OpenSnapshotDB opens an independent SQLite handle for read-only
-// snapshot work — specifically the auto-backup's VACUUM INTO. Kept
+// snapshot work: specifically the auto-backup's VACUUM INTO. Kept
 // separate from the app's single-connection pool (getDB) so a
 // periodic backup runs concurrently under WAL without blocking
 // request handlers: VACUUM INTO reads a consistent snapshot of the
@@ -175,7 +175,7 @@ func OpenSnapshotDB(path string) (*sql.DB, error) {
 //   - string → VString
 //   - []byte → VString (assumed UTF-8)
 //   - bool   → VBool
-//   - nil    → VString "" (defensive — should be filtered by NotNull check)
+//   - nil    → VString "" (defensive, should be filtered by NotNull check)
 func goValueToScalar(v any) (Value, error) {
 	if v == nil {
 		return VString{V: ""}, nil

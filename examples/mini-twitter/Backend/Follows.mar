@@ -4,7 +4,7 @@ module Backend.Follows exposing (follows)
 import Shared
 
 
--- Follows entity — the social graph as a join table.
+-- Follows entity: the social graph as a join table.
 --
 -- Two integer columns and a timestamp. `followerId` is the user
 -- who clicked Follow; `followedId` is whose tweets they want to

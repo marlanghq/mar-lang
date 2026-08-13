@@ -11,7 +11,7 @@ import (
 // StartSweeper launches a background goroutine that calls SweepExpired
 // on a fixed cadence. Returns immediately; the returned `stop` function
 // cancels the sweeper and returns once the goroutine has exited
-// (synchronous teardown — important for tests so the next test doesn't
+// (synchronous teardown: important for tests so the next test doesn't
 // race against a leftover goroutine writing to the same DB).
 //
 // Behaviour:
@@ -19,7 +19,7 @@ import (
 //     idled deployments (process restarted after weeks) shouldn't have
 //     to wait `interval` to reclaim space.
 //   - On each tick, calls SweepExpired with the current wall-clock time.
-//     Errors are logged to stderr but don't stop the loop — a transient
+//     Errors are logged to stderr but don't stop the loop: a transient
 //     DB issue shouldn't permanently break expiration cleanup.
 //   - When the context is cancelled (or `stop()` is called), returns.
 //

@@ -3,8 +3,8 @@
 // `.env` next to mar.json carries environment variables for local
 // development and self-hosting deployments. Loaded once when the
 // manifest's env-resolved load path runs (LoadManifest /
-// LoadManifestDev). Shell-set variables always win — .env is a
-// fallback, never an override — so an operator can
+// LoadManifestDev). Shell-set variables always win: .env is a
+// fallback, never an override, so an operator can
 // `export SMTP_PASSWORD=foo && mar dev` to test a new value without
 // touching .env.
 //
@@ -35,7 +35,7 @@ import (
 // LoadDotenv reads .env from `root` (typically the directory
 // containing mar.json) and returns the parsed key→value map. Returns
 // nil, nil if .env doesn't exist (the common case). Returns an error
-// only if the file exists but is malformed — we'd rather fail loudly
+// only if the file exists but is malformed: we'd rather fail loudly
 // than silently use a half-parsed env.
 func LoadDotenv(root string) (map[string]string, error) {
 	path := filepath.Join(root, ".env")
@@ -77,7 +77,7 @@ func LoadAndApplyDotenv(root string) (map[string]string, error) {
 }
 
 // parseDotenv reads the file content into a key→value map. Strict on
-// purpose — every parse failure returns an error with file:line so
+// purpose, every parse failure returns an error with file:line so
 // the user can fix the bad line instead of guessing why their secret
 // didn't load.
 func parseDotenv(r io.Reader, path string) (map[string]string, error) {
@@ -91,7 +91,7 @@ func parseDotenv(r io.Reader, path string) (map[string]string, error) {
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
-		// Tolerate a leading `export ` — common in .env files copied
+		// Tolerate a leading `export `: common in .env files copied
 		// out of shell snippets.
 		if strings.HasPrefix(line, "export ") {
 			line = strings.TrimSpace(strings.TrimPrefix(line, "export "))
@@ -116,7 +116,7 @@ func parseDotenv(r io.Reader, path string) (map[string]string, error) {
 	return out, nil
 }
 
-// validDotenvKey enforces POSIX-style names — letters, digits,
+// validDotenvKey enforces POSIX-style names: letters, digits,
 // underscore, must start with a letter or underscore. Matches the
 // shape mar.json's `env:VAR` regex (envrefs.go) expects so anything
 // loadable here is also referenceable from the manifest.

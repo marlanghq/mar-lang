@@ -11,7 +11,7 @@ const dataMarPath = "../../" + DataMarRelPath
 
 // TestDataMarIsCurrent is the lock on the scheme: it regenerates the module in
 // memory and fails if the committed file disagrees. This makes "add a stdlib
-// function (or edit content.go) and forget to regenerate" impossible to merge —
+// function (or edit content.go) and forget to regenerate" impossible to merge:
 // the signatures on the website stay identical to the compiler's.
 func TestDataMarIsCurrent(t *testing.T) {
 	have, err := os.ReadFile(dataMarPath)

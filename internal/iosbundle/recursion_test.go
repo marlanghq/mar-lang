@@ -20,7 +20,7 @@ import (
 //
 // The Go runtime carries the depth on the function value, because its requests
 // are concurrent and a shared counter would be wrong. Swift's interpreter runs
-// on the main actor, so an ambient counter is both correct and simpler — and
+// on the main actor, so an ambient counter is both correct and simpler, and
 // being ambient is what makes it see recursion routed through a higher-order
 // builtin without any value having to carry anything.
 
@@ -88,7 +88,7 @@ func runSwift(t *testing.T, bin, src, entry string) (string, string) {
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
 		// A refused program exits non-zero on purpose, so the error itself is
-		// not a failure — but a crash with no output is, and that looks the
+		// not a failure, but a crash with no output is, and that looks the
 		// same unless the exit status is reported.
 		t.Logf("swift exit: %v", err)
 	}

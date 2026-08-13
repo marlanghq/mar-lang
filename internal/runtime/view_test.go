@@ -36,7 +36,7 @@ go = Task.forEach (\_ -> Task.succeed ()) xs
 }
 
 // `width fill` is the explicit "claim the free space" sizing attr
-// that replaced the expand wrapper — `text [width fill]` is the
+// that replaced the expand wrapper: `text [width fill]` is the
 // equal-columns idiom. Pins (a) text's leading attrs list and (b)
 // that the shape typechecks + evaluates against the real BaseEnv,
 // so the web/iOS renderers (flex classes / .frame(maxWidth:
@@ -50,7 +50,7 @@ v = UI.text [ UI.width UI.fill ] "hi"
 	}
 }
 
-// UI.fill is the axis-polymorphic Size value — same __unit-tagged
+// UI.fill is the axis-polymorphic Size value: same __unit-tagged
 // record shape as chars/lines so every renderer dispatches on one
 // field. Pins the tag.
 func TestUIFillValue(t *testing.T) {

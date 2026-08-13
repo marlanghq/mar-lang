@@ -19,14 +19,14 @@ import (
 // install one (test paths). Atomic so we don't need a mutex on the
 // read path, which is hit per-request.
 //
-// Secure-by-default: there is no "off" value — a missing or zero
+// Secure-by-default: there is no "off" value, a missing or zero
 // configured value falls back to the default. Validation in the
 // project package guarantees user-configured values are in bounds
 // before they ever reach here.
 var maxBodyBytes atomic.Int64
 
 func init() {
-	// 1 MiB — same constant as project.DefaultMaxBodyBytes. Duplicated
+	// 1 MiB: same constant as project.DefaultMaxBodyBytes. Duplicated
 	// here (rather than imported) to avoid a project → jsserve back-
 	// reference; the values are pinned by tests in both packages.
 	maxBodyBytes.Store(1 << 20)
@@ -34,10 +34,10 @@ func init() {
 
 // SetMaxBodyBytes installs the per-request body cap. Called once at
 // boot from the CLI after mar.json is loaded. Values outside the
-// validator-enforced range are pinned to the default — a defensive
+// validator-enforced range are pinned to the default: a defensive
 // fallback if a caller ever bypasses Validate (e.g. test code).
 func SetMaxBodyBytes(n int64) {
-	if n < 1<<10 || n > 32<<20 { // [1 KiB, 32 MiB] — matches project bounds
+	if n < 1<<10 || n > 32<<20 { // [1 KiB, 32 MiB]: matches project bounds
 		n = 1 << 20
 	}
 	maxBodyBytes.Store(n)
@@ -52,7 +52,7 @@ func SetMaxBodyBytes(n int64) {
 // effect on the next call.
 // dispatchBackend matches the request against the mounted service routes
 // (by verb + path pattern), runs the matched handler, and writes its
-// response. Returns true when a route matched, false otherwise — the
+// response. Returns true when a route matched, false otherwise: the
 // caller decides what an unmatched request means (404 for a backend-only
 // server, the frontend shell for a fullstack one).
 func dispatchBackend(routes []runtime.Value, urlPath string, w http.ResponseWriter, req *http.Request) bool {
@@ -74,7 +74,7 @@ func dispatchBackend(routes []runtime.Value, urlPath string, w http.ResponseWrit
 		// once the limit is hit; we surface that as 413 and bail. Without
 		// this cap, a single client sending Content-Length: 10GB would
 		// exhaust server memory before the handler runs (and the cap
-		// applies even when the client lies about Content-Length — the
+		// applies even when the client lies about Content-Length: the
 		// reader counts actual bytes).
 		req.Body = http.MaxBytesReader(w, req.Body, maxBodyBytes.Load())
 		body, err := io.ReadAll(req.Body)
@@ -122,7 +122,7 @@ func dispatchBackend(routes []runtime.Value, urlPath string, w http.ResponseWrit
 		// forbidding MIME sniffing stops the browser from treating a body
 		// that happens to start with HTML (e.g. user-controlled text in an
 		// Effect.fail, fetched by navigating straight to a GET service) as
-		// text/html and rendering it — reflected XSS. It also fixes the
+		// text/html and rendering it: reflected XSS. It also fixes the
 		// content-type for well-behaved JSON clients.
 		// See docs/security-audit-2026-07-15.md #7.
 		h := w.Header()

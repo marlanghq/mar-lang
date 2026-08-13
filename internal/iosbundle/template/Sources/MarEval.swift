@@ -16,7 +16,7 @@ enum Eval {
     ///
     /// A function that never reaches its base case used to run until the
     /// thread's stack was gone, which on iOS is a crash the app cannot catch
-    /// or report — the user just sees it disappear.
+    /// or report: the user just sees it disappear.
     ///
     /// The number is MEASURED, not mirrored from the Go runtime, because the
     /// two platforms are not comparable: Go grows a goroutine stack to a
@@ -24,7 +24,7 @@ enum Eval {
     /// on an 8 MB thread stack. Built the way the template ships it
     /// (-O -wmo), it completes 1000 nested Mar calls and segfaults by 2000.
     /// 512 sits at half the known-good depth, which leaves room for frames
-    /// fatter than the probe's — a deeply nested expression uses more stack
+    /// fatter than the probe's: a deeply nested expression uses more stack
     /// per call than `1 + countDown (n - 1)` does.
     ///
     /// The asymmetry is honest rather than unfortunate: a program that
@@ -33,8 +33,8 @@ enum Eval {
     static let maxCallDepth = 512
 
     /// Ambient rather than threaded through every call, because unlike the Go
-    /// server — where requests are handled concurrently and a shared counter
-    /// would be wrong — everything that drives this interpreter is confined to
+    /// server: where requests are handled concurrently and a shared counter
+    /// would be wrong: everything that drives this interpreter is confined to
     /// the main actor: MarDispatcher, AppViewModel and MarPageRuntime are all
     /// @MainActor, and the effects that reach user code hop back onto it.
     ///
@@ -113,7 +113,7 @@ enum Eval {
             // Collapse the application spine `f a b c` into ONE saturated
             // call. Evaluating nested EApp nodes one at a time builds an
             // intermediate partial MarFn (plus a copied `applied` array)
-            // per argument — the interpreter's hottest allocation site: a
+            // per argument, the interpreter's hottest allocation site: a
             // canvas game's view frame is tens of thousands of
             // applications. Evaluation order matches the nested form (fn
             // first, then args left to right); in a typechecked program
@@ -227,7 +227,7 @@ enum Eval {
         // the worst of the three runtimes: a record without the field kept
         // running and carried a wrong value forward, silently, with nothing
         // to point at. The typechecker makes this unreachable for records
-        // that came from this program's types — so if it fires, a record
+        // that came from this program's types, so if it fires, a record
         // arrived from outside them and that is worth stopping for.
         case .fieldAccess(let recordE, let field):
             let r = try eval(recordE, env)
@@ -252,7 +252,7 @@ enum Eval {
                 var bag: [(String, MarValue)] = []
                 if matchInto(br.pattern, subj, &bag) {
                     // Tag-only patterns (the common Msg dispatch) bind
-                    // nothing — evaluate the body in the current env
+                    // nothing: evaluate the body in the current env
                     // instead of pushing an empty frame every lookup in
                     // the body would have to walk through.
                     if bag.isEmpty { return try eval(br.body, env) }
@@ -285,7 +285,7 @@ enum Eval {
     /// Applies a function to one argument with currying. Kept as the
     /// single-argument entry point for taggers, List callbacks, etc.
     /// The exactly-saturating closure case runs WITHOUT building the
-    /// one-element argument array `applyMany` would need — List.map /
+    /// one-element argument array `applyMany` would need: List.map /
     /// List.foldl call their user lambda once per element, so on a
     /// canvas frame this path fires millions of times.
     static func apply(_ fn: MarValue, _ arg: MarValue) throws -> MarValue {
@@ -303,7 +303,7 @@ enum Eval {
     }
 
     /// Applies a function to N arguments at once. When the arguments
-    /// saturate the arity, the call runs directly — no intermediate
+    /// saturate the arity, the call runs directly: no intermediate
     /// partial MarFns, no per-step `applied` array copies, and ONE Env
     /// frame for all params instead of a chain link per param (every
     /// lookup in the body walks that chain, so shorter is faster).
@@ -324,7 +324,7 @@ enum Eval {
                 if let native = f.native {
                     if f.applied.isEmpty && i == 0 && need == args.count {
                         // Whole-call fast path: the args array IS the
-                        // native's argument list — no copy.
+                        // native's argument list: no copy.
                         fv = try native(args)
                     } else {
                         var all = f.applied
@@ -336,7 +336,7 @@ enum Eval {
                     guard let params = f.params, let body = f.body, let fnEnv = f.env else {
                         throw MarRuntimeError.message("malformed function: no native and no body")
                     }
-                    // Bind straight into the frame — no intermediate
+                    // Bind straight into the frame: no intermediate
                     // `all` array; params of one call are distinct.
                     let frame = Env(parent: fnEnv)
                     for (p, v) in zip(params, f.applied) { frame.appendBinding(p, v) }
@@ -415,7 +415,7 @@ enum Eval {
             if !matchInto(head, xs[0], &bag) { return false }
             return matchInto(tail, .list(Array(xs.dropFirst())), &bag)
         case .record(let fields):
-            // `{ f1, f2 }` — bind each listed field's value. Partial
+            // `{ f1, f2 }`: bind each listed field's value. Partial
             // match: extra fields on the value are silently ignored.
             // Typecheck has already verified every listed field
             // exists on the value's type, so a missing field here is

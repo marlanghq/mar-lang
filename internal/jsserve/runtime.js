@@ -25,14 +25,14 @@
 
   const VInt    = (n)        => ({ k: 'I', n });
   const VFloat  = (n)        => ({ k: 'F', n });
-  // VDuration — time interval normalized to seconds. Constructed
+  // VDuration: time interval normalized to seconds. Constructed
   // only via Time.seconds / .minutes / .hours / .days / .weeks so
   // unit confusion is impossible at the call site.
   const VDuration = (seconds) => ({ k: 'D', seconds });
-  // VTime — absolute moment, Unix milliseconds. Constructed via
+  // VTime: absolute moment, Unix milliseconds. Constructed via
   // Time.now (effect) or Time.fromIso. Wire format is ISO 8601.
   const VTime = (millis) => ({ k: 'TM', millis });
-  // VAngle — a rotation, carried as deci-degrees in 0..3599. Built only
+  // VAngle: a rotation, carried as deci-degrees in 0..3599. Built only
   // via Math.degrees / .deciDegrees / .turns, so the unit is named at
   // construction and nowhere else (ADR 0029); `deci` is normative but not
   // observable, since no builtin hands it back. Wire format is
@@ -48,7 +48,7 @@
 
   // Reading a field a record does not have. The typechecker makes this
   // unreachable for records that came from this program's types, so it
-  // only fires when a record arrives from OUTSIDE them — in practice the
+  // only fires when a record arrives from OUTSIDE them: in practice the
   // model `mar dev` preserved across a hot reload, from before the Model
   // gained or lost a field.
   //
@@ -60,7 +60,7 @@
   // at the field nobody had.
   //
   // Callers guard on `=== undefined` before calling, so the `in` check
-  // never runs on the hot path — and a legitimate Mar value is never
+  // never runs on the hot path, and a legitimate Mar value is never
   // `undefined`, since every one of them is a tagged object.
   // Do two values have the same top-level shape? Used to decide whether a
   // model preserved across a hot reload still fits the program that just
@@ -88,19 +88,19 @@
       'means the page is still holding the model it loaded with, from before ' +
       'the Model changed. Reload the page.');
   }
-  // VChar — Unicode code point, distinct from a 1-char VString. Same
+  // VChar: Unicode code point, distinct from a 1-char VString. Same
   // model as Go's rune / Swift's Unicode.Scalar. JSON wire format is
   // {"__char": "x"} (see jsToMar / marToJs below). `c` is the integer
   // code point.
   const VChar = (c) => ({ k: 'Ch', c });
-  // VDec — exact base-10 number: BigInt coefficient (bounded to 34
+  // VDec, exact base-10 number: BigInt coefficient (bounded to 34
   // significant digits) + scale. 1.50 is {coef: 150n, scale: 2};
   // equality is numeric, scale is display metadata. Mirrors the Go
   // runtime's VDecimal (internal/runtime/decimal.go). Wire format is
-  // {"__dec": "1.50"} — a string, so no JSON parser ever routes the
+  // {"__dec": "1.50"}, a string, so no JSON parser ever routes the
   // digits through binary floating point.
   const VDec = (coef, scale) => ({ k: 'De', coef, scale });
-  // VDivision — the inert exact quotient `/` produces. Opaque on
+  // VDivision: the inert exact quotient `/` produces. Opaque on
   // purpose: no codec, no arithmetic, not comparable; only the
   // Decimal.rounded / exact / withRemainder resolvers turn it into a
   // value, which is where the precision gets written.
@@ -108,7 +108,7 @@
 
   // ---------- Decimal arithmetic (BigInt) ----------
   //
-  // Semantics mirror internal/runtime/decimal.go exactly — the
+  // Semantics mirror internal/runtime/decimal.go exactly: the
   // conformance vectors in decimal_test.go must produce identical
   // strings on both runtimes.
 
@@ -178,7 +178,7 @@
   }
 
   // Parse the canonical form (optional sign, digits, optional point +
-  // digits). Anything else — exponents included — returns null.
+  // digits). Anything else, exponents included, returns null.
   function parseDecString(s) {
     let t = String(s).trim();
     if (t === '') return null;
@@ -260,7 +260,7 @@
     return n;
   }
 
-  // VDict / VSet — ordered, polymorphic comparable-keyed containers.
+  // VDict / VSet: ordered, polymorphic comparable-keyed containers.
   // Internal representation parallels the Go runtime: VDict.pairs is a
   // sorted array of {key, value}; VSet.items is a sorted array. Sort
   // key is cmpValues; "comparable" means Int / Float / String at
@@ -275,13 +275,13 @@
 
   // ---------- Math (integer trigonometry) ----------
   //
-  // Semantics mirror internal/runtime/math.go and MarMath.swift exactly —
+  // Semantics mirror internal/runtime/math.go and MarMath.swift exactly:
   // the conformance vectors in math_conformance_test.go must produce
   // identical integers on all three. No Math.sin from the host anywhere:
   // three libms would be three answers, and a replayed rules engine, a
   // bot-verified level and time travel all need one.
 
-  // BEGIN GENERATED SINE TABLE (go generate ./internal/mathgen) — DO NOT EDIT
+  // BEGIN GENERATED SINE TABLE (go generate ./internal/mathgen), DO NOT EDIT
   // sin(θ) × 1000, half-even, at every deci-degree from 0.0° to 90.0°.
   // 901 entries: index i is i/10 degrees, sinQuarter[900] is exactly 1000.
   // The other three quadrants fold onto this one; atan2 searches the same
@@ -355,7 +355,7 @@
   const posMod = (n, m) => ((n % m) + m) % m;
 
   // sin/cos fold the whole circle onto the one quarter-wave table. Quadrant
-  // 1 and 3 read it backwards, 2 and 3 negate — no interpolation, because
+  // 1 and 3 read it backwards, 2 and 3 negate: no interpolation, because
   // the table already holds every representable input.
   function sinDeci(a) {
     const q = Math.floor(a / DECI_QUARTER);
@@ -406,7 +406,7 @@
     let inner = lo;
     if (inner < 450) {
       // Round to the nearer of k and k+1 by comparing the two cross
-      // products — each is |v| times the sine of the angular error, so the
+      // products: each is |v| times the sine of the angular error, so the
       // smaller one is the closer angle. A tie keeps the lower angle.
       const d0 = SIN_QUARTER[DECI_QUARTER - inner] * ay - SIN_QUARTER[inner] * ax;
       const d1 = SIN_QUARTER[inner + 1] * ax - SIN_QUARTER[DECI_QUARTER - inner - 1] * ay;
@@ -422,8 +422,8 @@
   // ---------- JSON ⇄ MarValue ----------
   //
   // Lifted to the IIFE level (rather than inside makeBuiltinEnv)
-  // so that mountPages's auth helpers — fetchAuthMe in particular
-  // — can reach jsToMar by closure scope. Without this, the user
+  // so that mountPages's auth helpers: fetchAuthMe in particular
+  //, can reach jsToMar by closure scope. Without this, the user
   // record from /_auth/whoami decodes via a ReferenceError catch and
   // collapses to Nothing, which silently redirects authenticated
   // users back to /sign-in instead of mounting the protected page.
@@ -442,7 +442,7 @@
         // A whole number the wire can carry but Mar cannot represent is
         // refused rather than rounded. JSON.parse has already lost the exact
         // digits by this point, so the value here is only good enough to tell
-        // that it was out of range — which is all the refusal needs.
+        // that it was out of range, which is all the refusal needs.
         if (!Number.isSafeInteger(v)) {
           throw new Error('Int out of range: ' + v +
             ' from JSON is outside the range of Int (-9007199254740991 to 9007199254740991)');
@@ -460,7 +460,7 @@
     if (typeof v === 'boolean') return VBool(v);
     if (Array.isArray(v)) return VList(v.map(jsToMar));
     if (typeof v === 'object') {
-      // Tagged constructor — round-trip from {__ctor: "Tag"} or
+      // Tagged constructor, round-trip from {__ctor: "Tag"} or
       // {__ctor: "Tag", __args: [...]}. Convention shared with the
       // Go encoder (encodeValue / valueToAny). Any object missing
       // __ctor falls through to the record path.
@@ -468,28 +468,28 @@
         const args = Array.isArray(v.__args) ? v.__args.map(jsToMar) : [];
         return VCtor(v.__ctor, args);
       }
-      // Time round-trip — `{__time: "ISO 8601"}` from the Go
+      // Time round-trip, `{__time: "ISO 8601"}` from the Go
       // encoder rebuilds a VTime so user code typed as
       // `createdAt : Time` actually receives a Time, not a String.
       if (typeof v.__time === 'string') {
         const ms = Date.parse(v.__time);
         if (!isNaN(ms)) return VTime(ms);
       }
-      // Angle round-trip — `{__angle: 450}` (deci-degrees) from the Go
+      // Angle round-trip, `{__angle: 450}` (deci-degrees) from the Go
       // encoder. Wrapped rather than trusted: the payload crossed a
       // network boundary and every other way to build an Angle
       // normalizes, so this one does too.
       if (typeof v.__angle === 'number') {
         return VAngle(posMod(Math.trunc(v.__angle), DECI_FULL));
       }
-      // Char round-trip — `{__char: "x"}` from the Go encoder. Take
+      // Char round-trip, `{__char: "x"}` from the Go encoder. Take
       // the FIRST code point (covers BMP + supplementary planes). A
       // malformed empty string degrades to U+FFFD rather than NaN.
       if (typeof v.__char === 'string') {
         const cp = v.__char.codePointAt(0);
         return VChar(cp == null ? 0xFFFD : cp);
       }
-      // Decimal round-trip — `{__dec: "1.50"}` from the Go encoder.
+      // Decimal round-trip, `{__dec: "1.50"}` from the Go encoder.
       // Rebuilt textually so the exact coefficient + scale survive.
       if (typeof v.__dec === 'string') {
         const d = parseDecString(v.__dec);
@@ -543,7 +543,7 @@
         // `order` records where the fields appeared in the source, which is
         // not part of the value: `{ a = 1, b = 2 }` and `{ b = 2, a = 1 }`
         // are equal, and encoding them differently would break the one
-        // property a pure function must have — equal inputs, equal output.
+        // property a pure function must have: equal inputs, equal output.
         // It also puts the three runtimes on the same answer; iOS already
         // sorted, so web and server were the odd ones out.
         const out = {};
@@ -551,7 +551,7 @@
         return out;
       }
       case 'C':
-        // Every ctor — Nothing and Just included — uses the
+        // Every ctor, Nothing and Just included, uses the
         // `__ctor` marker so generic decoders (jsToMar here, Go's
         // jsonToMar, iOS MarJSONCodec) can rebuild a VCtor without
         // needing type info at runtime. Transparent encodings
@@ -562,7 +562,7 @@
         // type-directed already.
         //
         // `__args` is written before `__ctor` because every object this
-        // encoder emits has its keys in sorted order — see the record case.
+        // encoder emits has its keys in sorted order: see the record case.
         // The iOS encoder hands its tree to JSONSerialization, which can only
         // be made deterministic with `.sortedKeys`, so sorted is the one order
         // all three runtimes can agree on. Decoders look keys up, so none of
@@ -720,7 +720,7 @@
         // Built-ins resolve immediately; everything else has to be
         // a registered enum type. The registry may not be populated
         // yet at very early bootstrap, so the decoder/encoder also
-        // re-check at use time — the typechecker is the authoritative
+        // re-check at use time: the typechecker is the authoritative
         // gate, this is a defensive fallback for handwritten patterns.
         if (type !== 'String' && type !== 'Int' && !enumTypes[type]) {
           throw new Error(`path "${p}": unknown type "${type}" for param "${name}". Allowed: String, Int, or a zero-arg enum type.`);
@@ -743,7 +743,7 @@
   // VString / VInt / VCtor on success, null on type mismatch
   // (e.g. "abc" against `{id:Int}`, or "foo" against `{role:Role}`
   // where Role has no `Foo` ctor). Match failure surfaces as null
-  // further up — the matcher tries the next page.
+  // further up: the matcher tries the next page.
   function decodePathSegment(raw, type) {
     let decoded = raw;
     try { decoded = decodeURIComponent(raw); } catch (_) {}
@@ -767,7 +767,7 @@
     return null;
   }
   // Encode a VInt / VString / VCtor back to a URL segment. Used by
-  // linkTo / Nav.pushTo. Type mismatches throw — caller surfaces
+  // linkTo / Nav.pushTo. Type mismatches throw: caller surfaces
   // them at the call-site with the path source for context.
   function encodePathSegment(v, type) {
     if (type === 'String') {
@@ -794,7 +794,7 @@
   }
   // Match a URL against a parsed pattern. Returns a VRecord with
   // typed fields on success, null on miss. Segment count must
-  // match exactly — '/notes/{id:Int}' won't match '/notes' or
+  // match exactly, '/notes/{id:Int}' won't match '/notes' or
   // '/notes/abc/edit', and '/notes/abc' will miss '{id:Int}'.
   function matchPathPattern(urlPath, pattern) {
     const urlSegs = urlPath.split('/').filter(s => s !== '');
@@ -890,7 +890,7 @@
 
   // Runaway recursion is stopped by Mar, not by the host.
   //
-  // The browser already threw a catchable RangeError, so nothing crashed — but
+  // The browser already threw a catchable RangeError, so nothing crashed, but
   // the limit was whatever the browser had left, which is far more than an
   // iPhone can do. The same app on the same code recursed 2000 deep happily on
   // the web and died on the phone. The two client runtimes ship as ONE app, so
@@ -900,7 +900,7 @@
   //
   // The counter is ambient rather than carried on the value (the Go runtime's
   // trick, needed there because its requests are concurrent). JavaScript is
-  // single-threaded, so ambient is both correct and cheaper — and being
+  // single-threaded, so ambient is both correct and cheaper, and being
   // ambient is what makes it see recursion routed through a higher-order
   // builtin like List.foldl, where the loop lives in the runtime and no Mar
   // frame would carry anything.
@@ -936,7 +936,7 @@
   // ---------- Pattern matching ----------
 
   // describeValue produces a short human-readable summary of a
-  // runtime value — used in error messages where pasting the full
+  // runtime value: used in error messages where pasting the full
   // value would be too noisy (records with dozens of fields, deeply
   // nested ctors). Keeps the same format for every value kind so
   // the operator can match the error against the AST quickly.
@@ -995,12 +995,12 @@
         if (!matchInto(pat.head, v.xs[0], bindings)) return false;
         return matchInto(pat.tail, VList(v.xs.slice(1)), bindings);
       case 'PRecord':
-        // `{ f1, f2, ... }` — bind each listed field's value into
+        // `{ f1, f2, ... }`: bind each listed field's value into
         // the scope. Partial-match: the value record may carry
         // additional fields the pattern doesn't list. The
         // typechecker already verified every listed field exists on
         // the value's static type, so a missing field here would be
-        // a typechecker bug — treat it as a non-match rather than a
+        // a typechecker bug: treat it as a non-match rather than a
         // hard crash.
         //
         // hasOwnProperty (not `in`) so prototype keys like
@@ -1023,7 +1023,7 @@
   function evalExpr(e, env) {
     switch (e.kind) {
       case 'EInt':    return VInt(e.value);
-      // coef ships as a string (34 digits overflow Number) — see the
+      // coef ships as a string (34 digits overflow Number): see the
       // serializer note in internal/jsserve/serialize.go.
       case 'EDecimal': return VDec(BigInt(e.coef), e.scale);
       case 'EString': return VString(e.value);
@@ -1052,7 +1052,7 @@
         // GENERATED BUILTIN CTORS; internal/ctorgen keeps it in sync with
         // the typecheck tables), and user constructors are registered
         // bare AND qualified by the module loader's Pass 1. A miss now
-        // means a registration bug, and it should be LOUD — the old
+        // means a registration bug, and it should be LOUD: the old
         // fallback (return VCtor(e.name)) let this class of bug hide for
         // weeks by silently manufacturing plausible values.
         if (v === undefined) throw new Error('unbound constructor: ' + key);
@@ -1060,7 +1060,7 @@
       }
       case 'EQualified': {
         // `impl` is the implementation the typechecker chose for THIS
-        // occurrence (see ast.EQualified.Impl) — today only a Decimal
+        // occurrence (see ast.EQualified.Impl): today only a Decimal
         // List.sum / List.product, whose empty-list zero the values
         // cannot reveal.
         if (e.impl !== undefined) {
@@ -1198,7 +1198,7 @@
   //   X-Mar-Runtime  the mar version that built the server
   //
   // So the check is just: remember what we saw first, and notice when a
-  // later response disagrees. No polling, no extra request — the
+  // later response disagrees. No polling, no extra request: the
   // evidence rides along with traffic the app was making anyway.
   //
   // The two headers differ in what they mean, and the difference is
@@ -1229,7 +1229,7 @@
       // unreadable rather than absent. Nothing to compare.
       return;
     }
-    // A response with neither header is not this server talking — an
+    // A response with neither header is not this server talking: an
     // older build, or a proxy that drops what it does not recognise.
     // Silence is not evidence of a change.
     if (runtime) {
@@ -1252,8 +1252,8 @@
     showStaleDeployBar();
   }
 
-  // A bar, not a modal. The page still works — it is running a complete,
-  // internally consistent version of the app, just not the newest one —
+  // A bar, not a modal. The page still works: it is running a complete,
+  // internally consistent version of the app, just not the newest one:
   // and interrupting someone mid-form to tell them about a deploy would
   // cost more than it saves. Appended to <body> rather than into
   // #mar-root so the next render does not wipe it.
@@ -1303,7 +1303,7 @@
       // Durations normalize to seconds at construction, so Time.seconds 60
       // and Time.minutes 1 ARE the same interval. A Time is the same moment
       // when it is the same Unix millisecond. Both were missing and fell
-      // through to `return false` below, in all three runtimes at once —
+      // through to `return false` below, in all three runtimes at once:
       // which is why the drift tests never saw it: they agreed on the lie.
       case 'D': return a.seconds === b.seconds;
       case 'TM': return a.millis === b.millis;
@@ -1321,15 +1321,15 @@
         for (let i = 0; i < a.xs.length; i++) if (!eqValues(a.xs[i], b.xs[i])) return false;
         return true;
       case 'R': {
-        // By FIELD SET, never by `order` — the order is display metadata (it
+        // By FIELD SET, never by `order`: the order is display metadata (it
         // decides how a record renders), not identity, so { a = 1, b = 2 } and
         // { b = 2, a = 1 } are the same value. Mirrors equalValues (Go) and
         // equalsMar (Swift).
         //
         // This case was missing, and its absence was invisible: a record fell
         // through the whole switch to the `return false` at the bottom, so EVERY
-        // record comparison in the browser answered "different" — including a
-        // value against itself — while the server and iOS answered correctly.
+        // record comparison in the browser answered "different": including a
+        // value against itself, while the server and iOS answered correctly.
         // It reached further than `==`, because the container cases above recurse
         // through here: a record inside a Just, a list, or a tuple poisoned those
         // too, and so did List.member and the picker's selected-option lookup.
@@ -1395,7 +1395,7 @@
   let currentJumpToFrame = null;
   // Set by every mountPages call to the live page's render(). The dev dock
   // calls it when the time-travel panel opens/closes so the clock-sub freeze
-  // (see render) applies at once — critical on CLOSE: while paused no timer is
+  // (see render) applies at once, critical on CLOSE: while paused no timer is
   // firing, so without an explicit re-render nothing would ever un-freeze.
   let currentDevRerender = null;
   // LIVE open-state of the time-travel panel this session (the dock's expand /
@@ -1441,8 +1441,8 @@
   // closes.
   //
   // Keyed by the def VALUE, not by a name. `def` is a top-level binding, so
-  // it evaluates once per module load and every use site — the page that
-  // reads it, the page that writes to it, the Main that never mentions it —
+  // it evaluates once per module load and every use site: the page that
+  // reads it, the page that writes to it, the Main that never mentions it:
   // holds the same object. That identity is the whole registration story:
   // there is no `shared` field on the App config to keep in sync, and two
   // different defs are simply two stores rather than a conflict to report.
@@ -1453,8 +1453,8 @@
   // how to paint.
   let sharedRerender = null;
 
-  // Deferred until the first render, so `init`'s Cmd — nearly always the
-  // Service.call that fills the store — dispatches into a live loop rather
+  // Deferred until the first render, so `init`'s Cmd: nearly always the
+  // Service.call that fills the store: dispatches into a live loop rather
   // than into a null one.
   let pendingSharedCmds = [];
 
@@ -1504,7 +1504,7 @@
   // Wrap a shared subscription's tagger so its messages reach the shared
   // update instead of the current page's. Subs are merged by KEY across
   // owners (a shared `Time.every 1000` and a page's own are one timer with
-  // two taggers), so the destination cannot ride on the record — it has to
+  // two taggers), so the destination cannot ride on the record: it has to
   // ride on each tagger.
   function sharedSubItems(store) {
     const sub = store.subscriptions ? apply(store.subscriptions, store.model) : null;
@@ -1530,7 +1530,7 @@
   // catch-up burst (ADR-0003: a painted frame that carries more than one tick
   // interval of real time delivers 2..4 back-to-back ticks so the GAME clock
   // keeps true speed while only the paint rate drops). Dispatch skips
-  // render() for these — the burst's final tick fires with the flag off and
+  // render() for these: the burst's final tick fires with the flag off and
   // paints once for the whole frame, so a burst costs N updates + ONE view.
   let tickBurst = false;
   // Update time spent in suppressed burst ticks, folded into the next painted
@@ -1544,7 +1544,7 @@
   // runs a hair over the 16.7 ms budget misses vsync and reads a flat 30,
   // hiding whether it's at 18 ms (almost there) or 33 ms (far off). This
   // measures the TRUE main-thread work per dispatch (update + view + DOM
-  // reconcile) with performance.now — NOT quantized — so you can watch the
+  // reconcile) with performance.now, NOT quantized, so you can watch the
   // real cost approach and cross the 16.7 ms line as you optimize.
   //
   // Off by default (zero cost). Enable with `?perf` in the URL (works on a
@@ -1566,8 +1566,8 @@
     // itself cost time and jitter the very number we're trying to measure.
     const now = (typeof performance !== 'undefined') ? performance.now() : 0;
     // Actual PAINTED-frame rate. perfRecord runs exactly once per painted
-    // frame — a catch-up burst's intermediate ticks fold their time in
-    // WITHOUT a paint (ADR-0003) — so paints in the last second ARE the
+    // frame: a catch-up burst's intermediate ticks fold their time in
+    // WITHOUT a paint (ADR-0003), so paints in the last second ARE the
     // rendered fps. This is the true refresh the eye sees, not the
     // vsync-quantized number an on-canvas counter reads; the two now differ
     // (a Low-Power-Mode display caps painting at 30 fps while the ms/frame
@@ -1594,7 +1594,7 @@
     const fps = __perfPaints.length;
     // Colour tracks the WORK headroom (ms vs the 16.7 ms budget), NOT the
     // paint rate: a display-capped 30 fps with cheap 8 ms frames is healthy
-    // (green), not a warning — the fps number tells that story on its own.
+    // (green), not a warning: the fps number tells that story on its own.
     __perfEl.style.color = v <= 16.7 ? '#77e88a' : (v <= 33.3 ? '#f2c94c' : '#ff6b6b');
     __perfEl.textContent = fps + ' fps   ' + v.toFixed(1) + ' ms/frame';
   }
@@ -1610,7 +1610,7 @@
   // mount's live timers via teardownAllSubs().
   const activeSubs = new Map(); // key -> { src, handle, taggers: [fn] }
   // ---- Keyboard subs (Keyboard.watch) ----
-  // event.code values that scroll / activate the page — preventDefault these so
+  // event.code values that scroll / activate the page: preventDefault these so
   // a game holding arrows or space doesn't also scroll. Everything else passes.
   const KEY_PREVENT_DEFAULT = new Set(['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight']);
   function makeKeyListener(type, onCode) {
@@ -1650,7 +1650,7 @@
       document.addEventListener('visibilitychange', () => { if (document.hidden) clear(); });
   }
   // Shared, installed once on first Keyboard.watch subscribe: OS auto-repeat
-  // re-fires keydown for a held code, so guard on set membership — only a real
+  // re-fires keydown for a held code, so guard on set membership: only a real
   // add/remove notifies watchers.
   let kbListenersInstalled = false;
   function installKbListeners() {
@@ -1729,7 +1729,7 @@
   // spoke differently depending on which Sub happened to play it and no Mar
   // value could say which it wanted. See docs/proposals/sound-envelope.md.
   //
-  // What stays here is NOT a house style — it is the floor below which a gain
+  // What stays here is NOT a house style: it is the floor below which a gain
   // change is a step discontinuity, i.e. an audible click. A voice that asks for
   // nothing gets this and only this: the shortest ramp that is not a click.
   // Every shape beyond it (a note that rings out, a crowd that arrives) is taste,
@@ -1741,7 +1741,7 @@
   let audioCtx = null, masterGain = null, noiseBuf = null, noiseBuf2 = null;
   // The bus sums voices LINEARLY, and nothing downstream was catching the result:
   // an app that sounds several things at once could ask for more than full scale
-  // and the output was hard-clipped by the device — heard as a chord that is not
+  // and the output was hard-clipped by the device: heard as a chord that is not
   // just louder but broken. Measured on examples/pocket-synth: three held organ
   // notes reached 1.05 to 1.29 depending on where their phases landed.
   //
@@ -1757,7 +1757,7 @@
   // output stops being a faithful rendering of what was asked for.
   // A WaveShaper maps its INPUT RANGE -1..+1 across the whole table, so the table
   // has to be built over -1..+1 too. Building it over a wider span silently
-  // rescales the transfer function — a first draft spanned -2..+2 and therefore
+  // rescales the transfer function: a first draft spanned -2..+2 and therefore
   // doubled every quiet signal and saturated everything else, which is the exact
   // opposite of transparent. Input past ±1 clamps to the end of the table, so the
   // value there is the hard limit: it is deliberately below 1.
@@ -1806,7 +1806,7 @@
     const t = audioCtx.currentTime;
     try { masterGain.gain.cancelScheduledValues(t); masterGain.gain.setTargetAtTime(soundMuted ? 0 : soundMasterLevel, t, 0.02); } catch (e) {}
   }
-  // Dev-only: the time-travel panel silences audio while you inspect the past — a
+  // Dev-only: the time-travel panel silences audio while you inspect the past, a
   // frozen world shouldn't keep droning its engine bed. Opening mutes (only if
   // sound was ON); closing un-mutes ONLY the mute WE applied, so a mute the user
   // set themselves survives. Wired from the dev dock's expand/collapse below.
@@ -1819,7 +1819,7 @@
     }
   }
   // Browsers block audio until a user gesture, so a program that makes
-  // sound opens (and resumes) its AudioContext on the first tap/key —
+  // sound opens (and resumes) its AudioContext on the first tap/key:
   // inside the gesture, where every browser allows it.
   //
   // Armed only for programs that actually reference Sound. An open
@@ -1837,7 +1837,7 @@
     document.addEventListener('keydown', wake);
   }
   // Does the loaded program reference the Sound module anywhere? Every
-  // reference carries the module the same way whatever the node kind —
+  // reference carries the module the same way whatever the node kind:
   // `module: ["Sound"]` on EQualified for Sound.play, on ECtor/PCtor for
   // Sound.Wave, on the import decl for `import Sound`. Walks the AST with
   // an early exit rather than stringifying it, so a silent app pays a
@@ -1858,7 +1858,7 @@
     }
     return false;
   }
-  // Exposed so the rule can be tested against REAL serializer output —
+  // Exposed so the rule can be tested against REAL serializer output:
   // it reads a shape (`module: ["Sound"]`) that only the Go serializer
   // produces, and if that shape ever changes every game goes silent with
   // no error anywhere. See TestSilentProgramsDoNotArmAudio.
@@ -1902,7 +1902,7 @@
     return noiseBuf2;
   }
   // Sound.duty: a band-limited pulse of width d (0..1) as a WebAudio PeriodicWave.
-  // The nth harmonic of a duty-d pulse is (2/nπ)·sin(nπd) — at d=0.5 the even
+  // The nth harmonic of a duty-d pulse is (2/nπ)·sin(nπd): at d=0.5 the even
   // harmonics vanish, i.e. it reduces to a plain square. 12.5% is thin/nasal, 25%
   // the classic NES lead, 50% hollow. Cached per duty so each note is cheap.
   function dutyWave(ctx, duty) {
@@ -1974,13 +1974,13 @@
       node = ctx.createBufferSource();
       node.buffer = soundNoiseBuffer(ctx);
       node.loop = true;
-      // Noise used to ignore the note completely — the same flat hiss on every
+      // Noise used to ignore the note completely: the same flat hiss on every
       // key, the one wave you could not actually PLAY. Resampling the clip by
       // the note pitches it: low keys stretch it into a rumble, high keys
       // squeeze it into a hiss, so the same oscillator covers thunder, surf,
       // engine and cymbal depending on where you play it. Ratio is against A4,
       // the tuning reference, clamped so an extreme note cannot ask for an
-      // absurd rate. (The clip itself stays untouched — soundNoiseBuffer is
+      // absurd rate. (The clip itself stays untouched: soundNoiseBuffer is
       // shared with the ambient bed, which must keep its own wash.)
       const nf = Math.max(1, v.freq || 440);
       const noiseRate = (f) => Math.max(0.05, Math.min(8, Math.max(1, f) / 440));
@@ -2015,14 +2015,14 @@
       }
     } else {
       node = ctx.createOscillator();
-      // Sound.duty — variable pulse width for Square (12/25/50/75%). A non-50 duty
+      // Sound.duty: variable pulse width for Square (12/25/50/75%). A non-50 duty
       // swaps in a custom PeriodicWave; Triangle/Sawtooth ignore it.
       const isSquare = !(v.wave === 'Triangle' || v.wave === 'Sawtooth');
       if (isSquare && v.duty && v.duty !== 50) node.setPeriodicWave(dutyWave(ctx, v.duty));
       else node.type = v.wave === 'Triangle' ? 'triangle' : v.wave === 'Sawtooth' ? 'sawtooth' : 'square';
       const f0 = Math.max(1, v.freq || 440);
       if (v.arp && v.arp.length) {
-        // Sound.arp — step the pitch fast through [base, ...arp] on ONE oscillator
+        // Sound.arp: step the pitch fast through [base, ...arp] on ONE oscillator
         // (the classic chiptune "chord" from a single channel). ~50 Hz = one step
         // per frame. Mutually exclusive with sweep/hold.
         const seq = [f0].concat(v.arp.map(x => Math.max(1, x)));
@@ -2038,7 +2038,7 @@
           node.frequency.linearRampToValueAtTime(Math.max(1, v.endFreq), t0 + dur);
         }
       }
-      // Sound.vibrato — a sine LFO on detune (cents), so the wobble is musical and
+      // Sound.vibrato: a sine LFO on detune (cents), so the wobble is musical and
       // independent of pitch. depth = cents, rate = Hz.
       if (v.vibDepth && v.vibDepth > 0) {
         const lfo = ctx.createOscillator();
@@ -2078,7 +2078,7 @@
   // LFO never stops.
   //
   // What a held source deliberately does NOT apply is the per-note PITCH ENVELOPE
-  // — Sound.sweep and Sound.arp. Both describe how one note's pitch moves over
+  //: Sound.sweep and Sound.arp. Both describe how one note's pitch moves over
   // its own length, and a held source has no length; worse, for Sound.glide the
   // pitch is a live parameter that soundGlideTo slides from underneath (that is
   // how an engine note tracks speed), so a scheduled ramp here would be silently
@@ -2095,7 +2095,7 @@
       const g = ctx.createGain();
       g.connect(masterGain);
       g.gain.setValueAtTime(0.0001, at);
-      // Fade in over the voice's own attack. This used to be a hardcoded 400ms —
+      // Fade in over the voice's own attack. This used to be a hardcoded 400ms:
       // right for a drone that starts once a session, and half a second of lag on
       // anything started per event, like a key. The number lives in the value now.
       g.gain.exponentialRampToValueAtTime(Math.max(0.0002, peak), at + Math.max(0.0005, voiceAttackSec(v)));
@@ -2124,13 +2124,13 @@
         extra.push(nb);
       } else {
         node = ctx.createOscillator();
-        // Sound.duty — the same band-limited pulse the one-shot path uses, so a
+        // Sound.duty: the same band-limited pulse the one-shot path uses, so a
         // narrow pulse keeps its reedy timbre instead of flattening to a square.
         const isSquare = !(v.wave === 'Triangle' || v.wave === 'Sawtooth');
         if (isSquare && v.duty && v.duty !== 50) node.setPeriodicWave(dutyWave(ctx, v.duty));
         else node.type = v.wave === 'Triangle' ? 'triangle' : v.wave === 'Sawtooth' ? 'sawtooth' : 'square';
         node.frequency.setValueAtTime(Math.max(1, v.freq || 440), at);
-        // Sound.vibrato — no stop time, so the wobble breathes for as long as the
+        // Sound.vibrato: no stop time, so the wobble breathes for as long as the
         // bed lives. Driven on `detune` (cents) precisely so soundGlideTo can glide
         // `frequency` underneath a live bed without disturbing it.
         if (v.vibDepth && v.vibDepth > 0) {
@@ -2146,7 +2146,7 @@
       }
       node.start(at);
       // `_peak` and `_attackEnd` exist for soundGlideTo, and they are not
-      // bookkeeping — they are what keeps it from destroying this envelope.
+      // bookkeeping: they are what keeps it from destroying this envelope.
       // Without `_peak`, its "did the level change?" guard read undefined on the
       // FIRST slide and ran anyway, cancelling the ramp scheduled just above.
       nodes.push({ node, gain: g, extra, release: voiceReleaseSec(v), _peak: peak, _attackEnd: at + Math.max(0.0005, voiceAttackSec(v)) });
@@ -2158,7 +2158,7 @@
     const t = audioCtx.currentTime;
     for (const rec of h.nodes) {
       try {
-        // Fade out over the voice's own release, as a RAMP — the same shape and
+        // Fade out over the voice's own release, as a RAMP: the same shape and
         // the same number the one-shot path uses, so `Sound.release 250` means
         // one duration everywhere instead of one duration and one time constant.
         // Read the live level BEFORE cancelling: cancelling first snaps the param
@@ -2182,7 +2182,7 @@
   // How fast a NEW LEVEL lands is one number with two meanings, and the split is
   // the same one as Sound.voice vs Sound.glide (ADR-0024). A bed's level is
   // supposed to lag: a crowd that tracks each event is heard as a rhythm, not as a
-  // background. A VOICE's level is not — a polyphonic instrument scales its voices
+  // background. A VOICE's level is not: a polyphonic instrument scales its voices
   // by how many are sounding, and that has to land while the chord is still being
   // held. At 1.1s it took about three seconds to arrive, so the notes already down
   // kept their old level and a chord still went over full scale; the app's
@@ -2207,7 +2207,7 @@
         try {
           // Cancel from the end of the attack, never from `now`. The attack is
           // scheduled slightly in the FUTURE (soundHeldStart starts at
-          // currentTime + 0.02), so cancelling at `now` wipes it — and a
+          // currentTime + 0.02), so cancelling at `now` wipes it, and a
           // GainNode whose automation is wiped falls back to its base value of
           // 1, which is 2.5x the level the voice asked for. That was audible as
           // a held note jumping in volume the moment it first slid, and staying
@@ -2250,7 +2250,7 @@
   // running even when the tab is backgrounded (unlike Time.every), so the music
   // doesn't stall. Voices route through a private loopGain (not masterGain) so
   // stop() can fade the whole track out cleanly. Loop voices are exempt from the
-  // SFX voice pool — music is never starved by effects.
+  // SFX voice pool: music is never starved by effects.
   function soundLoopStart(snd) {
     const ctx = ensureAudio();
     if (!ctx || soundMuted || !snd || !snd.voices || snd.voices.length === 0) return null;
@@ -2288,7 +2288,7 @@
       } catch (e) {}
       // ...then CUT it. setTargetAtTime is an asymptote, not a stop: it only
       // ever approaches 0.0001, and the node stays wired to master. That is
-      // fine for one loop and wrong in bulk — a sub's identity is its sound, so
+      // fine for one loop and wrong in bulk: a sub's identity is its sound, so
       // dragging a patch slider while a note holds stops and starts a loop
       // EVERY frame, and each faded-but-connected gain would pile up on master
       // (dozens per second, summing back into something audible). Disconnecting
@@ -2308,8 +2308,8 @@
       state.gain = null;
     }, 400);
   }
-  // Sound.once plays the whole schedule ONE time while subscribed — a death
-  // dirge, a stinger — through a private gain so unsubscribing (a restart, a
+  // Sound.once plays the whole schedule ONE time while subscribed: a death
+  // dirge, a stinger: through a private gain so unsubscribing (a restart, a
   // page change) cuts it off with a click-free fade. No re-scheduling: after
   // the last voice ends the sub simply holds silence, keeping only the right
   // to cancel. The cancellable middle ground between play (fire-and-forget)
@@ -2334,7 +2334,7 @@
     soundDetachAfterFade(state);   // same reason as the loop: a fade is not a stop
   }
 
-  // Device (docs/proposals/device.md) — capability readings from CSS media
+  // Device (docs/proposals/device.md): capability readings from CSS media
   // queries + the viewport, NEVER a user-agent string. matchMedia is the web's
   // own truth source for pointer precision / hover / colour-scheme / motion;
   // iPadOS lies in its UA (reports macOS) but answers these queries honestly.
@@ -2354,7 +2354,7 @@
   }
   // readDevice snapshots the current Device record. Safe on any host: with no
   // matchMedia / window (SSR, build) it defaults to a plain fine-pointer desktop
-  // — subs only run in the browser, so that default is just belt-and-suspenders.
+  //: subs only run in the browser, so that default is just belt-and-suspenders.
   function readDevice() {
     const q = deviceMediaQueries();
     const on = (mq) => !!(mq && mq.matches);
@@ -2378,23 +2378,23 @@
       // world holds still (see stripClockSubs). A future frame-loop source
       // would set clock: true too.
       clock: true,
-      // GAME-RATE intervals (≤ 20 ms — the canvas games' 1000/60 = 16) ride
+      // GAME-RATE intervals (≤ 20 ms: the canvas games' 1000/60 = 16) ride
       // requestAnimationFrame instead of setInterval. setInterval(16) beats
       // against the display's ~16.7 ms vsync: every ~half second two ticks
       // land inside one painted frame, so a steady scroller visibly jumps a
-      // double step — permanent micro-judder. With rAF, when the display's
+      // double step: permanent micro-judder. With rAF, when the display's
       // frame period is within ±25% of the interval (the normal 60 Hz case)
       // we lock ONE tick per painted frame: glass-smooth constant motion
-      // (ticks run at the display's ~16.7 ms, ~4% slower than nominal 16 —
+      // (ticks run at the display's ~16.7 ms, ~4% slower than nominal 16:
       // imperceptible). Off the lock, an accumulator keeps the GAME clock at
       // real time on both kinds of mismatched display (ADR-0003): on faster
       // panels (120/144 Hz) it fires every 2nd/3rd frame, and on SLOWER
       // frames (30 Hz Low Power Mode, a heavy scene) it fires 2..4
-      // back-to-back catch-up ticks — the world advances at true speed and
+      // back-to-back catch-up ticks: the world advances at true speed and
       // only the paint rate drops, instead of dropped frames dilating game
       // time into slow motion. The burst is capped (impossible load degrades
       // to slow motion, never a catch-up spiral) and renders once (see
-      // tickBurst). Longer intervals (real clocks) stay on setInterval —
+      // tickBurst). Longer intervals (real clocks) stay on setInterval:
       // rAF would freeze them entirely in a backgrounded tab.
       start: (g, fire) => {
         if (g.intervalMs > 20 || typeof requestAnimationFrame === 'undefined') {
@@ -2449,7 +2449,7 @@
         for (const tg of rec.taggers) deliverSub(tg, now);
       },
     },
-    // Keyboard.watch — the held-key mirror. Shared window keydown/keyup keep
+    // Keyboard.watch: the held-key mirror. Shared window keydown/keyup keep
     // heldKeyCodes current; any change (or a blur/tab-hide clear) notifies every
     // sub, which delivers the whole set as { down : List Keyboard.Key }. Each
     // Key is VCtor(event.code): it matches the qualified pattern Keyboard.<code>
@@ -2468,7 +2468,7 @@
       stop: (rec) => { const h = rec.handle; if (!h) return; h.stopped = true; kbWatchFires.delete(h.fire); },
       fire: (rec) => { const r = keyboardStateRecord(); for (const tg of rec.taggers) deliverSub(tg, r); },
     },
-    // Gamepad.watch — the full-pad mirror. The shared poll (padPoll) keeps
+    // Gamepad.watch: the full-pad mirror. The shared poll (padPoll) keeps
     // connection + both sticks + held-button set current and notifies every sub
     // on change; fire() delivers the whole snapshot record. Seeds on subscribe.
     // NOT clock: input flows during time-travel.
@@ -2483,7 +2483,7 @@
       stop: (rec) => { const h = rec.handle; if (!h) return; h.stopped = true; padWatchRemove(h.fire); },
       fire: (rec) => { const r = gamepadStateRecord(); for (const tg of rec.taggers) deliverSub(tg, r); },
     },
-    // Sound.voice and Sound.glide — a held source, alive for as long as the
+    // Sound.voice and Sound.glide: a held source, alive for as long as the
     // subscription is. Same start and stop; they differ in exactly two things,
     // and both are the same distinction:
     //
@@ -2507,7 +2507,7 @@
       update: (rec, g) => soundGlideTo(rec.handle, g.sound, BED_RELEVEL_SEC),
       fire: () => {},
     },
-    // Sound.loop — replays a Sound seamlessly while subscribed. The reconcile key
+    // Sound.loop: replays a Sound seamlessly while subscribed. The reconcile key
     // is the FULL content (incl. volume), so any change swaps songs (stop old,
     // start new); the same Sound keeps looping without a restart. No update hook
     // (a content change is a swap, not a live retune). NOT clock.
@@ -2516,7 +2516,7 @@
       stop: (rec) => soundLoopStop(rec.handle),
       fire: () => {},
     },
-    // Sound.once — plays the Sound a single time while subscribed; after the
+    // Sound.once: plays the Sound a single time while subscribed; after the
     // last note the sub only holds the right to CANCEL (unsubscribing fades a
     // mid-note cut cleanly). Content change = swap. NOT clock.
     once: {
@@ -2524,7 +2524,7 @@
       stop: (rec) => soundOnceStop(rec.handle),
       fire: () => {},
     },
-    // Device.watch — reports live device capabilities (docs/proposals/device.md).
+    // Device.watch: reports live device capabilities (docs/proposals/device.md).
     // Fires the current record ONCE on subscribe (deferred to a microtask so it
     // lands as its own dispatch, not re-entrant with the render that created the
     // sub), then a fresh record on every change: a media-query flip (mouse
@@ -2572,7 +2572,7 @@
   // True when the dev dock's time-travel panel is the open section RIGHT NOW.
   // Opening it freezes the world's clock sources (see render) so you pause at
   // the present frame, not just when you scrub back. Reads the live session flag
-  // (set by the dock's expand/collapse) rather than persisted localStorage —
+  // (set by the dock's expand/collapse) rather than persisted localStorage:
   // the persisted value survives reloads and would silently freeze a fresh page.
   function timeTravelPanelOpen() {
     return timeTravelPanelIsOpen;
@@ -2615,7 +2615,7 @@
     const def = (n, v) => envDefine(env, n, v);
 
     // Booleans / Maybe / Result / Order constructors. Order (LT/EQ/GT)
-    // is used by List.sortWith — same convention as Elm.
+    // is used by List.sortWith: same convention as Elm.
     def('True',  VBool(true));
     def('False', VBool(false));
     def('Nothing', VCtor('Nothing'));
@@ -2626,14 +2626,14 @@
     def('EQ', VCtor('EQ'));
     def('GT', VCtor('GT'));
 
-    // Method constructors — the HTTP verbs passed to Service.declare.
+    // Method constructors: the HTTP verbs passed to Service.declare.
     def('GET', VCtor('GET'));
     def('POST', VCtor('POST'));
     def('PUT', VCtor('PUT'));
     def('PATCH', VCtor('PATCH'));
     def('DELETE', VCtor('DELETE'));
 
-    // Service.Error constructors — the transport failure a Service.call
+    // Service.Error constructors: the transport failure a Service.call
     // delivers in its Err. serviceCall builds these directly (see
     // serviceErrorFromResponse / serviceErrorOffline). Registered under
     // their qualified names only, the Elm Http.Error model: user code
@@ -2652,7 +2652,7 @@
     //
     // Number.isSafeInteger is exactly the predicate: an integer, and within
     // +/-(2^53-1). It is reliable even for a product that overflowed into the
-    // inexact range, because rounding a double is relatively tiny — a value
+    // inexact range, because rounding a double is relatively tiny: a value
     // past 2^53 never rounds back under it.
     function checkedInt(a, op, b, c) {
       if (!Number.isSafeInteger(c)) {
@@ -2662,14 +2662,14 @@
       return VInt(c);
     }
 
-    // Arithmetic — `+ - *` close over both Int and Decimal (the
+    // Arithmetic: `+ - *` close over both Int and Decimal (the
     // typechecker's `number` constraint guarantees the operands agree).
     def('+', native(2, ([a, b]) => a.k === 'De' ? decAddV(a, b) : checkedInt(a.n, '+', b.n, a.n + b.n)));
     def('-', native(2, ([a, b]) => a.k === 'De' ? decSubV(a, b) : checkedInt(a.n, '-', b.n, a.n - b.n)));
     def('*', native(2, ([a, b]) => a.k === 'De' ? decMulV(a, b) : checkedInt(a.n, '*', b.n, a.n * b.n)));
-    // `//` — truncating Int division, total: /0 yields 0 on every runtime.
+    // `//`, truncating Int division, total: /0 yields 0 on every runtime.
     def('//', native(2, ([a, b]) => VInt(b.n === 0 ? 0 : Math.trunc(a.n / b.n))));
-    // `/` — Decimal-only, and it produces a QUESTION, not a number: the
+    // `/`, Decimal-only, and it produces a QUESTION, not a number: the
     // inert exact quotient, resolved by Decimal.rounded / exact /
     // withRemainder, which is where the precision gets written.
     def('/', native(2, ([a, b]) => VDivision(a, b)));
@@ -2700,7 +2700,7 @@
     def('|>', native(2, ([x, f]) => apply(f, x)));
     def('<|', native(2, ([f, x]) => apply(f, x)));
 
-    // Decimal stdlib — semantics match internal/runtime/decimal.go
+    // Decimal stdlib: semantics match internal/runtime/decimal.go
     // exactly (the conformance vectors in decimal_test.go must agree).
     const decimalZeroV = VDec(0n, 0);
     def('decimalZero', decimalZeroV);
@@ -2774,7 +2774,7 @@
     def('decimalToString', decimalToStringImpl);
     def('Decimal.toString', decimalToStringImpl);
 
-    // Division resolvers — the ONLY exits from Decimal.Division, and
+    // Division resolvers: the ONLY exits from Decimal.Division, and
     // the only places rounding can happen. No implicit rounding.
     const decimalRoundedImpl = native(3, ([mode, scale, dv]) => {
       const tag = decRoundingTag(mode);
@@ -2798,7 +2798,7 @@
     def('decimalWithRemainder', decimalWithRemainderImpl);
     def('Decimal.withRemainder', decimalWithRemainderImpl);
 
-    // String stdlib — semantics match the Go runtime (and iOS Swift)
+    // String stdlib: semantics match the Go runtime (and iOS Swift)
     // exactly. Arg order in particular: needle/prefix/sep first, so
     // pipe-friendly:  `s |> String.contains "foo"`.
     def('stringFromInt', native(1, ([n]) => VString(String(n.n))));
@@ -2824,7 +2824,7 @@
 
     // String.split mirrors Go's strings.Split: empty separator yields
     // one element per code unit (not per UTF-16 surrogate pair), since
-    // we already use s.length elsewhere — keep behavior consistent.
+    // we already use s.length elsewhere: keep behavior consistent.
     const stringSplitImpl = native(2, ([sep, s]) => {
       const parts = sep.s === '' ? Array.from(s.s) : s.s.split(sep.s);
       return VList(parts.map(p => VString(p)));
@@ -2837,7 +2837,7 @@
     def('stringJoin', stringJoinImpl);
     def('String.join', stringJoinImpl);
 
-    // String.trim — strip leading + trailing whitespace including
+    // String.trim: strip leading + trailing whitespace including
     // newlines, matching strings.TrimSpace in Go.
     const stringTrimImpl = native(1, ([s]) => VString(s.s.trim()));
     def('stringTrim', stringTrimImpl);
@@ -2849,9 +2849,9 @@
     def('stringEndsWith', stringEndsWithImpl);
     def('String.endsWith', stringEndsWithImpl);
 
-    // String.toInt : String -> Maybe Int — Number.isInteger after
+    // String.toInt : String -> Maybe Int, Number.isInteger after
     // Number(s) rejects floats, NaN, whitespace-only strings (Number
-    // would happily return 0 on " " — we don't want that). parseInt
+    // would happily return 0 on " ": we don't want that). parseInt
     // would accept "12abc" as 12; Number(...) doesn't, which matches
     // Elm's stricter behavior.
     const stringToIntImpl = native(1, ([s]) => {
@@ -2883,7 +2883,7 @@
     def('stringRepeat', stringRepeatImpl);
     def('String.repeat', stringRepeatImpl);
 
-    // String.padLeft / padRight — pad with a SINGLE Char (Elm-style).
+    // String.padLeft / padRight: pad with a SINGLE Char (Elm-style).
     // The seed is one code point that we repeat to fill.
     function padString(s, width, padCh, left) {
       const padStr = String.fromCodePoint(padCh);
@@ -2904,7 +2904,7 @@
     def('stringPadRight', stringPadRightImpl);
     def('String.padRight', stringPadRightImpl);
 
-    // String.indexes : String needle -> String s -> List Int — every
+    // String.indexes : String needle -> String s -> List Int, every
     // (non-overlapping) byte offset. Matches Elm's behavior.
     const stringIndexesImpl = native(2, ([needle, s]) => {
       if (needle.s === '') return VList([]);
@@ -2927,8 +2927,8 @@
     def('listMap', native(2, ([fn, l]) => VList(l.xs.map(x => apply(fn, x)))));
     def('List.map', native(2, ([fn, l]) => VList(l.xs.map(x => apply(fn, x)))));
     // listSum / listProduct : List number -> number. A non-empty list
-    // decides itself — all elements share one type, so the first one
-    // settles it — which keeps the runtime right even where a call site
+    // decides itself: all elements share one type, so the first one
+    // settles it, which keeps the runtime right even where a call site
     // was never elaborated. The empty list has nothing to inspect, so its
     // answer is the `empty` the typechecker picked by naming the impl.
     const numericFold = (who, dec, int, empty) => native(1, ([l]) => {
@@ -2954,7 +2954,7 @@
     def('List.sum', listSumImpl);
     def('listFilter', native(2, ([fn, l]) => VList(l.xs.filter(x => apply(fn, x).b))));
     def('List.filter', native(2, ([fn, l]) => VList(l.xs.filter(x => apply(fn, x).b))));
-    // List.reverse — non-mutating: build a new list rather than
+    // List.reverse, non-mutating: build a new list rather than
     // calling Array.prototype.reverse (which mutates the underlying
     // array, surprising callers that share the same VList instance).
     const listReverseImpl = native(1, ([l]) => VList(l.xs.slice().reverse()));
@@ -3015,7 +3015,7 @@
     def('List.drop', listDropImpl);
 
     // listMove : Int -> Int -> List a -> List a
-    // Pure splice — mirrors the Go impl: defensive no-op on
+    // Pure splice, mirrors the Go impl: defensive no-op on
     // from == to or out-of-bounds indices. Returns a NEW list;
     // never mutates the input. Used by the `list` UI primitive's
     // reorder gesture: the renderer fires onMove(from, to) and the
@@ -3035,7 +3035,7 @@
     def('listMove', listMoveImpl);
     def('List.move', listMoveImpl);
 
-    // listMember : a -> List a -> Bool — structural equality.
+    // listMember : a -> List a -> Bool, structural equality.
     const listMemberImpl = native(2, ([needle, l]) => {
       for (const e of l.xs) if (eqValues(needle, e)) return VBool(true);
       return VBool(false);
@@ -3043,7 +3043,7 @@
     def('listMember', listMemberImpl);
     def('List.member', listMemberImpl);
 
-    // listAny / listAll — short-circuit.
+    // listAny / listAll: short-circuit.
     const listAnyImpl = native(2, ([fn, l]) => {
       for (const e of l.xs) if (apply(fn, e).b) return VBool(true);
       return VBool(false);
@@ -3135,7 +3135,7 @@
     def('listFilterMap', listFilterMapImpl);
     def('List.filterMap', listFilterMapImpl);
 
-    // listMaximum / listMinimum : List a -> Maybe a — uses cmpValues
+    // listMaximum / listMinimum : List a -> Maybe a, uses cmpValues
     // which only handles Int/Float/String. Non-comparable element
     // types silently return Nothing rather than throwing.
     function listExtremum(l, want) {
@@ -3159,7 +3159,7 @@
     def('List.product', listProductImpl);
     def('listProductDecimal', numericFold('listProduct', decMulV, (a, b) => a * b, () => VDec(1n, 0)));
 
-    // listSort / listSortBy / listSortWith — Array.prototype.sort is
+    // listSort / listSortBy / listSortWith: Array.prototype.sort is
     // stable in all modern JS engines (ES2019+), so insertion order
     // survives equal keys. Same semantics as Go's sort.SliceStable.
     const listSortImpl = native(1, ([l]) =>
@@ -3178,7 +3178,7 @@
     def('List.sortBy', listSortByImpl);
 
     // listSortWith : (a -> a -> Order) -> List a -> List a
-    // Comparator returns LT / EQ / GT (a 3-way ADT) — translate to
+    // Comparator returns LT / EQ / GT (a 3-way ADT): translate to
     // -1/0/1 inside the JS sort callback. `default` covers a comparator
     // that returned something that isn't an Order ctor (typecheck
     // should catch this, but the runtime guard keeps the failure mode
@@ -3252,7 +3252,7 @@
     def('resultFromMaybe', resultFromMaybeImpl);
     def('Result.fromMaybe', resultFromMaybeImpl);
 
-    // Result.toMaybe — discards the error info (matches Elm).
+    // Result.toMaybe: discards the error info (matches Elm).
     const resultToMaybeImpl = native(1, ([r]) =>
       r.tag === 'Ok' && r.args.length === 1
         ? VCtor('Just', [r.args[0]])
@@ -3291,15 +3291,15 @@
     def('maybeFilter', maybeFilterImpl);
     def('Maybe.filter', maybeFilterImpl);
 
-    // always : a -> b -> a — Elm's Basics.always (constant function).
+    // always : a -> b -> a, Elm's Basics.always (constant function).
     def('always', native(2, ([a]) => a));
 
-    // not : Bool -> Bool — Elm's Basics.not. Mar has no prefix operator,
+    // not : Bool -> Bool, Elm's Basics.not. Mar has no prefix operator,
     // so negation is an ordinary function.
     def('not', native(1, ([b]) => VBool(!b.b)));
 
     // The numeric kit, bare and Elm-named. max/min/clamp go through
-    // cmpValues — the same ordering `<` uses — so Comparable is one
+    // cmpValues, the same ordering `<` uses, so Comparable is one
     // definition of order across Int, Decimal, String and Char.
     def('max', native(2, ([a, b]) => (cmpValues(a, b) >= 0 ? a : b)));
     def('min', native(2, ([a, b]) => (cmpValues(a, b) <= 0 ? a : b)));
@@ -3318,8 +3318,8 @@
     // DIVIDEND's (truncated, in step with `//`). Both total at 0.
     //
     // Every comparison here is against `0`, never `0n`. An Int's `.n` is a
-    // plain Number in this runtime — the overflow check is
-    // Number.isSafeInteger — so `x === 0n` is false for every Int that exists.
+    // plain Number in this runtime: the overflow check is
+    // Number.isSafeInteger, so `x === 0n` is false for every Int that exists.
     // These guards were written with BigInt literals and were therefore dead
     // code: `modBy 0` fell through to `x % 0` and put a NaN inside a value
     // typed Int, and `modBy (-4) 8` took the sign correction it should have
@@ -3334,7 +3334,7 @@
     }));
     def('remainderBy', native(2, ([d, n]) => (d.n === 0 ? VInt(0) : VInt(n.n % d.n))));
 
-    // Tuple — 2-tuple helpers. Tuples are VTuple values with .xs.
+    // Tuple: 2-tuple helpers. Tuples are VTuple values with .xs.
     const tupleFirstImpl = native(1, ([t]) => t.xs[0]);
     def('tupleFirst', tupleFirstImpl);
     def('Tuple.first', tupleFirstImpl);
@@ -3366,7 +3366,7 @@
     //
     // Elm-style polymorphic ordered map (sorted by key). Same wire
     // format and same comparable-key constraint as the Go and Swift
-    // runtimes. Pairs slice IS the canonical representation — every
+    // runtimes. Pairs slice IS the canonical representation: every
     // mutation rebuilds it sorted via dictInsertHelper / etc.
     def('dictEmpty', VDict([]));
     def('Dict.empty', VDict([]));
@@ -3445,7 +3445,7 @@
     def('dictFromList', dictFromListImpl);
     def('Dict.fromList', dictFromListImpl);
 
-    // Dict.map : (k -> v -> w) -> Dict k v -> Dict k w  — keys
+    // Dict.map : (k -> v -> w) -> Dict k v -> Dict k w  - keys
     // untouched so we keep the pair order without re-sorting.
     const dictMapImpl = native(2, ([fn, d]) =>
       VDict(d.pairs.map(p => ({ key: p.key, value: apply(apply(fn, p.key), p.value) }))));
@@ -3487,7 +3487,7 @@
     def('dictPartition', dictPartitionImpl);
     def('Dict.partition', dictPartitionImpl);
 
-    // Dict.union — left-biased: collision keeps `a`'s value.
+    // Dict.union, left-biased: collision keeps `a`'s value.
     const dictUnionImpl = native(2, ([a, b]) => {
       const out = [];
       let i = 0, j = 0;
@@ -3665,7 +3665,7 @@
 
     // ---------- Char ----------
     //
-    // Char in Mar is a Unicode code point — same model as Go's rune,
+    // Char in Mar is a Unicode code point: same model as Go's rune,
     // Swift's Unicode.Scalar, Elm's Char. `c` is the integer code
     // point on VChar.
     //
@@ -3686,7 +3686,7 @@
     def('charFromCode', charFromCodeImpl);
     def('Char.fromCode', charFromCodeImpl);
 
-    // Char predicates — operate on the Unicode properties of the
+    // Char predicates: operate on the Unicode properties of the
     // code point. We use JS regex with the `u` flag so things like
     // `Char.isAlpha 'é'` work (and stay aligned with Go's unicode
     // package, which is also Unicode-aware not ASCII-only).
@@ -3715,9 +3715,9 @@
     def('charIsLower', charIsLowerImpl);
     def('Char.isLower', charIsLowerImpl);
 
-    // toUpper / toLower — JS `.toUpperCase()` / `.toLowerCase()` on a
+    // toUpper / toLower: JS `.toUpperCase()` / `.toLowerCase()` on a
     // 1-char string. Take the first code point of the result to stay
-    // in Char (e.g. 'ß'.toUpperCase() = "SS" in some locales —
+    // in Char (e.g. 'ß'.toUpperCase() = "SS" in some locales:
     // unlikely with the default locale, but we take the first scalar
     // defensively to keep the type).
     const charToUpperImpl = native(1, ([c]) => {
@@ -3794,7 +3794,7 @@
     def('stringFoldl', stringFoldlImpl);
     def('String.foldl', stringFoldlImpl);
 
-    // stringAny : (Char -> Bool) -> String -> Bool — short-circuit.
+    // stringAny : (Char -> Bool) -> String -> Bool, short-circuit.
     const stringAnyImpl = native(2, ([fn, s]) => {
       for (const ch of s.s) {
         if (apply(fn, VChar(ch.codePointAt(0))).b) return VBool(true);
@@ -3804,7 +3804,7 @@
     def('stringAny', stringAnyImpl);
     def('String.any', stringAnyImpl);
 
-    // ---------- UI primitives — shared infrastructure ----------
+    // ---------- UI primitives: shared infrastructure ----------
     //
     // collectAttrs / makeAttr / flagAttr are used by every UI builtin
     // that takes an `[Attr]` list (containers, textField) and by the
@@ -3840,7 +3840,7 @@
     // ---------- UI.* (SwiftUI-style declarative vocabulary) ----------
     //
     // Mirror of the Go runtime's UI builtins (internal/runtime/view.go).
-    // Same VView / VAttr shapes — just a JS expression of the same
+    // Same VView / VAttr shapes, just a JS expression of the same
     // intermediate form. The renderer (createDOM further down) is the
     // authoritative interpreter; these builtins produce the data.
 
@@ -3873,7 +3873,7 @@
     def('UI.textField', native(4, uiTextField));
 
     // textArea : List Attr -> String placeholder -> String value -> (String -> msg) -> View msg
-    // Multi-line text input. Same shape as textField — swapping
+    // Multi-line text input. Same shape as textField: swapping
     // `textField` for `textArea` in user code is the only change
     // needed when the field needs to hold a paragraph instead of
     // a single line. iOS renders a TextEditor; web renders a
@@ -3900,12 +3900,12 @@
     // assignee, milestone). iOS renders SwiftUI's Picker with the
     // platform's native menu / wheel; web renders a styled
     // <select>. `toLabel` is applied per option to produce the
-    // displayed string — same shape user code already has for
+    // displayed string: same shape user code already has for
     // status / priority badges (`Shared.priorityLabel`,
     // `Shared.statusLabel`).
     //
     // The selected value is identified structurally (eqValues),
-    // so callers pass any ctor / int / string / record — whatever
+    // so callers pass any ctor / int / string / record: whatever
     // the option list contains.
     function uiPicker(args) {
       const [attrsList, selected, options, toLabel, onChange] = args;
@@ -3952,7 +3952,7 @@
       return VView('canvas', attrs, xs, '', null);
     });
     def('canvas', canvasCtor); def('Canvas.canvas', canvasCtor);
-    // Shape / Color builders — pure data (VCtor), drawn by the renderer.
+    // Shape / Color builders: pure data (VCtor), drawn by the renderer.
     const rectCtor     = native(5, args => VCtor('rect', args.slice()));
     const circleCtor   = native(4, args => VCtor('circle', args.slice()));
     const triangleCtor = native(7, args => VCtor('triangle', args.slice()));
@@ -3983,7 +3983,7 @@
     def('onHover', onHoverCtor);             def('Canvas.onHover', onHoverCtor);
     def('onAltTap', onAltTapCtor);           def('Canvas.onAltTap', onAltTapCtor);
     def('onWheel', onWheelCtor);             def('Canvas.onWheel', onWheelCtor);
-    // BEGIN GENERATED BUILTIN CTORS (go generate ./internal/ctorgen) — DO NOT EDIT
+    // BEGIN GENERATED BUILTIN CTORS (go generate ./internal/ctorgen), DO NOT EDIT
     // Every qualified builtin union constructor, straight from the
     // typecheck tables (CustomType.Module). Nothing here is hand-picked:
     // if a name is missing, fix the union in typecheck and regenerate.
@@ -4142,7 +4142,7 @@
     def('Canvas.Blend', native(1, args => VCtor('Blend', args.slice())));
     // END GENERATED BUILTIN CTORS
 
-    // text — plain text leaf. The attrs list carries the universal
+    // text: plain text leaf. The attrs list carries the universal
     // layout attrs (width / height); `text [width fill] "..."` is
     // the equal-columns idiom.
     const uiTextCtor = native(2, ([attrsList, s]) =>
@@ -4166,7 +4166,7 @@
     // Inline attrs. Bare style markers (bold/italic/strikethrough/
     // code) carry no payload; the renderer checks attr name to
     // toggle the corresponding CSS class. `link` is the one
-    // parameterized inline attr — its payload is the destination URL.
+    // parameterized inline attr: its payload is the destination URL.
     const inlineBoldAttr          = flagAttr('inlineBold');
     const inlineItalicAttr        = flagAttr('inlineItalic');
     const inlineStrikethroughAttr = flagAttr('inlineStrikethrough');
@@ -4186,7 +4186,7 @@
       VView('button', collectAttrs(attrsList), [], label.s, msg));
     def('uiButton', uiButtonCtor); def('UI.button', uiButtonCtor);
 
-    // disabled : Bool -> Attr — kept symmetric for both true/false so
+    // disabled : Bool -> Attr, kept symmetric for both true/false so
     // user code can pass a derived Bool without conditionally building
     // the attrs list.
     const uiDisabledCtor = native(1, ([b]) => makeAttr('disabled', b));
@@ -4195,7 +4195,7 @@
     // keyed : String -> View msg -> KeyedView msg
     // Wraps a regular View in a stable identity (the key string) so
     // it can be a child of UI.keyedList. The KeyedView distinction
-    // is compile-time only — at runtime we just append a `key` attr
+    // is compile-time only: at runtime we just append a `key` attr
     // to the inner VView. The reconciler reads that attr when
     // matching old/new children inside a keyedList.
     //
@@ -4228,7 +4228,7 @@
     // Per-row delete affordance. Bool = "editing mode is currently
     // on"; in that state, every row shows a permanent red `−` on
     // the left (iOS-edit-mode style). When false, the affordance
-    // reveals on hover instead (iCloud-Web style — see
+    // reveals on hover instead (iCloud-Web style: see
     // docs/cli-surface-proposal.md for the design rationale).
     //
     // The handler receives the index of the deleted row. The app is
@@ -4244,7 +4244,7 @@
     });
     def('uiOnDelete', uiOnDeleteCtor); def('UI.onDelete', uiOnDeleteCtor);
 
-    // title / subtitle — reuse the existing "title" / "subtitle"
+    // title / subtitle: reuse the existing "title" / "subtitle"
     // tags so createDOM's existing handling applies; UI styles
     // (font-size / weight / color) live in ensureUIStyles().
     const uiTitleCtor = native(1, ([s]) => VView('title', [], [], s.s));
@@ -4252,7 +4252,7 @@
     const uiSubtitleCtor = native(1, ([s]) => VView('subtitle', [], [], s.s));
     def('uiSubtitle', uiSubtitleCtor); def('UI.subtitle', uiSubtitleCtor);
 
-    // errorText — same leaf shape as text/title/subtitle. Tag
+    // errorText: same leaf shape as text/title/subtitle. Tag
     // 'errorText' triggers the .mar-error-text CSS class in
     // createDOM (red + semi-bold) and a role=alert for assistive
     // tech. Mirrors Go's runtime/view.go uiErrorText + iOS's
@@ -4274,7 +4274,7 @@
     });
     def('uiImage', uiImageCtor); def('UI.image', uiImageCtor);
 
-    // chars / lines / fill — sizing values. chars/lines wrap an Int
+    // chars / lines / fill: sizing values. chars/lines wrap an Int
     // in a record tagged with __unit so the renderer can dispatch on
     // what the number means (horizontal characters vs vertical
     // lines); fill is the axis-polymorphic "take the available
@@ -4290,7 +4290,7 @@
       VRecord({ __unit: VString('fill'), amount: VInt(0) }, ['__unit', 'amount']);
     def('uiFill', uiFillVal); def('UI.fill', uiFillVal);
 
-    // width / height — the universal sizing attrs. applyLayoutAttrs
+    // width / height: the universal sizing attrs. applyLayoutAttrs
     // reads the Size record's __unit: chars/lines size the content
     // box (inputs keep their special-cased max-width / rows
     // handling in applySizing), fill claims the free space on that
@@ -4300,12 +4300,12 @@
     const uiHeightCtor = native(1, ([v]) => makeAttr('height', v));
     def('uiHeight', uiHeightCtor); def('UI.height', uiHeightCtor);
 
-    // align — cross-axis alignment for a stack's hugging children.
+    // align: cross-axis alignment for a stack's hugging children.
     // The value is a plain alignment-name string; applyAlignAttr
     // maps it onto align-items, honoring only the axis that matches
     // the stack (vstack: leading/center/trailing; hstack:
     // top/center/bottom). Children with the matching `fill` have no
-    // cross-axis slack, so align never moves them — align is
+    // cross-axis slack, so align never moves them: align is
     // position, fill is size.
     const uiAlignCtor = native(1, ([v]) => makeAttr('align', v));
     def('uiAlign', uiAlignCtor); def('UI.align', uiAlignCtor);
@@ -4315,8 +4315,8 @@
     def('uiTop', VString('top'));           def('UI.top', VString('top'));
     def('uiBottom', VString('bottom'));     def('UI.bottom', VString('bottom'));
 
-    // px — pixel sizing unit for images (mirrors chars/lines, tagged
-    // 'px'). size — fixed width+height attr for an image. fit/cover —
+    // px: pixel sizing unit for images (mirrors chars/lines, tagged
+    // 'px'). size, fixed width+height attr for an image. fit/cover:
     // content-mode flags (CSS object-fit vocabulary; "cover", not
     // "fill", which is the sizing value above). createDOM's 'image'
     // case reads these.
@@ -4337,7 +4337,7 @@
     // child View becomes the tappable label. Renders as
     // <a class="mar-navigation-link"> wrapping the child DOM.
     // The leading attrs list carries `disabled` (and future
-    // modifiers) — uniform shape with every other interactive
+    // modifiers): uniform shape with every other interactive
     // primitive.
     def('uiNavigationLink', native(4, ([attrsList, pathV, params, child]) => {
       if (!pathV || pathV.k !== 'S') {
@@ -4354,12 +4354,12 @@
     }));
     def('UI.navigationLink', envLookup(env, 'uiNavigationLink'));
 
-    // empty — no-op placeholder; same VView the existing renderer
+    // empty: no-op placeholder; same VView the existing renderer
     // already knows to handle (display: none).
     def('uiEmpty', VView('empty', [], [], ''));
     def('UI.empty', VView('empty', [], [], ''));
 
-    // spacer — SwiftUI's `Spacer()`. Expands along the containing
+    // spacer: SwiftUI's `Spacer()`. Expands along the containing
     // stack's main axis to push siblings apart. On web that's a
     // `flex: 1` div the parent flex container absorbs.
     def('uiSpacer', VView('spacer', [], [], ''));
@@ -4371,7 +4371,7 @@
     // `Bool -> msg` callback in msg. createDOM renders a label
     // wrapping an iOS-style styled checkbox; on change the
     // checkbox dispatches `msg(newValue)`. The leading attrs
-    // list carries modifiers like `disabled` — same shape every
+    // list carries modifiers like `disabled`: same shape every
     // other interactive primitive uses (textField / button /
     // picker), so the gating idiom is uniform.
     def('uiToggle', native(4, ([attrsList, label, isOn, onChange]) => {
@@ -4382,7 +4382,7 @@
     def('UI.toggle', envLookup(env, 'uiToggle'));
 
     // centered : View msg -> View msg
-    // Wraps child in a "centered" view tag — pure two-axis
+    // Wraps child in a "centered" view tag: pure two-axis
     // alignment. The renderer fills the space the PARENT provides
     // (never inventing a size) and centers the child in it.
     const uiCenteredCtor = native(1, ([child]) =>
@@ -4413,7 +4413,7 @@
     // is "if this view appears in the tree, mount the modal; if it
     // doesn't, the modal is gone." Apps therefore branch via `case`
     // returning `UI.confirm {...}` when active and `UI.empty` when
-    // not — there's no explicit `isOpen` field.
+    // not: there's no explicit `isOpen` field.
     //
     // We stash both message handlers as attrs because the view has
     // two distinct dispatch paths (confirm + cancel) and VView's
@@ -4433,7 +4433,7 @@
     // Modifier attrs.
     const navTitleCtor   = native(1, ([s]) => makeAttr('navigationTitle', s));
     def('navigationTitle', navTitleCtor); def('UI.navigationTitle', navTitleCtor);
-    // topBarTrailing / topBarLeading — toolbar items at the trailing
+    // topBarTrailing / topBarLeading: toolbar items at the trailing
     // / leading edge of the top bar. Names match SwiftUI's
     // `.topBarTrailing` / `.topBarLeading` placement (iOS 17+).
     const topBarTrailingCtor = native(1, ([v]) => makeAttr('topBarTrailing', v));
@@ -4447,7 +4447,7 @@
     const footerCtor     = native(1, ([s]) => makeAttr('footer', s));
     def('footer', footerCtor); def('UI.footer', footerCtor);
 
-    // numericCode bundles numeric keypad + Code-from-Mail autofill —
+    // numericCode bundles numeric keypad + Code-from-Mail autofill:
     // single flag attr; the renderer expands it (see applyInputKind).
     const numericCodeAttr = flagAttr('inputKindNumericCode');
     def('numericCode', numericCodeAttr); def('UI.numericCode', numericCodeAttr);
@@ -4474,7 +4474,7 @@
     def('pageCreate', pageCreateImpl);
     def('Page.create', pageCreateImpl);
 
-    // Page.protected — same shape as Page.create plus User-aware
+    // Page.protected: same shape as Page.create plus User-aware
     // handler signatures (init/update/view receive the logged-in
     // User as first arg). The mountPages code recognizes the
     // "__ProtectedPage" tag, runs Auth.me on first entry, and
@@ -4493,13 +4493,13 @@
     // client-side admin auth gate here: the admin session cookie authorizes the
     // Mar.Admin.* fetches server-side (the /_mar/admin/api/mar/* routes 401
     // without it). So we pre-apply a placeholder AdminSession and emit a plain
-    // __Page that mounts like any other — the page only ever passes that value
+    // __Page that mounts like any other: the page only ever passes that value
     // to Mar.Admin.*, which ignore it. (Web-only; no iOS admin app.)
     const pageAdminProtectedImpl = native(1, ([rec]) => {
       const f = rec.fields;
       const title = f.title || VString('');
       const adminSession = VString('admin');
-      // init : AdminSession -> (Model, Effect) — pre-applying the
+      // init : AdminSession -> (Model, Effect), pre-applying the
       // session yields the (model, effect) tuple a plain page's init
       // now IS (no vestigial unit arg). The tuple is pure data and
       // the effect inside is a lazy description, so evaluating here
@@ -4513,10 +4513,10 @@
     def('pageAdminProtected', pageAdminProtectedImpl);
     def('Page.adminProtected', pageAdminProtectedImpl);
 
-    // Mar.Admin.* — privileged server-introspection, shaped like Service.call
-    // (AdminSession -> (Result String resp -> msg) -> Effect String msg). The
+    // Mar.Admin.*: privileged server-introspection, shaped like Service.call
+    // (AdminSession -> (Result String resp -> msg) -> Cmd msg). The
     // panel performs them as Cmds; the result arrives through toMsg. The
-    // AdminSession argument is the compile-time gate only — at runtime the
+    // AdminSession argument is the compile-time gate only: at runtime the
     // admin session cookie (same-origin) authorizes the request and the server
     // runs the real introspection body (internal/jsserve/admin_mar.go),
     // returning the Mar Value as JSON which jsToMar rebuilds here.
@@ -4525,7 +4525,7 @@
         .then(r => r.text().then(t => ({ ok: r.ok, body: t, status: r.status })))
         .then(r => {
           if (r.status === 401) {
-            // Admin session missing/expired — send the operator to the panel's
+            // Admin session missing/expired: send the operator to the panel's
             // own sign-in page. Guarded so the panel's several concurrent
             // fetches redirect once.
             if (!globalThis.__marAdminRedirecting) {
@@ -4564,7 +4564,7 @@
     def('Mar.Admin.listEntityRows', envLookup(env, 'marAdminListEntityRows'));
     def('marAdminListBackups', native(2, ([_s, toMsg]) => marAdminFetch('/_mar/admin/api/mar/backups', toMsg)));
     def('Mar.Admin.listBackups', envLookup(env, 'marAdminListBackups'));
-    // Admin sign-in flow — POST to the existing /_mar/admin/auth/* endpoints
+    // Admin sign-in flow: POST to the existing /_mar/admin/auth/* endpoints
     // (reuses authPost, same as the user Auth.*). Pre-auth, so no AdminSession.
     def('marAdminRequestCode', native(2, ([req, toMsg]) => authPost('/_mar/admin/auth/request-code', marToJs(req), toMsg, () => VUnit())));
     def('Mar.Admin.requestCode', envLookup(env, 'marAdminRequestCode'));
@@ -4573,7 +4573,7 @@
     def('marAdminSignOut', native(1, ([toMsg]) => authPost('/_mar/admin/auth/logout', null, toMsg, () => VUnit())));
     def('Mar.Admin.signOut', envLookup(env, 'marAdminSignOut'));
 
-    // Page.dynamic — pattern path with `:param` segments. The runtime
+    // Page.dynamic, pattern path with `:param` segments. The runtime
     // matches the URL against the pattern at navigation time, threading
     // a Params record through init/update/view as the leading argument.
     // The wire-format ctor is __DynamicPage; mountPages parses the path
@@ -4586,7 +4586,7 @@
     def('pageDynamic', pageDynamicImpl);
     def('Page.dynamic', pageDynamicImpl);
 
-    // Page.dynamicProtected — pattern path + auth gate. Combines
+    // Page.dynamicProtected: pattern path + auth gate. Combines
     // __DynamicPage's URL matching with __ProtectedPage's Auth.me
     // bootstrap. Handler signature is `User -> Params -> ...` (User
     // first, mirroring Page.protected).
@@ -4598,7 +4598,7 @@
     def('pageDynamicProtected', pageDynamicProtectedImpl);
     def('Page.dynamicProtected', pageDynamicProtectedImpl);
 
-    // Page.sheet — presentation, not a fifth kind of page. Takes a page
+    // Page.sheet: presentation, not a fifth kind of page. Takes a page
     // built by any constructor above and marks it PRESENTED: navigating
     // to it leaves the page you came from on screen and lays this one
     // over it in a sheet. Route, history entry and deep link are
@@ -4615,7 +4615,7 @@
     def('pageSheet', pageSheetImpl);
     def('Page.sheet', pageSheetImpl);
 
-    // Page.dynamicAdminProtected — pattern path + admin session. Pre-applies a
+    // Page.dynamicAdminProtected: pattern path + admin session. Pre-applies a
     // placeholder AdminSession (the admin cookie does the real auth on the
     // Mar.Admin.* fetches) and emits a plain __DynamicPage, so the existing
     // dynamic-page machinery threads Params in. Web-only (no iOS admin).
@@ -4624,7 +4624,7 @@
       const title = f.title || VString('');
       const adminSession = VString('admin');
       // Real sigs thread (AdminSession, Params, …); pre-apply the session,
-      // leaving (Params, …) — exactly __DynamicPage's shape.
+      // leaving (Params, …): exactly __DynamicPage's shape.
       const init = native(1, ([params]) => apply(apply(f.init, adminSession), params));
       const update = native(3, ([params, msg, model]) => apply(apply(apply(apply(f.update, adminSession), params), msg), model));
       const view = native(2, ([params, model]) => apply(apply(apply(f.view, adminSession), params), model));
@@ -4634,7 +4634,7 @@
     def('pageDynamicAdminProtected', pageDynamicAdminProtectedImpl);
     def('Page.dynamicAdminProtected', pageDynamicAdminProtectedImpl);
 
-    // Nav.* — programmatic navigation. The actual implementations
+    // Nav.*: programmatic navigation. The actual implementations
     // live inside mountPages (where `pages`/`render` are in scope) and
     // get attached to globalThis.__marNav at mount time. Calling them
     // before mountPages has run is a no-op (effect runs but has nothing
@@ -4653,7 +4653,7 @@
     }, 'navReplace')));
     def('Nav.replace', envLookup(env, 'navReplace'));
 
-    // Nav.dismiss : Cmd msg — close a route that is being presented
+    // Nav.dismiss : Cmd msg, close a route that is being presented
     // (Page.sheet). A VALUE, not a function: it takes nothing.
     //
     // Goes through history, exactly like the backdrop / Escape / Back
@@ -4672,7 +4672,7 @@
     }, 'navDismiss'));
     def('Nav.dismiss', envLookup(env, 'navDismiss'));
 
-    // Auth.completeSignIn : Effect e ()
+    // Auth.completeSignIn : Cmd ()
     //
     // The right way to navigate after a successful Auth.verifyCode.
     // Reads the `?next=` query parameter (set by the framework when a
@@ -4700,7 +4700,7 @@
           target = next;
         }
       } catch (_) {
-        // Defensive — URLSearchParams is universally supported but
+        // Defensive: URLSearchParams is universally supported but
         // some test environments may not have window.location.
       }
       // Reset the auth-expired coalescer so the next genuine session
@@ -4759,7 +4759,7 @@
     // Build a URL from a typed Path + the params record. Path values
     // are VStrings at runtime (the typechecker enforces the surface
     // type); the cached parsePathPattern turns them into typed segments
-    // for the URL builder. Used in `href` attributes — pure, no Effect.
+    // for the URL builder. Used in `href` attributes: pure, no Effect.
     def('linkTo', native(2, ([pathV, params]) => {
       if (!pathV || pathV.k !== 'S') {
         throw new Error('linkTo: expected Path, got ' + (pathV && pathV.k));
@@ -4768,8 +4768,8 @@
       return VString(buildPathURL(pattern, params));
     }));
 
-    // Nav.pushTo : Path r -> r -> Effect e msg
-    // Type-safe sibling of Nav.push — pre-renders the URL via the
+    // Nav.pushTo : Path r -> r -> Cmd msg
+    // Type-safe sibling of Nav.push: pre-renders the URL via the
     // typed Path, then reuses the same global navigation hook. The
     // URL build runs eagerly (so missing-param errors surface
     // synchronously), but the actual history mutation only fires
@@ -4802,7 +4802,7 @@
     }));
     def('Nav.replaceTo', envLookup(env, 'navReplaceTo'));
 
-    // App.frontend : List Page -> Effect String ()
+    // App.frontend : List Page -> Cmd ()
     // Mounts a page list with URL routing. Port comes from the host
     // server's mar.json, not user code.
     def('appFrontend', native(1, ([list]) => VEffect(() => mountPages(list.xs), 'mountPages')));
@@ -4815,7 +4815,7 @@
     // def has to be a top-level binding: it must evaluate once so every use
     // site holds the same object.
     //
-    // __originKey is the hot-reload identity — the def OBJECT dies on reload,
+    // __originKey is the hot-reload identity: the def OBJECT dies on reload,
     // the declaration order doesn't.
     const appSharedImpl = native(1, ([rec]) => {
       const f = rec.fields;
@@ -4848,13 +4848,13 @@
     def('cmdToShared', cmdToSharedImpl);
     def('Cmd.toShared', cmdToSharedImpl);
 
-    // App.backend : List Route -> Effect String ()
+    // App.backend : List Route -> Task ()
     // Backend is a server-side concept. The browser bundle never sees
     // backend routes; this builtin returns a no-op Effect on the JS side.
     def('appBackend', native(1, ([_]) => VEffect(() => VUnit(), 'noop')));
     def('App.backend', native(1, ([_]) => VEffect(() => VUnit(), 'noop')));
 
-    // App.fullstack : { api, pages } -> Effect String ()
+    // App.fullstack : { api, pages } -> Cmd ()
     // The browser only cares about `pages`; `api` runs server-side.
     def('appFullstack', native(1, ([rec]) =>
       VEffect(() => mountPages(rec.fields.pages.xs), 'mountPages')
@@ -4863,7 +4863,7 @@
       VEffect(() => mountPages(rec.fields.pages.xs), 'mountPages')
     ));
 
-    // Effect — sync versions (effects are run-on-demand thunks).
+    // Effect: sync versions (effects are run-on-demand thunks).
     def('effectSucceed', native(1, ([v]) => VEffect(() => v, 'pure')));
     def('Task.succeed', native(1, ([v]) => VEffect(() => v, 'pure')));
     def('effectMap', native(2, ([fn, eff]) => VEffect(() => apply(fn, eff.run()), 'map')));
@@ -4871,7 +4871,7 @@
     def('effectAndThen', native(2, ([fn, eff]) => VEffect(() => apply(fn, eff.run()).run(), 'andThen')));
     def('Task.andThen', native(2, ([fn, eff]) => VEffect(() => apply(fn, eff.run()).run(), 'andThen')));
 
-    // Effect.fail : e -> Effect e a — throws when run. Uncaught
+    // Task.fail : e -> Task a, throws when run. Uncaught
     // failures surface as a JS exception in the dispatcher; user
     // code that wants typed recovery should use Result.* instead.
     const effectFailImpl = native(1, ([err]) => VEffect(() => {
@@ -4881,8 +4881,8 @@
     def('effectFail', effectFailImpl);
     def('Task.fail', effectFailImpl);
 
-    // Effect.forEach : (a -> Effect e ()) -> List a -> Effect e ()
-    // Sequential — halts on first failure (the thrown error
+    // Task.forEach : (a -> Task ()) -> List a -> Task ()
+    // Sequential: halts on first failure (the thrown error
     // propagates out of run()).
     const effectForEachImpl = native(2, ([fn, list]) => VEffect(() => {
       for (const x of list.xs) {
@@ -4894,7 +4894,7 @@
     def('effectForEach', effectForEachImpl);
     def('Task.forEach', effectForEachImpl);
 
-    // Effect.sequence : List (Effect e a) -> Effect e (List a)
+    // Task.sequence : List (Task a) -> Task (List a)
     const effectSequenceImpl = native(1, ([list]) => VEffect(() => {
       const out = new Array(list.xs.length);
       for (let i = 0; i < list.xs.length; i++) {
@@ -4905,7 +4905,7 @@
     def('effectSequence', effectSequenceImpl);
     def('Task.sequence', effectSequenceImpl);
 
-    // Effect.batch : List (Effect e msg) -> Effect e msg
+    // Cmd.batch : List (Cmd msg) -> Cmd msg
     // Fire-and-forget fan-out (the Cmd.batch of Mar). Each child's
     // run() kicks off its own work and delivers through its own
     // toMsg dispatch (Service.call effects self-dispatch when their
@@ -4924,7 +4924,7 @@
     def('effectNone', VEffect(() => VUnit(), 'none'));
     def('Cmd.none', VEffect(() => VUnit(), 'none'));
 
-    // Sub.none / Sub.batch — the frontend subscription monoid. A Sub is a
+    // Sub.none / Sub.batch: the frontend subscription monoid. A Sub is a
     // declarative descriptor (k:'SUB'); the IIFE-level reconcileSubs reads it.
     const subNoneVal = { k: 'SUB', items: [] };
     def('subNone', subNoneVal);
@@ -4942,10 +4942,10 @@
     def('subBatch', subBatchImpl);
     def('Sub.batch', subBatchImpl);
 
-    // Random — Elm-style generators with a PURE, seedable core. A Generator a
+    // Random: Elm-style generators with a PURE, seedable core. A Generator a
     // is Seed -> (a, Seed): native(1) taking a Seed, returning VTuple([value,
     // nextSeed]). PCG-XSH-RR (64-bit state in BigInt) mirrors internal/runtime/
-    // random.go bit-for-bit — the golden vectors in random_test.go are the
+    // random.go bit-for-bit: the golden vectors in random_test.go are the
     // contract. A Seed rides inside a VTuple of two 32-bit halves, opaque at the
     // type level, so it serializes/compares like any tuple and needs no new kind.
     const _PCG_MUL = 6364136223846793005n, _PCG_INC = 1442695040888963407n;
@@ -4971,14 +4971,14 @@
     // Random.initialSeed : Int -> Seed
     const randomInitialSeed = native(1, ([n]) => makeSeed(scramble(n.n)));
     def('randomInitialSeed', randomInitialSeed); def('Random.initialSeed', randomInitialSeed);
-    // Random.step : Generator a -> Seed -> (a, Seed) — pure, runs anywhere.
+    // Random.step : Generator a -> Seed -> (a, Seed), pure, runs anywhere.
     const randomStep = native(2, ([g, seed]) => { const [v, next] = runGen(g, seed); return VTuple([v, next]); });
     def('randomStep', randomStep); def('Random.step', randomStep);
-    // Random.seed : Task Seed — real OS entropy as a Seed.
+    // Random.seed : Task Seed, real OS entropy as a Seed.
     const randomSeed = VEffect(() => entropySeed(), 'randomSeed');
     def('randomSeed', randomSeed); def('Random.seed', randomSeed);
 
-    // Random.generate : (a -> msg) -> Generator a -> Cmd msg — seeds from
+    // Random.generate : (a -> msg) -> Generator a -> Cmd msg, seeds from
     // entropy, steps once, dispatches the value as a Msg.
     const randomGenerate = native(2, ([toMsg, g]) => VEffect(() => {
       const [v] = runGen(g, entropySeed());
@@ -5039,7 +5039,7 @@
     def('cmdPerform', cmdPerformImpl);
     def('Cmd.perform', cmdPerformImpl);
 
-    // Math — Angle constructors, angle algebra, and the four functions.
+    // Math: Angle constructors, angle algebra, and the four functions.
     // Mirrors internal/runtime/math.go; the kernels themselves live in the
     // "Math (integer trigonometry)" section above, next to the generated
     // table. Each constructor reduces into one turn BEFORE scaling, so
@@ -5049,7 +5049,7 @@
       native(1, ([n]) => VAngle(posMod(n.n, perTurn) * scale));
     const degreesImpl = mkAngle(360, 10);
     const deciDegreesImpl = mkAngle(DECI_FULL, 1);
-    // turns counts in brads — 256 to the turn, the unit seasons-gp and
+    // turns counts in brads: 256 to the turn, the unit seasons-gp and
     // vortex already use. 3600/256 is not whole, so one brad floors; a
     // full turn is exact.
     const turnsImpl = native(1, ([n]) =>
@@ -5072,7 +5072,7 @@
     def('mathAtan2', atan2Impl);        def('Math.atan2', atan2Impl);
     def('mathIsqrt', isqrtImpl);        def('Math.isqrt', isqrtImpl);
 
-    // Time — Duration-typed unit smart constructors. Mirrors the Go
+    // Time: Duration-typed unit smart constructors. Mirrors the Go
     // runtime's timeBuiltins (internal/runtime/time.go). Each
     // constructor multiplies by its unit's seconds-count at build
     // time so the framework + user code only ever deals with
@@ -5090,12 +5090,12 @@
     def('timeToSeconds', native(1, ([d]) => VInt(Math.trunc(d.seconds || 0))));
     def('Time.toSeconds', envLookup(env, 'timeToSeconds'));
 
-    // Time.now — Effect e Time. Reads the wall clock; same shape as
+    // Time.now: Task Time. Reads the wall clock; same shape as
     // Effect.succeed but the value is fresh on each run.
     def('timeNow', VEffect(() => VTime(Date.now()), 'timeNow'));
     def('Time.now', envLookup(env, 'timeNow'));
 
-    // Time.every : Duration -> (Time -> msg) -> Sub msg — a recurring
+    // Time.every : Duration -> (Time -> msg) -> Sub msg, a recurring
     // subscription. Identity is the interval (seconds); the tagger is the
     // payload. The reconciler turns it into a setInterval that delivers the
     // current Time each tick. Fires first AFTER one interval (Elm's Time.every);
@@ -5118,16 +5118,16 @@
     def('gamepadWatch', gamepadWatchImpl); def('Gamepad.watch', gamepadWatchImpl);
 
     // ---- Device (docs/proposals/device.md): live capabilities, no UA guess ----
-    // Pointer constructors — global (like Order's LT / Method's GET), nullary.
+    // Pointer constructors: global (like Order's LT / Method's GET), nullary.
     def('Coarse', VCtor('Coarse')); def('Fine', VCtor('Fine'));
-    // CanvasMode constructors — global, nullary; the mandatory first arg of
+    // CanvasMode constructors: global, nullary; the mandatory first arg of
     // `canvas` (Pixelated = 1x + nearest-neighbour, Crisp = retina + smooth).
     def('Pixelated', VCtor('Pixelated')); def('Crisp', VCtor('Crisp'));
-    // Device.watch : (Device -> msg) -> Sub msg — the deviceWatch sub source
+    // Device.watch : (Device -> msg) -> Sub msg, the deviceWatch sub source
     // (above) reads matchMedia + innerWidth/Height and fires the record.
     const deviceWatchImpl = native(1, ([tagger]) => ({ k: 'SUB', items: [{ src: 'deviceWatch', key: 'deviceWatch', tagger }] }));
     def('deviceWatch', deviceWatchImpl); def('Device.watch', deviceWatchImpl);
-    // Device.touchOnly / canHover — pure readings off a Device record.
+    // Device.touchOnly / canHover: pure readings off a Device record.
     const deviceField = (d, name) => (d && d.fields) ? d.fields[name] : undefined;
     const deviceTouchOnlyImpl = native(1, ([d]) => {
       const p = deviceField(d, 'pointer');
@@ -5140,7 +5140,7 @@
     def('deviceCanHover', deviceCanHoverImpl);   def('Device.canHover', deviceCanHoverImpl);
 
     // ---- Sound (docs/proposals/sound.md): chip-audio SFX + loops + beds ----
-    // Wave constructors — values (the first arg to tone); the synth reads .tag.
+    // Wave constructors: values (the first arg to tone); the synth reads .tag.
     // Sound.Square / Triangle / Sawtooth / Noise constructors come from the
     // generated registry (see the GENERATED BUILTIN CTORS region).
     const mkSound = (voices) => ({ k: 'SND', voices });
@@ -5149,7 +5149,7 @@
     // outermost one, and the loss is invisible (no error, just a sound that
     // ignores half of what it was asked for).
     const cloneVoices = (snd) => (snd && snd.voices) ? snd.voices.map(v => ({ ...v })) : [];
-    // The identity of a HELD source — one oscillator kept alive by a Sub, as
+    // The identity of a HELD source: one oscillator kept alive by a Sub, as
     // opposed to a note scheduled and forgotten. Whatever is left OUT of the
     // identity becomes a live parameter: returning the sound again with only
     // that part changed glides the running node (soundGlideTo) instead of
@@ -5187,13 +5187,13 @@
     const soundSweepImpl = native(2, ([end, snd]) => patchLast(snd, v => { v.endFreq = end.n; }));
     def('soundSweep', soundSweepImpl); def('Sound.sweep', soundSweepImpl);
     // attack / release : the envelope, in ms. Carried by the VOICE so every
-    // playback path renders the same shape — `once` and `loop` ramp it inside the
+    // playback path renders the same shape: `once` and `loop` ramp it inside the
     // note's own span, `hold` fades in on start and out when the sub stops.
     //
     // These patch EVERY voice, not just the last one like volume/duty do. A chord
     // is one note played on several oscillators: if only the last layer took the
     // attack, the others would still jump, so the note would both click and speak
-    // twice. Per-layer envelopes are still expressible — shape a tone BEFORE
+    // twice. Per-layer envelopes are still expressible: shape a tone BEFORE
     // putting it in the chord.
     const patchAll = (snd, f) => { const vs = cloneVoices(snd); vs.forEach(f); return mkSound(vs); };
     const soundAttackImpl = native(2, ([ms, snd]) => patchAll(snd, v => { v.attack = Math.max(0, ms.n); }));
@@ -5251,9 +5251,9 @@
     const soundPlayImpl = native(1, ([snd]) => VEffect(() => { soundPlayNow(snd); return VUnit(); }, 'soundPlay'));
     def('soundPlay', soundPlayImpl); def('Sound.play', soundPlayImpl);
     // loop : Sound -> Sub msg  (replay seamlessly while subscribed). Keyed by FULL
-    // content INCLUDING volume, so any change swaps the song (a restart) — fine for
+    // content INCLUDING volume, so any change swaps the song (a restart): fine for
     // BGM. ambient : Sound -> Sub msg  (steady bed; keyed WITHOUT volume so the same
-    // bed at a new level retunes live instead of restarting — see subSources).
+    // bed at a new level retunes live instead of restarting: see subSources).
     const soundFullKey = (snd) => { try { return JSON.stringify((snd && snd.voices) || []); } catch (e) { return 'x'; } };
     const soundLoopImpl = native(1, ([snd]) => ({ k: 'SUB', items: [{ src: 'loop', key: 'loop:' + soundFullKey(snd), sound: snd, tagger: null }] }));
     def('soundLoop', soundLoopImpl); def('Sound.loop', soundLoopImpl);
@@ -5288,7 +5288,7 @@
     const pAs = mkPitch(10); def('soundPitch_as_', pAs); def('Sound.as_', pAs);
     const pB = mkPitch(11);  def('soundPitch_b', pB);    def('Sound.b', pB);
 
-    // Time arithmetic — durations are seconds, times are millis;
+    // Time arithmetic: durations are seconds, times are millis;
     // multiply by 1000 to align units when shifting.
     def('timeAdd', native(2, ([t, d]) => VTime((t.millis || 0) + (d.seconds || 0) * 1000)));
     def('Time.add', envLookup(env, 'timeAdd'));
@@ -5339,7 +5339,7 @@
     def('timeAddYears',  calendarShift(1, 0, 0));
     def('Time.addYears', envLookup(env, 'timeAddYears'));
 
-    // Component getters (UTC). Month is 1-indexed externally —
+    // Component getters (UTC). Month is 1-indexed externally:
     // we add 1 to JS's getUTCMonth (0-indexed) so user code reads
     // the same values it'd see on the Go and iOS sides.
     const component = (extract) => native(1, ([t]) => VInt(extract(new Date(t.millis || 0))));
@@ -5356,7 +5356,7 @@
     def('timeSecond', component(d => d.getUTCSeconds()));
     def('Time.second', envLookup(env, 'timeSecond'));
 
-    // JSON.decode : String -> Result String α — uses the IIFE-level
+    // JSON.decode : String -> Result String α, uses the IIFE-level
     // jsToMar so that fetchAuthMe (in mountPages) can reach the
     // same decoder.
     def('jsonDecode', native(1, ([raw]) => {
@@ -5369,7 +5369,7 @@
     }));
     def('JSON.decode', envLookup(env, 'jsonDecode'));
 
-    // JSON.encode : α -> String — uses the IIFE-level marToJs so
+    // JSON.encode : α -> String, uses the IIFE-level marToJs so
     // every consumer (jsonEncode, Service.call body, authPost
     // body) shares the same encoder. Mar's Maybe/Result get
     // shorthand encodings; other ctors round-trip via the
@@ -5377,14 +5377,14 @@
     def('jsonEncode', native(1, ([v]) => VString(JSON.stringify(marToJs(v)))));
     def('JSON.encode', envLookup(env, 'jsonEncode'));
 
-    // Http.get / Http.post — async fetch wrapped in an Effect.
+    // Http.get / Http.post: async fetch wrapped in an Effect.
     //
     //   Http.get  : String -> (Result String String -> msg) -> Effect Never msg
     //   Http.post : String -> String -> (Result String String -> msg) -> Effect Never msg
     //
     // The third (toMsg) argument lets the call result be turned into a Msg
     // that gets dispatched into the running app. The Effect itself does not
-    // produce a value synchronously — the response arrives asynchronously
+    // produce a value synchronously: the response arrives asynchronously
     // and is delivered as a Msg.
     def('httpGet', native(2, ([url, toMsg]) => {
       return VEffect(() => {
@@ -5412,7 +5412,7 @@
     // for one type alias dragged that module's schema into the browser, where
     // `Entity.define` then had to evaluate. The bundler now ships only the
     // declarations a page actually reaches (ADR 0019), so server-only code no
-    // longer arrives at all — and the stubs were the thing keeping that
+    // longer arrives at all, and the stubs were the thing keeping that
     // failure quiet. Forgetting one is what made `Entity.enum` typecheck and
     // then die in the browser with "unbound name".
     //
@@ -5421,7 +5421,7 @@
     // refuses the build before that anyway.
 
     // Service (RPC over HTTP). Server-side wraps a handler; browser-side
-    // the handler is never invoked — the contract just carries the verb +
+    // the handler is never invoked: the contract just carries the verb +
     // path so Service.call can build the request.
     //
     // Service.declare VERB "path": a typed RPC contract carrying the HTTP
@@ -5447,7 +5447,7 @@
     def('Auth.protect', envLookup(env, 'authProtect'));
 
     // PROPOSAL stubs (docs/authorization-proposal.md). The browser
-    // never enforces auth — the server's dispatcher does. So these
+    // never enforces auth: the server's dispatcher does. So these
     // are pass-throughs returning the ExposedService unchanged.
     def('authRequireRole',  native(2, ([_role, exposed]) => exposed));
     def('Auth.requireRole', envLookup(env, 'authRequireRole'));
@@ -5459,7 +5459,7 @@
     // Auth.config: server-side captures the user entity + signup hook
     // + email config into a global for the framework HTTP handlers.
     // Browser-side we additionally pull the `signInPage` field's
-    // path off — Page.protected reads it as the redirect target when
+    // path off: Page.protected reads it as the redirect target when
     // the user has no session. Stored on globalThis so the closure
     // inside mountPages (set up later) can read it without explicit
     // wiring.
@@ -5479,7 +5479,7 @@
     }));
     def('Auth.config', envLookup(env, 'authConfig'));
 
-    // Service.call : Service req resp -> req -> (Result Service.Error resp -> msg) -> Effect msg
+    // Service.call : Service req resp -> req -> (Result Service.Error resp -> msg) -> Cmd msg
     //   - Builds the request from the contract's verb + path: typed path
     //     params go in the URL, the rest in the query (GET / DELETE) or
     //     the JSON body (POST / PUT / PATCH). Parses the JSON response into
@@ -5495,7 +5495,7 @@
         }
         fetch(built.url, init)
           // Read the server's identity here, while the Response still
-          // exists — the next step reduces it to {ok, body, status} and
+          // exists: the next step reduces it to {ok, body, status} and
           // the headers are gone. Service calls are the traffic a
           // long-lived tab actually generates, which makes this the
           // one hook that matters.
@@ -5506,7 +5506,7 @@
             // the session is gone (or never existed). Send the user to
             // the configured signInPath, capturing where they were so
             // Auth.completeSignIn can return them after a successful login.
-            // The Err is NOT dispatched — user code never sees this
+            // The Err is NOT dispatched: user code never sees this
             // case. This keeps "session expired" out of every update
             // function across the app.
             if (r.status === 401 && handleAuthExpired()) return;
@@ -5571,18 +5571,18 @@
     // handleAuthExpired centralizes the "401 from Service.call" reaction:
     //
     //   1. If signInPath isn't configured (Auth.config absent), can't
-    //      do anything useful — return false so the caller surfaces the
+    //      do anything useful: return false so the caller surfaces the
     //      Err to user code instead. Without this guard we'd swallow
     //      the error silently in apps that don't even use Auth.
     //   2. If we already navigated to sign-in for an earlier 401 in
     //      this batch (parallel Service.calls all expiring together),
-    //      drop subsequent 401s on the floor — one redirect is enough.
+    //      drop subsequent 401s on the floor: one redirect is enough.
     //      The flag is reset by Auth.completeSignIn after a successful
     //      verifyCode, so the next legitimate session expiry will
     //      redirect again.
     //   3. Otherwise: capture the current path as `?next=`, navigate
     //      to the sign-in URL via replaceFresh (which also invalidates
-    //      the cached user — without that the next protected render
+    //      the cached user: without that the next protected render
     //      would still see Just user and loop back to 401).
     //
     // Returns true if the redirect was triggered (or coalesced); false
@@ -5606,7 +5606,7 @@
         }
       } catch (_) { /* fall through with bare signInPath */ }
 
-      // replaceFresh resets marDepth to 0 — /sign-in is an entry
+      // replaceFresh resets marDepth to 0: /sign-in is an entry
       // point, regardless of how deep into the app the user was
       // when their session expired. Without the reset, a user
       // bounced from /tasks/edit/42 (depth 1) would see a back
@@ -5667,7 +5667,7 @@
     // Without this, a 429 from the gateway limiter would surface in
     // a Result.Err as the literal string
     //   `{"error":"rate_limited","retryAfterSeconds":3}`
-    // which apps would have to substring-match against — defeating
+    // which apps would have to substring-match against: defeating
     // the whole point of having stable codes server-side.
     function decodeServerError(body) {
       if (!body) return '';
@@ -5763,7 +5763,7 @@
     }));
     def('Auth.verifyCode', envLookup(env, 'authVerifyCode'));
 
-    // Auth outcome constructors — qualified-only, like Service.Error.
+    // Auth outcome constructors: qualified-only, like Service.Error.
     def('Auth.CodeSent', VCtor('CodeSent'));
     def('Auth.InvalidEmail', VCtor('InvalidEmail'));
     def('Auth.RateLimited', VCtor('RateLimited'));
@@ -5775,7 +5775,7 @@
       // Optimistic logout: dispatch the result message IMMEDIATELY
       // and fire the server request in the background as
       // fire-and-forget. This is what production webapps
-      // (Gmail / Slack / Twitter) do — logout is fundamentally
+      // (Gmail / Slack / Twitter) do: logout is fundamentally
       // a UI gesture, not a transaction. Waiting for the server
       // to clear its session before the user sees ANY response
       // means a slow network leaves the operator stuck on a
@@ -5791,7 +5791,7 @@
       // reload-immediately-after-logout combo. The operator
       // explicitly asked for this trade in favor of responsive UX.
       //
-      // We always dispatch Ok(()) — the request's HTTP outcome is
+      // We always dispatch Ok(()): the request's HTTP outcome is
       // irrelevant to the user's intent. The .catch on the fetch
       // just swallows the error so it doesn't surface in console.
       return VEffect(() => {
@@ -5810,7 +5810,7 @@
     def('Auth.logout', envLookup(env, 'authLogout'));
 
     def('authMe', native(1, ([toMsg]) => {
-      // GET /_auth/whoami — Maybe user.
+      // GET /_auth/whoami: Maybe user.
       return VEffect(() => {
         fetch('/_auth/whoami', { credentials: 'same-origin' })
           .then(r => r.text().then(t => ({ ok: r.ok, body: t })))
@@ -5889,8 +5889,8 @@
   // Mouse and keyboard go through `click` (mouse has no iOS quirk; keyboard
   // Enter/Space arrive as a synthetic `click` with no pointer events). But a
   // TOUCH/pen tap completes on `pointerup` instead: on iOS Safari, a DOM
-  // mutation between touchstart and the synthetic click — e.g. a page that
-  // re-renders on a per-second countdown tick — makes Safari CANCEL the
+  // mutation between touchstart and the synthetic click: e.g. a page that
+  // re-renders on a per-second countdown tick: makes Safari CANCEL the
   // click, so a tap landing on the same instant as a re-render is silently
   // dropped (the button flashes its tap-highlight, nothing fires).
   // `pointerup` fires regardless of concurrent DOM mutation, so it's immune;
@@ -5906,7 +5906,7 @@
       return true;
     };
 
-    // Touch/pen: arm on pointerdown, complete on pointerup — but only for a
+    // Touch/pen: arm on pointerdown, complete on pointerup, but only for a
     // real tap (started on this node, moved < ~10px so it wasn't a scroll).
     let armed = false, downId = -1, downX = 0, downY = 0;
     node.addEventListener('pointerdown', (ev) => {
@@ -5955,7 +5955,7 @@
   // the (from, to) indices and pushes the resulting Msg through
   // the current MVU dispatcher.
   //
-  // Used by the list reorder gesture — both the mouse/touch drag
+  // Used by the list reorder gesture: both the mouse/touch drag
   // (attachListReorderDrag) and the keyboard grab (Padrão 2 in
   // attachListReorderKeyboard, P6 below).
   function dispatchOnMove(handler, from, to) {
@@ -5986,7 +5986,7 @@
   //   - Escape key or pointer-cancel: cancel without dispatching.
   //
   // Realtime visual reorder: as the cursor moves over rows, those
-  // rows shift in place to "open up" the drop slot — no separate
+  // rows shift in place to "open up" the drop slot: no separate
   // drop indicator needed (the visible gap IS the indicator). This
   // mirrors iOS table-view drag where the list reflows continuously
   // under the finger rather than waiting for the release.
@@ -5997,7 +5997,7 @@
       !c.classList.contains('mar-live-region'));
 
     function onPointerDown(ev) {
-      // Only react to the drag handle, not the whole row — clicking
+      // Only react to the drag handle, not the whole row: clicking
       // text or other content shouldn't start a drag.
       const handle = ev.target.closest('.mar-drag-handle');
       if (!handle) return;
@@ -6020,14 +6020,14 @@
       //     capture's iOS Safari side effects (a long-debugged
       //     class of bugs where the gesture state machine doesn't
       //     fully release on pointerup, leaving the page in a
-      //     "next tap is consumed" state — operator reported
+      //     "next tap is consumed" state: operator reported
       //     EXACTLY this symptom after every drag: "any button
       //     needs to be tapped twice; tapping somewhere first
       //     releases it").
       //
       //   - Listeners are added per-drag and removed on
       //     pointerup/cancel. No state outlives the drag. The
-      //     page is back to clean after release — same as if no
+      //     page is back to clean after release: same as if no
       //     drag ever happened.
       //
       // Bound once here so add/remove use the same function
@@ -6041,7 +6041,7 @@
       // The drag-active class on the list enables a CSS transition
       // on non-dragging siblings (transform 200ms ease-out). Setting
       // transforms on them in onPointerMove then animates smoothly
-      // — without this class the shifts would snap on each cursor
+      //: without this class the shifts would snap on each cursor
       // tick and feel jittery. See the CSS rule for the full pair.
       listEl.classList.add('mar-section-drag-active');
 
@@ -6050,7 +6050,7 @@
       //
       //   (a) Target-row hit testing. If we used live
       //       getBoundingClientRect, the rects would reflect the
-      //       realtime shifts we ourselves applied — moving the
+      //       realtime shifts we ourselves applied: moving the
       //       cursor 10px would cause a chain reaction (shift → new
       //       rect → new target → new shift → ...) and the drop
       //       slot would oscillate.
@@ -6082,13 +6082,13 @@
       // relative to where the pointer was at drag-start, so the row
       // moves 1:1 with the finger / mouse. We compose the translate
       // with a tiny scale-up (1.02) for the "picked up" feel that
-      // iOS uses on table-view drag — gives clear visual signal that
+      // iOS uses on table-view drag: gives clear visual signal that
       // THIS row is the one being moved, beyond the shadow alone.
       const deltaY = ev.clientY - dragging.startPointerY;
       dragging.rowEl.style.transform = 'translateY(' + deltaY + 'px) scale(1.02)';
 
       // Find the conceptual drop slot using PRE-DRAG geometry (not
-      // live rects — see the snapshot rationale in onPointerDown).
+      // live rects: see the snapshot rationale in onPointerDown).
       // We do NOT skip the dragging row's entry in geom: including it
       // lets a cursor on the dragging row's own slot resolve to
       // startIdx (no-op), which is the correct UX for "small drag
@@ -6116,14 +6116,14 @@
       // is dispatched as-is. For DOWN drags (target > startIdx)
       // every slot after startIdx shifts up by one when from is
       // removed, so the dispatched index is one less than the
-      // conceptual drop slot — without this -1 a drag that should
+      // conceptual drop slot: without this -1 a drag that should
       // land "above row N" instead lands BELOW row N.
       const startIdx = dragging.startIdx;
       const effectiveTarget =
         target > startIdx ? target - 1 : target;
 
       // Skip the shift recalc if the resolved target hasn't changed
-      // since the last move — the rows are already in the right
+      // since the last move: the rows are already in the right
       // positions and writing the same inline styles would just
       // churn CSSOM.
       if (effectiveTarget === dragging.lastTargetIdx) return;
@@ -6159,18 +6159,18 @@
 
     function onPointerUp(ev) {
       if (!dragging) return;
-      // No preventDefault here — drop the pointerup default
+      // No preventDefault here: drop the pointerup default
       // suppression. Modern drag-and-drop libraries (dnd-kit,
       // react-dnd) intentionally don't preventDefault on pointerup
       // because it can interfere with how iOS Safari processes the
       // touch-sequence end (including the synthetic click that
-      // should — or shouldn't — fire). The drag itself has already
+      // should, or shouldn't, fire). The drag itself has already
       // happened; nothing useful to suppress at this point.
       const { startIdx, lastTargetIdx, rowEl, rowGeometry } = dragging;
 
       // Detach the document-level listeners we attached in
       // onPointerDown. This is the cleanup that pointer-capture
-      // would have done implicitly (per spec) — but doing it
+      // would have done implicitly (per spec), but doing it
       // ourselves means no dependency on the browser's release
       // implementation. iOS Safari's broken implicit-release was
       // the original "Done needs 2 taps after drag" bug; this
@@ -6180,7 +6180,7 @@
       document.removeEventListener('pointercancel', onPointerCancel);
 
 
-      // FLIP drop animation — slide the dragged row smoothly from
+      // FLIP drop animation: slide the dragged row smoothly from
       // where the cursor released it to its final slot in the list,
       // instead of snapping. Without this the row jumps wherever
       // the reorder puts it, which reads as glitchy after the
@@ -6190,7 +6190,7 @@
       // positions already match their post-reorder natural
       // positions (the realtime shifts were rehearsing the final
       // layout). So we clear their transforms synchronously and
-      // they stay visually still — the dispatch + DOM-reorder +
+      // they stay visually still: the dispatch + DOM-reorder +
       // transform-clear all happen in one sync block, so the
       // browser paints a single coherent frame: rows in their new
       // DOM slots, no transforms, no visible motion.
@@ -6202,7 +6202,7 @@
       //   2. Disable transitions on all rows so the cleanups below
       //      don't accidentally animate things we want instant.
       //   3. Clear transforms on all rows. Dragged row briefly
-      //      snaps to its OLD-slot natural — invisible because we
+      //      snaps to its OLD-slot natural: invisible because we
       //      stay in the sync block. Other rows stay put visually
       //      (their drag-shift == post-reorder natural).
       //   4. Dispatch reorder → MVU + render moves the dragged row
@@ -6212,7 +6212,7 @@
       //      dragged row back at the cursor's spot.
       //   7. void offsetHeight forces a sync layout so the browser
       //      commits the inverted state before the transition
-      //      target is set — without it Chrome may collapse the
+      //      target is set: without it Chrome may collapse the
       //      next two style writes into a no-op.
       //   8. PLAY: next frame, clear the transform. The transition
       //      we set in step 7 animates from inverted (cursor) to
@@ -6230,7 +6230,7 @@
       // positions are unaffected (their drag-shifted position ==
       // their post-reorder natural position). The dragged row
       // would visually snap to its OLD slot if the browser painted
-      // here — but it doesn't, because we stay sync until step 6.
+      // here, but it doesn't, because we stay sync until step 6.
       for (const g of rowGeometry) {
         g.el.style.transform = '';
       }
@@ -6258,7 +6258,7 @@
       }
 
       // If the dragged row's cursor position already coincides
-      // with its final slot (rare — pointer didn't move much),
+      // with its final slot (rare: pointer didn't move much),
       // skip the FLIP. Nothing to animate.
       if (Math.abs(dx) < 0.5 && Math.abs(dy) < 0.5) {
         rowEl.classList.remove('mar-row-dragging');
@@ -6267,7 +6267,7 @@
         return;
       }
 
-      // Step 6: invert — put the dragged row back where the
+      // Step 6: invert, put the dragged row back where the
       // cursor was. scale(1.02) lift carries through the
       // animation so the row "lands" by shrinking to natural
       // size + sliding simultaneously (iOS Reminders feel).
@@ -6277,7 +6277,7 @@
       void rowEl.offsetHeight;
       rowEl.style.transition = 'transform 260ms cubic-bezier(0.2, 0.9, 0.3, 1)';
 
-      // Step 8: play — clear transform on next frame to trigger
+      // Step 8: play, clear transform on next frame to trigger
       // the transition. rAF ensures the inverted state was
       // painted at least once before the animation starts.
       requestAnimationFrame(() => {
@@ -6296,7 +6296,7 @@
       if (!dragging) return;
       const { rowEl, rowGeometry } = dragging;
       // Detach document-level listeners (mirror of onPointerUp's
-      // cleanup) — see onPointerDown for the architecture.
+      // cleanup): see onPointerDown for the architecture.
       document.removeEventListener('pointermove', onPointerMove);
       document.removeEventListener('pointerup', onPointerUp);
       document.removeEventListener('pointercancel', onPointerCancel);
@@ -6312,12 +6312,12 @@
       dragging = null;
     }
 
-    // Only pointerdown stays on listEl — that's the gesture-start
+    // Only pointerdown stays on listEl: that's the gesture-start
     // detector (needs to fire when the user touches the drag
     // handle inside this section). The move / up / cancel
     // listeners get attached to DOCUMENT inside onPointerDown so
     // they catch events anywhere on the page during the drag, and
-    // are detached on pointerup/cancel — no state outlives the
+    // are detached on pointerup/cancel: no state outlives the
     // gesture (the iOS Safari "stuck capture" bug was caused by
     // listeners + setPointerCapture not unwinding cleanly).
     listEl.addEventListener('pointerdown', onPointerDown);
@@ -6326,13 +6326,13 @@
   // makeDragHandle creates the `≡` handle element prepended to each
   // row in a reorderable list when edit mode is active. Pure DOM
   // factory; the listener attachment is on the LIST element (event
-  // delegation) — see attachListReorderDrag.
+  // delegation): see attachListReorderDrag.
   function makeDragHandle() {
     const h = document.createElement('button');
     h.type = 'button';
     h.className = 'mar-drag-handle';
     h.setAttribute('aria-label', 'Drag to reorder');
-    // Three short horizontal bars — iOS-style drag affordance.
+    // Three short horizontal bars: iOS-style drag affordance.
     for (let i = 0; i < 3; i++) {
       const bar = document.createElement('span');
       bar.className = 'mar-drag-handle-bar';
@@ -6346,14 +6346,14 @@
   //
   // Why this exists: the section's createDOM appends a handle to
   // every child during the initial render. BUT keyed reconciliation
-  // can create new row DOM via createDOM(rowView) in two places —
+  // can create new row DOM via createDOM(rowView) in two places:
   //
   //   (a) patchChildrenKeyed when newKey isn't in oldByKey (a row
   //       added in edit mode, e.g. via the Add Task button), and
   //   (b) patchDOM's tag-mismatch replacement (toggle → hstack on
   //       edit-mode entry, or any future shape-shift)
   //
-  // — and neither path goes through the section's createDOM loop,
+  //, and neither path goes through the section's createDOM loop,
   // so the fresh row would be missing its handle. Calling this
   // helper from those creation sites (and re-running it on the
   // section's patch path) makes the handle's presence robust to
@@ -6369,7 +6369,7 @@
     if (!rowEl.hasAttribute('tabindex')) rowEl.setAttribute('tabindex', '0');
     if (!rowEl.hasAttribute('role')) rowEl.setAttribute('role', 'listitem');
     if (!rowEl.hasAttribute('aria-grabbed')) rowEl.setAttribute('aria-grabbed', 'false');
-    // posinset / setsize ALWAYS get refreshed — these change on
+    // posinset / setsize ALWAYS get refreshed: these change on
     // every reorder / insert / delete, and stale values would
     // mislead screen readers.
     rowEl.setAttribute('aria-posinset', String(posIndex + 1));
@@ -6385,11 +6385,11 @@
     rowEl.classList.toggle('mar-row-last', posIndex === totalCount - 1);
   }
 
-  // attachRowDeleteAffordance — appends the per-row delete button
+  // attachRowDeleteAffordance: appends the per-row delete button
   // (iOS-edit-mode minus circle on the row's left). Only renders
   // when the row is in edit mode: web's normal mode shows just the
   // primary affordance (toggle / link) without a destructive option
-  // — the user enters Edit explicitly to do CRUD on the list.
+  //: the user enters Edit explicitly to do CRUD on the list.
   //
   // We considered the iCloud-Web hover-reveal pattern but it
   // conflicts with apps that have a separate Edit mode (the
@@ -6399,13 +6399,13 @@
   // less ambiguous and matches the iOS Mail/Notes/Reminders
   // ergonomics exactly.
   //
-  // The click handler dispatches `handler(idx)` — the framework's
-  // standard apply-then-dispatch — so the Mar app's `update` sees
+  // The click handler dispatches `handler(idx)`: the framework's
+  // standard apply-then-dispatch, so the Mar app's `update` sees
   // a `Msg.SomeDelete idx` and decides what to do. Two shapes are
   // common and both must work: delete right away (drop from the
   // model + Service.call to persist), or open a `UI.confirm` and
   // delete only if the user agrees. The tap is a question, not a
-  // verdict — see the click handler.
+  // verdict: see the click handler.
   //
   // Idempotent: re-rendering a row that already has the button
   // reuses the existing DOM node + listener (no stacking). When
@@ -6415,7 +6415,7 @@
   function attachRowDeleteAffordance(rowEl, posIndex, handler, isEditing) {
     let btn = rowEl.querySelector(':scope > .mar-row-delete');
     if (!isEditing) {
-      // Browse mode — remove any stale button from a previous
+      // Browse mode: remove any stale button from a previous
       // render that had editing=true. This is the cleanup leg of
       // toggling Edit → Done while the same DOM node persists.
       if (btn) btn.remove();
@@ -6428,7 +6428,7 @@
       btn.setAttribute('aria-label', 'Delete');
       // Minus glyph as SVG so it stays crisp on retina without a
       // font dependency. A 4-unit-tall bar in a 24-unit viewBox
-      // renders ~2.3px tall at the 14×14 SVG size — clearly
+      // renders ~2.3px tall at the 14×14 SVG size: clearly
       // visible against the red disc. The previous 2-unit bar
       // disappeared to roughly 1px on standard DPI screens.
       btn.innerHTML =
@@ -6447,14 +6447,14 @@
         // assumption is wrong for the common destructive pattern, where
         // the handler opens a confirmation dialog instead of deleting.
         // The row collapsed to zero height BEFORE the dialog appeared,
-        // and on Cancel the model never changed — so the reconciler saw
+        // and on Cancel the model never changed, so the reconciler saw
         // no diff for that row, and nothing restored the inline styles
         // the animation had left behind (`fill: 'forwards'`). The row
         // stayed invisible until a reload while the server still had it.
         //
         // Whether the row leaves is the app's call, expressed as a
         // model change. An exit animation therefore belongs to the
-        // reconciler, driven by the row actually leaving the list — not
+        // reconciler, driven by the row actually leaving the list, not
         // to this click, which only asks the question.
         try {
           const idxV = VInt(parseInt(btn.dataset.idx || '0', 10));
@@ -6473,7 +6473,7 @@
     btn.dataset.idx = String(posIndex);
   }
 
-  // attachListReorderKeyboard — Padrão 2 (WAI-ARIA grab + arrow
+  // attachListReorderKeyboard: Padrão 2 (WAI-ARIA grab + arrow
   // keys) for keyboard / screen-reader users. Invisible to mouse
   // users (no extra UI), discoverable via Tab focus + screen
   // reader announcements.
@@ -6496,19 +6496,19 @@
       !c.classList.contains('mar-drop-indicator') &&
       !c.classList.contains('mar-live-region'));
 
-    // One shared live region per list — assistive tech reads
+    // One shared live region per list: assistive tech reads
     // updates as polite announcements.
     //
-    // Hosted on `liveHost` (the section wrapper) — NOT on `listEl`
-    // (the section-body) — because `.mar-section-body > *` applies
+    // Hosted on `liveHost` (the section wrapper), NOT on `listEl`
+    // (the section-body), because `.mar-section-body > *` applies
     // padding (10px 0), min-height (22px), and border-bottom (0.5px)
     // to every direct child. Even though the live region is
     // `position: absolute` (out of flow, so it doesn\'t push siblings),
     // appending it as the last child of the body kicks the previous
-    // actual last row out of `:last-child` — gaining a hairline
+    // actual last row out of `:last-child`, gaining a hairline
     // border, and visually nudging the section card\'s end by enough
     // to read as a "phantom extra row" the moment Edit is toggled.
-    // Hosting on the section wrapper sidesteps all of that — the
+    // Hosting on the section wrapper sidesteps all of that: the
     // wrapper has no descendant rules to inherit.
     const host = liveHost || listEl;
     let live = host.querySelector(':scope > .mar-live-region');
@@ -6534,7 +6534,7 @@
     // row. Without this, pressing Tab while grabbed creates a
     // "zombie" state: the row stays styled as `.mar-row-grabbed`
     // (dark blue fill) AND another row picks up the browser's
-    // `:focus-visible` ring (blue outline) — two rows look
+    // `:focus-visible` ring (blue outline), two rows look
     // "selected", subsequent Space presses can't resolve which
     // row to act on, and arrow keys move the grabbed (invisible-
     // to-the-user attention) instead of the focused one.
@@ -6545,7 +6545,7 @@
     // on each arrow keypress). By the time the microtask runs,
     // focus has settled. If it landed back on the grabbed row,
     // we keep the grab. If it landed elsewhere, the user
-    // intentionally shifted attention — cancel.
+    // intentionally shifted attention: cancel.
     function onGrabbedBlur() {
       setTimeout(() => {
         if (!grabbed) return;
@@ -6591,7 +6591,7 @@
       const idx = rs.indexOf(grabbed.rowEl);
       const target = Math.max(0, Math.min(rs.length - 1, idx + delta));
       if (target === idx) return;
-      // Move DOM live — gives instant visual + screen-reader
+      // Move DOM live: gives instant visual + screen-reader
       // feedback. The final model update happens on drop.
       const anchor = (delta > 0)
         ? (rs[target].nextSibling || null)
@@ -6602,7 +6602,7 @@
       // drive the rounded-corner border-radius (18px at the card's
       // outer corners vs 8px between rows). insertBefore moves the
       // grabbed row but leaves these classes stale on it AND on the
-      // rows it traded places with — so the focused outline shows
+      // rows it traded places with, so the focused outline shows
       // an 8px corner where the card has an 18px curve, visible as
       // a "broken" ring at the top or bottom row.
       const afterMove = rows();
@@ -6617,7 +6617,7 @@
       // some momentarily transfer it to `<body>` and the user-
       // agent never moves it back. In the latter case our
       // onGrabbedBlur handler sees `activeElement !== grabbed.rowEl`
-      // and cancels the grab — so after one arrow press, the next
+      // and cancels the grab, so after one arrow press, the next
       // arrow / Space silently does nothing (the symptom the user
       // saw: "ArrowDown worked, ArrowUp did nothing"). Explicitly
       // re-focusing right after the move makes the gesture stable
@@ -6640,7 +6640,7 @@
             // Commit the drop regardless of which row currently
             // has focus. The blur handler above should have
             // already ended the grab if focus left the grabbed
-            // row — this is a defensive fallback for browsers /
+            // row: this is a defensive fallback for browsers /
             // edge cases where the blur didn't fire (e.g.,
             // focus moved via JS rather than user interaction).
             endGrab(true);
@@ -6691,7 +6691,7 @@
     node.disabled = isDisabled(view);
   }
 
-  // Sync disabled state onto an <a> — which doesn't have a native
+  // Sync disabled state onto an <a>, which doesn't have a native
   // `disabled` property. We set aria-disabled (assistive tech +
   // [aria-disabled=true] CSS selector hook) and toggle a class so
   // the stylesheet can fade the row + kill pointer events. The
@@ -6706,7 +6706,7 @@
       // Pull the link out of tab order while disabled. Without
       // this, Tab still lands on it (because we force tabindex=0
       // on every navigationLink), and Enter activates the
-      // navigation — defeating the disabled state for keyboard
+      // navigation: defeating the disabled state for keyboard
       // users. Returns to tabindex=0 when re-enabled below.
       node.setAttribute('tabindex', '-1');
     } else {
@@ -6719,7 +6719,7 @@
   // applyInputKind reads the input-kind flag attrs (email / password
   // / newPassword / numeric) and translates them into the right HTML
   // attributes. Defaults to type=text when no kind attr is present.
-  // Multiple input-kind attrs on one input — last one wins; the user
+  // Multiple input-kind attrs on one input: last one wins; the user
   // shouldn't combine them anyway.
   function applyInputKind(node, view) {
     let type = 'text';
@@ -6743,7 +6743,7 @@
             break;
           case 'inputKindOneTimeCode':
             // `autocomplete="one-time-code"` activates iOS Mail's
-            // "Code from Mail" autofill — when the user receives an
+            // "Code from Mail" autofill, when the user receives an
             // email with a recent code, Safari surfaces it as a
             // keyboard suggestion. Chrome's "Smart Lock" does the
             // same thing. Orthogonal to `UI.numeric` so a real OTP
@@ -6800,7 +6800,7 @@
 
   // applySizing reads `width` / `height` attrs (records with __unit
   // and amount fields, built by UI.chars / UI.lines) and applies them
-  // to the DOM element. Both attrs are optional — sizing without them
+  // to the DOM element. Both attrs are optional: sizing without them
   // falls back to the input's default (full-width, browser/CSS
   // default height).
   //
@@ -6820,7 +6820,7 @@
       //   - the actual N×ch content area
       //
       // box-sizing on .mar-textfield is `border-box`, so max-width
-      // INCLUDES padding + border — we have to bake them back in or
+      // INCLUDES padding + border: we have to bake them back in or
       // the content area ends up ~Nch - 30px wide instead of Nch.
       // Total constant: 28 + 2 + 4 = 34px.
       //
@@ -6876,8 +6876,8 @@
     return null;
   }
 
-  // applyLayoutAttrs applies the UNIVERSAL sizing attrs — width /
-  // height carrying chars / lines / fill Size values — to any view's
+  // applyLayoutAttrs applies the UNIVERSAL sizing attrs: width /
+  // height carrying chars / lines / fill Size values: to any view's
   // node. Runs from createDOM's shared tail and the patch path, so
   // swapping `width fill` ↔ `width (chars 12)` between renders stays
   // in sync (classList.toggle + unconditional style writes make it
@@ -6906,7 +6906,7 @@
 
   // applyAlignAttr maps a stack's `align` attr onto its cross axis
   // (align-items). Each stack honors only its own axis's values plus
-  // center — vstack: leading/center/trailing, hstack: top/center/
+  // center, vstack: leading/center/trailing, hstack: top/center/
   // bottom; a wrong-axis value is ignored rather than guessed. No
   // attr → the base-class default (vstack stretch, hstack center).
   // Align only places HUGGING children: a child with the matching
@@ -6923,9 +6923,9 @@
   }
 
   // readLengthAttr unwraps a sizing-attr value into { unit, amount }.
-  // The Mar-side type system enforces the axis — `width` carries a
+  // The Mar-side type system enforces the axis: `width` carries a
   // Size Width (chars N / fill), `height` a Size Height (lines N /
-  // fill) — so the unit check here is defensive; a malformed value
+  // fill), so the unit check here is defensive; a malformed value
   // just returns null.
   function readLengthAttr(view, name) {
     if (!view.attrs) return null;
@@ -6978,7 +6978,7 @@
         selectedIdx = i;
       }
     }
-    // Set the select's value *after* options are appended — assigning
+    // Set the select's value *after* options are appended: assigning
     // before they exist silently fails and the dropdown shows the
     // wrong default. -1 (no match) leaves the browser's default of
     // index 0 in place, which is the safest fallback when the model's
@@ -6998,10 +6998,10 @@
   //   [1] <header.mar-nav-bar>       ← the 32px bold large title.
   //
   // This mirrors iOS large-title navigation: the bar is pinned on
-  // screen (position: sticky in CSS — back button and actions never
+  // screen (position: sticky in CSS, back button and actions never
   // scroll away), while the large title is CONTENT and scrolls with
   // the page. When the large title disappears under the bar, the
-  // bar's small centered title takes over — the same handoff iOS
+  // bar's small centered title takes over: the same handoff iOS
   // does. Both nodes are always returned (display:none when empty)
   // so the create and patch paths can address slots positionally.
   function buildNavigationChrome(view) {
@@ -7010,7 +7010,7 @@
     const leadingAttr  = view.attrs && view.attrs.find(a => a.name === 'topBarLeading');
     const depth = currentNavDepth();
     // Back chevron is framework-owned and independent of any
-    // user-provided topBarLeading content — it appears whenever
+    // user-provided topBarLeading content: it appears whenever
     // there's a previous page to return to. SwiftUI works the same
     // way: .navigationBarBackButtonHidden(true) is the explicit
     // opt-out, not the default consequence of setting toolbar
@@ -7031,7 +7031,7 @@
       left.className = 'mar-nav-side';
       // Order matters: back chevron first (closest to the leading
       // edge of the screen), custom topBarLeading after it. This
-      // mirrors SwiftUI's automatic placement — toolbar items go
+      // mirrors SwiftUI's automatic placement: toolbar items go
       // BESIDES the auto-injected back button, not in place of it.
       if (autoBack) {
         left.appendChild(buildBackButton());
@@ -7041,7 +7041,7 @@
       }
       toolbarRow.appendChild(left);
 
-      // Inline title — hidden until the large title scrolls out
+      // Inline title: hidden until the large title scrolls out
       // (wireNavInlineTitle toggles .mar-nav-scrolled). The large
       // title is the page's real heading; this is a visual echo,
       // so hide it from the accessibility tree.
@@ -7094,7 +7094,7 @@
   // handoff: when the large-title header scrolls out of the strip
   // the pinned bar occupies, the bar's centered title fades in;
   // scroll back to the top and it fades out again. One observer per
-  // chrome build, stored on the row — the patch path disconnects
+  // chrome build, stored on the row: the patch path disconnects
   // the old row's observer explicitly, and rows dropped by full
   // page navigation take theirs to the garbage collector.
   function wireNavInlineTitle(toolbarRow, header) {
@@ -7122,7 +7122,7 @@
   }
 
   // buildBackButton returns the iOS 26-style circular glass pill
-  // with just the chevron inside. No visible text — the previous
+  // with just the chevron inside. No visible text: the previous
   // screen\'s title goes into the `title` attribute as a hover
   // tooltip + aria-label so the affordance is accessible without
   // taking horizontal space in the toolbar.
@@ -7138,7 +7138,7 @@
     chev.textContent = '‹';
     btn.appendChild(chev);
     btn.addEventListener('click', () => {
-      // Native browser back — fires popstate, which calls render()
+      // Native browser back: fires popstate, which calls render()
       // with the previous URL + depth, triggering the "back"
       // view-transition direction.
       history.back();
@@ -7159,20 +7159,20 @@
 
   // Respect the OS-level "reduce motion" accessibility preference.
   // Users who set this don't want page-transition slide animations
-  // — disable them entirely and just do the DOM swap.
+  //: disable them entirely and just do the DOM swap.
   function prefersReducedMotion() {
     return window.matchMedia
       && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   }
 
   // ensureUIStyles injects the CSS for the UI.* vocabulary once. The
-  // styling aims for the iOS Form/List card-list look on web — light
+  // styling aims for the iOS Form/List card-list look on web: light
   // gray page background, white sections with rounded corners, gray
   // section headers, dividers between rows.
   function ensureUIStyles() {
     // Always replace the existing <style> with the current build's
     // content. Hot reload re-runs the IIFE but document.head's
-    // <style> element survives the page lifecycle — without removing
+    // <style> element survives the page lifecycle: without removing
     // and re-appending, edits to this CSS string wouldn't show up
     // in the browser until the user did a full reload.
     const old = document.getElementById('mar-ui-style');
@@ -7184,7 +7184,7 @@
     // favor of a flatter, wider layout closer to Linear / Notion /
     // modern dashboards: 960px content column, subtle borders instead
     // of cards, neutral grayscale, system font stack at 15-16px.
-    // The same DSL still renders as proper iOS Forms on Swift —
+    // The same DSL still renders as proper iOS Forms on Swift:
     // only the WEB rendering picks the desktop idiom.
     style.textContent = [
       // System-flavored vocabulary: native system font stack,
@@ -7204,7 +7204,7 @@
       // and dark UAs. Without it, form-control internals (input /
       // textarea / select default backgrounds, scrollbar tracks,
       // focus rings) pick the LIGHT branch even when the OS is in
-      // dark mode — visible as a stark white input on an otherwise
+      // dark mode: visible as a stark white input on an otherwise
       // dark page. With `light dark` listed, the UA flips its
       // internals to match `prefers-color-scheme`, and our explicit
       // .mar-textfield rules layer over a dark-correct UA default.
@@ -7214,7 +7214,7 @@
       //
       //  1. Overscroll bounce (Safari, mobile in particular) reveals
       //     the html element above/below the body. Without this it
-      //     defaults to white — jarring on a dark-mode page that's
+      //     defaults to white: jarring on a dark-mode page that's
       //     otherwise charcoal.
       //
       //  2. The View Transitions API renders its snapshot pair
@@ -7228,7 +7228,7 @@
       // scheme: dark) override further down.
       'html { background-color: #f0f0f3; }',
       'body {',
-      // Subtle vertical gradient — "Liquid Glass" needs a hint of
+      // Subtle vertical gradient: "Liquid Glass" needs a hint of
       // directional light to look right (glass without context
       // looks like flat translucency). Light at the top fades to
       // a slightly darker tone toward the bottom, so the glass
@@ -7244,7 +7244,7 @@
       '  text-rendering: optimizeLegibility;',
       '}',
 
-      // Page container — content stays inside a ~1024px column to
+      // Page container: content stays inside a ~1024px column to
       // keep line lengths readable on wide displays. Big top padding
       // gives the large title breathing room; the page is
       // content-first, no nav chrome on top.
@@ -7273,7 +7273,7 @@
       // No top padding: the sticky toolbar row is the first child and OWNS
       // the safe-area top (it carries env(safe-area-inset-top) as its own
       // padding-top). This is what lets its solid background fill the iOS
-      // status-bar strip — see the .mar-nav-toolbar-row note below.
+      // status-bar strip: see the .mar-nav-toolbar-row note below.
       '  padding-top: 0;',
       '  padding-right: max(32px, env(safe-area-inset-right));',
       '  padding-bottom: max(48px, calc(env(safe-area-inset-bottom) + 24px));',
@@ -7283,25 +7283,25 @@
       '  box-sizing: border-box;',
       '}',
 
-      // Large-title header — scrolls away with the content, exactly
+      // Large-title header: scrolls away with the content, exactly
       // like iOS. Only the toolbar row below is pinned.
       '.mar-nav-bar {',
       '  margin-bottom: 24px;',
       '}',
-      // The toolbar row is a SOLID, full-width sticky bar anchored at top:0 —
+      // The toolbar row is a SOLID, full-width sticky bar anchored at top:0:
       // apple.com's exact technique, and the only thing that fills the iOS
       // status-bar strip when the page is scrolled.
       //
       // Why solid + sticky, after three failed floating/fixed attempts: on
       // iOS 26 a `position: fixed` element is inset to the safe area and can
-      // NOT reach under the status bar (measured on the simulator — env()
+      // NOT reach under the status bar (measured on the simulator: env()
       // inside it even reads 0), so no fixed element or pseudo could ever
       // paint that strip. A `position: sticky` element CAN: pinned at top:0 it
       // reaches the physical screen top; its padding-top holds
       // env(safe-area-inset-top) so the pills sit below the notch while the
       // bar's own background fills the strip; and page content scrolls UNDER
       // it and is hidden. When you scroll off the top iOS drops theme-color
-      // and lets content flow edge-to-edge under the status bar — EVERY site
+      // and lets content flow edge-to-edge under the status bar: EVERY site
       // does this (Wikipedia included), and a solid sticky header is how
       // apple.com covers it too.
       //
@@ -7321,7 +7321,7 @@
       // Full-bleed background: pull the row out to the nav stack's border-box
       // edges (matching its side padding), then pad the content back in so the
       // pills stay in the column. The margins EXACTLY cancel the padding, so
-      // the row never widens the document — no horizontal scrollbar (the trap
+      // the row never widens the document: no horizontal scrollbar (the trap
       // that had forced the old surface onto position:fixed).
       '  margin-left: calc(-1 * max(32px, env(safe-area-inset-left)));',
       '  margin-right: calc(-1 * max(32px, env(safe-area-inset-right)));',
@@ -7337,20 +7337,20 @@
       // Frosted glass, apple.com-style: a translucent tint of the page's TOP
       // color plus a backdrop blur. At rest it sits over the page's own top
       // color, so it reads as that color (invisible); once content scrolls
-      // BENEATH the bar (which it does — the whole point of the sticky solid
+      // BENEATH the bar (which it does: the whole point of the sticky solid
       // bar) the blur frosts it. The alpha (0.6) is deliberately below
       // apple's own ~0.8: our page content is low-contrast light-gray, so at
-      // 0.8 the glass read as nearly solid — 0.6 lets the shapes show through.
+      // 0.8 the glass read as nearly solid: 0.6 lets the shapes show through.
       // A heavier blur keeps it legible at that lower opacity.
       //
       // NO saturate(): apple can afford saturate because its page is flat
-      // white — there is no hue for it to lift. OUR background is a faintly
+      // white: there is no hue for it to lift. OUR background is a faintly
       // cool gradient, and saturate() over that tinted backdrop pushed the
       // bar's chroma ABOVE the body's, so AT REST the status-bar strip read a
-      // hair cooler than the page right below it — the visible band. Plain
+      // hair cooler than the page right below it: the visible band. Plain
       // blur + a same-color tint shift no hue, so the bar matches the page top
       // exactly at rest and still frosts content on scroll. (If a browser
-      // lacks backdrop-filter, 0.6 alone is thin — acceptable, it is rare and
+      // lacks backdrop-filter, 0.6 alone is thin: acceptable, it is rare and
       // modern iOS/desktop all support it.)
       '  background: rgba(247, 247, 249, 0.6);',
       '  -webkit-backdrop-filter: blur(24px);',
@@ -7365,25 +7365,25 @@
       '.mar-nav-toolbar-row > .mar-nav-side { flex: 1 1 0; }',
       // Buttons-only page (no navigationTitle): a touch more gap to the body.
       '.mar-nav-toolbar-solo { margin-bottom: 24px; }',
-      // Title-only page (no buttons): the bar is STILL a solid strip — it has
-      // to be, to fill the status bar — with only the inline title fading in
+      // Title-only page (no buttons): the bar is STILL a solid strip, it has
+      // to be, to fill the status bar: with only the inline title fading in
       // on scroll. (It used to collapse to height 0 back when the surface was
       // a separate fixed pseudo; now the row itself is the surface, so it must
       // keep its height and just carry no controls.) The class survives only
       // so wireNavInlineTitle can pick the smaller scroll-trigger margin.
-      // Inline title — the small centered label that takes over when
+      // Inline title: the small centered label that takes over when
       // the large title scrolls out (.mar-nav-scrolled, toggled by
       // wireNavInlineTitle).
       //
       // BARE TEXT, by design. It has no background of its own: legibility
       // comes from the bar's own solid surface behind it, exactly like
-      // "Mailboxes" in iOS Mail. That is what makes the pill mean something —
+      // "Mailboxes" in iOS Mail. That is what makes the pill mean something:
       // every pill in this bar is a control, and the one label that is not a
       // control wears nothing.
       //
       // The cross-fade below is the iOS handoff: opacity plus a 4px rise,
       // over the same window in which the large title leaves. It must not
-      // slide in from the top with the bar — the small title arriving on
+      // slide in from the top with the bar: the small title arriving on
       // its own is what reads as native.
       '.mar-nav-inline-title {',
       '  font-size: 14px;',
@@ -7413,13 +7413,13 @@
       '.mar-nav-side { display: flex; align-items: center; gap: 8px; }',
       '.mar-nav-side-trailing { justify-content: flex-end; }',
 
-      // Trailing nav buttons — glass pills. iOS 26 dropped the
+      // Trailing nav buttons: glass pills. iOS 26 dropped the
       // gray-fill toolbar buttons in favor of translucent pills
       // that pick up backdrop blur. The inset white highlight is
-      // the "specular" — the cue your eye reads as glass rather
+      // the "specular": the cue your eye reads as glass rather
       // than just translucent.
       // Links in nav slots (e.g. an external "Download" in
-      // topBarTrailing) wear the same glass pill as buttons — a bare
+      // topBarTrailing) wear the same glass pill as buttons: a bare
       // text link floating over scrolling content reads as a glitch
       // next to the title's glass pill.
       '.mar-nav-side .mar-paragraph { margin: 0; }',
@@ -7437,7 +7437,7 @@
       '  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);',
       // Label color, not action color. The affordance here is the PILL
       // itself: controls wear a container, the inline title does not (it
-      // is plain text on the bar's surface). Same rule iOS uses —
+      // is plain text on the bar's surface). Same rule iOS uses:
       // see the Mail app, where "Edit" is a pill and "Mailboxes" is
       // bare text. Tinting these blue was tried and reverted: it made
       // the back button and every trailing action shout for attention
@@ -7451,14 +7451,14 @@
       '  cursor: pointer;',
       '  transition: background 200ms, transform 150ms;',
       // touch-action: manipulation tells iOS Safari "this button
-      // accepts taps for click — don\'t hold the synthetic click
+      // accepts taps for click: don\'t hold the synthetic click
       // for ~300ms waiting for a possible double-tap-to-zoom".
       // Without it, after a touch-heavy gesture (like the drag
       // reorder), the next tap on this button gets absorbed by
       // Safari\'s gesture-disambiguation window: the operator
       // sees "Done did nothing" on the first press, has to tap
       // again. Applies cleanly to nav-bar action buttons (back,
-      // Done, Sign out) which are tap-only — no pinch or scroll.
+      // Done, Sign out) which are tap-only: no pinch or scroll.
       '  touch-action: manipulation;',
       // A nav button is a UI.button like any other, so it carries
       // `mar-button` and picks up that rule's spacing. The bar does its
@@ -7477,7 +7477,7 @@
       '}',
       '.mar-nav-side button:active, .mar-nav-side a.mar-inline:active { transform: scale(0.96); }',
 
-      // Auto-inserted back button — circular glass pill with the
+      // Auto-inserted back button: circular glass pill with the
       // chevron only. iOS 26 dropped the "‹ Back" / "‹ Previous"
       // text label in favor of an icon-only pill that floats over
       // the page. Accessibility lives in `aria-label` and the
@@ -7490,7 +7490,7 @@
       '  border: 0.5px solid rgba(0, 0, 0, 0.10);',
       '  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);',
       // Same label color as the trailing actions. The chevron does not
-      // need a tint to say "tappable" — the round glass pill already
+      // need a tint to say "tappable": the round glass pill already
       // does, and a bar where every control shouts in blue is a loud
       // bar. Quiet chrome, loud content.
       '  color: #1d1d1f;',
@@ -7508,7 +7508,7 @@
       '  margin-top: -2px;',
       '}',
 
-      // Form / list / nav body — vertical stack with snug gap.
+      // Form / list / nav body: vertical stack with snug gap.
       // Cards have visible boundaries; just enough gap to keep them
       // from touching, no more.
       '.mar-form, .mar-list, .mar-nav-body {',
@@ -7522,14 +7522,14 @@
       // Height propagation. #mar-root is a min-100dvh flex column
       // (see the shell CSS in server.go); the nav stack and its body
       // pass that height down so a `height fill` child or a
-      // `centered` view has real space to claim — no magic
+      // `centered` view has real space to claim: no magic
       // min-heights anywhere in the chain. Content taller than the
       // viewport still grows normally (flex-basis auto).
       '.mar-nav-stack { flex: 1 1 auto; display: flex; flex-direction: column; }',
       '.mar-nav-body { flex: 1 1 auto; }',
 
       // Section: small uppercase eyebrow header above a rounded
-      // content card. Reset UA margin — some browsers give <section>
+      // content card. Reset UA margin: some browsers give <section>
       // ~1em vertical margin by default, which shows up as a chunky
       // black gap between consecutive section cards on top of our
       // form gap.
@@ -7540,7 +7540,7 @@
       '  color: #6e6e73;',
       '  padding: 0 4px; margin: 0 0 4px 0;',
       '}',
-      // Section card — iOS 26 "Liquid Glass" surface. Translucent
+      // Section card: iOS 26 "Liquid Glass" surface. Translucent
       // white with backdrop blur + saturation so what\'s behind
       // (the gradient page background) bleeds through softened.
       // The inset specular highlight on the top edge + outer drop
@@ -7548,7 +7548,7 @@
       //
       // The horizontal inset (16px) lives HERE on the parent rather
       // than as margin on individual rows. That way replaced
-      // children — <input>, <textarea>, <select> — naturally fill
+      // children (<input>, <textarea>, <select>, naturally fill
       // the (now-narrower) content area via plain `width: 100%`,
       // sidestepping the "width: auto means intrinsic on inputs"
       // CSS gotcha that bit us when the inset was per-row.
@@ -7564,7 +7564,7 @@
       '    inset 0 0.5px 0 rgba(255, 255, 255, 0.6),',
       '    0 8px 24px rgba(0, 0, 0, 0.05);',
       '}',
-      // Rows: vertical padding only — horizontal inset now comes
+      // Rows: vertical padding only, horizontal inset now comes
       // from the parent. Border-bottom becomes "inset divider"
       // (matches iOS Settings rather than full-bleed dividers).
       //
@@ -7574,7 +7574,7 @@
       // the browser's default line-height for 16px text) because
       // the chrome is slightly taller than the natural text line.
       // Locking the content area to 22px in normal mode too means
-      // the row dimensions are identical in both modes — no
+      // the row dimensions are identical in both modes: no
       // jumpy reflow when the user toggles Edit.
       '.mar-section-body > * {',
       '  display: block;',
@@ -7608,7 +7608,7 @@
       // A section with an empty body (e.g. `section [ footer "..." ] []`,
       // a footer- or header-only section) must not paint an empty glass
       // card between its neighbors. Collapse the body so only the
-      // header/footer caption shows — matching iOS, where a footer-only
+      // header/footer caption shows: matching iOS, where a footer-only
       // section renders as a lone gray caption with no row card.
       '.mar-section-body:empty { display: none; }',
       '.mar-section-footer {',
@@ -7631,7 +7631,7 @@
       '  display: flex; align-items: center;',
       '  gap: 8px;',
       '}',
-      // The handle: 36×22 — wide enough for a comfortable
+      // The handle: 36×22, wide enough for a comfortable
       // horizontal tap target (the row's vertical padding extends
       // the hit area to the full 44pt Apple guideline), and
       // height-matched exactly to the delete button + the row's
@@ -7641,7 +7641,7 @@
       // area at 22px in both modes.
       //
       // The three bars inside are 18×2 each with a 3px gap,
-      // packing to 12px total — comfortably inside the 22px box.
+      // packing to 12px total: comfortably inside the 22px box.
       '.mar-drag-handle {',
       '  flex: 0 0 auto;',
       '  width: 36px; height: 22px;',
@@ -7654,7 +7654,7 @@
       // row has. Works whether the row is a plain `text` leaf
       // (where the text node has no flex-grow) or an `hstack`
       // (where the hstack children already fill space). The handle
-      // BELONGS at the trailing edge — putting the rule here makes
+      // BELONGS at the trailing edge: putting the rule here makes
       // that property of the handle itself, not a side-effect of
       // whatever wrapper happens to be around it.
       '  margin-left: auto;',
@@ -7665,7 +7665,7 @@
       '  touch-action: none;',  // prevent the browser from scrolling on touch-drag
       '  -webkit-tap-highlight-color: transparent;',
       // Long-press on the handle on iOS shouldn\'t pop the
-      // text-selection callout (copy/paste/Define) — the handle is
+      // text-selection callout (copy/paste/Define): the handle is
       // a grab affordance, not selectable content.
       '  -webkit-user-select: none; user-select: none;',
       '  -webkit-touch-callout: none;',
@@ -7677,7 +7677,7 @@
       // chrome below already excludes .mar-drag-handle via
       // :not(), but the failure mode if that exclusion ever
       // misses (cache, chained-:not() bug, future selector
-      // refactor) is severe — the handle turns into a solid
+      // refactor) is severe: the handle turns into a solid
       // white pill on hover, making the bars invisible against
       // it. Belt-and-braces: force transparent at higher
       // specificity than the hstack rule, with !important on
@@ -7711,7 +7711,7 @@
       '  transition: transform 200ms cubic-bezier(0.32, 0.72, 0, 1);',
       '}',
 
-      // Row being actively dragged — opaque background + elevated
+      // Row being actively dragged: opaque background + elevated
       // shadow + above-siblings z-index so it reads as a card
       // floating over the rest of the list. The pointer-move
       // handler also applies an inline `transform: translateY(...)
@@ -7731,12 +7731,12 @@
       '  z-index: 2;',
       '  position: relative;',
       '}',
-      // Keyboard focus on a row — Tab navigates between rows in
+      // Keyboard focus on a row: Tab navigates between rows in
       // edit mode (each has tabindex="0"). Without an explicit
       // :focus-visible rule, the browser draws its default outline
       // which gets visually swallowed by the row's flush layout
       // and the dark page background. A subtle blue outline makes
-      // "I just Tabbed here" obvious — same color as the grabbed
+      // "I just Tabbed here" obvious: same color as the grabbed
       // state below, but no background tint so the two states
       // remain distinguishable (focused = "could grab", grabbed =
       // "actively moving").
@@ -7745,7 +7745,7 @@
       '  outline-offset: -2px;',
       '  border-radius: 8px;',
       '}',
-      // Keyboard "grabbed" state — distinct from focused (adds the
+      // Keyboard "grabbed" state: distinct from focused (adds the
       // background tint to say "arrow keys will move this row").
       // Both styles share the outline so the visual transition
       // from focused → grabbed is just the bg-fill flashing on.
@@ -7767,7 +7767,7 @@
       // (16px) restores the content position so text / buttons /
       // handle don't shift. Result: outline + bg + lift span the
       // full row width (edge to edge of the rounded card),
-      // content stays in its place — the iOS Settings "selected
+      // content stays in its place: the iOS Settings "selected
       // row" look.
       //
       // Including `.mar-row-dragging` here makes the lifted card
@@ -7781,7 +7781,7 @@
       '  padding-left: 16px;',
       '  padding-right: 16px;',
       '}',
-      // Corner rounding for the first and last rows — match the
+      // Corner rounding for the first and last rows: match the
       // section card's outer border-radius (18px) so the outline
       // and bg fill curve smoothly into the card's rounded
       // corners. Without these overrides, the rectangular 8px
@@ -7792,7 +7792,7 @@
       // edges, since they border other rows).
       //
       // The `:first-child:last-child` combo handles the single-row
-      // case — both top AND bottom corners round.
+      // case: both top AND bottom corners round.
       '.mar-row-first:focus-visible,',
       '.mar-row-first.mar-row-grabbed {',
       '  border-radius: 18px 18px 8px 8px;',
@@ -7805,7 +7805,7 @@
       '.mar-row-first.mar-row-last.mar-row-grabbed {',
       '  border-radius: 18px;',
       '}',
-      // Drop indicator — thin blue line shown between rows during
+      // Drop indicator: thin blue line shown between rows during
       // drag. Absolutely positioned over the list root; the JS
       // updates `top` as the cursor moves.
       //
@@ -7813,7 +7813,7 @@
       // `.mar-section-body > *` rule above which gives every child
       // 10px vertical padding + a hairline border-bottom. Without
       // these overrides the "2px line" actually renders as a ~22px
-      // blob (2px content + 20px padding + 0.5px border) — visible
+      // blob (2px content + 20px padding + 0.5px border): visible
       // as a fat blue bar in the screenshot. Absolute positioning
       // takes the element OUT OF FLOW but it still inherits the
       // box-model properties applied by the descendant selector.
@@ -7828,7 +7828,7 @@
       '  pointer-events: none;',
       '  z-index: 1;',
       '}',
-      // ARIA live region — visually hidden but exposed to screen
+      // ARIA live region: visually hidden but exposed to screen
       // readers. The reorder code writes "Grabbed item 2 of 5"
       // etc. here, the screen reader announces it politely.
       '.mar-live-region {',
@@ -7843,7 +7843,7 @@
       //
       // For the dragged row in dark mode: light-mode goes #ffffff
       // (clearly lighter than the page), so dark mode needs the
-      // opposite contrast — a tint LIGHTER than the surrounding
+      // opposite contrast: a tint LIGHTER than the surrounding
       // section-body card, with a stronger shadow to read as
       // "floating above" against the near-black page. Bumping to
       // rgba(72,72,74,…) (≈ iOS systemGray3) lifts it visibly
@@ -7865,22 +7865,22 @@
       '  display: flex; flex-direction: row; align-items: center;',
       '  gap: 12px;',
       '}',
-      // SwiftUI-style layout: hstack children HUG their content — they
+      // SwiftUI-style layout: hstack children HUG their content, they
       // do NOT stretch to fill the row. To distribute, insert a
       // `spacer` (pushes siblings apart) or wrap a child in `expand`
       // (claims the free space). This is the single rule. The only
       // children that stay greedy are the ones that are intrinsically
       // flexible (textField / textArea, mirroring SwiftUI\'s TextField)
-      // or ARE the fill mechanism (spacer, expand) — each opts back in
+      // or ARE the fill mechanism (spacer, expand): each opts back in
       // below. `flex: 0 1 auto` = hug, but shrink (truncate) rather
       // than overflow on a narrow row.
       '.mar-hstack > * { flex: 0 1 auto; min-width: 0; }',
-      // Buttons keep their intrinsic size and never compress — a
+      // Buttons keep their intrinsic size and never compress: a
       // clipped button label reads as broken.
       '.mar-hstack > button { flex: 0 0 auto; }',
       '.mar-vstack {',
       '  display: flex; flex-direction: column; align-items: stretch;',
-      // 6px is the SwiftUI-feel default — tight enough that a
+      // 6px is the SwiftUI-feel default: tight enough that a
       // title/subtitle pair reads as a single row (the iOS Settings
       // pattern), loose enough that a vstack of three sibling
       // sentences still has breathing room. The previous 12px
@@ -7888,13 +7888,13 @@
       '  gap: 6px;',
       '}',
 
-      // Inputs — soft fill, big, prominent. Focus shows the
+      // Inputs: soft fill, big, prominent. Focus shows the
       // link-blue ring. Always has visible chrome (border, fill,
       // rounded, focus ring). What changes with context is
       // POSITIONING:
       //   - inside a section card: vertical+horizontal margin so the
       //     input is visually inset from the card edges
-      //   - inside an hstack: flex: 1 (no margin — hstack's gap
+      //   - inside an hstack: flex: 1 (no margin, hstack's gap
       //     handles spacing)
       //   - free-floating: full width
       //
@@ -7907,7 +7907,7 @@
       // baseline `<style>` reset (see internal/jsserve/server.go). That
       // reset uses a `:where(input:not(...))` selector with zero
       // specificity, expecting any rule that mentions `.mar-textfield`
-      // by class to win — but specificity comparison happens per
+      // by class to win, but specificity comparison happens per
       // PROPERTY, not per rule. `.mar-textfield` declares `width` but
       // not `max-width`, so the reset\'s 24rem cap leaks through and
       // hard-caps every mar-styled input at 384px regardless of
@@ -7929,7 +7929,7 @@
       '  box-shadow: 0 0 0 4px rgba(0, 113, 227, 0.12);',
       '}',
       '.mar-textfield::placeholder { color: #86868b; }',
-      // Tabular numerals — every digit (0-9) renders at exactly the
+      // Tabular numerals: every digit (0-9) renders at exactly the
       // same advance width, making CSS `ch` calculations exact for
       // numeric-content inputs. Without this, in proportional fonts
       // like system-ui / SF Pro, "888888" is ~5% wider than "111111",
@@ -7943,7 +7943,7 @@
       '.mar-textfield[inputmode="numeric"] {',
       '  font-variant-numeric: tabular-nums;',
       '}',
-      // Disabled textfield / textarea — keeps the same visual frame
+      // Disabled textfield / textarea: keeps the same visual frame
       // but dims the text + placeholder and switches the cursor so
       // the user knows clicking won\'t do anything. `not-allowed`
       // matches the cursor we use on disabled buttons.
@@ -7969,7 +7969,7 @@
       // Inside a section card: just a small vertical margin between
       // rows. The horizontal inset comes from the parent's padding
       // (see `.mar-section-body`), so the textfield's base
-      // `width: 100%` already fills the card — no per-row width math.
+      // `width: 100%` already fills the card, no per-row width math.
       '.mar-section-body > .mar-textfield {',
       '  margin: 8px 0;',
       '}',
@@ -7979,7 +7979,7 @@
       '  margin: 0;',
       '}',
 
-      // Picker — single-selection dropdown. The wrapping div is the
+      // Picker: single-selection dropdown. The wrapping div is the
       // visual chrome (border, focus state, custom chevron); the
       // inner <select> stays a plain native control so accessibility
       // (keyboard nav, screen-reader, mobile native popover) keeps
@@ -7987,7 +7987,7 @@
       // appearance:none so the only chevron the user sees is our
       // overlay glyph, which we can position consistently across
       // platforms.
-      // Date picker — a native <input type="date"> wearing the
+      // Date picker: a native <input type="date"> wearing the
       // textfield chrome (.mar-textfield). We only nudge the calendar
       // trigger so it reads as interactive; .mar-textfield's
       // appearance:none can otherwise dim it.
@@ -8002,7 +8002,7 @@
       // `isolation: isolate` keeps the ::before's `z-index: -1`
       // inside the picker's local stacking context. Without it,
       // the negative z-index escapes to the html root and paints
-      // behind the section card's white background — invisible.
+      // behind the section card's white background: invisible.
       // Same fix as `a.mar-navigation-link`.
       '  position: relative;',
       '  isolation: isolate;',
@@ -8021,7 +8021,7 @@
       '  margin: 0;',
       '  font: inherit; color: inherit;',
       // Left-align the value. Matches the readability the user
-      // asked for — the eye scans from the section header on the
+      // asked for: the eye scans from the section header on the
       // left, and the trailing chevron at the row's right edge
       // closes the visual frame. (SwiftUI Form Picker right-aligns
       // the value flush against the chevron; we don\'t copy that
@@ -8036,7 +8036,7 @@
       // SwiftUI's Picker (which shows the value flush-right + a
       // menu indicator). aria-hidden in markup; dimmed in CSS so
       // it reads as decorative chrome. Glyph is the two-arrow
-      // "select-up-down" indicator — the iOS 17+ Picker(.menu)
+      // "select-up-down" indicator: the iOS 17+ Picker(.menu)
       // convention. Apple's symbol is `chevron.up.chevron.down`;
       // we render it inline via a stacked SVG that ships with the
       // runtime so it renders identically across fonts (`›`
@@ -8057,7 +8057,7 @@
       '  line-height: 1;',
       '  pointer-events: none;',
       '}',
-      // Inside a section card — same row layout as toggle: label-ish
+      // Inside a section card, same row layout as toggle: label-ish
       // text on the left (the selected value) and the trailing
       // disclosure chevron on the right. The section-body > * rule
       // supplies the 10px/16px padding so we don\'t restate it here.
@@ -8089,7 +8089,7 @@
       // as navigationLink.
       //
       // `:not(.mar-disabled)` suppresses BOTH tints when the picker
-      // is inert — matches the convention used by button/
+      // is inert: matches the convention used by button/
       // navigationLink/etc: disabled = ZERO interactive feedback,
       // only the `not-allowed` cursor signals "this exists but
       // doesn\'t respond." Without this guard, a disabled picker
@@ -8112,7 +8112,7 @@
       '.mar-picker:not(.mar-disabled):has(.mar-picker-select:focus-visible)::before {',
       '  background: rgba(0, 113, 227, 0.10);',
       '}',
-      // Disabled picker — fade the value text + chevron and switch
+      // Disabled picker: fade the value text + chevron and switch
       // the cursor. The inner <select disabled> blocks the dropdown;
       // .mar-disabled is toggled on the wrapper by the renderer so
       // the chevron (a separate <span>) and any future overlay
@@ -8128,15 +8128,15 @@
 
       // Buttons split into two roles (iOS 26 hierarchy):
       //
-      //   PRIMARY CTA  — section-body direct child. Full-width
+      //   PRIMARY CTA  - section-body direct child. Full-width
       //                  action like "Verify" / "Submit". Solid
-      //                  blue fill, white text — the visual
+      //                  blue fill, white text: the visual
       //                  weight reads "do this".
       //
-      //   SECONDARY    — hstack child (inline next to other row
+      //   SECONDARY    - hstack child (inline next to other row
       //                  content, like "Add" beside an input, or
       //                  "Delete" in a task row). Glass pill with
-      //                  link-blue TEXT instead of solid blue —
+      //                  link-blue TEXT instead of solid blue:
       //                  quiet-action treatment.
       '.mar-button {',
       '  display: block;',
@@ -8153,7 +8153,7 @@
       '}',
       // Hover tint is gated to real pointers: on iOS Safari an ungated
       // :hover STICKS to the tapped button (hover emulation), leaving it
-      // looking selected while the tap sometimes fails to register — you
+      // looking selected while the tap sometimes fails to register: you
       // tap once, see the highlight, and nothing happens. Touch gets a
       // transient :active press instead, which clears on release.
       '@media (hover: hover) {',
@@ -8165,7 +8165,7 @@
       '  background: #c7c7cc; color: rgba(255, 255, 255, 0.85);',
       '  cursor: not-allowed; opacity: 0.55;',
       '}',
-      // Generic `.mar-hstack > button` chrome — the pill / blur /
+      // Generic `.mar-hstack > button` chrome: the pill / blur /
       // blue-link look for action buttons inline in a row (Add, Save,
       // etc.). Two buttons are EXCEPTIONS and need their own visual
       // identity preserved, so they're excluded via :not():
@@ -8223,10 +8223,10 @@
       '  font-size: 14px;',
       '}',
 
-      // hstack inside section card — already gets row padding from
+      // hstack inside section card: already gets row padding from
       // the section-body > * rule. No extra needed.
 
-      // Title / subtitle — heading text in the body of a section.
+      // Title / subtitle: heading text in the body of a section.
       // Scoped via class to avoid clobbering h1/h2 used elsewhere
       // (e.g. .mar-section-header is also <h2>).
       '.mar-title {',
@@ -8237,12 +8237,12 @@
       '  font-size: 17px; font-weight: 400; color: #6e6e73;',
       '  margin: 0; line-height: 1.35;',
       '}',
-      // image — UI.image. Default (no `size` attr): fills the
+      // image, UI.image. Default (no `size` attr): fills the
       // container width and keeps aspect ratio. A `size` attr sets
       // explicit width/height inline (see applyImageAttrs). Rounded
       // corners match the section-card radius language; object-fit
       // defaults to contain (no crop) and flips to cover under `fill`.
-      // canvas draw-surface (2D games). Fills the viewport — the only
+      // canvas draw-surface (2D games). Fills the viewport: the only
       // consumer today is a full-screen game whose `canvas` is the page's
       // root view. touch-action/user-select are off so taps don't pan,
       // zoom, or select. The element reports its box back via watchSize.
@@ -8254,18 +8254,18 @@
       '  user-select: none;',
       '  -webkit-user-select: none;',
       // iOS Safari otherwise pops the copy/paste callout (and can start a
-      // selection) on a long-press over the game surface — kill it.
+      // selection) on a long-press over the game surface: kill it.
       '  -webkit-touch-callout: none;',
       '}',
       // Page-wide armor for game pages (root view IS a canvas; the
-      // render loop tags <html> with .mar-canvas-page — see
+      // render loop tags <html> with .mar-canvas-page: see
       // syncCanvasRootClass). The per-element rules above are not
       // enough on iOS Safari: a long-press over a non-selectable
       // element can still start a selection on the nearest selectable
       // ancestor (html/body), and the dynamic-viewport dance around
       // the URL bar can land a touch a hair outside the canvas. Games
       // long-press constantly (hold-to-jump), so disarm the page.
-      // Regular UI pages never get the class — text stays selectable.
+      // Regular UI pages never get the class: text stays selectable.
       'html.mar-canvas-page, html.mar-canvas-page body {',
       '  user-select: none;',
       '  -webkit-user-select: none;',
@@ -8277,7 +8277,7 @@
       '  display: block; max-width: 100%; height: auto;',
       '  border-radius: 10px; object-fit: contain;',
       '}',
-      // errorText — red + semi-bold so "couldn't reach the server"
+      // errorText: red + semi-bold so "couldn't reach the server"
       // and similar destructive-state messages jump out from the
       // surrounding plain body text. The shade is iOS systemRed
       // (#ff3b30) which has good contrast on both light and dark
@@ -8295,7 +8295,7 @@
       // "A deploy happened while this tab was open." Bottom-left rather
       // than full width: the news is real but small, and a bar across
       // the screen would read as an error. One z-index below the runtime
-      // failure banner, which always outranks it — if the app is broken,
+      // failure banner, which always outranks it, if the app is broken,
       // "there is a newer version" is not the headline.
       '#mar-stale-deploy {',
       '  position: fixed; z-index: 2147482999;',
@@ -8365,7 +8365,7 @@
       '  }',
       '  .mar-runtime-error-back { color: #ffb3aa; border-color: #7a3a32; }',
       '}',
-      // paragraph + inline atoms — flowing block of mixed-styled
+      // paragraph + inline atoms: flowing block of mixed-styled
       // text. The block sets natural body-text dimensions; inline
       // atoms compose freely via additive CSS classes so `[bold,
       // code]` (bold inline code) works without special-casing.
@@ -8381,7 +8381,7 @@
       '.mar-inline-bold { font-weight: 700; }',
       '.mar-inline-italic { font-style: italic; }',
       '.mar-inline-strike { text-decoration: line-through; }',
-      // Inline code — monospace + subtle background tint + small
+      // Inline code: monospace + subtle background tint + small
       // radius. Padding kept tight (1px x 4px) so the run sits on
       // the same baseline as surrounding text without bumping the
       // line-height.
@@ -8404,7 +8404,7 @@
       '@media (prefers-color-scheme: dark) {',
       '  .mar-inline-code { background: rgba(255, 255, 255, 0.10); }',
       '}',
-      // Inline link — accent color + underline. Underline is the
+      // Inline link: accent color + underline. Underline is the
       // affordance signal; on hover the underline thickens slightly
       // for feedback without changing position (text-decoration-
       // thickness keeps layout stable).
@@ -8418,7 +8418,7 @@
       '  outline: 2px solid #0a84ff; outline-offset: 2px;',
       '  border-radius: 2px;',
       '}',
-      // navigationLink — full-width tappable area with a chevron
+      // navigationLink: full-width tappable area with a chevron
       // on the trailing edge, mirroring how iOS NavigationLink
       // renders inside a list. Child content keeps the inherited
       // text color so a vstack of text+subtitle (typical row label)
@@ -8432,11 +8432,11 @@
       // (e.g. "SUA VEZ" flush-right) lands on top of the chevron. The
       // chevron stays visually pinned to the far right (it's absolute, so
       // padding doesn't move it); this only insets the CONTENT so it stops
-      // just before the chevron — the iOS Settings layout. Left-only rows
+      // just before the chevron: the iOS Settings layout. Left-only rows
       // are unaffected (nothing sits in the gutter to see a difference).
       '  padding-right: 20px;',
       '  color: inherit; text-decoration: none; cursor: pointer;',
-      // No explicit padding — the parent `.mar-section-body > *`
+      // No explicit padding: the parent `.mar-section-body > *`
       // rule supplies 10px 0 to every row inside a section card,
       // and the parent itself supplies the 16px horizontal inset
       // via its own `padding: 0 16px`. The link content sits
@@ -8448,7 +8448,7 @@
       // `isolation: isolate` forces a stacking context on the link.
       // Without it, the ::before's `z-index: -1` escapes to the
       // nearest stacking-context ancestor (the html root) and ends
-      // up painting BEHIND the section card's white background —
+      // up painting BEHIND the section card's white background:
       // so hover + focus tints become invisible. With isolation,
       // the ::before stays inside the link's local context: behind
       // the link's static content (text + chevron), above the
@@ -8463,7 +8463,7 @@
       // shrink the link's content box. As a flex sibling (the old
       // `flex-shrink: 0`) it consumed its own width + the 12px gap, so an
       // `expand`-ed two-column child inside the link laid its columns out
-      // over (rowWidth - chevron - gap) — shifting a right-hand value
+      // over (rowWidth - chevron - gap): shifting a right-hand value
       // column ~10px left of the same column in a plain (chevron-less)
       // row. Taking it out of flow (absolute) gives the content the FULL
       // row width, so a value/detail column lines up identically whether
@@ -8471,7 +8471,7 @@
       // vertically centred, painted over the (empty) trailing margin.
       '  position: absolute; right: 0; top: 50%; transform: translateY(-50%);',
       '}',
-      // Hover background — paints full-bleed across the row including
+      // Hover background: paints full-bleed across the row including
       // the card's 16px horizontal padding. A naive
       // `:hover { background }` on the link only covers the link's
       // own box, leaving white strips where the parent padding sits
@@ -8487,7 +8487,7 @@
       //     border-bottom, and the previous row's border-bottom that
       //     sits flush against this row's top). Without this, the
       //     hover tint leaves a thin white sliver at the row's top
-      //     and bottom edges — visible at standard zoom.
+      //     and bottom edges: visible at standard zoom.
       //
       // Anchored against the link's `position: relative`. z-index: -1
       // keeps the paint within the link's stacking context (so it
@@ -8513,7 +8513,7 @@
       '  a.mar-navigation-link:hover::before { background: rgba(0,0,0,0.07); }',
       '}',
       // Keyboard-focus tint. Without this, Tab navigation lands on
-      // the link with no visible change — users assume Tab is
+      // the link with no visible change: users assume Tab is
       // skipping the row entirely. Same ::before painter as hover,
       // brighter color so focus reads distinctly from a casual
       // mouseover. `:focus-visible` (not `:focus`) so a click on
@@ -8522,10 +8522,10 @@
       // the role of focus indicator full-bleed.
       'a.mar-navigation-link:focus { outline: none; }',
       'a.mar-navigation-link:focus-visible::before { background: rgba(0, 113, 227, 0.10); }',
-      // Disabled navigationLink — fade the text + chevron, kill the
+      // Disabled navigationLink: fade the text + chevron, kill the
       // hover background, cursor flips to `not-allowed`. The click
       // itself is swallowed by the delegated handler (onLinkClick
-      // reads __marView.attrs and bails out for disabled links) —
+      // reads __marView.attrs and bails out for disabled links):
       // so we DON\'T set `pointer-events: none` here: that would
       // also suppress the cursor change, leaving the link looking
       // identical to its enabled sibling on hover. Trade-off:
@@ -8552,9 +8552,9 @@
       '}',
       'a.mar-navigation-link .mar-vstack { gap: 2px; }',
 
-      // Centered — pure two-axis alignment. It claims whatever space
+      // Centered: pure two-axis alignment. It claims whatever space
       // its PARENT provides (flex: 1 inside the page\'s height-
-      // propagating column — #mar-root → .mar-nav-stack →
+      // propagating column: #mar-root → .mar-nav-stack →
       // .mar-nav-body all pass the viewport height down) and centers
       // the child in it. No own height: in a parent that hugs (a
       // section card) it simply centers horizontally at content
@@ -8568,12 +8568,12 @@
       '  text-align: center;',
       '}',
 
-      // Spacer — SwiftUI Spacer(). Flex filler that pushes siblings
+      // Spacer: SwiftUI Spacer(). Flex filler that pushes siblings
       // along the parent flex container\'s main axis. Inside an
       // hstack it expands horizontally; inside vstack, vertically.
       '.mar-spacer { flex: 1 1 auto; align-self: stretch; }',
 
-      // Universal sizing — the `width fill` / `height fill` attr
+      // Universal sizing: the `width fill` / `height fill` attr
       // classes (set by applyLayoutAttrs on any view). The rules are
       // contextual because what "fill" means depends on the parent\'s
       // flex direction: on the parent\'s MAIN axis the child grows as
@@ -8589,11 +8589,11 @@
       '.mar-nav-body > .mar-h-fill { flex: 1 1 0; min-height: 0; }',
       '.mar-hstack > .mar-h-fill { align-self: stretch; }',
 
-      // Cross-axis alignment — the stack `align` attr (classes set
+      // Cross-axis alignment: the stack `align` attr (classes set
       // by applyAlignAttr). Positions HUGGING children in the
       // cross-axis slack; a child with the matching fill has no
       // slack (its stretch rule above wins), so align never resizes.
-      // vstack default stays stretch, hstack default stays center —
+      // vstack default stays stretch, hstack default stays center:
       // these only fire when the attr is present.
       '.mar-vstack.mar-align-leading  { align-items: flex-start; }',
       '.mar-vstack.mar-align-center   { align-items: center; }',
@@ -8602,14 +8602,14 @@
       '.mar-hstack.mar-align-center   { align-items: center; }',
       '.mar-hstack.mar-align-bottom   { align-items: flex-end; }',
 
-      // Toggle — mobile-style switch. The native checkbox is hidden
+      // Toggle: mobile-style switch. The native checkbox is hidden
       // via appearance:none and re-drawn as a 51x31 pill with a 27px
       // white thumb that slides on the :checked state. Standard
       // touch-target dimensions.
       '.mar-toggle {',
       '  display: flex; align-items: center; justify-content: space-between;',
       '  gap: 12px;',
-      // No padding here — let the parent .mar-section-body > * rule
+      // No padding here: let the parent .mar-section-body > * rule
       // supply 10px 16px (same as text / subtitle / button rows), so
       // the toggle\'s label is inset from the card\'s leading edge
       // and the switch from the trailing edge. Setting `padding`
@@ -8646,7 +8646,7 @@
       '  outline: none;',
       '  box-shadow: 0 0 0 4px rgba(10, 132, 255, 0.25);',
       '}',
-      // Disabled toggle — switch loses its color (or its green if
+      // Disabled toggle: switch loses its color (or its green if
       // ON), and the label / cursor go inert. `.mar-disabled` is
       // toggled on the <label> wrapper so the label-text faded
       // tone matches the visually-disabled switch.
@@ -8667,7 +8667,7 @@
       //
       //   .mar-sheet-backdrop (full-screen overlay; click → dismiss)
       //     .mar-sheet-panel (the actual sheet card)
-      //       .mar-sheet-handle (drag affordance — non-functional v1)
+      //       .mar-sheet-handle (drag affordance: non-functional v1)
       //       {sheet content}
       //
       // The backdrop is ALWAYS in the DOM (so re-renders can flip
@@ -8680,7 +8680,7 @@
       '  backdrop-filter: blur(8px);',
       // ALWAYS display: flex (not toggled to none) so CSS transitions
       // can animate from closed → open. `display: none → flex` is a
-      // discrete change the browser never tweens — the sheet would
+      // discrete change the browser never tweens: the sheet would
       // pop in instantly. opacity 0 + pointer-events: none makes the
       // closed state both invisible and click-through.
       '  display: flex; flex-direction: column;',
@@ -8695,14 +8695,14 @@
       '  pointer-events: auto;',
       '}',
 
-      // Panel — the actual sheet card.
+      // Panel: the actual sheet card.
       // - Page sheet style: leaves ~10vh of the parent visible at top.
       // - Rounded top corners only (bottom flush with screen edge).
       // - White background with subtle inset highlight on top edge.
       // - Slide-up animation with iOS-spec cubic-bezier.
       // Panel sizes to its content (no min-height). Previously had
       // min-height: 50vh which forced a half-screen panel even with
-      // a one-line message — large empty area under the content.
+      // a one-line message: large empty area under the content.
       // iOS native page-sheets also size to content; users can drag
       // the handle to expand to detents, which we don't have yet.
       // The 90vh cap keeps an over-long content from pinning the
@@ -8732,7 +8732,7 @@
       '}',
       '.mar-sheet-open .mar-sheet-panel { transform: translateY(0); }',
 
-      // Drag handle — small pill at the top-center, signals "this can
+      // Drag handle: small pill at the top-center, signals "this can
       // be dragged down to dismiss". Visual affordance only in v1; the
       // drag gesture itself is iOS-native (page sheet) and not yet
       // wired up on web.
@@ -8762,7 +8762,7 @@
 
       // Wide viewports: become a FORM SHEET instead of a bottom sheet.
       //
-      // A sheet that slides up from the bottom edge is a phone idiom —
+      // A sheet that slides up from the bottom edge is a phone idiom:
       // the thumb is at the bottom and the screen is narrow, so an
       // edge-to-edge panel reads as "a drawer over the page". On a
       // desktop the same panel is a ~1000px-wide, content-tall strip
@@ -8773,7 +8773,7 @@
       // So above the tablet breakpoint we switch to what iPadOS/macOS
       // do with a sheet presentation: a narrow card, centered in the
       // window, rounded on all four corners. The min-height stops a
-      // one-field form from collapsing into a letterbox — note this is
+      // one-field form from collapsing into a letterbox: note this is
       // scoped to wide screens ONLY, so the phone bottom sheet keeps
       // sizing to its content (a min-height there would reintroduce
       // the half-empty panel that was removed earlier).
@@ -8818,7 +8818,7 @@
       // metric (540x620pt) instead of the compact card: a roster or a
       // day's worth of rows needs the extra width to keep its rows from
       // wrapping, and the floor stops a short one from reading as a
-      // dialog. On phones nothing changes — a bottom sheet already fills
+      // dialog. On phones nothing changes: a bottom sheet already fills
       // the width it has.
       '@media (min-width: 768px) {',
       '  .mar-page-sheet .mar-sheet-panel {',
@@ -8827,7 +8827,7 @@
       '  }',
       '}',
 
-      // Dark mode adjustments — match the rest of the runtime\'s dark
+      // Dark mode adjustments: match the rest of the runtime\'s dark
       // theme without re-stating every rule.
       '@media (prefers-color-scheme: dark) {',
       '  .mar-sheet-backdrop { background: rgba(0, 0, 0, 0.6); }',
@@ -8852,7 +8852,7 @@
       //         .mar-confirm-confirm[.destructive]
       //
       // Unlike .mar-sheet-backdrop, this one is mounted only when
-      // the modal is showing — the parent's `case` returns
+      // the modal is showing: the parent's `case` returns
       // `UI.confirm {...}` only when active, `UI.empty` otherwise.
       // So no opacity-toggle hack needed; we just animate the
       // entrance from the moment the element mounts.
@@ -8901,7 +8901,7 @@
       '.mar-confirm-actions {',
       '  display: flex; gap: 8px;',
       '}',
-      // Both buttons share the same chrome — pill shape, full
+      // Both buttons share the same chrome: pill shape, full
       // height. Cancel is system fill, Confirm has the accent color
       // (red when destructive=True, blue otherwise).
       '.mar-confirm-actions > button {',
@@ -8922,13 +8922,13 @@
       '  color: #1d1d1f;',
       '}',
       '.mar-confirm-cancel:hover { background: rgba(0, 0, 0, 0.10); }',
-      // Non-destructive confirm — system blue accent.
+      // Non-destructive confirm: system blue accent.
       '.mar-confirm-confirm {',
       '  background: #007aff;',
       '  color: #ffffff;',
       '}',
       '.mar-confirm-confirm:hover { background: #0066d6; }',
-      // Destructive variant — system red. Same iOS color as
+      // Destructive variant: system red. Same iOS color as
       // .mar-row-delete and SwiftUI .destructive role.
       '.mar-confirm-confirm.destructive {',
       '  background: #ff3b30;',
@@ -8936,7 +8936,7 @@
       '}',
       '.mar-confirm-confirm.destructive:hover { background: #e0352b; }',
 
-      // Dark mode — switch the dialog card to dark glass + adjust
+      // Dark mode: switch the dialog card to dark glass + adjust
       // button colors so contrast stays readable.
       '@media (prefers-color-scheme: dark) {',
       '  .mar-confirm-backdrop { background: rgba(0, 0, 0, 0.6); }',
@@ -8972,13 +8972,13 @@
       // <html> before the swap.
       //
       // The keyframes mirror iOS NavigationStack:
-      //   forward (push) — new slides in from the right, old
+      //   forward (push): new slides in from the right, old
       //     parallaxes slightly left and dims.
-      //   back (pop)     — reversed: new slides in from the left,
+      //   back (pop)     - reversed: new slides in from the left,
       //     old slides out to the right.
       //
-      // Timing curve is the standard "page push" easing —
-      // cubic-bezier(0.32, 0.72, 0, 1) — applied at 400ms. Below
+      // Timing curve is the standard "page push" easing:
+      // cubic-bezier(0.32, 0.72, 0, 1): applied at 400ms. Below
       // ~320ms the slide reads as a snap; above ~480ms it starts
       // feeling sluggish on a browser.
       '@keyframes mar-slide-in-right { from { transform: translateX(100%); } }',
@@ -9009,7 +9009,7 @@
       // transitions: outgoing dissolves while the new content
       // settles in from slightly smaller (0.96 → 1.0). No
       // horizontal motion → reads as "new context", not "next/prev
-      // screen". Duration sits at 280ms — fast enough to feel
+      // screen". Duration sits at 280ms: fast enough to feel
       // responsive after a tap, slow enough that the scale registers
       // as deliberate rather than a flash.
       //
@@ -9031,7 +9031,7 @@
       // `view-transition-name: mar-dev-dock` (see createDevDock),
       // which splits it out of the `root` snapshot group into its
       // own. `animation: none` here keeps that group static
-      // through the page transition — so the bottom-right widget
+      // through the page transition, so the bottom-right widget
       // stays anchored while the page slides under it. Without
       // this rule the browser would default to a cross-fade,
       // which on a static element with identical old/new content
@@ -9041,7 +9041,7 @@
       '::view-transition-new(mar-dev-dock) {',
       '  animation: none !important;',
       '}',
-      // Accessibility — kill the slide for users who set
+      // Accessibility: kill the slide for users who set
       // `prefers-reduced-motion`. The runtime also skips the
       // startViewTransition call entirely in that case, but the
       // CSS guard belongs here too for any non-runtime triggers
@@ -9056,7 +9056,7 @@
       '  .mar-nav-toolbar-row { transition: none; }',
       '}',
 
-      // Dark mode — iOS 26 "Liquid Glass" on a near-black graphite
+      // Dark mode: iOS 26 "Liquid Glass" on a near-black graphite
       // page. The gradient hints at light coming from above; the
       // glass surfaces (cards, pills) tint that light bluish-warm
       // via subtle saturation in the backdrop filter.
@@ -9065,7 +9065,7 @@
       // rationale as the light-mode rule above: bottom-bounce
       // overscroll and view-transition gaps would otherwise flash
       // white through the dark page. Also add an explicit
-      // ::selection so highlighted text stays legible — the
+      // ::selection so highlighted text stays legible, the
       // browser's default selection color on macOS is a light
       // blue/grey that washes out the page's #f5f5f7 text into
       // near-invisibility against the highlight.
@@ -9079,7 +9079,7 @@
       // actions) all share one lifted-slate fill. The inline title is
       // deliberately NOT in this group: it is bare text and reads
       // against the bar itself instead of carrying chrome of its own.
-      // Same split as light mode — control wears a container, label
+      // Same split as light mode: control wears a container, label
       // does not.
       '  .mar-nav-back, .mar-nav-side button, .mar-nav-side a.mar-inline {',
       '    background: #2c2c2e;',
@@ -9095,11 +9095,11 @@
       '  .mar-nav-toolbar-row { background: rgba(35, 35, 38, 0.6); }',
       '  .mar-nav-toolbar-row.mar-nav-scrolled { border-bottom-color: rgba(255, 255, 255, 0.10); }',
       '  .mar-nav-inline-title { color: #f5f5f7; }',
-      // Label color, not action color — see the light-mode note.
+      // Label color, not action color: see the light-mode note.
       '  .mar-nav-back, .mar-nav-side button, .mar-nav-side a.mar-inline { color: #f5f5f7; }',
       '  @media (hover: hover) { .mar-nav-back:hover { background: #3a3a3c; } }',
       '  @media (hover: hover) { .mar-nav-side button:hover, .mar-nav-side a.mar-inline:hover { background: #3a3a3c; } }',
-      // Section card in dark glass — translucent slate that lets
+      // Section card in dark glass: translucent slate that lets
       // the gradient bleed through under the blur.
       '  .mar-section-body {',
       '    background: rgba(44, 44, 46, 0.7);',
@@ -9123,7 +9123,7 @@
       '    box-shadow: 0 0 0 4px rgba(10, 132, 255, 0.18);',
       '  }',
       // Disabled textfield in dark mode. The light-mode rule uses
-      // `color: rgba(0,0,0,0.36)` — 36% black on a near-black
+      // `color: rgba(0,0,0,0.36)`, 36% black on a near-black
       // surface in dark mode lands the text essentially invisible.
       // Operator reported they couldn't read the email address
       // they had just typed while the "Sending…" request was in
@@ -9184,8 +9184,8 @@
       // Single visual mode: when the section is in delete-editing
       // state, every row carries a red `−` circle at its LEFT (iOS
       // Mail/Notes/Reminders edit-mode chrome). Outside edit mode
-      // the button isn't rendered at all — see
-      // attachRowDeleteAffordance — so this CSS doesn't need to
+      // the button isn't rendered at all: see
+      // attachRowDeleteAffordance, so this CSS doesn't need to
       // cover that case.
       //
       // We use compound selectors (`.mar-section-body
@@ -9221,7 +9221,7 @@
       // container so the delete button (order:-1) can sit on the
       // left of whatever the row's normal content is. The
       // negative margin pokes the disc out into the section
-      // card\'s padding gutter — same offset iOS uses.
+      // card\'s padding gutter: same offset iOS uses.
       '.mar-section-delete-edit > * {',
       '  display: flex;',
       '  align-items: center;',
@@ -9232,12 +9232,12 @@
       '  margin-left: -4px;',
       '}',
       // Exit animation is driven imperatively via Web Animations
-      // API in attachRowDeleteAffordance — see that function for
+      // API in attachRowDeleteAffordance: see that function for
       // the keyframes (height collapse + slide-left + fade). The
       // imperative path needs concrete `from` keyframes (current
       // height, current padding), so the animation has to be
       // built per-row at click time, not via a fixed CSS class.
-      // Dark mode: tone the red down — full system-red against a
+      // Dark mode: tone the red down, full system-red against a
       // dark background reads harsh.
       '@media (prefers-color-scheme: dark) {',
       '  .mar-section-body .mar-row-delete { background: #ff453a; }',
@@ -9289,7 +9289,7 @@
   // bare "YYYY-MM-DD" calendar date with no timezone, so we read and
   // write in the LOCAL calendar: the day shown is the day stored.
   // (Matches iOS DatePicker, which shows the device-local date.) The
-  // bound value is a concrete `Time` (datePicker is pure — the program
+  // bound value is a concrete `Time` (datePicker is pure: the program
   // owns the value and seeds "today" via `Cmd.perform GotToday Time.now`),
   // so we read it directly with no clock fallback. Changes parse back to
   // a VTime at local midnight.
@@ -9300,7 +9300,7 @@
     if (mv && typeof mv.millis === 'number') {
       d = new Date(mv.millis);
     } else {
-      d = new Date(0); // unset — a pure datePicker always receives a Time
+      d = new Date(0); // unset: a pure datePicker always receives a Time
     }
     const p = (n) => (n < 10 ? '0' : '') + n;
     return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate());
@@ -9315,7 +9315,7 @@
   // styleInlineSpan syncs an inline-run element (from `span`) to its view:
   // the CSS classes (bold / italic / strike / code), the link href, and the
   // text. Shared by createDOM (first paint) and patchDOM (re-render) so a
-  // span's TEXT and STYLE both track the model — without it, a dynamic span
+  // span's TEXT and STYLE both track the model: without it, a dynamic span
   // inside a paragraph froze at its first value (text was set once in
   // createDOM and never patched).
   function styleInlineSpan(e, view) {
@@ -9332,7 +9332,7 @@
       }
     }
     if (href) {
-      // External target — link inline text always opens off-site (there's no
+      // External target: link inline text always opens off-site (there's no
       // "internal inline link" primitive; navigationLink covers internal). New
       // tab + noopener so the source page can't be poked at.
       classes.push('mar-inline-link');
@@ -9340,7 +9340,7 @@
       e.setAttribute('target', '_blank');
       e.setAttribute('rel', 'noopener noreferrer');
     } else {
-      // Re-render may have dropped the link — clear the anchor attrs so a
+      // Re-render may have dropped the link: clear the anchor attrs so a
       // once-link span doesn't keep a stale href.
       e.removeAttribute('href');
       e.removeAttribute('target');
@@ -9389,7 +9389,7 @@
         break;
       case 'span': {
         // Inline run. Classes (bold / italic / strike / code), link href, and
-        // text all come from styleInlineSpan — the same helper patchDOM uses,
+        // text all come from styleInlineSpan: the same helper patchDOM uses,
         // so a dynamic span reconciles on re-render. The span-vs-anchor tag was
         // already resolved above from the link attr.
         styleInlineSpan(e, view);
@@ -9409,7 +9409,7 @@
         // Red + semi-bold via .mar-error-text. role="alert" so
         // assistive tech announces the message when it appears
         // (errors typically arrive after an action, not at page
-        // load — the live-region announcement is the whole point).
+        // load: the live-region announcement is the whole point).
         ensureUIStyles();
         e.className = 'mar-error-text';
         e.setAttribute('role', 'alert');
@@ -9448,7 +9448,7 @@
         // pushes through history.pushState instead of doing a
         // full reload.
         //
-        // `disabled` here can't use the HTML disabled property —
+        // `disabled` here can't use the HTML disabled property:
         // <a> doesn't have one. Instead we mark the link with
         // aria-disabled + a CSS class; the delegated click handler
         // (onLinkClick) reads __marView.attrs and skips
@@ -9460,8 +9460,8 @@
         // default (it considers links "content", not "controls",
         // unless the user enables Settings > Advanced > "Press
         // Tab to highlight each item on a webpage"). For an app
-        // where navigationLink IS a primary control — Settings-row
-        // style "go to next screen" — we want every browser to
+        // where navigationLink IS a primary control: Settings-row
+        // style "go to next screen": we want every browser to
         // tab through it without the user fiddling with system
         // preferences. tabindex="0" is a no-op in Chrome/Firefox
         // (they tab to links anyway) and the right knob for Safari.
@@ -9499,7 +9499,7 @@
         }
         break;
       case 'form':
-        // <form>{children}</form> — children diffed positionally.
+        // <form>{children}</form>: children diffed positionally.
         // Suppress the default Enter-submits behavior; per-field
         // submit is handled by the UI.submit attr.
         ensureUIStyles();
@@ -9508,10 +9508,10 @@
         for (const c of view.children) e.appendChild(createDOM(c));
         break;
       case 'uiList':
-        // <div.mar-list>{sections-or-rows}</div> — always a div
+        // <div.mar-list>{sections-or-rows}</div>: always a div
         // wrapper with children rendered directly. Avoids <li>
         // wrapping (semantic noise without payoff for sectioned
-        // lists). No reorder semantics on the list itself — those
+        // lists). No reorder semantics on the list itself: those
         // live on its constituent `section`s (see the uiSection
         // ctor for handle wiring + keyboard a11y).
         ensureUIStyles();
@@ -9531,7 +9531,7 @@
         // difference is at the type level: uiKeyedList children
         // each carry a `key` attr (injected by `UI.keyed`), while
         // uiSection children don\'t. The reconciler reads the key
-        // for keyed children automatically — no special-casing
+        // for keyed children automatically: no special-casing
         // needed here.
         ensureUIStyles();
         e.className = 'mar-section';
@@ -9544,7 +9544,7 @@
         e.appendChild(h);
         const body = document.createElement('div');
         body.className = 'mar-section-body';
-        // Reorder support — driven by the `onMove` attr's editing
+        // Reorder support: driven by the `onMove` attr's editing
         // flag. In edit mode each row gets a drag handle (mouse /
         // touch) AND becomes keyboard-focusable with grab + arrow
         // semantics (Padrão 2, screen-reader friendly). Both
@@ -9577,7 +9577,7 @@
         if (editingS && handlerS) {
           attachListReorderDrag(body, handlerS);
           // Live-region hosted on the section wrapper (`e`), not on
-          // the body. See the function for why — TLDR: appending to
+          // the body. See the function for why, TLDR: appending to
           // body shifts the last actual row out of `:last-child` and
           // it gains a hairline border, reading as a phantom extra
           // row.
@@ -9610,7 +9610,7 @@
         if (ph) e.setAttribute('placeholder', ph);
         e.value = view.text;
         // `<input disabled>` natively suppresses focus, typing, AND
-        // the `input` / `keydown` events — so neither
+        // the `input` / `keydown` events, so neither
         // attachInputDispatcher nor attachSubmitDispatcher needs an
         // extra guard once we sync the DOM property here.
         applyDisabledAttr(e, view);
@@ -9619,7 +9619,7 @@
         break;
       }
       case 'textArea': {
-        // Same dispatcher wiring as textField — the renderer just
+        // Same dispatcher wiring as textField: the renderer just
         // emits a <textarea> instead of <input>. We reuse the
         // textfield CSS class so the borders / focus ring / padding
         // line up with neighboring textField rows; a small
@@ -9630,7 +9630,7 @@
         const ph = getAttr(view, 'placeholder');
         if (ph) e.setAttribute('placeholder', ph);
         e.value = view.text;
-        // A reasonable default — three lines of room without
+        // A reasonable default: three lines of room without
         // committing to a tall fixed block. User code can override
         // via `[ height (lines N) ]` (applySizing sets rows).
         if (!e.hasAttribute('rows')) e.setAttribute('rows', '3');
@@ -9645,7 +9645,7 @@
         // calendar popover; we reuse the textfield chrome so the row
         // lines up with neighboring textField / picker rows, and sync
         // the value as a local YYYY-MM-DD. Changes parse back to a
-        // VTime (local midnight) and dispatch onChange — same shape as
+        // VTime (local midnight) and dispatch onChange: same shape as
         // picker / toggle (apply view.msg to the picked value).
         ensureUIStyles();
         e.className = 'mar-textfield mar-datepicker';
@@ -9675,7 +9675,7 @@
         // The wrapping div lets us layer a custom chevron over the
         // native select without losing the platform's accessible
         // dropdown UI (keyboard nav, screen-reader announcements,
-        // mobile native popover). The chevron is decorative — the
+        // mobile native popover). The chevron is decorative: the
         // <select> itself is the focusable / interactive surface.
         ensureUIStyles();
         e.className = 'mar-picker';
@@ -9684,14 +9684,14 @@
         select.className = 'mar-picker-select';
         renderPickerOptions(select, view);
         // `<select disabled>` natively blocks the dropdown from
-        // opening and suppresses change events — so we sync the
+        // opening and suppresses change events, so we sync the
         // property on the inner element, not the wrapping div.
         // Mirror the disabled state onto the wrapper too so CSS
         // can grey-out the chevron + text via :has() / class.
         applyDisabledAttr(select, view);
         e.classList.toggle('mar-disabled', isDisabled(view));
         e.appendChild(select);
-        // Inline SVG renders consistently across browsers / fonts —
+        // Inline SVG renders consistently across browsers / fonts:
         // unlike a unicode chevron glyph which Safari + Chrome
         // sometimes render as a thin stub or fail to size with the
         // surrounding CSS font-size. Two stacked triangles mirror
@@ -9723,14 +9723,14 @@
       case 'centered':
         // Pure two-axis alignment: fills whatever space the PARENT
         // provides (flex: 1 in the page's height-propagating column
-        // — it never invents a height of its own) and centers the
+        //: it never invents a height of its own) and centers the
         // child in it. Full-screen states (Loading, EmptyState, …).
         ensureUIStyles();
         e.className = 'mar-centered';
         for (const c of view.children) e.appendChild(createDOM(c));
         break;
       case 'spacer':
-        // Flex filler — the parent flex container (hstack / vstack
+        // Flex filler: the parent flex container (hstack / vstack
         // / section-body) absorbs it and pushes siblings apart.
         ensureUIStyles();
         e.className = 'mar-spacer';
@@ -9778,7 +9778,7 @@
         //   </div>
         //
         // The wrapper is always in the DOM (stable for diff). CSS
-        // toggles via the `.open` class — slide-up + backdrop fade.
+        // toggles via the `.open` class: slide-up + backdrop fade.
         // When `open=false` the wrapper is `display: none` so it
         // doesn't block clicks on the parent page.
         ensureUIStyles();
@@ -9808,7 +9808,7 @@
         //   </div>
         //
         // The presence of the view in the tree IS the "is open"
-        // state — when the parent's `case` returns `UI.empty`
+        // state, when the parent's `case` returns `UI.empty`
         // instead, the entire backdrop unmounts and the modal
         // disappears with no extra wiring. Animation in / out is
         // handled by CSS keyframes on the backdrop class.
@@ -9855,7 +9855,7 @@
       default:
         for (const c of view.children) e.appendChild(createDOM(c));
     }
-    // Universal layout pass — every view honors width / height
+    // Universal layout pass: every view honors width / height
     // (chars / lines / fill), and stacks additionally honor `align`.
     // Runs after the per-tag case so the classes compose with the
     // tag's own className assignment.
@@ -9868,7 +9868,7 @@
   //
   // A `canvas` view paints its Shape children onto a <canvas> sized to its
   // own box. Coordinates are CSS pixels and match the box the game is told
-  // about via watchSize — so positions computed from the model's w/h land
+  // about via watchSize, so positions computed from the model's w/h land
   // exactly (reflow). Event listeners read el.__marView at fire time, so
   // the latest onTap / watchSize tagger is used even after a re-render.
 
@@ -9882,7 +9882,7 @@
   // button down), keyed by the platform pointerId, each carrying a small stable
   // integer id (0,1,2,… smallest free, assigned on contact, reusable on
   // release) and its position in canvas CSS-pixel space. Any add / move / remove
-  // schedules a single coalesced dispatch of the whole list on the next frame —
+  // schedules a single coalesced dispatch of the whole list on the next frame:
   // the Model always holds the latest complete truth. pointercancel (which the
   // browser also fires on window blur for active pointers) removes the pointer,
   // so a finger can never stick. Hovering pointers never enter the table (no
@@ -9950,12 +9950,12 @@
       };
       // Tap → onTap(x, y) on pointer DOWN. For the matching "up" (onRelease) we
       // attach DOCUMENT-level pointerup/pointercancel listeners for this one
-      // press — NOT setPointerCapture. Capturing the pointer has a long-debugged
+      // press, NOT setPointerCapture. Capturing the pointer has a long-debugged
       // class of iOS Safari bugs (the gesture state machine doesn't release
       // cleanly: the next tap gets eaten, and a held control can even fire a
       // spurious pointercancel mid-press, which for hold-to-move would clear the
       // press and freeze movement). Document listeners catch the release anywhere
-      // on the page — the finger can slide off the control — with none of that.
+      // on the page, the finger can slide off the control, with none of that.
       // Same pattern the list-drag handler above uses, for the same reason.
       el.addEventListener('pointerdown', (ev) => {
         const [dx, dy] = canvasXY(ev);
@@ -9998,7 +9998,7 @@
         document.addEventListener('pointercancel', onUp);
       });
       // iOS Safari: the CSS armor above (user-select / touch-callout none, on
-      // the element AND on html.mar-canvas-page) is still not enough — holding
+      // the element AND on html.mar-canvas-page) is still not enough: holding
       // a finger down pops the selection LOUPE, that grey magnifying blob, over
       // the surface. Reported on the synth, where holding a key to sustain a
       // note IS a long press. Safari decides to begin that gesture from
@@ -10011,7 +10011,7 @@
       }, { passive: false });   // preventDefault is ignored on a passive listener
       // Desktop input trio (opt-in, inert on touch). All read el.__marView at
       // fire time so the latest tagger wins after a re-render.
-      //   onHover  — pointer move with NO button held (a pressed move is
+      //   onHover  - pointer move with NO button held (a pressed move is
       //              onDrag's job). Touch has no button-less move, so this
       //              never fires on touch, exactly as documented.
       el.addEventListener('pointermove', (ev) => {
@@ -10022,7 +10022,7 @@
           currentDispatch(apply(apply(tagger, VInt(x)), VInt(y)));
         }
       });
-      //   onAltTap — right-click / two-finger tap. contextmenu is the portable
+      //   onAltTap: right-click / two-finger tap. contextmenu is the portable
       //              signal; preventDefault swallows the native menu.
       el.addEventListener('contextmenu', (ev) => {
         const tagger = canvasAttrValue(el.__marView, 'onAltTap');
@@ -10033,7 +10033,7 @@
           currentDispatch(apply(apply(tagger, VInt(x)), VInt(y)));
         }
       });
-      //   onWheel  — scroll delta as (dx, dy). preventDefault stops the page
+      //   onWheel  - scroll delta as (dx, dy). preventDefault stops the page
       //              from scrolling; both signs are stable across pixel/line
       //              devices. dx carries horizontal (trackpad) scroll; callers
       //              that only want vertical just ignore it. Non-passive so
@@ -10047,7 +10047,7 @@
         }
       }, { passive: false });
       // Resize → redraw + watchSize({ w, h } as (w, h)). ResizeObserver fires
-      // once on observe, seeding the real box size into the model immediately —
+      // once on observe, seeding the real box size into the model immediately:
       // the size mirror's "seed on subscribe" contract.
       if (typeof ResizeObserver !== 'undefined') {
         el.__canvasRO = new ResizeObserver(() => {
@@ -10071,13 +10071,13 @@
     const ctx = el.getContext && el.getContext('2d');
     if (!view || !ctx) return;
     // The canvas render mode (mandatory `CanvasMode` arg) decides the backing
-    // resolution — see docs/adrs/0001-canvas-render-resolution.md.
+    // resolution: see docs/adrs/0001-canvas-render-resolution.md.
     //
     // Pixelated: buffer = 1 CSS px, nearest-neighbour upscale. A full-screen
     // action game repaints every pixel each frame; at retina dpr (2–3 on
     // phones) that's 4–9× the fill and mobile Safari drops below 60 fps. Since
     // the frame loop ticks once per painted frame (subSources.timeEvery), a
-    // slower paint doesn't just look janky — the world runs in slow motion. At
+    // slower paint doesn't just look janky: the world runs in slow motion. At
     // 1× an iPhone paints ~1/3 the pixels, so it holds 60 fps; nearest-neighbour
     // keeps the upscale crisp instead of bilinear-blurring it.
     //
@@ -10141,13 +10141,13 @@
       // Scale args are percent ints (100 = 1×); Rotate takes an Angle.
       case 'Scale':     ctx.scale(canvasNum(t.args[0]) / 100, canvasNum(t.args[1]) / 100); break;
       case 'Rotate':    ctx.rotate(canvasRadians(t.args[0])); break;
-      // Alpha / Blend are not matrix ops — groupAlpha and groupBlend pull
+      // Alpha / Blend are not matrix ops: groupAlpha and groupBlend pull
       // them out before this runs.
     }
   }
 
   // Canvas.Blend on a group as a globalCompositeOperation, or null when
-  // absent (which means Normal — exactly what a group did before Blend
+  // absent (which means Normal: exactly what a group did before Blend
   // existed, so untouched code keeps drawing the same bytes). Unlike Alpha,
   // repeats do NOT combine: opacities compose, modes don't, so the last one
   // in the list simply wins.
@@ -10202,7 +10202,7 @@
   // This is the whole point of Alpha over `rgba`: fading each shape on its own
   // would let the group's parts show through each other, because every shape
   // would blend against the ones already painted under it. Compositing first
-  // and fading once means overlaps inside the group never blend at all — a
+  // and fading once means overlaps inside the group never blend at all: a
   // sprite fades as one object, a cloud of overlapping puffs comes out evenly
   // translucent instead of showing its seams.
   //
@@ -10210,12 +10210,12 @@
   // scratch and to the stamp, so shapes inside an Add group still sum with
   // each other AND the finished group still sums onto the scene. That agrees
   // with the no-layer path because Add / Multiply / Screen are commutative per
-  // channel — folding the shapes together first lands where folding them into
+  // channel: folding the shapes together first lands where folding them into
   // the backdrop one by one would.
   //
   // Erase is the exception: its children paint NORMALLY into the scratch,
   // building one silhouette, and only the stamp cuts. That is what makes
-  // `Alpha 50 + Erase` mean "a hole at half strength" — letting the children
+  // `Alpha 50 + Erase` mean "a hole at half strength": letting the children
   // erase each other inside the scratch would erase nothing at all (the
   // scratch starts empty), and erasing them against the target instead would
   // bite deeper wherever two erasers overlap.
@@ -10280,7 +10280,7 @@
         const alpha = groupAlpha(transforms);
         const op = groupBlend(transforms);
         // No Alpha means no buffer, for every mode: one context-state
-        // assignment and the children draw straight through. Erase included —
+        // assignment and the children draw straight through. Erase included:
         // erasing shape by shape leaves dst × Π(1-aᵢ), which is exactly what
         // stamping their composited silhouette once would leave. (Measured
         // both ways on a pixel bench, 2026-07-15: byte-identical.)
@@ -10323,7 +10323,7 @@
     syncSheetHistory(outlet, open);
   }
 
-  // Read attrs directly off the view — getAttr() in this file
+  // Read attrs directly off the view: getAttr() in this file
   // assumes string attrs (returns `.value.s`), which would silently
   // drop a VBool. Mirroring toggleIsOn's direct-lookup pattern.
   function sheetIsOpen(view) {
@@ -10380,7 +10380,7 @@
       } else if (ev.target.classList.contains('mar-confirm-cancel')) {
         kind = 'onCancel';
       } else if (ev.target === backdropEl) {
-        // Bare-backdrop click (didn't hit the dialog) — treat as cancel.
+        // Bare-backdrop click (didn't hit the dialog): treat as cancel.
         kind = 'onCancel';
       }
       if (!kind) return;
@@ -10389,7 +10389,7 @@
     });
   }
 
-  // Document-level Escape handler — installed once. Walks the
+  // Document-level Escape handler: installed once. Walks the
   // currently-mounted DOM for a `.mar-confirm-backdrop` and
   // dispatches its onCancel. Doing this at the document level (vs.
   // on each backdrop) means we don't need focus inside the dialog
@@ -10436,12 +10436,12 @@
         url.toString());
     } else if (!open && wasOpen) {
       sheetHistory.open.delete(outlet);
-      // Remove our pushed entry with history.back() — but DEFER it to a
+      // Remove our pushed entry with history.back(), but DEFER it to a
       // microtask. A single dispatch can both close a sheet AND navigate
       // ("create the record, then jump to it"): the effect (Nav.push) runs
       // right after this render (see currentDispatch). When it does, the
-      // nav ADOPTS our synthetic entry — pushNav overwrites it and clears
-      // sheetPendingBack — so popping here is cancelled; without that, the
+      // nav ADOPTS our synthetic entry: pushNav overwrites it and clears
+      // sheetPendingBack, so popping here is cancelled; without that, the
       // deferred back() would fire after the nav's pushState and bounce us
       // straight off the page we just opened. With no nav in the dispatch,
       // the microtask still runs and cleans the entry exactly as before.
@@ -10475,14 +10475,14 @@
     if (node.__sheetDispatchersBound) return;
     node.__sheetDispatchersBound = true;
 
-    // Backdrop click — only dismiss when the user clicks the wrapper
+    // Backdrop click: only dismiss when the user clicks the wrapper
     // itself, not bubbled from the panel content.
     node.addEventListener('click', (ev) => {
       if (ev.target !== node) return;
       dispatchSheetDismiss(node);
     });
 
-    // Escape key — only when this sheet is open (sheets stack
+    // Escape key: only when this sheet is open (sheets stack
     // semantically; outermost sheet closes first).
     document.addEventListener('keydown', (ev) => {
       if (ev.key !== 'Escape') return;
@@ -10490,7 +10490,7 @@
       dispatchSheetDismiss(node);
     });
 
-    // Browser back button — popstate fires when the user hits Back.
+    // Browser back button: popstate fires when the user hits Back.
     // If WE just called history.back() to clean up an outlet, ignore
     // (the parent already closed the sheet via Msg). Otherwise the
     // user wants to close: dispatch onDismiss so the parent flips
@@ -10501,7 +10501,7 @@
         return;
       }
       if (!node.__marView || !sheetIsOpen(node.__marView)) return;
-      // Forget the outlet — the URL entry is already gone.
+      // Forget the outlet: the URL entry is already gone.
       const outlet = sheetOutlet(node.__marView);
       if (outlet) sheetHistory.open.delete(outlet);
       dispatchSheetDismiss(node);
@@ -10526,7 +10526,7 @@
       return replacement;
     }
     setMarView(node, newView);
-    // Universal layout pass (mirror of createDOM's tail) — re-sync
+    // Universal layout pass (mirror of createDOM's tail): re-sync
     // the width / height classes + styles and the stack `align`
     // class on every patch, so dynamically swapped sizing attrs
     // (`if compact then width (chars 12) else width fill`) track the
@@ -10536,7 +10536,7 @@
 
     switch (newView.tag) {
       case 'canvas':
-        // Re-issue the draw list — the shape children change every frame.
+        // Re-issue the draw list: the shape children change every frame.
         // The listeners + ResizeObserver were wired once in createDOM and
         // read node.__marView (freshly set above) at fire time.
         drawCanvas(node);
@@ -10551,7 +10551,7 @@
         // Inline run inside a paragraph. Text AND styling derive from the
         // view, so re-sync both (a dynamic span used to freeze at its first
         // value). If the link-ness flipped, the DOM element type changed
-        // (span <-> a), which a class swap can't fix — replace instead.
+        // (span <-> a), which a class swap can't fix: replace instead.
         const wantsLink = (newView.attrs || []).some(a => a.name === 'inlineLink');
         if (wantsLink !== (node.tagName === 'A')) {
           const replacement = createDOM(newView);
@@ -10582,7 +10582,7 @@
         const newHref = getAttr(newView, 'href');
         if (node.getAttribute('href') !== newHref) node.setAttribute('href', newHref);
         applyAnchorDisabled(node, newView);
-        // Patch children in place — same shape as the other
+        // Patch children in place: same shape as the other
         // container tags (hstack/vstack/section). Lets a focused
         // input nested inside a navigationLink survive a re-render.
         patchChildrenPositional(node, oldView.children || [], newView.children || [], 'navigationLink');
@@ -10590,16 +10590,16 @@
       }
       case 'textField':
       case 'textArea':
-        // Only write if the value diverges — avoids resetting the cursor
+        // Only write if the value diverges: avoids resetting the cursor
         // mid-keystroke when the model just echoes what the user typed.
         // Same patch path for both shapes; the input vs textarea is
         // already pinned by node.tagName from the initial createDOM.
         if (node.value !== newView.text) node.value = newView.text;
         applyDisabledAttr(node, newView);
-        // Re-apply sizing on every patch — cheap (idempotent: same
+        // Re-apply sizing on every patch, cheap (idempotent: same
         // attrs produce the same inline style), and necessary when
         // user code dynamically swaps the width/height attr (rare
-        // but valid — e.g. `if model.compact then width (chars 12)
+        // but valid: e.g. `if model.compact then width (chars 12)
         // else width (chars 40)`).
         applySizing(node, newView);
         break;
@@ -10652,12 +10652,12 @@
       case 'empty':
         break;
       case 'spacer':
-        // No content, no listeners — nothing to update. The CSS
+        // No content, no listeners: nothing to update. The CSS
         // class drives the layout entirely.
         break;
       case 'toggle': {
-        // Slot 0: <span.mar-toggle-label> — sync text.
-        // Slot 1: <input.mar-toggle-switch> — sync checked.
+        // Slot 0: <span.mar-toggle-label>, sync text.
+        // Slot 1: <input.mar-toggle-switch>, sync checked.
         // Listener on the input reads view.msg from the label via
         // closure, so __marView already updated above is enough.
         const labelSpan = node.querySelector(':scope > .mar-toggle-label');
@@ -10679,7 +10679,7 @@
         applySheetOpenState(node, newView);
         const panel = node.querySelector(':scope > .mar-sheet-panel');
         if (panel) {
-          // Panel's first child is the persistent .mar-sheet-handle —
+          // Panel's first child is the persistent .mar-sheet-handle:
           // diff starts from index 1.
           const oldChildren = oldView.children || [];
           const newChildren = newView.children || [];
@@ -10715,7 +10715,7 @@
           confirmBtn.textContent = confirmDialogAttr(newView, 'confirmLabel');
           confirmBtn.classList.toggle('destructive', confirmDialogAttrRaw(newView, 'destructive'));
         }
-        // No children to diff — the dialog's content is fully
+        // No children to diff: the dialog's content is fully
         // attribute-driven. The view's onConfirm / onCancel
         // handlers live on the (newly-stored) view via setMarView;
         // the listener reads them from there at click-time, so they
@@ -10745,7 +10745,7 @@
         // back button / toolbar actions go DEAD on any page that animates
         // via Time.every (the whole view re-renders every frame, but the
         // bar's content is identical). Keeping the mounted nodes preserves
-        // their identity — and their observer + listeners — so the click
+        // their identity, and their observer + listeners, so the click
         // lands. The observer only toggles mar-nav-scrolled (carried
         // above), so outerHTML is a faithful "did the bar change?" check.
         const chromeSame = oldRow && oldBar
@@ -10760,7 +10760,7 @@
           node.replaceChild(newRow, node.children[0]);
           node.replaceChild(newBar, node.children[1]);
         }
-        // Slot 2: body wrapper. Diff its children — that's where
+        // Slot 2: body wrapper. Diff its children, that's where
         // form/list/etc live, possibly with a focused input below.
         const body = node.querySelector(':scope > .mar-nav-body');
         if (body) {
@@ -10787,14 +10787,14 @@
           // When the editing flag of `onMove` OR `onDelete` flips,
           // the row structure changes (drag handles + delete
           // buttons appear / disappear; listeners get rebound).
-          // Rebuild the section body wholesale — toggling edit
+          // Rebuild the section body wholesale: toggling edit
           // mode is rare (one tap) and a fresh subtree is simpler
           // than diffing every affordance in/out.
           //
           // We only watch the `.editing` flag on onDelete, not the
           // presence of the attr itself: the delete button is gated
           // entirely on editing=true (see attachRowDeleteAffordance
-          // — browse mode shows no destructive control), so the
+          //: browse mode shows no destructive control), so the
           // attr can come and go between renders without visual
           // change as long as editing stays false.
           const oldOnMoveS = getAttrRaw(oldView, 'onMove');
@@ -10810,7 +10810,7 @@
             node.parentNode.replaceChild(fresh, node);
             break;
           }
-          // Stable editing state — keyed reconciliation handles
+          // Stable editing state: keyed reconciliation handles
           // reorders without losing handle wiring (drag listeners
           // are bound to the section-body element, not the rows).
           patchChildrenPositional(body, oldView.children, newView.children, 'uiSection');
@@ -10822,7 +10822,7 @@
           // createDOM loop where these affordances are normally
           // appended. Without this sweep, those rows would render
           // WITHOUT a delete button or drag handle while siblings
-          // have one — the visible "only first row has no delete"
+          // have one: the visible "only first row has no delete"
           // symptom users hit after an Undo.
           //
           // Cheap: O(N) querySelector calls, with the inner work
@@ -10862,7 +10862,7 @@
   // appended; removed entries are detached.
   //
   // Dispatches to patchChildrenKeyed when any child carries a `key`
-  // attr — preserves identity (focus, animation, scroll, custom
+  // attr: preserves identity (focus, animation, scroll, custom
   // state on the DOM node) across reorders. Positional matching is
   // a fast path for the common case (homogeneous static-order
   // lists like form sections); keyed is the right thing for
@@ -10878,18 +10878,18 @@
       const newChild = newChildren[i];
       const domChild = domChildren[i];
       if (!newChild) {
-        // Excess DOM nodes — remove the rest.
+        // Excess DOM nodes: remove the rest.
         while (parentNode.childNodes.length > newChildren.length) {
           parentNode.removeChild(parentNode.lastChild);
         }
         break;
       }
       if (!domChild) {
-        // New child — append.
+        // New child: append.
         parentNode.appendChild(createDOM(newChild));
         continue;
       }
-      // Existing — patch in place.
+      // Existing: patch in place.
       patchDOM(domChild, newChild);
     }
   }
@@ -10904,7 +10904,7 @@
 
   // viewKey extracts the `key` attr value (or null) from a view.
   // Lives next to hasAnyKey so call sites pull identity in one
-  // place — if we later move keys off the attrs list onto a
+  // place, if we later move keys off the attrs list onto a
   // dedicated field of VView, only this one helper changes.
   function viewKey(view) {
     if (!view || !view.attrs) return null;
@@ -10927,7 +10927,7 @@
   //      - If no key match (new entry): create a fresh DOM node.
   //      - If a new child has no key, fall back to creating fresh.
   //        (Mixing keyed and unkeyed siblings is a smell; we don't
-  //        attempt clever matching — the unkeyed ones are treated
+  //        attempt clever matching: the unkeyed ones are treated
   //        as always-new.)
   //   3. After the walk, remove any old DOM nodes whose key wasn't
   //      consumed by the new list (i.e., the item was removed).
@@ -10950,7 +10950,7 @@
     // Step 2: walk newChildren in order, reordering DOM as we go.
     // `cursor` tracks the position where the next reused/created
     // node should land. We use insertBefore(node, anchor) where
-    // anchor is the node currently at `cursor` — that's the only
+    // anchor is the node currently at `cursor`: that's the only
     // primitive that handles "move to position N" correctly even
     // when the node is already somewhere else in the parent.
     const consumed = new Set();
@@ -10969,7 +10969,7 @@
         // changes; preserves the DOM identity we just moved).
         patchDOM(node, newChild);
       } else {
-        // New entry — create fresh and insert at position i.
+        // New entry: create fresh and insert at position i.
         const node = createDOM(newChild);
         parentNode.insertBefore(node, anchor);
       }
@@ -11012,7 +11012,7 @@
   // `#mar-root`. After N reloads, every `history.back()` would
   // fire N+1 render() closures in parallel, each tied to a stale
   // mountPages scope, racing to startViewTransition (only one is
-  // allowed in flight — the rest reject silently). The visible
+  // allowed in flight: the rest reject silently). The visible
   // symptom is the back button needing several presses to
   // actually advance the URL.
   //
@@ -11025,14 +11025,14 @@
 
   // mountPages mounts a list of pages with URL-based routing. A
   // single-page app is just a list of one page (path "/"). Each page
-  // has its own model — selected by window.location.pathname.
+  // has its own model: selected by window.location.pathname.
   // Falls back to the first page when the URL doesn't match any path.
   // iOS Safari needs a no-op touch listener on `document` to enter
   // its "delegated event delivery" mode. WITHOUT this, after a
   // long-touch gesture (like our drag reorder), Safari leaves the
   // page in a state where the next tap on any button is consumed
   // by gesture-state cleanup instead of firing the button's click
-  // handler — operator must tap twice. The fix is documented voodoo
+  // handler: operator must tap twice. The fix is documented voodoo
   // (the same trick FastClick used in the late 2010s, the same
   // reason jQuery Mobile shipped an empty body click handler):
   // adding a passive listener to `document` flips Safari onto a
@@ -11074,7 +11074,7 @@
       if (authPending) return authPending;
       authPending = fetch('/_auth/whoami', { credentials: 'same-origin' })
         // Covers the app that navigates between protected pages without
-        // ever calling a service — whoami is the only traffic it makes.
+        // ever calling a service: whoami is the only traffic it makes.
         .then(r => { noteServerIdentity(r); return r; })
         .then(r => r.ok ? r.text() : Promise.reject('HTTP ' + r.status))
         .then(t => {
@@ -11096,7 +11096,7 @@
     // buildPathURL) live at the IIFE level so they're reachable from
     // both makeBuiltinEnv (linkTo / Nav.pushTo) and mountPages.
 
-    // `fns()` returns { init, update, view, subscriptions } — a function
+    // `fns()` returns { init, update, view, subscriptions }: a function
     // rather than four values because a page built by Page.withShared has to
     // resolve them against the CURRENT shared model on every use. For an
     // ordinary page it closes over one ctor and never changes.
@@ -11109,7 +11109,7 @@
       const initializedKeys = {}; // preservation key → bool
 
       // Apply User and Params in the right order (User first, then
-      // Params — matches the type signatures in env.go). Either may
+      // Params: matches the type signatures in env.go). Either may
       // be null/undefined when irrelevant.
       const applyExtras = (fn, user, params) => {
         let f = fn;
@@ -11126,14 +11126,14 @@
         // pages declare init as the tuple value itself, and the
         // protected/dynamic flavors became it once applyExtras fed
         // them User/Params. No vestigial unit argument. Unwrapping is
-        // pure — the effect is only run if we go on to adopt it — so it
+        // pure, the effect is only run if we go on to adopt it, so it
         // is safe to do here, before deciding whether to keep `prior`.
         const initial = unwrapModelTuple(initFnApplied);
         const prior = preservedScreenModels[key];
         // A preserved model is kept only if it still has the SHAPE this
         // program's init produces. Rendering it was the old test, and it
         // let a mismatch through whenever the view happened not to read
-        // the field that changed — the failure then surfaced on the first
+        // the field that changed: the failure then surfaced on the first
         // `update` that did, as a runtime error far from its cause.
         //
         // The comparison is the top-level field set only. A nested change
@@ -11164,12 +11164,12 @@
         isProtected,
         isDynamic,
         // Page.sheet: presented OVER the page navigated from, rather
-        // than replacing it. Only render()'s paint step reads this —
+        // than replacing it. Only render()'s paint step reads this:
         // routing, auth, init, dispatch and subscriptions are identical
         // to any other page.
         isSheet: !!isSheet,
         // Per-key state. activeKey is set by currentPage() before
-        // render touches model / params — keeping these as getters
+        // render touches model / params: keeping these as getters
         // means the rest of the runtime stays oblivious to the
         // single-vs-many model split.
         activeKey: path,
@@ -11206,7 +11206,7 @@
       };
 
       if (!isProtected && !isDynamic) {
-        // Static public pages can init eagerly — no auth dependency,
+        // Static public pages can init eagerly: no auth dependency,
         // no URL-derived params.
         initWith(null, null, path);
       }
@@ -11229,7 +11229,7 @@
       if (p0.k !== 'C') continue;
 
       // Page.withShared wraps any of the four ctors below. Unwrap it here so
-      // everything downstream — routing, auth, init, dispatch, subs — sees an
+      // everything downstream, routing, auth, init, dispatch, subs, sees an
       // ordinary page and stays oblivious to shared entirely.
       //
       // The builder is re-applied only when the model actually changes;
@@ -11255,7 +11255,7 @@
       // gate (redirect resolved from globalThis.__marAuthSignInPath, set by
       // the Auth.config builtin). __DynamicPage / __DynamicProtectedPage also
       // enable URL-pattern matching with `:param` segments. (Page.adminProtected
-      // pre-applies its AdminSession and emits a plain __Page — see its builtin.)
+      // pre-applies its AdminSession and emits a plain __Page: see its builtin.)
       const pathV = p.args[0], titleV = p.args[4];
       const path = pathV.s;
       const title = (titleV && titleV.k === 'S') ? titleV.s : '';
@@ -11296,7 +11296,7 @@
         if (params !== null) {
           // Dynamic pages key model state by URL, not by path: navigating
           // /notes/abc → /notes/xyz is a fresh model slot, not a re-render.
-          // (Static pages key by path — see the literal match above.)
+          // (Static pages key by path: see the literal match above.)
           dp.page.activeKey = urlPath;
           dp.page.params = params;
           return dp.page;
@@ -11319,7 +11319,7 @@
     // Longest declared route that is a proper PATH PREFIX of this one:
     // /classes/3/attendance yields /classes/3, params and all, because the
     // prefix of a concrete url is itself concrete. Routes that nest on screen
-    // nest in the url too — if they don't, that is a shape worth noticing in
+    // nest in the url too, if they don't, that is a shape worth noticing in
     // the route table rather than a case to paper over here.
     //
     // A presented route with no such parent still gets the app's first page,
@@ -11353,7 +11353,7 @@
     let mountedPath = null;   // the LIVE page in the DOM (drives the on-nav init cleanup)
     // Runtime-failure state (ADR 0020). Declared up here with the rest of the
     // render bookkeeping rather than beside the functions that use it, because
-    // render() runs several times before that point in this body — a `let`
+    // render() runs several times before that point in this body: a `let`
     // further down would be in its temporal dead zone.
     let dispatchErrorBanner = null;  // the banner over a still-usable screen
     let pageFailure = null;          // signature of the failure currently painted
@@ -11364,7 +11364,7 @@
     let presentedKey = null;   // route currently painted in the overlay
     let presentedDOM = null;   // its root node, kept for patching
     let presentedHost = null;  // the .mar-sheet-backdrop we own
-    let drawnPath = null;     // the page currently PAINTED — differs from mountedPath only
+    let drawnPath = null;     // the page currently PAINTED: differs from mountedPath only
                               // while time-travel draws a past frame from another page
     let routerInstalled = false;
     // Tracks the marDepth at the last DOM-swap render. The next swap
@@ -11413,7 +11413,7 @@
     // (Safari macOS two-finger swipe-back is the canonical case),
     // we skip our own startViewTransition for the next render so
     // animations don't stack. The flag is set by the popstate
-    // handler below — it reads PopStateEvent.hasUAVisualTransition,
+    // handler below: it reads PopStateEvent.hasUAVisualTransition,
     // a standard property browsers expose during traversal-driven
     // visual transitions. Reset to false after a single render.
     let skipNextViewTransition = false;
@@ -11425,13 +11425,13 @@
     //     (logout, switching modes); use 'fade' (no direction).
     //   - Nav.replaceFresh → depth resets to 0; semantically it's
     //     ALSO a context change (sign-in completed, redirected
-    //     after auth-expired), not a "go back" — use 'fade'.
+    //     after auth-expired), not a "go back": use 'fade'.
     //   - Nav.push       → depth grows; use 'forward' slide.
     //   - browser back   → depth shrinks; use 'back' slide.
     //
     // The depth heuristic alone would render replaceFresh as 'back'
     // (because newDepth < lastSeen), which implies "going back into
-    // history" — visually wrong since the previous flow is gone.
+    // history": visually wrong since the previous flow is gone.
     // Set just before render() by the nav primitives below; read
     // and cleared inside render().
     let pendingNavKind = null;
@@ -11440,29 +11440,29 @@
     // this and they must never disagree: the slide animation (which way
     // the screens move) and the re-init guard (whether the destination
     // gets a fresh model or its old one back). A user who SEES a back
-    // slide must GET the screen they left — so both answers come from
+    // slide must GET the screen they left, so both answers come from
     // here, from one set of rules.
     //
-    //   'none'    — first render of this mountPages call (cold load,
+    //   'none'    - first render of this mountPages call (cold load,
     //               direct URL, hot reload): there is no previous
     //               screen to have left. Also same-depth key changes.
-    //   'fade'    — Nav.replace / Nav.replaceFresh: a context change
+    //   'fade'    - Nav.replace / Nav.replaceFresh: a context change
     //               (logout, sign-in completed), not a stack movement.
-    //   'forward' — Nav.push and anything else that grows the depth.
-    //   'back'    — the depth shrank: browser Back, swipe-back, or a
+    //   'forward': Nav.push and anything else that grows the depth.
+    //   'back'    - the depth shrank: browser Back, swipe-back, or a
     //               history.back() from app code.
     //
     // Depth is a counter, so one case it cannot see: the browser's
     // FORWARD button after a Back. That grows the depth exactly like a
     // push, so the screen re-inits rather than being restored. Telling
     // the two apart would mean stamping a monotonic id on every history
-    // entry — real machinery for a button that app-shaped UIs rarely
+    // entry: real machinery for a button that app-shaped UIs rarely
     // show and iOS doesn't have at all. Left as is, deliberately.
     //
     // Pure: reads state, mutates none. render() calls it twice in one
     // pass (guard first, swap later) and both must get the same answer,
-    // so the bookkeeping it depends on — firstRender, lastSeenNavDepth,
-    // pendingNavKind — is only advanced by the swap, at the end.
+    // so the bookkeeping it depends on: firstRender, lastSeenNavDepth,
+    // pendingNavKind, is only advanced by the swap, at the end.
     function navKind() {
       if (firstRender) return 'none';
       if (pendingNavKind === 'replace' || pendingNavKind === 'replaceFresh') return 'fade';
@@ -11474,7 +11474,7 @@
 
     // Games own the whole page: when the mounted root view is a canvas,
     // extend .mar-canvas's selection armor to <html>/<body> (see the
-    // html.mar-canvas-page CSS). Toggled — not just added — so SPA
+    // html.mar-canvas-page CSS). Toggled, not just added, so SPA
     // navigation from a game page back to a regular UI page restores
     // normal text selection.
     function syncCanvasRootClass() {
@@ -11487,7 +11487,7 @@
     // Delegated, so one listener per host covers every descendant anchor.
     // Named at this scope (rather than inline where it is installed)
     // because there are two hosts: #mar-root and, when a route is
-    // presented, the sheet overlay — which is not inside #mar-root.
+    // presented, the sheet overlay, which is not inside #mar-root.
     const onLinkClick = (ev) => {
       const a = ev.target.closest && ev.target.closest('a[href^="/"]');
       if (!a) return;
@@ -11509,7 +11509,7 @@
 
     // ---------- Presented routes (Page.sheet) ----------
     //
-    // Same page machinery as everything else — same routing, same auth
+    // Same page machinery as everything else: same routing, same auth
     // gate, same init, same dispatch, same subscriptions. The ONLY thing
     // that differs is where the view is painted: into a sheet over the
     // previous page instead of into #mar-root in its place.
@@ -11534,7 +11534,7 @@
       host.appendChild(panel);
       document.body.appendChild(host);
       host.addEventListener('click', (ev) => {
-        // Only the backdrop itself — clicks that bubbled up from the
+        // Only the backdrop itself: clicks that bubbled up from the
         // panel's own content are not a dismissal.
         if (ev.target === host) dismissPresented();
       });
@@ -11545,7 +11545,7 @@
       presentedHost = host;
       // Force a style flush, THEN open. The browser needs a computed
       // closed state to transition from (same reason the backdrop is
-      // never display:none) — reading a layout property provides it
+      // never display:none), reading a layout property provides it
       // synchronously. requestAnimationFrame would also work while the
       // tab is visible, but its callbacks are parked in a background
       // tab, and a sheet that stays at opacity 0 with pointer-events
@@ -11610,7 +11610,7 @@
     // The page-level error boundary (ADR 0020). Everything drawing a screen
     // goes through here: `init`, `subscriptions`, `view` and the DOM builder.
     // A throw from any of them means the same thing to the person looking at
-    // it — this screen could not be shown — so they get the same treatment.
+    // it, this screen could not be shown, so they get the same treatment.
     function render() {
       try {
         renderPage();
@@ -11626,7 +11626,7 @@
 
       // ── Re-init on navigation: push is fresh, pop restores ──
       // Going somewhere NEW runs that page's `init` from scratch, as if
-      // it were the first visit, and re-fires its init effect — so you
+      // it were the first visit, and re-fires its init effect, so you
       // never open a screen showing the previous visit's stale data.
       // Going BACK restores the screen you left, model intact, no
       // refetch. That's a navigation stack: the pages below the top
@@ -11643,23 +11643,23 @@
       // The web used to re-init unconditionally, which was the one real
       // behavioral gap between the two runtimes.
       //
-      // We detect a genuine navigation — not a same-page re-render, and
-      // not a hot-reload remount — with two facts read from the PREVIOUS
+      // We detect a genuine navigation, not a same-page re-render, and
+      // not a hot-reload remount: with two facts read from the PREVIOUS
       // render: a page was already `mounted`, AND the active key changed.
       //
       // Hot reload (marReload) is unaffected: it re-runs mountPages with a
       // null `mounted`, so this guard is skipped and the module-level
-      // preservedScreenModels is reused — you keep your screen across saves.
+      // preservedScreenModels is reused: you keep your screen across saves.
       // Time-travel keeps its own frame history, untouched here.
       //
       // To share data across screens (instead of refetching per page),
-      // lift it out of the page model — the server is the shared source in
+      // lift it out of the page model: the server is the shared source in
       // fullstack apps.
       if (mounted != null && mountedPath !== pg.activeKey && navKind() !== 'back') {
         pg.resetKey(pg.activeKey);
         // Claim the navigation HERE, not in swap(). swap() also assigns
         // mountedPath, but it runs after this render computes a view and
-        // (under View Transitions) a frame later still — and the init
+        // (under View Transitions) a frame later still, and the init
         // effect we are about to run fires in between.
         //
         // An init effect that dispatches WITHOUT waiting on the network
@@ -11667,7 +11667,7 @@
         // Time.now` has its value immediately, so the Msg lands before
         // swap() ever executes. With mountedPath still pointing at the
         // PREVIOUS page, that nested render saw a key change again, reset
-        // the key it had just initialized, and ran init a second time —
+        // the key it had just initialized, and ran init a second time:
         // which fired the effect again. Unbounded recursion: a frozen UI
         // and thousands of identical requests from one tap, with the page
         // model stuck at its init values because every cycle replaced it.
@@ -11682,7 +11682,7 @@
       // Page.protected gating: ensure we know who the user is before
       // mounting. If unauthed, navigate to the sign-in path declared
       // in Auth.config.signInPage. If we don't have an answer yet,
-      // fire Auth.me and bail — the .then handler will re-call
+      // fire Auth.me and bail: the .then handler will re-call
       // render() once authUser is populated.
       if (pg.isProtected) {
         if (authUser == null) {
@@ -11699,7 +11699,7 @@
           }
           // Replace history (no back-button to a page the user can't
           // see) and route to the sign-in page. Marked as 'replace'
-          // so the cross-fade animation fires — the protected page
+          // so the cross-fade animation fires: the protected page
           // never visibly mounted, so a slide would be misleading.
           pendingNavKind = 'replace';
           replaceNav(signInPath);
@@ -11718,8 +11718,8 @@
         }
       } else {
         // Static public pages. These are init'd eagerly in
-        // buildPageEntry — no user to wait for, no params to read from
-        // the URL — but eager means ONCE, at mount. They still need
+        // buildPageEntry: no user to wait for, no params to read from
+        // the URL, but eager means ONCE, at mount. They still need
         // this branch, because the guard above retires the key on every
         // push and something has to run init again afterwards.
         //
@@ -11738,8 +11738,8 @@
         // AN INIT EFFECT CAN NAVIGATE, AND THAT RE-ENTERS THIS FUNCTION.
         //
         // Redirecting out of `init` is a supported pattern and the natural
-        // way to write a bootstrap gate — "no handle yet, go and pick one"
-        // — because deciding in the view means a flash of the page you were
+        // way to write a bootstrap gate: "no handle yet, go and pick one"
+        //, because deciding in the view means a flash of the page you were
         // never meant to see. So the effect below can call Nav.replaceTo,
         // which navigates and calls render() itself, and that nested pass
         // runs to completion before this line returns.
@@ -11750,7 +11750,7 @@
         // the nested pass was entitled to invalidate. The reported bug:
         // signing up put you on a protected page whose init redirected to
         // /setup, and the outer render went on to draw the page you had
-        // left with a user it no longer knew — the view threw, the failure
+        // left with a user it no longer knew: the view threw, the failure
         // screen flashed, and the app was wedged with the DOM and the
         // runtime disagreeing about which page was mounted.
         //
@@ -11763,7 +11763,7 @@
       }
       // Per-page browser-tab title. Empty title (the default when the
       // user omits `title` from Page.create) leaves whatever the host
-      // HTML had alone — useful in cases where a non-mar wrapper sets
+      // HTML had alone: useful in cases where a non-mar wrapper sets
       // a richer title.
       if (pg.title && document.title !== pg.title) {
         document.title = pg.title;
@@ -11773,14 +11773,14 @@
       // stops its timers and the new page's subscriptions start.
       // Subscriptions reconcile against the LIVE model. While the dev panel is
       // inspecting a past frame (traveling), strip the clock sources so the
-      // world's autonomous timers freeze — non-clock subs keep running.
+      // world's autonomous timers freeze: non-clock subs keep running.
       let desiredSub = pg.subscriptions ? apply(applyExtras(pg, pg.subscriptions), pg.model) : null;
       // Shared subs belong to the STORE, not the screen, so they join every
       // render's desired set instead of starting and stopping with the page.
       // A `Time.every 1000` here is an app-wide heartbeat.
       //
       // The reconciler merges by key, so a shared Time.every 1000 and a
-      // page's own are one timer with two taggers — and each tagger knows
+      // page's own are one timer with two taggers, and each tagger knows
       // which update loop it feeds (see deliverSub).
       if (sharedStores.size > 0) {
         let sharedItems = [];
@@ -11795,7 +11795,7 @@
       if (preservedTimeTravel && (preservedTimeTravel.traveling || timeTravelPanelOpen())) desiredSub = stripClockSubs(desiredSub);
       reconcileSubs(desiredSub);
       // Read-only time-travel: while inspecting, DRAW the selected frame's
-      // snapshot, but never touch pg.model — the live model keeps advancing
+      // snapshot, but never touch pg.model: the live model keeps advancing
       // underneath (async results append at the tail). Only applies when the
       // inspected frame belongs to the page we're on; a cross-page frame just
       // shows the live model (it can't reflect visibly here anyway).
@@ -11823,13 +11823,13 @@
       }
       const viewVal = viewWithUser(viewPg, drawModel);
       const root = document.getElementById('mar-root');
-      // On page change, throw away the old DOM — diffing across a
+      // On page change, throw away the old DOM: diffing across a
       // navigation gives no useful work. Use activeKey (URL-based for
       // dynamic pages) so /notes/abc → /notes/xyz also resets the DOM.
       // Presentation (Page.sheet). Laying a route over another one needs
       // another one to lay it over: reached by navigation there is a page
-      // already painted, but opened cold — deep link, reload, shared URL
-      // — there is nothing behind it, and the route renders as an
+      // already painted, but opened cold: deep link, reload, shared URL
+      //: there is nothing behind it, and the route renders as an
       // ordinary full-screen page. Same URL, same model, whole screen.
       const presenting = viewPg.isSheet
         && (coveredKey !== null || (mounted != null && drawnPath !== viewPg.activeKey));
@@ -11838,7 +11838,7 @@
         closePresented();
         // The covered page is the live one again. Normally the DOM swap
         // re-stamps mountedPath, but revealing a covered page takes the
-        // patch path below (its DOM never left), so nothing else would —
+        // patch path below (its DOM never left), so nothing else would:
         // and a stale mountedPath would stop the NEXT presentation from
         // re-initializing.
         mountedPath = pg.activeKey;
@@ -11848,7 +11848,7 @@
         paintPresented(viewPg, viewVal);
         // Advance the same nav bookkeeping the swap advances. Skipping it
         // would leave lastSeenNavDepth at the covered page's depth, so
-        // the dismissal would read as 'none' instead of 'back' — and the
+        // the dismissal would read as 'none' instead of 'back', and the
         // re-init guard would wipe the covered page's model instead of
         // handing it back.
         firstRender = false;
@@ -11859,7 +11859,7 @@
         // re-init guard used at the top of this render (see navKind).
         // 'forward' slides in from the right with the old screen
         // parallaxing left; 'back' reverses it; 'fade' cross-fades
-        // with a subtle scale — iOS-modern, what Photos and Sign in
+        // with a subtle scale: iOS-modern, what Photos and Sign in
         // with Apple do between non-hierarchical contexts, reading as
         // "you stepped into a new place" without implying a stack
         // direction; 'none' doesn't animate.
@@ -11889,7 +11889,7 @@
         const swap = () => {
           // Its own boundary: under View Transitions this body runs a frame
           // later, so render()'s try/catch has already returned and a throw
-          // from the recompute below would escape as an unhandled rejection —
+          // from the recompute below would escape as an unhandled rejection:
           // the exact vanishing act ADR 0020 exists to end.
           try {
             swapDOM();
@@ -11904,12 +11904,12 @@
           // callback ASYNCHRONOUSLY (next frame), so a fast init-effect
           // fetch can resolve and advance pg.model BEFORE the swap fires.
           // Mounting the stale snapshot would leave the old "Loading…"
-          // view on screen even though the data already arrived — the
+          // view on screen even though the data already arrived: the
           // bug where a freshly-navigated page (e.g. a protected page's
           // dashboard right after sign-in) stuck on "Loading…" until
           // time-travel forced a fresh mount.
           // While time-traveling, mount the frozen frame snapshot (viewVal),
-          // not a live recompute — the live model is intentionally paused.
+          // not a live recompute: the live model is intentionally paused.
           mounted = createDOM(isTraveling ? viewVal : viewWithUser(pg, pg.model));
           root.appendChild(mounted);
           syncCanvasRootClass();
@@ -11920,7 +11920,7 @@
           drawnPath = viewPg.activeKey;
           if (shouldScrollTop) {
             // `auto` (not 'smooth') because the page itself is
-            // animating in via View Transitions / cross-fade —
+            // animating in via View Transitions / cross-fade:
             // adding a second animated scroll on top reads as
             // jittery. Instant reset is correct here.
             window.scrollTo({ top: 0, left: 0, behavior: 'auto' });
@@ -11930,7 +11930,7 @@
             || !document.startViewTransition
             || prefersReducedMotion()
             || skipNextViewTransition) {
-          // Reset the flag — only the immediately-following render
+          // Reset the flag: only the immediately-following render
           // should skip; subsequent button-back clicks need their
           // own transition.
           skipNextViewTransition = false;
@@ -11944,14 +11944,14 @@
           document.documentElement.dataset.marNavDir = dir;
           const t = document.startViewTransition(swap);
           t.finished
-            .catch(() => { /* user-cancelled / skipped — ignore */ })
+            .catch(() => { /* user-cancelled / skipped: ignore */ })
             .finally(() => {
               delete document.documentElement.dataset.marNavDir;
             });
         }
       } else {
         // Same page, just an MVU re-render (model changed; URL didn't).
-        // Patch in place — no view-transition, no animation. Clear
+        // Patch in place: no view-transition, no animation. Clear
         // pendingNavKind even though we didn't consume it for direction
         // selection above (the swap branch did), so a stale flag from
         // an early-exit render (e.g. authUser fetch race) doesn't leak
@@ -11995,11 +11995,11 @@
     // pushNav / replaceNav wrap history.pushState / replaceState
     // with the bookkeeping the nav chrome reads back later:
     //
-    //   marDepth   — depth counter for the auto back button
+    //   marDepth   - depth counter for the auto back button
     //                (buildNavigationChrome reads currentNavDepth())
     //                and the view-transition direction detector
     //                (render() compares old vs new depth).
-    //   prevTitle  — title of the page we\'re LEAVING, captured
+    //   prevTitle  - title of the page we\'re LEAVING, captured
     //                from document.title at push time. The back
     //                button on the next page reads this to render
     //                "‹ <where back goes>" instead of a generic
@@ -12013,7 +12013,7 @@
     // the back target stays the same).
     // A navigation supersedes any sheet's queued history cleanup: cancel
     // the deferred history.back() (see syncSheetHistory) and forget the
-    // open outlets — navigating unmounts the page that owned those sheets,
+    // open outlets: navigating unmounts the page that owned those sheets,
     // so their synthetic entries are ours to reuse or discard.
     function adoptPendingSheetEntry() {
       sheetPendingBack = null;
@@ -12047,7 +12047,7 @@
     }
 
     // Expose programmatic navigation so Nav.push / Nav.replace can
-    // reach into this closure. Last call wins — successive mountPages
+    // reach into this closure. Last call wins: successive mountPages
     // (e.g. hot-reload) replace the table.
     globalThis.__marNav = {
       push: (path) => {
@@ -12062,7 +12062,7 @@
         // saying why, because it reads like superstition and was very
         // nearly removed as such.
         //
-        // It is not really "auth may have changed" — it is a refetch
+        // It is not really "auth may have changed": it is a refetch
         // before the destination draws. Nulling the cache makes the
         // protected-page gate in renderPage block, fetch /_auth/whoami,
         // and only then render. That is the one thing that makes an edit
@@ -12084,7 +12084,7 @@
       // replaceFresh: like replace, but also resets marDepth to 0 so
       // the destination has no back-button into the (now-completed)
       // flow that brought us here. Used by Auth.completeSignIn and by the
-      // auth-expired redirect — both are entry-point transitions
+      // auth-expired redirect: both are entry-point transitions
       // where "going back" makes no sense (you'd land on a page you
       // either can't access yet, or that you just finished with).
       replaceFresh: (path) => {
@@ -12098,7 +12098,7 @@
 
     // Forget who is signed in. Exposed on globalThis because the builtin
     // that needs it (Auth.logout) is built in makeBuiltinEnv, outside this
-    // closure — the same reason __marNav is exposed. Logout used to rely on
+    // closure: the same reason __marNav is exposed. Logout used to rely on
     // the app happening to follow it with a Nav.replace, which is not a
     // contract, just a habit most sign-out handlers share.
     globalThis.__marAuthForget = () => { authUser = null; };
@@ -12121,7 +12121,7 @@
     // match a dynamic pattern. Hoisted out of the __MAR_DEV__ block (like the
     // helpers above) so render()'s cross-page time-travel branch can resolve
     // which page a past frame belongs to. Harmless in production (never called
-    // — preservedTimeTravel is null so the traveling branch is dead).
+    //: preservedTimeTravel is null so the traveling branch is dead).
     function lookupPageForFrame(framePath) {
       if (pages[framePath]) return pages[framePath];
       for (const dp of dynamicPages) {
@@ -12137,12 +12137,12 @@
     // pagePath, time } so the time-travel panel can scrub through history.
     // The panel reads `timeTravel.frames` and `timeTravel.cursor`; jumping
     // sets the page's model directly and re-renders. Live dispatch resets
-    // travel mode and (if we're not at the end of history) branches —
+    // travel mode and (if we're not at the end of history) branches:
     // discarding frames after the cursor so the user's new action becomes
     // the new "present".
     //
     // Frames are validated LAZILY (see frameRenders + jumpToFrame): a reload no
-    // longer re-renders the whole history — that made reload cost scale with a
+    // longer re-renders the whole history: that made reload cost scale with a
     // 60fps app's playtime (thousands of frames, each re-running the full view).
     // A frame is checked only when it's about to be shown: the one under the
     // cursor on reload (if parked in the past), then each frame you scrub to.
@@ -12153,7 +12153,7 @@
     // snapshots? Both models must render: nextModel is what a forward jump
     // shows, prevModel what a jump BACK through this frame shows. Protected
     // pages before we know the user, and dynamic pages (whose Params only
-    // exist for the live URL), are assumed renderable — same as the old pass.
+    // exist for the live URL), are assumed renderable: same as the old pass.
     function frameRenders(frame) {
       const pg = lookupPageForFrame(frame.pagePath);
       if (!pg) return false;
@@ -12170,7 +12170,7 @@
     {
       // Lazy: don't re-validate the whole history on reload. Just clamp the
       // cursor into range and re-derive `traveling`. If we reloaded while
-      // parked on a PAST frame, render() is about to draw that one frame — so
+      // parked on a PAST frame, render() is about to draw that one frame, so
       // validate just it; if the reloaded view can't render it the recorded
       // history is stale (the model shape changed), so drop it and snap back to
       // the live model rather than crash. Every other frame is validated the
@@ -12194,7 +12194,7 @@
       // Lazy validation: the snapshot we're about to draw must still render
       // under the current (possibly hot-reloaded) view. -1 is the initial state
       // = frame 0's prevModel, so frame 0 covers it. If it no longer renders,
-      // the recorded history predates a shape-changing reload — drop it and
+      // the recorded history predates a shape-changing reload: drop it and
       // return to the live model instead of crashing render(). Always refresh
       // the panel here (even mid slider-drag): the slider's range just changed.
       const checkIdx = targetIdx < 0 ? 0 : targetIdx;
@@ -12207,7 +12207,7 @@
         return;
       }
       // Read-only: we only move the cursor + traveling flag. We do NOT write
-      // pg.model — the live model stays live and keeps advancing. render()
+      // pg.model: the live model stays live and keeps advancing. render()
       // draws the frame's snapshot (see drawModel there) while traveling.
       // "Latest" (cursor at the end) means traveling = false → we go back to
       // showing the live model, and clock subs resume.
@@ -12216,7 +12216,7 @@
       render();
       // skipPanelRefresh keeps the dock panel intact during slider drags.
       // Re-rendering the panel rebuilds the <input>, which kills the
-      // mouse drag mid-stream — without this guard the user can only
+      // mouse drag mid-stream: without this guard the user can only
       // step one frame per click instead of scrubbing freely.
       if (!opts || !opts.skipPanelRefresh) {
         pushTimeTravelState();
@@ -12235,8 +12235,8 @@
 
     // resetTimeTravel re-runs the current page's init function (getting
     // a fresh (model, effect) pair) and wipes the frame history. The
-    // resulting init effect is fired so any startup work — HTTP fetch,
-    // initial timer, etc. — re-triggers as if the page was just loaded.
+    // resulting init effect is fired so any startup work: HTTP fetch,
+    // initial timer, etc.: re-triggers as if the page was just loaded.
     // Multi-page apps: only the current page is reset; siblings keep
     // whatever model they last had.
     function resetTimeTravel() {
@@ -12244,14 +12244,14 @@
       if (!pg || !pg.init) return;
       // For protected pages, init takes the User as first arg. Skip
       // reset when we don't have one (the page itself wouldn't render
-      // anyway — render() routes to redirect).
+      // anyway: render() routes to redirect).
       if (pg.isProtected && getUser() == null) return;
       // Apply User then Params (if present), matching the init type
       // signature. applyExtras handles the four flavors uniformly.
       const initFn = applyExtras(pg, pg.init);
       const fresh = unwrapModelTuple(apply(initFn, VUnit()));
       pg.model = fresh.model;
-      // Allow the init effect to fire again on the next render path —
+      // Allow the init effect to fire again on the next render path:
       // mountPages gates it via initEffectsRun (keyed on activeKey so
       // dynamic pages reset cleanly per-URL), which we toggle off here.
       initEffectsRun[pg.activeKey] = false;
@@ -12283,7 +12283,7 @@
           pulse: (s) => !!s.traveling,
         },
         render: renderTimeTravelPanel,
-        // Seed with whatever survived hot-reload — registerPanel replaces
+        // Seed with whatever survived hot-reload: registerPanel replaces
         // the panel definition (and state), so without this we'd zero the
         // history visually even though `timeTravel` (the closure variable)
         // still holds the preserved frames.
@@ -12299,7 +12299,7 @@
     // After a hot-reload that preserved the model, restore the page's
     // model from the latest frame too. mountPages above already restored
     // the model from preservedScreenModels (which is updated on every
-    // dispatch), so this would normally be a no-op — but if the user
+    // dispatch), so this would normally be a no-op, but if the user
     // was time-traveling at reload time, the live model is the frame
     // they had jumped to, and we want the panel state to reflect that.
     if (timeTravel.frames.length > 0) {
@@ -12315,10 +12315,10 @@
       const cursor = state.cursor;
       // Repaints the model viewer for a given cursor. Declared here (assigned
       // further down, where the viewer is built) so the slider's live-drag
-      // handler can call it — the handler only fires after render() completes.
+      // handler can call it: the handler only fires after render() completes.
       let paintModel = null;
       // The scrubbable window is `total` frames, but older ones may have been
-      // dropped — `dropped` is how many, so displayed numbers match the badge's
+      // dropped: `dropped` is how many, so displayed numbers match the badge's
       // ever-growing count (frame idx 0 is really action #(dropped+1)).
       const dropped = Math.max(0, (state.total || total) - total);
       const trueTotal = total + dropped;
@@ -12372,7 +12372,7 @@
       // app + status text live but skip the full panel re-render so the
       // <input> survives the drag (otherwise the dock would rebuild it
       // mid-mousedown and the user could only step one frame per click).
-      // `onchange` fires on release — that's when we sync the panel
+      // `onchange` fires on release: that's when we sync the panel
       // (including the row-list highlight, traveling banner, etc.).
       const slider = document.createElement('input');
       slider.type = 'range';
@@ -12415,8 +12415,8 @@
       {
         // The panel is only rendered while it's the open dock section, and
         // opening it freezes the world (render strips clock subs whenever the
-        // panel is open). So the banner shows in BOTH states — scrubbed back
-        // vs. sitting at the present — and closing the panel is what resumes.
+        // panel is open). So the banner shows in BOTH states: scrubbed back
+        // vs. sitting at the present, and closing the panel is what resumes.
         const note = document.createElement('div');
         note.textContent = state.traveling
           ? 'Paused — inspecting a past frame (read-only). Close the panel to resume.'
@@ -12430,7 +12430,7 @@
         container.appendChild(note);
       }
 
-      // Model viewer — the actual Mar state at the selected frame. We keep every
+      // Model viewer: the actual Mar state at the selected frame. We keep every
       // frame's prev/nextModel, so this is the real model you're paused on:
       // cursor -1 shows the initial state (frame 0's prevModel), otherwise the
       // frame's nextModel. Top-level record fields go one-per-line; nested values
@@ -12451,13 +12451,13 @@
       modelBox.style.border = '1px solid #374151';
       modelBox.style.borderRadius = '4px';
       modelBox.style.padding = '6px 8px';
-      modelBox.style.flex = '1';        // right column — takes the width the list leaves
+      modelBox.style.flex = '1';        // right column: takes the width the list leaves
       modelBox.style.minHeight = '0';   // so it fills the row height and scrolls internally
       modelBox.style.overflow = 'auto';
       modelBox.style.whiteSpace = 'pre-wrap';
       modelBox.style.wordBreak = 'break-word';
       // paintModel is referenced by slider.oninput above; that handler only runs
-      // on a real drag, long after this render defines it — so the forward ref is
+      // on a real drag, long after this render defines it, so the forward ref is
       // safe. Keeping it here keeps the whole model section in one place.
       paintModel = (idx) => {
         const m = modelAt(idx);
@@ -12483,7 +12483,7 @@
       // not appended here.
 
       // Frame list (newest first). Fills the remaining vertical space
-      // inside the panel and is the only scrollable region — controls /
+      // inside the panel and is the only scrollable region: controls /
       // banners stay sticky above it. Marked with data-scroll-key so
       // the dock preserves scroll position across re-renders.
       const list = document.createElement('div');
@@ -12538,7 +12538,7 @@
       }
       // Bottom row: the earliest state we can still reach. When nothing has
       // been dropped it's the true initial state (numbered 0). When frames
-      // HAVE been dropped, this row is NOT a real action — action #dropped and
+      // HAVE been dropped, this row is NOT a real action: action #dropped and
       // everything before it were evicted, so their msgs (Tick? Tapped?) are
       // gone. Show a '⋯' marker instead of a slot number so it reads as a state
       // floor, not "action #dropped = (oldest kept state)".
@@ -12549,7 +12549,7 @@
       }
       // Two columns filling the remaining height: frame timeline (left) and the
       // model inspector (right). Each carries a small header so it's clear what
-      // you're looking at — especially that the right side IS the page's model.
+      // you're looking at: especially that the right side IS the page's model.
       // The panel widens for time-travel to fit both.
       const labeledColumn = (basis, label, body) => {
         const col = document.createElement('div');
@@ -12583,7 +12583,7 @@
       container.appendChild(cols);
 
       // Scroll the cursor row into view if it's outside the list's
-      // visible area. `block: 'nearest'` is the right setting — it only
+      // visible area. `block: 'nearest'` is the right setting, it only
       // scrolls when needed (no jump if already visible) and picks the
       // shortest path (top vs bottom edge). Deferred via queueMicrotask
       // so it runs after the dock's scroll-position restore step,
@@ -12606,25 +12606,25 @@
     // arrow keys don't multiply.
     currentJumpToFrame = jumpToFrame;
     currentDevRerender = render;
-    } // end if (__MAR_DEV__) — time-travel block
+    } // end if (__MAR_DEV__): time-travel block
 
     // ── Runtime failures ──────────────────────────────────────────────
     //
     // ADR 0020. Every runtime error a checked program can still raise is a
     // bug: runaway recursion, a `case` over literals with no catch-all, or an
-    // integer leaving the 53-bit range. All three are deterministic — the same
-    // input fails the same way — so the message never offers a retry the way
+    // integer leaving the 53-bit range. All three are deterministic: the same
+    // input fails the same way, so the message never offers a retry the way
     // `Service.errorToString` does, where the network really does come back.
     //
     // What differs between the three screens below is only whether anything is
     // left to stand on.
     const RUNTIME_ERROR_TITLE = 'This app has a critical bug.';
 
-    // 'dispatch' — update, a tagger, or an effect. `update` never mutates:
+    // 'dispatch', update, a tagger, or an effect. `update` never mutates:
     //   it returns a new model or it throws, so a throw means the model was
     //   never replaced and the screen behind this message is a consistent one.
-    // 'page'     — view or init, with an entry to go back to.
-    // 'stuck'    — view or init on the first screen. Nothing to return to, and
+    // 'page'     - view or init, with an entry to go back to.
+    // 'stuck'    - view or init on the first screen. Nothing to return to, and
     //   reloading re-runs the init that just failed, so nothing is offered.
     function runtimeErrorBody(kind) {
       if (kind === 'dispatch') {
@@ -12652,7 +12652,7 @@
 
       if (__MAR_DEV__) {
         // Development gets the failure itself. There is no file:line:column
-        // to add — the serialized AST carries no positions (see
+        // to add: the serialized AST carries no positions (see
         // internal/jsserve/serialize.go), so the browser does not know where
         // the expression came from and inventing one would be worse than
         // omitting it.
@@ -12689,7 +12689,7 @@
     }
 
     // The banner lives outside #mar-root so the next render doesn't wipe it,
-    // and it stays until a dispatch succeeds — nothing times it out, because a
+    // and it stays until a dispatch succeeds: nothing times it out, because a
     // bug does not heal on its own.
     function clearDispatchError() {
       if (dispatchErrorBanner && dispatchErrorBanner.parentNode) {
@@ -12718,7 +12718,7 @@
     // A failed `view` or `init` has no screen to preserve, so the message takes
     // the page. Deduplicated by text: a game whose view throws fails again
     // every frame, and rebuilding identical DOM 60 times a second would be
-    // both wasteful and — since it replaces what you are reading — a flicker.
+    // both wasteful and, since it replaces what you are reading, a flicker.
     function presentPageFailure(err) {
       // Same reason as reportRuntimeError: a cold load whose `init` or `view`
       // throws never reaches a renderer, so nothing has installed the CSS.
@@ -12750,7 +12750,7 @@
       // fail the same way on every future frame: there is no state the program
       // can reach on its own where it starts working again. Left running, a
       // game whose view throws keeps ticking sixty times a second behind a dead
-      // screen — a laptop left overnight burned eleven hours of battery and
+      // screen: a laptop left overnight burned eleven hours of battery and
       // recorded 2.4 million actions nobody would ever see.
       //
       // Only the subscriptions are cut, and only after the message is painted:
@@ -12764,8 +12764,8 @@
 
     currentDispatch = (msg) => {
       // A halted program accepts no more messages. Subscriptions are already
-      // torn down; this catches the in-flight ones — an effect that resolves
-      // after the failure, a DOM handler on the dead screen — so the model
+      // torn down; this catches the in-flight ones: an effect that resolves
+      // after the failure, a DOM handler on the dead screen, so the model
       // cannot advance past the state the failure is being reported about.
       if (halted) return;
       const pg = currentPage();
@@ -12785,8 +12785,8 @@
           // navigated away, so `currentPage()` is no longer the page that
           // issued it. Compile-time case exhaustiveness guarantees a page
           // can always match its OWN messages, so a no-branch failure here
-          // can only be a message meant for a torn-down page. Drop it — it
-          // isn't the live page's concern — rather than crash the whole app
+          // can only be a message meant for a torn-down page. Drop it: it
+          // isn't the live page's concern: rather than crash the whole app
           // with an unhandled rejection.
           if (__MAR_DEV__ && global.__marDevMode && typeof console !== 'undefined' && console.warn) {
             console.warn('[mar] ignored a message delivered after navigation (a stale async result from a previous page): ' + describeValue(msg));
@@ -12798,7 +12798,7 @@
         // screen, the tap looked like it simply did nothing, and the only
         // trace was a console entry nobody has open. The model is left
         // untouched (the update never completed), which mirrors the iOS
-        // runtime — see MarPageRuntime.dispatch.
+        // runtime: see MarPageRuntime.dispatch.
         reportRuntimeError('update', err);
         return;
       }
@@ -12809,15 +12809,15 @@
       // model setter already writes to preservedScreenModels[activeKey];
       // no separate write needed here.
 
-      // Frame capture is dev-only — no need to keep the history around in
+      // Frame capture is dev-only: no need to keep the history around in
       // production (and it would just leak memory).
       if (__MAR_DEV__ && global.__marDevMode) {
         const hadEffect = !!(out.effect && out.effect.k === 'E' && out.effect.tag !== 'none');
-        // Append only — never branch. Inspecting a past frame is read-only, so
+        // Append only, never branch. Inspecting a past frame is read-only, so
         // a new live msg (an async result; clock ticks are paused while
         // traveling) just goes on the end. It never rewrites history or the
         // model the user is looking at.
-        timeTravel.total = timeTravel.total + 1;   // the badge counter — grows forever
+        timeTravel.total = timeTravel.total + 1;   // the badge counter: grows forever
         timeTravel.frames.push({
           msg, prevModel, nextModel: out.model, hadEffect,
           // pagePath records activeKey (URL for dynamic pages, pattern path
@@ -12826,7 +12826,7 @@
         });
         const TT_MAX_FRAMES = 10000;
         // The counter keeps climbing, but the SCRUBBABLE window is the last
-        // TT_MAX_FRAMES — drop older frames (you just can't rewind past them).
+        // TT_MAX_FRAMES: drop older frames (you just can't rewind past them).
         // Trim + follow the tail ONLY when live; while inspecting a past frame
         // we drop nothing (the frame under the cursor must never be evicted)
         // and leave the cursor parked. Both resume when the user goes live.
@@ -12842,11 +12842,11 @@
       // Intermediate catch-up ticks (ADR-0003) advance the model without
       // painting; the burst's final tick arrives with tickBurst off and
       // renders the frame once. Skipping render also defers sub reconcile
-      // to the burst end — render() is the reconcile funnel, and the last
+      // to the burst end: render() is the reconcile funnel, and the last
       // tick's model is the one that matters.
       if (!tickBurst) render();
       // The measured window is update + render (the view rebuild + DOM
-      // reconcile) — the interpreter cost we optimize. The effect runs after,
+      // reconcile): the interpreter cost we optimize. The effect runs after,
       // outside the measure, since Cmd.none / sound scheduling isn't the
       // per-frame bottleneck. Suppressed burst ticks fold their update time
       // into the next painted dispatch so the readout stays ms per PAINTED
@@ -12862,22 +12862,22 @@
     // Stamp marDepth: 0 onto the initial history entry so every
     // subsequent push/replace can read + bump it. Without this, the
     // first navigation sees `history.state == null`, treats depth as
-    // 0, pushes with depth 1 — which is correct but only by accident.
+    // 0, pushes with depth 1, which is correct but only by accident.
     // Doing it explicitly here keeps `currentNavDepth()` honest from
     // the very first render onward.
     if (history.state == null || typeof history.state.marDepth !== 'number') {
       replaceNav(window.location.pathname + window.location.search + window.location.hash);
     }
 
-    // A presented route opened cold — a bookmark, a shared link, a reload —
+    // A presented route opened cold, a bookmark, a shared link, a reload:
     // used to render as a full screen, because there was nothing behind it to
     // present over. That was worse than merely odd: `Nav.dismiss` is a no-op
     // on the first history entry, so the sheet's own Done button did nothing
     // and the screen was a dead end.
     //
     // So give it something behind. The rule needs no new API because a
-    // presented route already nests in the URL under the screen it covers —
-    // /classes/3/attendance sits under /classes/3 — and being a prefix of a
+    // presented route already nests in the URL under the screen it covers:
+    // /classes/3/attendance sits under /classes/3, and being a prefix of a
     // CONCRETE url means the parent's params are already filled in. Seeding
     // the two-entry stack here, rather than special-casing the render, means
     // everything downstream (the presenting branch, dismiss, Back) works with
@@ -12885,7 +12885,7 @@
     //
     // It boots AT the parent and then navigates to the sheet, rather than
     // teaching render() a third case. The presenting branch already requires
-    // something mounted behind the overlay, and on a cold start nothing is —
+    // something mounted behind the overlay, and on a cold start nothing is:
     // so instead of relaxing that requirement, this replays the two steps the
     // seeded history claims already happened. render() learns nothing new.
     let coldPresentation = null;
@@ -12904,7 +12904,7 @@
     // on hot reload.
     //
     // We wrap render() in a shim that inspects the PopStateEvent's
-    // `hasUAVisualTransition` flag — set to true by Safari (and
+    // `hasUAVisualTransition` flag: set to true by Safari (and
     // other UAs) when a back/forward traversal triggered by a
     // platform gesture (two-finger swipe-back on macOS Safari) is
     // ALREADY being visually transitioned by the browser. Layering
@@ -12929,13 +12929,13 @@
     render();
     // The covered screen is mounted now, so the sheet has something to be
     // presented over. This is an ordinary push as far as the runtime is
-    // concerned — which is the point.
+    // concerned, which is the point.
     if (coldPresentation !== null) {
       pushNav(coldPresentation);
       render();
     }
     // The stores' init Cmds run only now. init happens while pages are being
-    // built — before there is a dispatch to deliver a result to — so a
+    // built, before there is a dispatch to deliver a result to, so a
     // Service.call fired there would resolve into nothing.
     const cmds = pendingSharedCmds;
     pendingSharedCmds = [];
@@ -12953,7 +12953,7 @@
     // marRun's `envLookup(env, program.entry)` finds it. Real modules
     // get their own frame so two modules that both declare a bare
     // `page` / `renderBody` / `projectsSection` (and bigapp has all
-    // three) don't clobber each other in the shared bindings — the
+    // three) don't clobber each other in the shared bindings: the
     // last-write-wins on a shared env makes the result depend on the
     // non-deterministic topo iteration order, which is why this bug
     // was intermittent. Closures captured in modEnv chain to the
@@ -12970,7 +12970,7 @@
       for (const imp of mod.imports) {
         if ((!imp.exposing || imp.exposing.length === 0) && !imp.all) continue;
         const impName = (imp.module || []).join('.');
-        // `exposing (..)`: bind every export of the module bare —
+        // `exposing (..)`: bind every export of the module bare:
         // values and ctors registered as `impName.x` in the env chain
         // (for builtin modules like UI, the whole vocabulary). Mirrors
         // the typechecker's wildcard handling.
@@ -12985,7 +12985,7 @@
           if (v !== undefined) {
             envDefine(modEnv, item.name, v);
           }
-          // `Type(..)` — pull every constructor of the imported type
+          // `Type(..)`: pull every constructor of the imported type
           // into the bare namespace too. The imported module's AST is
           // the source of truth for the ctor list.
           if (item.open && modulesByName) {
@@ -13033,7 +13033,7 @@
         }
       }
     }
-    // Pass 2: pre-bind value names with placeholders. Module-local —
+    // Pass 2: pre-bind value names with placeholders. Module-local:
     // only this module's body needs the self-reference; other modules
     // reach the value via its qualified alias once Pass 3 runs.
     for (const d of mod.decls) {
@@ -13067,8 +13067,8 @@
     global.__marDevMode = !!program.devMode;
     // Auth metadata baked in by the server. Main.mar isn't in the
     // browser bundle (only page-reachable modules are), so the
-    // server hands resolved auth config — currently signInPath for
-    // Page.protected — through this side channel.
+    // server hands resolved auth config: currently signInPath for
+    // Page.protected: through this side channel.
     if (program.auth && typeof program.auth.signInPath === 'string') {
       globalThis.__marAuthSignInPath = program.auth.signInPath;
     }
@@ -13116,7 +13116,7 @@
     currentDispatch = null;
     // The def objects die with the old program, so the stores keyed by them
     // are dead too. Their MODELS live on in preservedSharedModels, which is
-    // keyed by declaration order rather than by object — a save should not
+    // keyed by declaration order rather than by object: a save should not
     // sign you out or refetch your profile, exactly as it does not reset a
     // page model.
     sharedStores.clear();
@@ -13145,7 +13145,7 @@
   //
   // The HTML head includes <link rel="preload" href="/_mar/program
   // .json" as="fetch">, so this fetch is typically a cache hit on the
-  // browser's preload buffer — the actual download started in parallel
+  // browser's preload buffer: the actual download started in parallel
   // with runtime.js as soon as the head was parsed. Total wait is
   // max(T_runtime_load, T_program_download), not their sum.
   //
@@ -13157,7 +13157,7 @@
   // the fetch *additionally* would make Chrome refuse to use the
   // preloaded entry (the cache modes have to match), which manifests
   // as the warning "preloaded using link preload but not used within
-  // a few seconds" — and the second network round-trip defeats the
+  // a few seconds", and the second network round-trip defeats the
   // whole point of the preload.
   global.marBootstrap = function () {
     // Reuse the eager fetch the HTML shell started (see server.go's
@@ -13175,7 +13175,7 @@
           const root = document.getElementById('mar-root');
           if (root) {
             // Wipe the boot placeholder (and anything else) so the
-            // error message stands alone — otherwise "Loading…" stays
+            // error message stands alone: otherwise "Loading…" stays
             // stacked above the red error which reads like a fresh
             // load is still in progress.
             while (root.firstChild) root.removeChild(root.firstChild);
@@ -13191,7 +13191,7 @@
 
   // setupDevChannel opens the SSE connection used by `mar dev` for both
   // hot reload and dev-time UI feedback (compile errors, server-down
-  // detection). Skipped when EventSource isn't available — the app
+  // detection). Skipped when EventSource isn't available: the app
   // still runs, just without dev affordances.
   //
   // Both the compile-error and connection state are reported to the dev
@@ -13260,7 +13260,7 @@
     es.onopen = function () {
       clearDisconnectTimer();
       if (everConnected) {
-        // The SSE stream dropped and came back — a server restart. Since
+        // The SSE stream dropped and came back: a server restart. Since
         // runtime.js (and the CSS it injects via ensureUIStyles) is
         // embedded in the `mar` binary, a rebuilt binary serves a new
         // runtime.js, but the soft hot-reload path (marReload) only
@@ -13293,7 +13293,7 @@
 
     es.onerror = function () {
       // EventSource fires onerror on every drop. Wait ~1s before
-      // surfacing — short blips (server restart inside hot-reload,
+      // surfacing: short blips (server restart inside hot-reload,
       // network hiccup) shouldn't flash a badge.
       clearDisconnectTimer();
       disconnectTimer = setTimeout(function () {
@@ -13332,7 +13332,7 @@
         '.mar-dock-badge:hover { background: #374151; }' +
         '.mar-dock-badge.active { background: #374151; }' +
         '.mar-dock-badge.pulse { animation: mar-dock-pulse 1.2s ease-in-out infinite; }' +
-        // Time-travel scrubber — custom range so the thumb reaches both
+        // Time-travel scrubber: custom range so the thumb reaches both
         // ends (the native thumb insets by half its width, leaving a gap)
         // and matches the dark dock. The track fills blue up to the
         // cursor via the --tt-fill CSS var (set in renderTimeTravelPanel);
@@ -13359,7 +13359,7 @@
     root.style.display = 'none';
     // Pin the dock during page view-transitions. The default
     // `::view-transition-old(root)` / `::view-transition-new(root)`
-    // snapshots include the whole document — dock and all — so the
+    // snapshots include the whole document, dock and all, so the
     // dock slides with the page despite being at `position: fixed`.
     // Giving it its own `view-transition-name` opts it out of the
     // root group: the browser snapshots the dock as a separate,
@@ -13451,8 +13451,8 @@
         let el = badgeEls[p.id];
         if (!el) {
           // Build the badge ONCE. It (and its handler) then persists across
-          // updates, so a high-frequency updatePanel — e.g. a game loop
-          // dispatching ~60 msgs/s — can't tear the tap target out from
+          // updates, so a high-frequency updatePanel: e.g. a game loop
+          // dispatching ~60 msgs/s, can't tear the tap target out from
           // under a press. Only text / colors / classes change below.
           el = document.createElement('span');
           const iconEl = document.createElement('span');
@@ -13464,7 +13464,7 @@
           el._icon = iconEl;
           el._label = labelEl;
           // Toggle on pointerDOWN, not click. A `click` is synthesized only
-          // after pointerup AND survives no long task between down/up — under a
+          // after pointerup AND survives no long task between down/up: under a
           // 60fps dispatch loop the browser routinely drops it, so taps felt
           // dead ("had to click many times"). pointerdown fires on contact.
           el.style.touchAction = 'manipulation';
@@ -13478,7 +13478,7 @@
         el._icon.textContent = p.badge.icon || '•';
         el._label.textContent = p.badge.label ? p.badge.label(p.state) : p.id;
         // Attach only if not already in the bar. Re-appending an existing child
-        // MOVES it (remove+insert) — and a move landing between a tap's down and
+        // MOVES it (remove+insert), and a move landing between a tap's down and
         // up eats the click. Skipping it keeps the tap target perfectly static.
         if (el.parentNode !== bar) bar.appendChild(el);
       }
@@ -13523,7 +13523,7 @@
       // again (see drawModel) and the frame-capture tail-follow resumes; the
       // re-render also restarts the clock subs (while paused no timer fires, so
       // this is the only thing that can). Without it, scrubbing back and then
-      // closing left `traveling` true — the world stayed frozen on the past frame
+      // closing left `traveling` true: the world stayed frozen on the past frame
       // while the clock kept advancing the hidden live model underneath ("seems
       // to resume but still shows the old state"). Set the flag DIRECTLY on the
       // shared preservedTimeTravel (what render reads) rather than routing
@@ -13665,7 +13665,7 @@
     }
   };
 
-  // __marEvalValue — dev/test hook: load a compiled program's modules
+  // __marEvalValue, dev/test hook: load a compiled program's modules
   // into a fresh env and render one top-level value by (qualified)
   // name. The cross-runtime conformance test (internal/jsserve/
   // decimal_conformance_test.go) uses it to prove this runtime and the
@@ -13691,7 +13691,7 @@
   // value (a Sound's voice records, say) cannot do it through a display string.
   global.__marEvalRaw = marEvalRaw;
   // Start one subscription source directly, outside a running page. A Cmd can be
-  // driven from a test because it carries .run(); a Sub cannot — it only means
+  // driven from a test because it carries .run(); a Sub cannot: it only means
   // something to the reconciler. This lets a test drive the SUB half of the synth
   // (Sound.voice / Sound.glide's held node) against a fake AudioContext, the same way the Cmd
   // half is already driven through Sound.play.

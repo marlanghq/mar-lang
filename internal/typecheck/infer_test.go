@@ -328,7 +328,7 @@ func TestMaybeNothing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// "Maybe t<n>" — type of Nothing is polymorphic, var ID varies.
+	// "Maybe t<n>": type of Nothing is polymorphic, var ID varies.
 	if !strings.HasPrefix(got, "Maybe ") {
 		t.Fatalf("want Maybe ..., got %s", got)
 	}
@@ -358,7 +358,7 @@ func TestUnknownIdentifier(t *testing.T) {
 }
 
 func TestOccursCheck(t *testing.T) {
-	// (\x -> x x) — applying x to itself — needs x : a -> b AND x : a, occurs.
+	// (\x -> x x), applying x to itself, needs x : a -> b AND x : a, occurs.
 	_, err := inferExprSrc(t, `\x -> x x`)
 	if err == nil {
 		t.Fatal("expected occurs check failure")

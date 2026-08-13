@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-// helper — pull a builtin from the registry by name.
+// helper: pull a builtin from the registry by name.
 func timeBuiltin(t *testing.T, name string) Value {
 	t.Helper()
 	v, ok := timeBuiltins()[name]
@@ -33,7 +33,7 @@ func callN(t *testing.T, name string, args ...Value) Value {
 	return out
 }
 
-// toMillis convenience for tests — UTC midnight of the given Y-M-D.
+// toMillis convenience for tests: UTC midnight of the given Y-M-D.
 func ymdMillis(y, m, d int) int64 {
 	return time.Date(y, time.Month(m), d, 0, 0, 0, 0, time.UTC).UnixMilli()
 }
@@ -56,7 +56,7 @@ func TestTimeFromYMD_Epoch(t *testing.T) {
 }
 
 func TestTimeFromYMD_Normalizes(t *testing.T) {
-	// Out-of-range month rolls forward — same as Go's time.Date and
+	// Out-of-range month rolls forward: same as Go's time.Date and
 	// JavaScript's Date constructor. Document the behavior rather
 	// than reject the input; users who want strict validation can
 	// check with their own arithmetic before calling.

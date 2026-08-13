@@ -15,7 +15,7 @@
 //                    Bound directly into SwiftUI's `NavigationStack
 //                    (path:)` so the native swipe-back gesture works
 //                    out of the box.
-//   - currentPath  : convenience computed property — the active
+//   - currentPath  : convenience computed property, the active
 //                    page's path. Equal to `navPath.last` or `"/"`
 //                    when the stack is empty (cold start).
 //   - currentUser  : VCtor('Just', [user]) | VCtor('Nothing', []) | nil
@@ -37,7 +37,7 @@ final class AppContext {
     static let shared = AppContext()
 
     /// Pages list produced by App.frontend / App.fullstack. Each
-    /// element is a `__Page` or `__ProtectedPage` ctor — see
+    /// element is a `__Page` or `__ProtectedPage` ctor: see
     /// `decodedPages()` for the per-tag positional layout.
     private(set) var pages: [MarValue] = []
 
@@ -70,16 +70,16 @@ final class AppContext {
 
     /// Path to redirect unauthenticated users to. Set by the
     /// Auth.config builtin from its `signInPage` field. Empty when
-    /// the app doesn't declare any Auth — Page.protected then
+    /// the app doesn't declare any Auth: Page.protected then
     /// surfaces a clear runtime error rather than a silent loop.
     var signInPath: String = ""
 
     /// Where to send the user after a successful sign-in. Set by
     /// `handleAuthExpired()` when a 401 from a Service.call hijacks
-    /// the user to the sign-in screen — `Auth.completeSignIn` consumes it.
+    /// the user to the sign-in screen: `Auth.completeSignIn` consumes it.
     /// Web uses a `?next=` URL parameter for the same purpose; on iOS
     /// we don't have a URL bar, so we keep it in memory. Lost on cold
-    /// start (acceptable — there's no "where you were" anymore).
+    /// start (acceptable: there's no "where you were" anymore).
     var pendingReturnPath: String?
 
     /// Coalesces parallel Service.call 401s. Set true the moment the
@@ -91,7 +91,7 @@ final class AppContext {
     /// Monotonic counter bumped every time `navigate(replace: true)`
     /// rewrites the stack. The `StackShell` view applies it as
     /// SwiftUI `.id()` on the NavigationStack so a replace tears down
-    /// the old stack and mounts a new one — letting the wrapper
+    /// the old stack and mounts a new one: letting the wrapper
     /// cross-fade between them instead of replaying the
     /// slide-from-right push animation, which would visually lie
     /// about a destructive operation. Push and pop don't bump this;
@@ -111,7 +111,7 @@ final class AppContext {
         redirectingToSignIn = false
     }
 
-    /// Initial seed for the navigation stack — called once at app
+    /// Initial seed for the navigation stack: called once at app
     /// startup with the path of the first registered page. Idempotent:
     /// only sets when the stack is empty so a hot-reload or program
     /// refresh doesn't bulldoze the user's current location.
@@ -124,14 +124,14 @@ final class AppContext {
     /// The navigation stack a url should arrive as.
     ///
     /// For an ordinary route that is just the route. For a PRESENTED one it is
-    /// two entries — the screen it covers, then itself — because a presented
+    /// two entries, the screen it covers, then itself, because a presented
     /// route opened cold used to render as a bare full screen, and that was
     /// worse than odd: `dismissTop` is a no-op on the first entry, so the
     /// sheet's own Done button did nothing and the screen was a dead end.
     ///
     /// The parent needs no new API. A presented route already nests in the url
-    /// under the screen it covers — /classes/3/attendance sits under
-    /// /classes/3 — and the prefix of a CONCRETE url is itself concrete, so the
+    /// under the screen it covers: /classes/3/attendance sits under
+    /// /classes/3, and the prefix of a CONCRETE url is itself concrete, so the
     /// parent's params come along for free. Routes that nest on screen nest in
     /// the url too; one that doesn't is a shape worth noticing in the route
     /// table rather than a case to paper over here.
@@ -180,7 +180,7 @@ final class AppContext {
 
     /// Close the top entry of the stack: what Nav.dismiss does, and what
     /// a presented route's own Cancel / Done button needs. Never pops the
-    /// last entry — at the app's first screen there is nothing to close,
+    /// last entry: at the app's first screen there is nothing to close,
     /// and popping it would leave the renderer with no route at all.
     func dismissTop() {
         guard navPath.count > 1 else { return }
@@ -194,7 +194,7 @@ final class AppContext {
     ///
     /// `invalidateUser` opts out of clearing `currentUser` on replace,
     /// for the case where the caller has just installed a fresh user
-    /// value and a navigate(replace:true) follows immediately —
+    /// value and a navigate(replace:true) follows immediately:
     /// `Auth.completeSignIn` is the canonical example. Without this
     /// escape hatch, the just-set user would be wiped before the
     /// destination's protected-page gate could see it, forcing an
@@ -207,7 +207,7 @@ final class AppContext {
             }
             // Bump the generation BEFORE mutating navPath so SwiftUI
             // sees both observable changes in the same tick and treats
-            // the NavigationStack as identity-swapped — triggering the
+            // the NavigationStack as identity-swapped: triggering the
             // cross-fade transition instead of the default
             // slide-from-right push animation. Order matters: if the
             // path changed first, SwiftUI might already start animating
@@ -239,7 +239,7 @@ final class AppContext {
             if case .ctor("__SharedPage", let wargs, _) = v, wargs.count >= 2,
                case .string(let key) = wargs[0] {
                 // Say so when this fails. A dropped page does not crash and
-                // does not draw anything — it simply is not in the app, and
+                // does not draw anything: it simply is not in the app, and
                 // the first symptom is the WRONG SCREEN at launch, because
                 // the root is whichever page happened to survive.
                 guard let store = MarSharedRegistry.lookup(key) else {
@@ -333,7 +333,7 @@ final class AppContext {
     }
 }
 
-/// One Page ready for mounting — its ctor args destructured into named
+/// One Page ready for mounting: its ctor args destructured into named
 /// fields. The redirect path for protected pages comes from
 /// `AppContext.signInPath` at render time (set by the Auth.config
 /// builtin), not from the page itself. `isDynamic` indicates the
@@ -364,7 +364,7 @@ extension Array where Element == DecodedPage {
 struct DecodedPage: Identifiable {
     /// Set when the page came from `Page.withShared`. The page is a FUNCTION
     /// of the shared model, so the builder is kept unapplied and re-run on
-    /// every read — see MarPageRuntime. Path, title and the flags are read
+    /// every read: see MarPageRuntime. Path, title and the flags are read
     /// once, because a route cannot change with the model.
     struct SharedBinding {
         let key: String
@@ -409,7 +409,7 @@ struct DecodedPage: Identifiable {
     /// AppViewModel. Fills each `{name:Type}` segment with a plausible value
     /// and runs it back through the real matcher, so whatever comes out is
     /// typed exactly the way a real URL's params would be. Returns nil when
-    /// the pattern uses something this cannot fill — the caller says so
+    /// the pattern uses something this cannot fill: the caller says so
     /// rather than counting the page as checked.
     func sampleParams() -> MarValue? { sampleVisit()?.params }
 

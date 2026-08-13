@@ -1,8 +1,8 @@
 package runtime
 
 // Device (docs/proposals/device.md) reports live, truthful device capabilities
-// to a frontend — the precision of the primary pointer, whether it can hover,
-// the viewport size, and the dark / reduced-motion preferences — all read from
+// to a frontend: the precision of the primary pointer, whether it can hover,
+// the viewport size, and the dark / reduced-motion preferences: all read from
 // CSS media queries in the JS runtime (never a user-agent string, which iPadOS
 // lies about). These Go builtins are inert like the Sound ones: Device.watch is
 // a CLIENT subscription the server never fires, and the pure helpers are defined
@@ -22,7 +22,7 @@ func deviceBuiltins() map[string]Value {
 		return false
 	}
 	return map[string]Value{
-		// Pointer constructors — global (like Order's LT / Method's GET), nullary.
+		// Pointer constructors: global (like Order's LT / Method's GET), nullary.
 		// The runtime tag is the bare ctor name, matching how the JS runtime
 		// builds the record from `(pointer: coarse)` / `(pointer: fine)`.
 		"Coarse": VCtor{Tag: "Coarse"},
@@ -36,7 +36,7 @@ func deviceBuiltins() map[string]Value {
 		}),
 
 		// Device.touchOnly : coarse primary pointer, nothing fine attached, no
-		// hover — finger-only hardware (iPhone/iPad yes; iPad+trackpad no).
+		// hover: finger-only hardware (iPhone/iPad yes; iPad+trackpad no).
 		"deviceTouchOnly": nativeFn(1, func(args []Value) (Value, error) {
 			coarse := false
 			if r, ok := args[0].(VRecord); ok {

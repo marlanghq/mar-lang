@@ -3,7 +3,7 @@
 // value declaration. Direct port of `loadModule` in runtime.js.
 //
 // Service contracts carry their own verb + path (stamped by
-// Service.declare), so the loader treats them like any other value —
+// Service.declare), so the loader treats them like any other value:
 // no provenance stamping needed.
 
 import Foundation
@@ -11,7 +11,7 @@ import Foundation
 enum MarLoader {
 
     /// Run a module's declarations into the given environment. The
-    /// env is mutated in place — typical use is the global env
+    /// env is mutated in place: typical use is the global env
     /// returned by `MarBuiltins.makeEnv()`.
     static func load(module: Module, into env: Env) throws {
         let ownName = module.name.joined(separator: ".")
@@ -19,8 +19,8 @@ enum MarLoader {
         // Per-module scope, mirroring `loadModule` in
         // internal/jsserve/runtime.js. Every module used to load its bare
         // names into the SAME env, so two modules that both declare `view`
-        // or `init` or `page` — which every page module in every example
-        // does — overwrote each other, last one wins. A closure resolves its
+        // or `init` or `page`, which every page module in every example
+        // does: overwrote each other, last one wins. A closure resolves its
         // free names when it RUNS, so `view = view global` inside Catalog's
         // Page.create found whichever module happened to be loaded last.
         //
@@ -33,7 +33,7 @@ enum MarLoader {
         // so qualified lookups across modules still resolve.
         let modEnv = ownName.isEmpty ? env : Env(parent: env)
 
-        // Pass 0: imports — re-bind exposed names from already-known
+        // Pass 0: imports, re-bind exposed names from already-known
         // qualified bindings. Without this, code that compiles
         // (e.g. `column [...]` after `import View exposing (column)`)
         // explodes at runtime with "unbound name: column".

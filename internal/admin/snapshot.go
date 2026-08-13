@@ -1,4 +1,4 @@
-// Snapshot — produces a single backup tarball from a live database.
+// Snapshot: produces a single backup tarball from a live database.
 // Used both by the auto-backup scheduler (one snapshot per tick) and
 // the ad-hoc CLI path (force a snapshot now).
 //
@@ -45,7 +45,7 @@ type SnapshotInputs struct {
 }
 
 // SnapshotMetadata is the on-disk shape of metadata.json inside the
-// bundle. Stable across releases — older readers should be able to
+// bundle. Stable across releases: older readers should be able to
 // decode newer bundles for diagnostics. Add fields, never rename.
 type SnapshotMetadata struct {
 	CreatedAtUnixMs   int64    `json:"createdAtUnixMs"`
@@ -82,7 +82,7 @@ func WriteSnapshot(in SnapshotInputs) error {
 		return fmt.Errorf("admin.WriteSnapshot: VACUUM INTO: %w", err)
 	}
 
-	// 2. mar.json — copy verbatim. env:VAR refs stay intact;
+	// 2. mar.json, copy verbatim. env:VAR refs stay intact;
 	// resolved secret values never touch this file.
 	manifestSrc := filepath.Join(in.ProjectDir, "mar.json")
 	manifestRaw, err := os.ReadFile(manifestSrc)
@@ -93,7 +93,7 @@ func WriteSnapshot(in SnapshotInputs) error {
 		return fmt.Errorf("admin.WriteSnapshot: stage manifest: %w", err)
 	}
 
-	// 3. metadata.json — describes the snapshot's identity. The
+	// 3. metadata.json: describes the snapshot's identity. The
 	// schemaFingerprint is what the restore flow uses to refuse
 	// applying this bundle against a divergent live schema.
 	fingerprint, err := SchemaFingerprint(in.DB)
@@ -144,7 +144,7 @@ func manifestName(m *project.Manifest) string {
 // already exists (MkdirAll never changes the mode of an existing
 // dir, so catalogs created before the 0o700 policy stay 0o755
 // without the explicit Chmod). Backup bundles hold the full
-// database — auth codes and session hashes included — so on a
+// database, auth codes and session hashes included, so on a
 // multi-user host the catalog must not be listable or readable by
 // other local users.
 func ensureBackupDir(dir string) error {

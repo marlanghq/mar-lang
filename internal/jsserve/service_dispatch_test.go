@@ -25,9 +25,9 @@ func echoService(verb, path string) runtime.Value {
 	return runtime.ExposedServiceToRoute(es)
 }
 
-// TestServiceDispatchVerbAndPathParams drives the full HTTP path —
+// TestServiceDispatchVerbAndPathParams drives the full HTTP path:
 // dispatchBackend routing + the ExposedServiceToRoute wrapper's typed
-// request assembly — for each verb, including typed {id:Int} path params
+// request assembly, for each verb, including typed {id:Int} path params
 // and path+body merge.
 func TestServiceDispatchVerbAndPathParams(t *testing.T) {
 	withMaxBodyBytes(t, 1<<20)

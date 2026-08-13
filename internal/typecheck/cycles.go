@@ -32,7 +32,7 @@ func buildValueGraph(mod *ast.Module) valueGraph {
 		g.decls[v.Name] = declInfo{isFunction: len(v.Params) > 0, pos: v.Pos}
 	}
 	// Walk each value's body collecting top-level refs. Local variables
-	// (let / lambda params / pattern binds) shadow top-level names —
+	// (let / lambda params / pattern binds) shadow top-level names:
 	// pass them as locals so we don't count them as deps.
 	for _, d := range mod.Decls {
 		v, ok := d.(*ast.ValueDecl)
@@ -118,7 +118,7 @@ func findCycle(start string, deps map[string][]string) []string {
 // Every runtime evaluates top-level values eagerly, in the order the
 // declarations appear. That made source order load-bearing: `total` reading
 // a `nums` declared below it saw the pre-bind placeholder instead of the
-// list, and blew up later inside a builtin — on a program that typechecks.
+// list, and blew up later inside a builtin: on a program that typechecks.
 // Fixing it here rather than in each runtime means the Go, JS and Swift
 // evaluators need to know nothing about it; they still walk the list in
 // order, and the list is now in the right order.
@@ -201,7 +201,7 @@ func joinCycle(path []string) string {
 
 // collectTopLevelRefs walks an expression and records every reference
 // to a top-level declaration (by looking the name up in `decls`).
-// Lazy / eager doesn't matter here — see checkValueCycles for why.
+// Lazy / eager doesn't matter here: see checkValueCycles for why.
 func collectTopLevelRefs(e ast.Expr, decls map[string]declInfo, locals map[string]bool, out map[string]bool) {
 	switch n := e.(type) {
 	case *ast.EVar:

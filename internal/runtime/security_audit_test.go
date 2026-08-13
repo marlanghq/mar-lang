@@ -9,7 +9,7 @@ import (
 // (runDispatch, statusOf, vJust, vNothing) live in auth_test.go.
 
 // rawService returns an ExposedService as produced by a bare
-// Service.implement — i.e. NOT run through Auth.protect, so RequiresUser
+// Service.implement: i.e. NOT run through Auth.protect, so RequiresUser
 // starts false. Its handler returns Unit; for the bypass tests it should
 // never be reached (the 401 short-circuits before the handler runs).
 func rawService() VExposedService {
@@ -22,7 +22,7 @@ func rawService() VExposedService {
 	}}
 }
 
-// #1 (Alta) — decorating a raw service with an authorization gate must
+// #1 (Alta): decorating a raw service with an authorization gate must
 // still require authentication. Before the fix the decorators left
 // RequiresUser=false, the dispatcher skipped every gate, and the
 // "protected" service served public.
@@ -63,7 +63,7 @@ func TestSecurityAudit_DecoratorsImplyAuth(t *testing.T) {
 	}
 }
 
-// #1 defense-in-depth — even if a service carries a gate but somehow has
+// #1 defense-in-depth, even if a service carries a gate but somehow has
 // RequiresUser=false, ExposedServiceToRoute coerces it so it can't serve
 // public through the dispatcher.
 func TestSecurityAudit_GateImpliesAuthAtDispatch(t *testing.T) {
@@ -79,7 +79,7 @@ func TestSecurityAudit_GateImpliesAuthAtDispatch(t *testing.T) {
 	}
 }
 
-// #2 (Alta) — List.range / List.repeat / String.repeat must reject a
+// #2 (Alta): List.range / List.repeat / String.repeat must reject a
 // caller-controlled count that would exhaust memory, and List.range must
 // not spin forever on Int overflow. The overflow case has to reject
 // promptly (no 10M-element allocation before erroring).

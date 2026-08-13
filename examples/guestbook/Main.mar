@@ -20,7 +20,7 @@ import UI exposing
 -- Demonstrates:
 --   - Repo for persistence with auto-derived schema + auto-migration.
 --   - Service.declare / Service.implement (typed RPC, no JSON mucking).
---   - The UI vocabulary on a minimal example — navigationStack with
+--   - The UI vocabulary on a minimal example: navigationStack with
 --     a Form of two Sections (input row + entries row).
 
 
@@ -42,7 +42,7 @@ entries =
         }
 
 
--- Service contracts — shared between backend impl and frontend caller.
+-- Service contracts: shared between backend impl and frontend caller.
 listEntries : Service () (List Entry)
 listEntries = Service.declare GET "/entries"
 

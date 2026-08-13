@@ -1,12 +1,12 @@
-// Char module + String <-> [Char] bridges — Swift port of the Go
+// Char module + String <-> [Char] bridges: Swift port of the Go
 // internal/runtime/char.go and the JS builtins in runtime.js.
 //
 // Char in Mar is a Unicode code point (here: Unicode.Scalar). NOT a
 // grapheme cluster. `String.toList "🇧🇷"` yields TWO chars, matching
-// Elm semantics — the regional indicators are two separate scalars.
+// Elm semantics: the regional indicators are two separate scalars.
 //
 // padLeft / padRight live here too because they now take a Char
-// (Elm-style) rather than a String — co-locating with the rest of
+// (Elm-style) rather than a String: co-locating with the rest of
 // the Char-flavored stdlib makes the dependency explicit.
 
 import Foundation
@@ -32,7 +32,7 @@ enum MarChar {
         env.define("charFromCode",  .fn(fromCode))
         env.define("Char.fromCode", .fn(fromCode))
 
-        // Predicates — Unicode-aware via the scalar's properties. The
+        // Predicates: Unicode-aware via the scalar's properties. The
         // CharacterSet checks read the .value directly so they line up
         // with the Go side's `unicode.IsDigit` / `unicode.IsLetter`.
         let isDigit = MarFn.native(1) { args in
@@ -71,7 +71,7 @@ enum MarChar {
         env.define("charIsLower",  .fn(isLower))
         env.define("Char.isLower", .fn(isLower))
 
-        // toUpper / toLower — uppercase/lowercase via String, then take
+        // toUpper / toLower: uppercase/lowercase via String, then take
         // the first scalar of the result. Some locales (Turkish, e.g.)
         // can multi-scalar a single char (`İ` lowercases to `i` +
         // combining mark); taking the first scalar keeps the type
@@ -139,7 +139,7 @@ enum MarChar {
 
         // String higher-order ops over Char. We iterate
         // `.unicodeScalars` (code points), matching the Go and JS
-        // sides — `String.toList "🇧🇷"` yields two scalars, so
+        // sides: `String.toList "🇧🇷"` yields two scalars, so
         // `String.map` walks both of them.
         let stringMap = MarFn.native(2) { args in
             guard case .string(let s) = args[1] else {
@@ -190,7 +190,7 @@ enum MarChar {
         env.define("stringFoldl",  .fn(stringFoldl))
         env.define("String.foldl", .fn(stringFoldl))
 
-        // stringAny : (Char -> Bool) -> String -> Bool — short-circuit.
+        // stringAny : (Char -> Bool) -> String -> Bool, short-circuit.
         let stringAny = MarFn.native(2) { args in
             guard case .string(let s) = args[1] else {
                 throw MarRuntimeError.typeMismatch(expected: "String", got: Eval.typeOf(args[1]))

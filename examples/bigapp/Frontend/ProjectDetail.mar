@@ -10,7 +10,7 @@ import UI exposing
     )
 
 
--- Project detail — header card with project metadata, a toggle row
+-- Project detail: header card with project metadata, a toggle row
 -- that filters issues by status, then the issue list itself.
 -- Three Service.call's compose the page: getProject, listIssues
 -- (filtered), and the delete action. Each piece lands in its own

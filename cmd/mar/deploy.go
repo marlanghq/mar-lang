@@ -1,8 +1,8 @@
-// `mar deploy` — the one deploy command. It reads the project's
+// `mar deploy`: the one deploy command. It reads the project's
 // `mar.json` deploy block and hands off to the flow for whichever
 // provider is configured.
 //
-// There's no target to choose: the app type determines it 1:1 —
+// There's no target to choose: the app type determines it 1:1:
 // App.fullstack ships to a Fly VM (deploy.fly), App.frontend ships to
 // a Cloudflare Pages static bundle (deploy.cloudflare-pages). So a
 // project carries exactly one deploy block and `mar deploy` just
@@ -88,7 +88,7 @@ func printMissingDeployHint(path string) {
 
 // missingDeployHint returns the "add a deploy block" hint body, tailored
 // to the app's actual shape: a frontend app deploys to Cloudflare Pages,
-// a fullstack or backend app to a Fly VM — each with a ready-to-paste
+// a fullstack or backend app to a Fly VM: each with a ready-to-paste
 // example, not a two-option menu to decode. A non-nil topoErr means the
 // shape couldn't be determined (main doesn't compile yet, or the path has
 // no app), so we fall back to listing both targets. Split from printing

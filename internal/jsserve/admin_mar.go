@@ -23,7 +23,7 @@ import (
 // This file wires the runtime bodies for the Mar.Admin.* builtins (the type
 // surface + injection point live in internal/runtime/admin.go). The native
 // admin SPA and the Mar-native admin panel read the EXACT same introspection
-// helpers — listTables, dbFileSizes, requestLogger, the request counters — so
+// helpers, listTables, dbFileSizes, requestLogger, the request counters, so
 // this is just a second projection of that data, shaped as Mar Values instead
 // of JSON. A Page.adminProtected program renders it; the SPA hits the JSON
 // handlers. One source of truth, two front-ends.
@@ -86,7 +86,7 @@ func marDBStats() (runtime.Value, error) {
 
 	// Same two-bucket split the SPA uses: the operator's own entities vs
 	// framework-managed tables (the reserved _mar_ prefix). sqlite_* internal
-	// tables are dropped entirely — never useful, just noise.
+	// tables are dropped entirely, never useful, just noise.
 	var business, framework []runtime.Value
 	for _, t := range listTables(db) {
 		if strings.HasPrefix(t, "sqlite_") {
@@ -162,14 +162,14 @@ func marListEntities() (runtime.Value, error) {
 }
 
 // marListEntityRows browses one table. v1: stringified cells in a Dict so a
-// single shape covers every column; capped (no cursor — that's a v2 refinement
+// single shape covers every column; capped (no cursor: that's a v2 refinement
 // matching the SPA's pagination).
 func marListEntityRows(entity string) (runtime.Value, error) {
 	db, err := adminDB()
 	if err != nil {
 		return mvList(nil), nil
 	}
-	// Whitelist against the live schema — the entity name can't pivot
+	// Whitelist against the live schema: the entity name can't pivot
 	// arbitrary SQL (same defense as the JSON handler).
 	if !slices.Contains(listTables(db), entity) {
 		return nil, fmt.Errorf("unknown entity %q", entity)
@@ -187,7 +187,7 @@ func marListEntityRows(entity string) (runtime.Value, error) {
 	}
 	defer rows.Close()
 
-	// VDict.Pairs MUST stay sorted ascending by key — build them in
+	// VDict.Pairs MUST stay sorted ascending by key: build them in
 	// sorted-column order so the invariant holds by construction.
 	sortedCols := append([]string(nil), columns...)
 	sort.Strings(sortedCols)
@@ -245,7 +245,7 @@ func stringifyCell(v any) string {
 // marListBackups projects the database backup catalog (the same data the
 // legacy SPA's /_mar/admin/api/database-backups returns) as Mar Values. The
 // panel renders each entry with a plain <a href> to the existing download
-// endpoint — the download itself never round-trips through Mar.Admin.*.
+// endpoint: the download itself never round-trips through Mar.Admin.*.
 func marListBackups() (runtime.Value, error) {
 	dbPath := runtime.CurrentDBPath()
 	if dbPath == "" {
@@ -271,7 +271,7 @@ func marListBackups() (runtime.Value, error) {
 // The panel's Mar.Admin.* effects fetch these endpoints; each runs the
 // corresponding body above and returns the Mar Value in the FRONTEND wire
 // format (runtime.EncodeValueJSON ↔ jsToMar), not the plain JSON the legacy
-// SPA endpoints emit — that's what lets a typed Dict survive the round-trip.
+// SPA endpoints emit: that's what lets a typed Dict survive the round-trip.
 // Gated by the admin session cookie, same as every other /_mar/admin/api/*
 // route. mountAdminHandlers wires them under /_mar/admin/api/mar/.
 
@@ -374,7 +374,7 @@ var (
 )
 
 // adminPanelProgram parses, typechecks and serializes the embedded panel into
-// the frontend program.json the runtime mounts. Compiled once and cached — it's
+// the frontend program.json the runtime mounts. Compiled once and cached: it's
 // framework-owned source that never changes at runtime. A typecheck failure
 // here is a framework bug (the panel is shipped, not user-authored), surfaced
 // the first time /_mar/admin/program.json is hit.
@@ -391,7 +391,7 @@ func adminPanelProgram() ([]byte, error) {
 		}
 		// Mirror apphost.PickFrontMods: the frontend runtime mounts a
 		// synthetic, NAMELESS `__entry = appFrontend [<pages>]` module and
-		// uses "__entry" as the program entry. Nameless matters — a named
+		// uses "__entry" as the program entry. Nameless matters: a named
 		// module's decls (our Admin.Panel.main) bind into a private frame,
 		// so marRun's shared-env entry lookup can't see them. The nameless
 		// module's decl binds into the shared env where the lookup runs.
@@ -413,7 +413,7 @@ func adminPanelProgram() ([]byte, error) {
 		// Built here, not parsed, so the typechecker never sees it. There is
 		// nothing for elaboration to decide: no numeric literals and no
 		// polymorphic references, only a call and three qualified names.
-		// Saying so explicitly is the point — the evaluating side refuses an
+		// Saying so explicitly is the point: the evaluating side refuses an
 		// unelaborated tree, and this is the one place that claims exemption.
 		entryMod.MarkElaborated()
 
@@ -425,7 +425,7 @@ func adminPanelProgram() ([]byte, error) {
 // handleAdminMarShell serves the HTML shell for the Mar-native panel. It reuses
 // the standard app shell (same CSS + boot path), with the program URL pointed
 // at the panel's own program.json. No HTTP auth gate (mirrors handleAdminPage)
-// — the panel's data calls are gated by the admin cookie server-side.
+// : the panel's data calls are gated by the admin cookie server-side.
 func handleAdminMarShell(w http.ResponseWriter, r *http.Request) {
 	html := strings.ReplaceAll(
 		fmt.Sprintf(pageHTML, "Mar Admin"),

@@ -32,7 +32,7 @@ func Generalize(env *TypeEnv, t Type, s *Subst) Type {
 // the same Kind. The forall header stores only IDs (`[]int`), so we
 // walk the body once to harvest each ID's Kind before generating
 // replacements. Without this, instantiating `forall k:Comparable. Dict
-// k v` would produce `Dict t999 v` with `t999` unconstrained — and
+// k v` would produce `Dict t999 v` with `t999` unconstrained, and
 // the comparable check would never fire at the call site.
 func Instantiate(t Type) Type {
 	f, ok := t.(TForall)
@@ -53,7 +53,7 @@ func Instantiate(t Type) Type {
 //
 // Each quantified var should appear at least once in the body (else
 // quantifying it was pointless), so the lookup is well-defined.
-// Vars that don't appear default to KindAny — harmless, since they
+// Vars that don't appear default to KindAny: harmless, since they
 // won't show up in the substituted result anyway.
 func harvestKinds(t Type, ids []int) map[int]Kind {
 	want := make(map[int]bool, len(ids))

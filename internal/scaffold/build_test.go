@@ -11,7 +11,7 @@ import (
 
 // TestValidateProductionConfig_NoAuthSkips covers the early-return
 // path: when Auth.config wasn't called, validation has nothing to
-// check — projects without auth ship without these fields, that's
+// check: projects without auth ship without these fields, that's
 // fine.
 func TestValidateProductionConfig_NoAuthSkips(t *testing.T) {
 	runtime.ResetAuthForTesting()
@@ -54,13 +54,13 @@ func TestValidateProductionConfig_AuthRequiresMail(t *testing.T) {
 // TestBuild_RejectsUnknownManifestField pins that `mar build` validates
 // mar.json structure for ANY target (not just production builds): a
 // typo'd or misplaced top-level key fails the build instead of being
-// silently ignored. Regression guard for the dev≠build gap — `mar dev`
+// silently ignored. Regression guard for the dev≠build gap: `mar dev`
 // always rejected this, but build + check used to wave it through.
 func TestBuild_RejectsUnknownManifestField(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, filepath.Join(dir, "Main.mar"),
 		"module Main exposing (main)\n\nmain : Cmd ()\nmain = App.frontend []\n")
-	// "port" belongs under "server", not at the top level — the exact
+	// "port" belongs under "server", not at the top level: the exact
 	// misplacement that used to build clean and silently fall back to
 	// the default port.
 	writeFile(t, filepath.Join(dir, "mar.json"), `{"name":"x","port":3011}`)
@@ -106,7 +106,7 @@ func TestValidateProductionConfig_PartialMail(t *testing.T) {
 }
 
 // TestValidateProductionConfig_HappyPath confirms a fully-configured
-// mar.json passes validation. smtpPort omitted on purpose — the
+// mar.json passes validation. smtpPort omitted on purpose: the
 // default makes it optional.
 func TestValidateProductionConfig_HappyPath(t *testing.T) {
 	dir := t.TempDir()
@@ -153,8 +153,8 @@ func TestIsProductionTarget(t *testing.T) {
 }
 
 // TestFlyDeployEvalSequence_NoDuplicateEntity guards the `mar deploy`
-// (Fly path) double-evaluation bug. The deploy runs main twice in one process —
-// Topology() to pick the Dockerfile shape, then Build() to compile — and
+// (Fly path) double-evaluation bug. The deploy runs main twice in one process:
+// Topology() to pick the Dockerfile shape, then Build() to compile, and
 // both go through loadAndRunForBuild. That helper must reset the global
 // entity registry before evaluating; without it, the second eval
 // re-registers every Entity.define and the build dies with
@@ -172,11 +172,11 @@ func TestFlyDeployEvalSequence_NoDuplicateEntity(t *testing.T) {
 		t.Skipf("guestbook fixture missing: %v", err)
 	}
 
-	// Eval #1 — the same call mar deploy makes to detect topology.
+	// Eval #1: the same call mar deploy makes to detect topology.
 	if _, err := Topology(dir); err != nil {
 		t.Fatalf("Topology (eval #1) failed: %v", err)
 	}
-	// Eval #2 — the compile step. Pre-fix this tripped the duplicate-
+	// Eval #2: the compile step. Pre-fix this tripped the duplicate-
 	// entity guard because the registry still held eval #1's entities.
 	if err := Build(dir, t.TempDir(), ""); err != nil {
 		t.Fatalf("Build after Topology must not trip the duplicate-entity guard: %v", err)
@@ -194,7 +194,7 @@ func writeFile(t *testing.T, path, content string) {
 
 // registerFakeAuth simulates the side effect Auth.config has at
 // runtime so ValidateProductionConfig sees a registered Auth.
-// Calling RegisterAuth with a zero VAuth is enough — the validator
+// Calling RegisterAuth with a zero VAuth is enough: the validator
 // only checks `CurrentAuth() != nil`.
 func registerFakeAuth() {
 	runtime.RegisterAuth(runtime.VAuth{})
@@ -206,7 +206,7 @@ func registerFakeAuth() {
 // quietly behaved differently from the ones they were developed as.
 //
 // theme-color is the one with teeth. The strip above the page on iOS
-// Safari is browser chrome — env(safe-area-inset-top) reads 0 there,
+// Safari is browser chrome: env(safe-area-inset-top) reads 0 there,
 // so the frosted nav bar cannot reach it and its color is only ever
 // what this meta says. Undeclared, Safari falls back to the PWA
 // manifest's theme_color and paints a flat band over a light page.

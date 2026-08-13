@@ -11,14 +11,14 @@ import (
 // new re-runs that page's `init`, going Back hands you the screen you left.
 //
 // This had no test, and it broke silently for months. `render()` re-initialized
-// only protected and dynamic pages — static public pages init eagerly ONCE in
-// buildPageEntry, and there was no `else` to run init again — so a static page
+// only protected and dynamic pages: static public pages init eagerly ONCE in
+// buildPageEntry, and there was no `else` to run init again, so a static page
 // kept its very first model for the life of the tab. It shipped because the
 // guard *looked* right: it cleared the flags, and nothing downstream used them.
 //
 // So these tests drive the real runtime, not the flags. The program under test
-// is parity.NavSource — a counter you can bump, a page to navigate to, and a
-// sheet route — and a fake browser thin enough to be obviously honest: it
+// is parity.NavSource: a counter you can bump, a page to navigate to, and a
+// sheet route, and a fake browser thin enough to be obviously honest: it
 // renders into a fake DOM the test reads back, and its history is a list with
 // an index. The assertions are on what the page SHOWS, which is the only thing
 // a user can see and the only thing a stale model can lie about.
@@ -52,7 +52,7 @@ func runNavDriver(t *testing.T, driver string) string {
 // The last step is the one that was broken. `/a` is a static public page, so it
 // was init'd once at mount and never again; arriving fresh from `/b` used to
 // show the counter from the earlier visit. It is also the step that separates
-// this rule from "never re-init" — without it, a test that only checked Back
+// this rule from "never re-init": without it, a test that only checked Back
 // would pass on a runtime that simply kept every model forever.
 func TestNavPushReinitsAndBackRestores(t *testing.T) {
 	got := runNavDriver(t, `
@@ -88,7 +88,7 @@ process.stdout.write(seen.join(' '));
 	}
 }
 
-// Nav.replace is a context change, not a stack movement — same depth, so the
+// Nav.replace is a context change, not a stack movement: same depth, so the
 // depth delta alone reads it as "no navigation at all". It must still re-init,
 // or logging out would drop you on a screen still holding the previous
 // session's model. This is why navKind() checks the verb before the depth.
@@ -113,7 +113,7 @@ process.stdout.write(before + ' ' + shown());
 
 // A presented route (Page.sheet) is the same page machinery with one thing
 // changed: where the view is painted. So the test asserts exactly that, in the
-// place a user would notice — the screen you came from is STILL THERE, with the
+// place a user would notice: the screen you came from is STILL THERE, with the
 // state you left on it, while the task sits over it.
 //
 // Reading only #mar-root would pass on a runtime that simply refused to
@@ -157,7 +157,7 @@ process.stdout.write(seen.join(' '));
 	}
 }
 
-// Opened cold — a bookmark, a shared link, a reload — a presented route now
+// Opened cold, a bookmark, a shared link, a reload, a presented route now
 // arrives WITH the screen it belongs to underneath it.
 //
 // It used to render as a bare full screen, on the reasoning that a deep link
@@ -167,7 +167,7 @@ process.stdout.write(seen.join(' '));
 //
 // The parent needs no new API because a presented route already nests in the
 // url under the screen it covers, and the prefix of a concrete url is itself
-// concrete — so /a/nested resolves /a with its params already filled in. A
+// concrete, so /a/nested resolves /a with its params already filled in. A
 // presented route with no such parent falls back to the app's first page,
 // because a modal always has something behind it.
 func TestSheetRouteOpenedColdPresentsOverItsParent(t *testing.T) {
@@ -181,7 +181,7 @@ func TestSheetRouteOpenedColdPresentsOverItsParent(t *testing.T) {
 		},
 		{
 			// /s is declared at the top level, so there is no prefix to
-			// resolve — the app's first page goes underneath instead.
+			// resolve: the app's first page goes underneath instead.
 			name: "top-level, so the app's first page goes underneath",
 			url:  "/s",
 			want: "root=A=0,sheet=S=0",

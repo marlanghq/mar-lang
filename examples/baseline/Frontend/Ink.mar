@@ -8,8 +8,8 @@ import Canvas exposing ( rgb, rgba )
 -- grid and the series chart.
 --
 -- Those are the only places a canvas earns its keep. Both are pictures
--- of data with no native equivalent — a hundred coloured squares, or
--- ninety bars — and neither has any text competing with the page's own.
+-- of data with no native equivalent: a hundred coloured squares, or
+-- ninety bars, and neither has any text competing with the page's own.
 --
 -- The daily log used to draw its answer strips here too, and that was
 -- the wrong call twice over. Canvas text beside native text never quite
@@ -51,8 +51,8 @@ levelColor level =
         rgb 74 146 152
 
 
--- Factors are not good or bad — "lots of coffee" is not a worse answer
--- than "none" — so they get one calm accent instead of the ramp. Only
+-- Factors are not good or bad: "lots of coffee" is not a worse answer
+-- than "none", so they get one calm accent instead of the ramp. Only
 -- mood and energy, which really do run from bad to good, are coloured
 -- by level.
 accent : Color

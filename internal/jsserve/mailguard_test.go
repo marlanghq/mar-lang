@@ -11,7 +11,7 @@ import (
 // Security audit 2026-07-15, finding #6.
 //
 // The hole: the admin panel mounts on any project with a session secret
-// and a database — NO Auth.config required. An admin-only project could
+// and a database: NO Auth.config required. An admin-only project could
 // therefore boot with no SMTP at all, and every admin sign-in printed a
 // valid one-time code to stdout, which in production is the log stream.
 //
@@ -69,7 +69,7 @@ func TestGuardMailSinkAllowsCompleteSMTP(t *testing.T) {
 
 // Half-configured SMTP (host, no password) cannot authenticate against
 // any provider, so Send would fall back to the sink. The guard has to
-// treat it as unusable, not as "configured" — otherwise this deploy
+// treat it as unusable, not as "configured": otherwise this deploy
 // boots and leaks. This is the case a naive `Host == ""` check misses.
 func TestGuardMailSinkRefusesHostWithoutPassword(t *testing.T) {
 	withAuthState(t, "a-secret-long-enough-for-the-panel",

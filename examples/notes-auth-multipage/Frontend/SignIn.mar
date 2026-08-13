@@ -6,7 +6,7 @@ import UI exposing (navigationStack, navigationTitle, form, section, text, textF
 
 
 -- Local state machine for the sign-in flow. No bootstrap of Auth.me
--- here — the framework lets the user visit /sign-in even when logged
+-- here: the framework lets the user visit /sign-in even when logged
 -- in (creates a new session); if you want auto-redirect-to-/notes
 -- when already logged in, see the (future) `Page.guest` combinator.
 --
@@ -20,7 +20,7 @@ type Model
     | AskCode String String (Maybe String)
 
 
--- DraftChanged / Submitted are step-agnostic — the Model already
+-- DraftChanged / Submitted are step-agnostic: the Model already
 -- tells us whether the user is on the email or code screen, so the
 -- view binds the same handler at both steps.
 type Msg
@@ -38,7 +38,7 @@ init =
 update : Msg -> Model -> (Model, Cmd Msg)
 update msg model =
     case msg of
-        -- Typing clears any pending error — once the user edits the
+        -- Typing clears any pending error: once the user edits the
         -- input, the previous failure no longer reflects what's there.
         -- Same pattern as a stale toast that clears on edit.
         DraftChanged value ->
@@ -141,7 +141,7 @@ verifyFailed reason model =
 
 
 -- View built from SwiftUI-style primitives. Each step renders as a
--- `navigationStack { form { section [...] } }` — same shape SwiftUI
+-- `navigationStack { form { section [...] } }`: same shape SwiftUI
 -- uses natively. iOS gets a real NavigationStack + Form + Section
 -- (with safe-area + table styling); web gets `<main><form><section>`
 -- with CSS that mimics the iOS card-list look.

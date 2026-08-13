@@ -8,7 +8,7 @@ import Backend.Mentions
 import Shared exposing (Role(..))
 
 
--- Comments — one row per message under an issue. The view layer
+-- Comments: one row per message under an issue. The view layer
 -- denormalizes the author so the frontend doesn't have to fan out
 -- user lookups per comment.
 comments : Entity Shared.Comment
@@ -26,7 +26,7 @@ comments =
         }
 
 
--- Reactions — emoji acks on comments. The composite UNIQUE on
+-- Reactions: emoji acks on comments. The composite UNIQUE on
 -- (commentId, userId, emoji) is what makes the toggle service safe:
 -- a second "add 👍" from the same user collapses into a no-op (and
 -- our toggle handler interprets the existing row as "remove it").
@@ -114,7 +114,7 @@ remove input user =
 -- toggleReaction implements optimistic toggle semantics: if the
 -- (commentId, userId, emoji) triple already exists, delete it; if
 -- not, create it. The DB-level UNIQUE constraint guarantees we
--- never accidentally create a duplicate even under racing tabs —
+-- never accidentally create a duplicate even under racing tabs:
 -- the second `Repo.create` would fail; the lookup-first approach
 -- below avoids ever triggering that path on a normal request.
 --
@@ -156,7 +156,7 @@ toggleReaction input user =
             )
 
 
--- countForIssue — cheap helper to fill `commentCount` on an
+-- countForIssue: cheap helper to fill `commentCount` on an
 -- IssueView. Exported so Backend.Issues can call it after
 -- materializing each row.
 countForIssue : Int -> Task Int
@@ -172,7 +172,7 @@ countForIssue issueId =
 -- buildCommentView denormalizes the author (name + email) onto the
 -- row AND attaches a reactions summary. The summary groups raw
 -- Reaction rows by emoji, counts each group, and flags any emoji
--- the viewer themselves reacted with — that flag drives the
+-- the viewer themselves reacted with: that flag drives the
 -- "highlighted vs ghosted" pill state on the frontend.
 --
 -- Takes the viewer's user id so the `mineToo` flag is correct for
@@ -278,7 +278,7 @@ services =
 
     -- Reactions: any authed user can toggle their own reaction
     -- on any comment they can see. (The Auth.requireRole gate isn't
-    -- needed — toggleReaction is keyed on `user.id`, so no user can
+    -- needed: toggleReaction is keyed on `user.id`, so no user can
     -- modify someone else's reaction by construction.)
     , Auth.protect Shared.toggleReaction toggleReaction
     ]

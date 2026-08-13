@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-// TestAllow_FirstHitGetsThrough — first Allow() on a fresh key
+// TestAllow_FirstHitGetsThrough: first Allow() on a fresh key
 // always succeeds (bucket starts at full burst).
 func TestAllow_FirstHitGetsThrough(t *testing.T) {
 	l := New(Policy{Rate: 10, Burst: 5})
@@ -17,7 +17,7 @@ func TestAllow_FirstHitGetsThrough(t *testing.T) {
 	}
 }
 
-// TestAllow_BurstThenReject — Burst hits in a row all pass, the
+// TestAllow_BurstThenReject: Burst hits in a row all pass, the
 // (Burst+1)th rejects with a positive retry duration.
 func TestAllow_BurstThenReject(t *testing.T) {
 	l := New(Policy{Rate: 1, Burst: 3}) // 1 token/sec, 3 burst
@@ -37,7 +37,7 @@ func TestAllow_BurstThenReject(t *testing.T) {
 	}
 }
 
-// TestAllow_KeysAreIsolated — one IP exhausting its bucket
+// TestAllow_KeysAreIsolated: one IP exhausting its bucket
 // doesn't affect another IP's bucket.
 func TestAllow_KeysAreIsolated(t *testing.T) {
 	l := New(Policy{Rate: 1, Burst: 2})
@@ -53,7 +53,7 @@ func TestAllow_KeysAreIsolated(t *testing.T) {
 	}
 }
 
-// TestAllow_RefillsOverTime — after the bucket is empty, waiting
+// TestAllow_RefillsOverTime: after the bucket is empty, waiting
 // long enough should let new requests through. Uses a fast rate
 // (1000/s) so the test runs in millis, not seconds.
 func TestAllow_RefillsOverTime(t *testing.T) {
@@ -73,7 +73,7 @@ func TestAllow_RefillsOverTime(t *testing.T) {
 	}
 }
 
-// TestAllow_RetryAfterIsAccurate — the duration returned when
+// TestAllow_RetryAfterIsAccurate: the duration returned when
 // rejecting matches roughly the time until 1 token refills.
 func TestAllow_RetryAfterIsAccurate(t *testing.T) {
 	l := New(Policy{Rate: 2, Burst: 1}) // 2/s, burst 1
@@ -92,7 +92,7 @@ func TestAllow_RetryAfterIsAccurate(t *testing.T) {
 	}
 }
 
-// TestEviction_DropsIdleKeys — keys that fully refilled and went
+// TestEviction_DropsIdleKeys: keys that fully refilled and went
 // idle past the threshold get evicted, freeing the map.
 func TestEviction_DropsIdleKeys(t *testing.T) {
 	l := New(Policy{Rate: 1000, Burst: 100})
@@ -113,14 +113,14 @@ func TestEviction_DropsIdleKeys(t *testing.T) {
 	}
 }
 
-// TestEviction_KeepsActiveKeys — a key that was hit recently is
+// TestEviction_KeepsActiveKeys: a key that was hit recently is
 // kept regardless of bucket level.
 func TestEviction_KeepsActiveKeys(t *testing.T) {
 	l := New(Policy{Rate: 1, Burst: 5})
 	defer l.Stop()
 
 	l.Allow("active")
-	// Run eviction "now" — under 1h since last access, key stays.
+	// Run eviction "now": under 1h since last access, key stays.
 	l.evict(time.Now())
 	if l.numKeys() != 1 {
 		t.Errorf("expected active key to survive eviction; got %d", l.numKeys())

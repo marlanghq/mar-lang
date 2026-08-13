@@ -1,7 +1,7 @@
 module Shared exposing (..)
 
 
--- BigApp domain — a project-management / issue tracker built to
+-- BigApp domain: a project-management / issue tracker built to
 -- stress-test the mar compiler over a realistic multi-module
 -- codebase. Models the kind of system a small team would build to
 -- manage their own work: teams own projects, projects contain
@@ -22,7 +22,7 @@ module Shared exposing (..)
 -- Activities are append-only audit log entries: one row per
 -- significant action (issue created, status changed, commented,
 -- reaction added, …). They're a derived denormalization of what
--- happens across the system — handlers in the writeful services
+-- happens across the system: handlers in the writeful services
 -- emit an activity row as a side effect of the primary write.
 --
 -- Verb is a closed enum so the frontend can render verb-specific
@@ -138,7 +138,7 @@ type alias Project =
     }
 
 
--- Service input types — small records so callers (frontend, iOS) can
+-- Service input types: small records so callers (frontend, iOS) can
 -- build them without referring to the full entity. Keeps the public
 -- API of each Service.* small and explicit.
 type alias NewProject =
@@ -175,7 +175,7 @@ type alias DeleteProject =
 --     ↑                       │
 --     └────── reopen ─────────┘
 --
--- Closed-as-WontFix is a separate terminal state from Done — Done
+-- Closed-as-WontFix is a separate terminal state from Done: Done
 -- means "the work is finished and shipped", WontFix means "we
 -- decided not to do it". UI surfaces them differently (Done = green
 -- check, WontFix = gray) so the team can reason about trade-offs at
@@ -187,7 +187,7 @@ type IssueStatus
     | WontFix
 
 
--- Priority — four levels mapping to the standard "urgency × impact"
+-- Priority: four levels mapping to the standard "urgency × impact"
 -- grid. Stored as enum, so adding a new priority is a one-line
 -- change here + the migration that follows.
 type IssuePriority
@@ -312,7 +312,7 @@ type alias Comment =
 -- expects forward declarations to be in source order.)
 --
 -- One row per (comment, user, emoji) triple. Composite UNIQUE on
--- that triple keeps "Marcio added 👍" idempotent — clicking the
+-- that triple keeps "Marcio added 👍" idempotent: clicking the
 -- same emoji twice toggles instead of stacking. The toggle service
 -- inserts when absent, deletes when present.
 
@@ -343,7 +343,7 @@ type alias ToggleReaction =
 -- ====================================================================
 --
 -- A mention is "I (commenter) called you out by @handle". One row
--- per (comment, mentioned-user) pair — the UNIQUE on those two
+-- per (comment, mentioned-user) pair: the UNIQUE on those two
 -- columns means a comment can mention the same person five times in
 -- its body and still produce a single inbox entry. Mentions are
 -- never edited; if a comment is deleted, its mentions cascade away
@@ -557,7 +557,7 @@ type alias DashboardData =
 -- Each Service.declare is a typed RPC between frontend and backend.
 -- The backend implements it in Backend/*; the frontend calls it via
 -- Service.call. The compiler enforces that argument and return
--- shapes line up — adding a field here ripples into every consumer.
+-- shapes line up: adding a field here ripples into every consumer.
 
 
 -- Projects

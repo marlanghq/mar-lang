@@ -13,7 +13,7 @@ import UI exposing
 
 -- Code-entry half of the sign-in flow, mounted at
 -- /sign-in/verify/{email:String}. The email arrives as a typed path
--- param, so the URL is the source of truth — pasting it into a fresh
+-- param, so the URL is the source of truth: pasting it into a fresh
 -- tab still works, and Back returns to the email step.
 
 

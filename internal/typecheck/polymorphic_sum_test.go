@@ -9,7 +9,7 @@ import (
 )
 
 // List.sum is one name over two element types, and the checker is the only
-// party that can tell them apart in the case that matters — an empty list. It
+// party that can tell them apart in the case that matters: an empty list. It
 // records the answer on the reference node (ast.EQualified.Impl), so these
 // tests are about what ends up written there, not just what typechecks.
 
@@ -35,7 +35,7 @@ func TestPolymorphicSumSignature(t *testing.T) {
 		}
 		// The published signature feeds the LSP and the /reference site, so
 		// an erased constraint here would advertise a type the compiler
-		// rejects — you cannot sum strings.
+		// rejects: you cannot sum strings.
 		if got, want := Pretty(Instantiate(scheme)), "List number -> number"; got != want {
 			t.Errorf("%s : %s, want %s", name, got, want)
 		}

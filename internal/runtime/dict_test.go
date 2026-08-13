@@ -96,7 +96,7 @@ func TestEvalSetJSONRoundtrip(t *testing.T) {
 }
 
 func TestEvalListSortWithOrder(t *testing.T) {
-	// Descending sort via List.sortWith — comparator returns
+	// Descending sort via List.sortWith: comparator returns
 	// LT / EQ / GT, NOT -1/0/1. The whole point is that "less"
 	// reads as `LT`, not as a magic Int constant.
 	src := `List.sortWith (\a b -> if a > b then LT else if a < b then GT else EQ) [3, 1, 4, 1, 5, 9, 2, 6]`

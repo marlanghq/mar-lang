@@ -17,13 +17,13 @@ func openMemDB(t *testing.T) *sql.DB {
 	return db
 }
 
-// TestSchemaFingerprint_Deterministic — same schema in different
+// TestSchemaFingerprint_Deterministic: same schema in different
 // table-creation orders hashes the same. (The fingerprint sorts by
 // (type, name) before hashing.)
 //
 // Note: SQLite stores sqlite_master.sql VERBATIM as the operator
 // typed it. Two schemas with different formatting produce different
-// fingerprints — this is fine for our use case (Mar's migrator is
+// fingerprints: this is fine for our use case (Mar's migrator is
 // deterministic; same migrator version = byte-identical CREATE
 // statements). We only need to be robust to insertion order, which
 // is what this test verifies.
@@ -54,7 +54,7 @@ func TestSchemaFingerprint_Deterministic(t *testing.T) {
 	}
 }
 
-// TestSchemaFingerprint_NormalizeWhitespace — the formatting-tolerance
+// TestSchemaFingerprint_NormalizeWhitespace: the formatting-tolerance
 // part of the contract. Even though Mar's migrator is deterministic,
 // we want minor whitespace variations (single space vs double, leading
 // spaces) to hash the same so a stray edit doesn't break restore.
@@ -72,7 +72,7 @@ func TestSchemaFingerprint_NormalizeWhitespace(t *testing.T) {
 	}
 }
 
-// TestSchemaFingerprint_DifferentSchemas — adding a column changes
+// TestSchemaFingerprint_DifferentSchemas: adding a column changes
 // the hash.
 func TestSchemaFingerprint_DifferentSchemas(t *testing.T) {
 	a := openMemDB(t)
@@ -87,7 +87,7 @@ func TestSchemaFingerprint_DifferentSchemas(t *testing.T) {
 	}
 }
 
-// TestSchemaFingerprint_IgnoresData — inserting rows doesn't change
+// TestSchemaFingerprint_IgnoresData: inserting rows doesn't change
 // the schema fingerprint.
 func TestSchemaFingerprint_IgnoresData(t *testing.T) {
 	db := openMemDB(t)
@@ -101,7 +101,7 @@ func TestSchemaFingerprint_IgnoresData(t *testing.T) {
 	}
 }
 
-// TestSchemaFingerprint_NoSchema — a fresh DB with no tables still
+// TestSchemaFingerprint_NoSchema: a fresh DB with no tables still
 // produces a stable empty hash.
 func TestSchemaFingerprint_NoSchema(t *testing.T) {
 	db := openMemDB(t)

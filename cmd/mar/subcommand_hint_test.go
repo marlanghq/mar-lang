@@ -4,7 +4,7 @@ import "testing"
 
 // parentForSubcommand powers the "did you mean" hint when someone
 // types a sub-subcommand (logs, status, secrets, ...) at the top
-// level. It's a static map — no manifest lookup on this hot path.
+// level. It's a static map: no manifest lookup on this hot path.
 // Pin the cases so a future refactor doesn't accidentally route them
 // through disk reads or drop a sub.
 func TestParentForSubcommand_staticSubs(t *testing.T) {

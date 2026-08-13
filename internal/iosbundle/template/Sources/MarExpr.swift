@@ -1,4 +1,4 @@
-// Expression + pattern AST — direct port of the kinds handled by
+// Expression + pattern AST: direct port of the kinds handled by
 // `evalExpr` and `matchInto` in runtime.js. Decoded from the JSON
 // shape that the Go server emits via `internal/jsserve.SerializeModule`.
 
@@ -64,7 +64,7 @@ indirect enum Pat {
     case tuple([Pat])
     case list([Pat])
     case cons(head: Pat, tail: Pat)
-    /// `{ f1, f2, ... }` — partial record destructure. Binds each
+    /// `{ f1, f2, ... }`: partial record destructure. Binds each
     /// listed field name as a local. Extra fields on the matched
     /// value are ignored (Elm-style row-poly partial match).
     case record(fields: [String])

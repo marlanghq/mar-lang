@@ -28,7 +28,7 @@ import Frontend.Inbox
 import Shared exposing (Role(..))
 
 
--- BigApp — issue tracker built to stress-test the mar compiler over
+-- BigApp: issue tracker built to stress-test the mar compiler over
 -- a realistic full-stack codebase. ~9 entities, ~25 services,
 -- ~10 pages, thousands of lines of cross-module wiring.
 --
@@ -60,7 +60,7 @@ auth =
             -- code or domain match; the showcase keeps it open so the
             -- demo team picks up automatically.
             --
-            -- `createdAt` is intentionally omitted — the framework
+            -- `createdAt` is intentionally omitted: the framework
             -- auto-fills TIMESTAMP columns with the current server
             -- time, since signup hooks run synchronously and can't
             -- call Time.now themselves.

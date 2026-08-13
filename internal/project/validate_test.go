@@ -53,7 +53,7 @@ func TestValidate_AdminsRejectsBadShape(t *testing.T) {
 	}
 }
 
-// TestValidate_AdminsRejectsDuplicates — the boot-time sync would
+// TestValidate_AdminsRejectsDuplicates: the boot-time sync would
 // silently dedupe, but accepting it at parse means the user could
 // have a typo (same email twice with different casing) the check
 // missed. Compile-time rejection forces them to fix it.
@@ -83,7 +83,7 @@ func TestValidate_RecentRequestsSizeAcceptsRange(t *testing.T) {
 	}
 }
 
-// TestValidate_RecentRequestsSizeRejectsOutOfRange — the whole point
+// TestValidate_RecentRequestsSizeRejectsOutOfRange: the whole point
 // of hard rejection is catching surprises like 99999 at compile
 // time, not silently clamping to 5000.
 func TestValidate_RecentRequestsSizeRejectsOutOfRange(t *testing.T) {
@@ -109,7 +109,7 @@ func TestValidate_RecentRequestsSizeRejectsOutOfRange(t *testing.T) {
 	}
 }
 
-// TestValidate_AutoBackupAcceptsRange — both ends of the documented
+// TestValidate_AutoBackupAcceptsRange: both ends of the documented
 // range and a typical mid value should pass.
 func TestValidate_AutoBackupAcceptsRange(t *testing.T) {
 	cases := []struct {
@@ -138,7 +138,7 @@ func TestValidate_AutoBackupAcceptsRange(t *testing.T) {
 	}
 }
 
-// TestValidate_AutoBackupRejectsOutOfRange — values outside the
+// TestValidate_AutoBackupRejectsOutOfRange: values outside the
 // documented bounds fail with a message naming the field.
 func TestValidate_AutoBackupRejectsOutOfRange(t *testing.T) {
 	cases := []struct {
@@ -181,7 +181,7 @@ func TestValidate_AutoBackupRejectsOutOfRange(t *testing.T) {
 	}
 }
 
-// TestAutoBackup_ResolvedDefaults — when fields are zero, the
+// TestAutoBackup_ResolvedDefaults, when fields are zero, the
 // resolver returns the documented defaults; explicit values pass
 // through verbatim.
 func TestAutoBackup_ResolvedDefaults(t *testing.T) {
@@ -208,7 +208,7 @@ func TestAutoBackup_ResolvedDefaults(t *testing.T) {
 	}
 }
 
-// TestValidate_RateLimitAcceptsRange — both ends of the documented
+// TestValidate_RateLimitAcceptsRange: both ends of the documented
 // range and a typical mid value should pass.
 func TestValidate_RateLimitAcceptsRange(t *testing.T) {
 	cases := []struct {
@@ -236,7 +236,7 @@ func TestValidate_RateLimitAcceptsRange(t *testing.T) {
 	}
 }
 
-// TestValidate_RateLimitRejectsOutOfRange — values outside the
+// TestValidate_RateLimitRejectsOutOfRange: values outside the
 // documented bounds fail with a message naming the field. Same
 // "0 means unset" convention as the other bounded knobs.
 func TestValidate_RateLimitRejectsOutOfRange(t *testing.T) {
@@ -278,7 +278,7 @@ func TestValidate_RateLimitRejectsOutOfRange(t *testing.T) {
 	}
 }
 
-// TestValidate_MaxBodyBytesAcceptsRange — both ends of the documented
+// TestValidate_MaxBodyBytesAcceptsRange: both ends of the documented
 // range and a typical default value should pass.
 func TestValidate_MaxBodyBytesAcceptsRange(t *testing.T) {
 	cases := []struct {
@@ -300,10 +300,10 @@ func TestValidate_MaxBodyBytesAcceptsRange(t *testing.T) {
 	}
 }
 
-// TestValidate_MaxBodyBytesRejectsOutOfRange — anything outside the
+// TestValidate_MaxBodyBytesRejectsOutOfRange: anything outside the
 // documented bounds fails with a message naming the field. The lower
 // bound exists because below ~1 KiB no real JSON API works; the
-// upper bound exists because no "unlimited" — uncapped bodies are
+// upper bound exists because no "unlimited": uncapped bodies are
 // a DoS vector by design.
 func TestValidate_MaxBodyBytesRejectsOutOfRange(t *testing.T) {
 	cases := []struct {
@@ -329,7 +329,7 @@ func TestValidate_MaxBodyBytesRejectsOutOfRange(t *testing.T) {
 	}
 }
 
-// TestMaxBodyBytes_ResolvedDefaults — nil receiver and zero field
+// TestMaxBodyBytes_ResolvedDefaults: nil receiver and zero field
 // both fall back to the documented default. Explicit values pass
 // through. Pins the resolver against accidental drift.
 func TestMaxBodyBytes_ResolvedDefaults(t *testing.T) {
@@ -347,7 +347,7 @@ func TestMaxBodyBytes_ResolvedDefaults(t *testing.T) {
 	}
 }
 
-// TestIsValidEmail — pin the shape check that runtime auth handlers
+// TestIsValidEmail: pin the shape check that runtime auth handlers
 // rely on. The same regex backs admin/mail validation in this
 // package; this exported helper extends it to /_auth/request-code
 // and /_mar/admin/auth/request-code so junk like "not-an-email"
@@ -380,7 +380,7 @@ func TestIsValidEmail(t *testing.T) {
 	}
 }
 
-// TestRateLimit_ResolvedDefaults — when the block or fields are
+// TestRateLimit_ResolvedDefaults, when the block or fields are
 // zero, resolvers return the documented defaults; explicit values
 // pass through verbatim. Pinning this so the dev/prod boot path
 // (which always feeds the resolver into ratelimit.New) doesn't
@@ -473,7 +473,7 @@ func TestValidate_Mail(t *testing.T) {
 	}
 }
 
-// TestValidate_MailPlaceholderIsTyped — the "..." placeholder check
+// TestValidate_MailPlaceholderIsTyped: the "..." placeholder check
 // returns a *PlaceholderError so the CLI can match it via errors.As
 // and render a field-specific Hint (instead of falling through to
 // the generic catch-all). Pins the typed-error contract so future
@@ -506,7 +506,7 @@ func TestValidate_MailPlaceholderIsTyped(t *testing.T) {
 	}
 }
 
-// TestValidate_MailRejectsFreeMailDomains — using gmail.com /
+// TestValidate_MailRejectsFreeMailDomains: using gmail.com /
 // outlook.com / yahoo.com / etc. as the from address can never
 // work in production (SMTP providers won't let you send from
 // domains you haven't verified). Reject at compile time with the
@@ -532,7 +532,7 @@ func TestValidate_MailRejectsFreeMailDomains(t *testing.T) {
 		{"hello@my-app.com", true},
 		{"App <hello@my-app.com>", true},
 		{"x@notes-app.fly.dev", true},
-		// fastmail / zoho deliberately NOT in the blocklist —
+		// fastmail / zoho deliberately NOT in the blocklist:
 		// some users do host on a real domain via these.
 		{"x@fastmail.com", true},
 		{"x@zoho.com", true},
@@ -688,7 +688,7 @@ func TestValidateDeployCloudflarePages_MissingCases(t *testing.T) {
 		})
 	}
 
-	// Whole-block-missing cases handled separately — they don't
+	// Whole-block-missing cases handled separately: they don't
 	// mutate a CloudflarePages struct because there isn't one yet.
 	blockCases := []struct {
 		name string
@@ -816,7 +816,7 @@ func TestValidateDeployCloudflarePages_AppEdgeCases(t *testing.T) {
 }
 
 // TestCheckSecrets_APITokenObligatesEnv pins the rule that
-// deploy.cloudflare-pages.apiToken must be an env:VAR reference —
+// deploy.cloudflare-pages.apiToken must be an env:VAR reference:
 // committing a literal token would be a credential leak. Same
 // shape as the existing checks for mail.smtpPassword and
 // auth.sessionSecret.

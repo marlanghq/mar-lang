@@ -2,7 +2,7 @@ package project
 
 import "testing"
 
-// isStdlib must recognise every built-in module — including the ones the old
+// isStdlib must recognise every built-in module: including the ones the old
 // hand-maintained list silently omitted (Dict, Set, Time, Tuple, Char, Auth,
 // Nav, Service, Server, Db), which made `import Dict` etc. fail as if the
 // module were a missing local file.
@@ -18,7 +18,7 @@ func TestIsStdlibCoversBuiltinModules(t *testing.T) {
 	}
 }
 
-// Names that are NOT built-in modules must be treated as project files —
+// Names that are NOT built-in modules must be treated as project files:
 // including IO/Screen, which a stale doc comment used to list as built-ins
 // but which the language never actually provided.
 func TestIsStdlibRejectsNonModules(t *testing.T) {

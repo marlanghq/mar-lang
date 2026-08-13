@@ -1,16 +1,16 @@
-// Auto-backup scheduler — the goroutine that wakes periodically,
+// Auto-backup scheduler: the goroutine that wakes periodically,
 // produces a snapshot via VACUUM INTO, packs it into the catalog,
 // and prunes oldest entries to honor the retention policy.
 //
 // One scheduler per process. StartScheduler is idempotent (sync.Once);
 // stopping is via context cancellation. The scheduler doesn't own
-// the lifecycle of the database connection or the manifest — those
+// the lifecycle of the database connection or the manifest: those
 // are passed in.
 //
 // The actual snapshot+tar work is delegated to a SnapshotFunc the
 // caller provides. This keeps the package independent of cmd/mar-
 // runtime's bundle layout (which lives there to avoid import cycles
-// — that file references the manifest, which references project.*,
+//: that file references the manifest, which references project.*,
 // which we don't want admin to depend on).
 
 package admin
@@ -49,12 +49,12 @@ type SchedulerConfig struct {
 
 // schedulerOnce ensures we don't start multiple schedulers per
 // process. Tests pass nil ctx + nil cancel via StartSchedulerForTest
-// to bypass — production goes through StartScheduler.
+// to bypass: production goes through StartScheduler.
 var schedulerOnce sync.Once
 
 // StartScheduler kicks off the auto-backup loop in a background
 // goroutine. Idempotent within a process. The returned context's
-// Done() is the goroutine's exit signal — wire to the parent
+// Done() is the goroutine's exit signal: wire to the parent
 // context so process shutdown stops the scheduler cleanly.
 func StartScheduler(parent context.Context, cfg SchedulerConfig) context.CancelFunc {
 	ctx, cancel := context.WithCancel(parent)
@@ -64,7 +64,7 @@ func StartScheduler(parent context.Context, cfg SchedulerConfig) context.CancelF
 	return cancel
 }
 
-// StartSchedulerForTest is the test-friendly entry point — bypasses
+// StartSchedulerForTest is the test-friendly entry point: bypasses
 // the sync.Once guard so multiple tests can spin up + tear down
 // schedulers without leaking goroutines into other tests. Production
 // should always use StartScheduler.
@@ -105,7 +105,7 @@ func runScheduler(ctx context.Context, cfg SchedulerConfig) {
 }
 
 // tick runs one backup cycle: snapshot + prune. Errors are logged
-// but never abort the scheduler — a transient failure shouldn't
+// but never abort the scheduler: a transient failure shouldn't
 // kill the loop forever.
 func tick(cfg SchedulerConfig, log func(string)) {
 	now := time.Now().UTC()
@@ -137,7 +137,7 @@ func tick(cfg SchedulerConfig, log func(string)) {
 // If the catalog has a backup younger than `interval`, defer until
 // `interval` has elapsed since that backup. Otherwise tick almost
 // immediately (1 second grace so boot logs land before backup
-// chatter — capped by `interval` so test setups with tiny intervals
+// chatter: capped by `interval` so test setups with tiny intervals
 // don't get penalized).
 func computeFirstDelay(catalogDir string, interval time.Duration, now func() time.Time) time.Duration {
 	grace := time.Second
@@ -156,7 +156,7 @@ func computeFirstDelay(catalogDir string, interval time.Duration, now func() tim
 }
 
 // humanBytes is a tiny formatter for the log line. Doesn't need to
-// be exposed — the same conversion happens elsewhere via human-
+// be exposed: the same conversion happens elsewhere via human-
 // readable formatters in the CLI.
 func humanBytes(n int64) string {
 	const unit = 1024

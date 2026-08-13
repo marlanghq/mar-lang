@@ -4,7 +4,7 @@
 // It's web-target infrastructure: the same Config drives both `mar dev`
 // (which serves /_mar/manifest.json + /_mar/icon-*.png live) and
 // `mar build` (which writes those files into dist/). No external
-// dependencies — icon resizing uses a stdlib box-average downscale,
+// dependencies: icon resizing uses a stdlib box-average downscale,
 // which is plenty for the large→small ratios app icons need.
 package pwa
 
@@ -22,7 +22,7 @@ import (
 // reference. 180 = apple-touch-icon; 192 + 512 = Web App Manifest.
 var IconSizes = []int{180, 192, 512}
 
-// FaviconSize is the dimension served at /favicon.ico — small enough to
+// FaviconSize is the dimension served at /favicon.ico: small enough to
 // be a crisp tab favicon, large enough for high-DPI tabs (browsers
 // downscale to 16/32 as needed).
 const FaviconSize = 48

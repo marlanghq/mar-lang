@@ -27,9 +27,9 @@ type Symbol struct {
 	// Where the name was *defined* (1-indexed, mar-style).
 	DefLine int
 	DefCol  int
-	// For SymValue / SymConstructor — the inferred type, pretty-printed.
+	// For SymValue / SymConstructor: the inferred type, pretty-printed.
 	Type string
-	// For SymTypeAlias / SymCustomType — a one-line summary of the type's
+	// For SymTypeAlias / SymCustomType: a one-line summary of the type's
 	// shape (rhs).
 	Summary string
 }
@@ -60,7 +60,7 @@ func BuildIndex(uri, source string) *DocIndex {
 		return idx
 	}
 	idx.Mod = mod
-	res, _ := typecheck.CheckModule(mod) // ignore err — we still want to index decls
+	res, _ := typecheck.CheckModule(mod) // ignore err: we still want to index decls
 	idx.Result = res
 	collectSymbols(idx)
 	return idx
@@ -187,7 +187,7 @@ func IdentifierAt(source string, line, col int) string {
 	return row[start:end]
 }
 
-// HoverMarkdown produces the hover content for a symbol — Markdown with
+// HoverMarkdown produces the hover content for a symbol: Markdown with
 // a code block containing the type signature. Stdlib symbols (flagged
 // via stdlibBuiltinTag in Summary) get a "_built-in_" footer instead of
 // a regular summary line.

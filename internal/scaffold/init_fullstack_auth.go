@@ -6,12 +6,12 @@ import "fmt"
 // operator picks the fullstack-with-auth kind. Layout mirrors the
 // canonical multipage examples (notes-auth-multipage, team-notes):
 //
-//	Main.mar              — Auth.config + App.fullstack wiring
-//	Shared.mar            — types + Service contracts
-//	Backend.mar           — users + entries entities, Auth.protected services
-//	Frontend/Routes.mar   — centralized typed Paths
-//	Frontend/SignIn.mar   — email + code flow with inline errors
-//	Frontend/Home.mar     — protected entries page
+//	Main.mar              - Auth.config + App.fullstack wiring
+//	Shared.mar            - types + Service contracts
+//	Backend.mar           - users + entries entities, Auth.protected services
+//	Frontend/Routes.mar   - centralized typed Paths
+//	Frontend/SignIn.mar   - email + code flow with inline errors
+//	Frontend/Home.mar     - protected entries page
 //
 // Splitting pages and using Page.protected from day one matches how
 // real auth-gated apps grow.

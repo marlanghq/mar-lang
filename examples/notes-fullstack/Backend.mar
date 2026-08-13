@@ -4,7 +4,7 @@ module Backend exposing (services)
 import Shared
 
 
--- SQLite schema lives here — the browser bundle never sees it.
+-- SQLite schema lives here: the browser bundle never sees it.
 notes : Entity Shared.Note
 notes =
     Entity.define

@@ -42,7 +42,7 @@ func TestStdlibCoversRecentAdditions(t *testing.T) {
 		"Cmd.none", "Cmd.batch", "Cmd.perform",
 		"Sub.none", "Sub.batch",
 		"Time.now", "Time.every",
-		// Random — Elm-style generators + the generate-as-Cmd bridge
+		// Random: Elm-style generators + the generate-as-Cmd bridge
 		"Random.generate", "Random.int", "Random.uniform", "Random.constant",
 		"Random.map", "Random.map2", "Random.andThen", "Random.list", "Random.pair",
 		// REST services: Service.declare VERB "/path"
@@ -73,7 +73,7 @@ func TestStdlibCoversRecentAdditions(t *testing.T) {
 	}
 
 	// Random.generate is the only bridge from a Generator into the MVU
-	// loop — its type must reach Cmd, not hand back a bare Generator.
+	// loop: its type must reach Cmd, not hand back a bare Generator.
 	// Catches a regression that re-exposes the generator directly.
 	if s, ok := have["Random.generate"]; ok {
 		if !strings.Contains(s.Type, "Cmd") {

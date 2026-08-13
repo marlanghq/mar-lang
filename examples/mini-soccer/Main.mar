@@ -1,7 +1,7 @@
 module Main exposing (main)
 
 
--- Super Striker — a tiny 8-bit arcade football game in the spirit of the
+-- Super Striker: a tiny 8-bit arcade football game in the spirit of the
 -- Master System classics (Great Soccer, World Cup). Top-down single-screen
 -- pitch, both goals in view. You always control ONE blue player: whoever is
 -- nearest the ball, or the blue carrier when your team has it. The other
@@ -11,11 +11,11 @@ module Main exposing (main)
 -- the ball and tackles (steal / lunge) when you don't. That single contextual
 -- button is the whole Master-System feel: no menus, no combos, just run and kick.
 --
--- A canvas game for Mar, built with ZERO language changes — the same handful of
+-- A canvas game for Mar, built with ZERO language changes: the same handful of
 -- primitives the mini-rpg uses: a `Time.every` tick drives the sim, `Keyboard`
 -- feeds input, and the whole 8-bit look is drawn from ONE primitive, `rect`:
 -- blocky sprites with black outlines, a 3x5 pixel font (see the `glyph` table),
--- and a dotted centre circle — no smooth `circle`, no system font. All maths is
+-- and a dotted centre circle: no smooth `circle`, no system font. All maths is
 -- Int (Mar has no Float); the helpers at the bottom (absI, iclamp, isign, d2…)
 -- stand in for the Basics functions Mar doesn't ship. The pitch lives in fixed
 -- logical units (640x400) and is scaled into the canvas by a WHOLE number so
@@ -86,11 +86,11 @@ goalDepth = 20           -- how far the net sticks out behind the line
 -- movement is sub-pixel (subPx / cardSub / diagSub, below); the AI uses these
 -- whole-pixel steps.
 cpuSpeed : Int
-cpuSpeed = 2             -- AI cardinal step — matches your ~2px straight-line speed
+cpuSpeed = 2             -- AI cardinal step: matches your ~2px straight-line speed
 
 
 cpuDiag : Int
-cpuDiag = 1              -- AI diagonal step — also equal to yours (a fair chase)
+cpuDiag = 1              -- AI diagonal step: also equal to yours (a fair chase)
 
 
 keeperSpeed : Int
@@ -154,7 +154,7 @@ slideRecover = 16        -- extra cool ticks after a slide before you can act
 
 
 slideDownTicks : Int
-slideDownTicks = 12      -- ticks face-down after a MISSED slide (won nothing) — a brief stumble, just enough that a wild carrinho isn't free
+slideDownTicks = 12      -- ticks face-down after a MISSED slide (won nothing): a brief stumble, just enough that a wild carrinho isn't free
 
 
 dribbleAhead : Int
@@ -188,11 +188,11 @@ cpuPassPow = 8           -- a Red CPU's firm ground pass to a team-mate (a touch
 
 
 passLead : Int
-passLead = 24            -- a CPU pass target must be at least this far AHEAD (toward goal) — only forward balls
+passLead = 24            -- a CPU pass target must be at least this far AHEAD (toward goal): only forward balls
 
 
 passPressR2 : Int
-passPressR2 = 324        -- 18^2: a Blue defender this close to a Red carrier is "pressure" — lay the ball off
+passPressR2 = 324        -- 18^2: a Blue defender this close to a Red carrier is "pressure", lay the ball off
 
 
 passEvery : Int
@@ -681,7 +681,7 @@ dirHeld m =
 -- Discrete on-DOWN actions for a key that JUST went down (the edge is derived by
 -- the caller diffing the set). Mirrors the old KeyDown routing: mute (any phase),
 -- pause (Playing only), else the play-phase actions L=shoot / K=slide / J=switch,
--- or off the pitch ANY key advances. Direction keys fall through — held is
+-- or off the pitch ANY key advances. Direction keys fall through: held is
 -- recomputed by dirHeld. The model is the fold accumulator; each key is an element.
 applyKeyPress : Keyboard.Key -> Model -> Model
 applyKeyPress key model =
@@ -733,7 +733,7 @@ nextInCycle current ids =
     r.result
 
 
--- X: a sliding tackle ("carrinho") with the player you control — lunges in the
+-- X: a sliding tackle ("carrinho") with the player you control, lunges in the
 -- direction you're holding (or facing), reaching much farther than a standing
 -- tackle, but the `cool` lockout means a miss leaves you recovering. Only fires
 -- when you're chasing (not carrying the ball) and not already committed.
@@ -773,7 +773,7 @@ stickDead = 35           -- analog-stick threshold (of 100) before a direction r
 
 -- Discrete on-DOWN actions for a gamepad button that JUST went down. Mirrors the
 -- old PadDown routing: Start pauses (Playing); off the pitch ANY button advances;
--- in play A=shoot/tackle, B/X=slide, Y/L1/R1=switch. The d-pad falls through — held
+-- in play A=shoot/tackle, B/X=slide, Y/L1/R1=switch. The d-pad falls through: held
 -- is recomputed by dirHeld. The model is the fold accumulator; each button is an element.
 applyPadPress : Gamepad.Button -> Model -> Model
 applyPadPress btn model =
@@ -962,7 +962,7 @@ playTick model =
             -- a countdown blip on each of the last 10 whole seconds before the NEXT
             -- boundary: half time (first half) or full time (second). The clock runs
             -- continuously across both halves, so we measure the gap to that boundary
-            -- rather than always to zero — that lands the ticks at 45' too, not only 90'.
+            -- rather than always to zero: that lands the ticks at 45' too, not only 90'.
             periodEnd = if model.half == 1 then matchTicks // 2 else 0
             toEnd = newClock - periodEnd
             lowBeep = if toEnd > 0 && toEnd <= 10 * fps && imodP toEnd fps == 0 then [ CuTimeLow ] else []
@@ -997,7 +997,7 @@ playTick model =
 
 -- Which blue player you steer. Control follows the ball ONLY when a blue
 -- outfielder actually has it (you always steer the carrier). Otherwise it
--- STAYS on whoever you last chose — the game never yanks control away from you
+-- STAYS on whoever you last chose: the game never yanks control away from you
 -- mid-play. Press Shift to hand control to the blue player nearest the ball.
 pickControlled : Model -> Int
 pickControlled model =
@@ -1131,7 +1131,7 @@ moveField model p =
         stepToward p (foeGoalX model p.team) midY cpuSpeed cpuDiag
     else if teamNearestField p.team model.players b == p.id then
         -- the nearest chaser on the team WITHOUT the ball goes for it at the normal
-        -- pace (no speed boost — it made keeping the ball too hard).
+        -- pace (no speed boost: it made keeping the ball too hard).
         stepToward p b.x b.y cpuSpeed cpuDiag
     else if threatened && secondNearestField p.team model.players b == p.id then
         -- the SECOND presser COVERS instead of diving onto the ball (which stacked
@@ -1232,7 +1232,7 @@ spread model p =
 
 
 -- Move a player toward (tx, ty). Cardinal moves use spCard; a diagonal (both
--- axes want to move) uses spDiag on EACH axis — same rule the human obeys, so
+-- axes want to move) uses spDiag on EACH axis: same rule the human obeys, so
 -- the AI's diagonal run is no faster than yours.
 stepToward : Player -> Int -> Int -> Int -> Int -> Player
 stepToward p tx ty spCard spDiag =
@@ -1355,7 +1355,7 @@ keeperClear mk2 dir b =
 
 -- a red carrier that has reached the final third lets fly at the blue goal,
 -- aiming for a top / bottom corner (alternating) rather than straight down the
--- middle — so the keeper actually has to guess, and the shots aren't monotonous.
+-- middle, so the keeper actually has to guess, and the shots aren't monotonous.
 cpuShoot : Model -> Model
 cpuShoot model =
     let
@@ -1400,7 +1400,7 @@ cpuShoot model =
 
 -- The best Red team-mate to pass to: a field player clearly AHEAD toward the
 -- attacking goal (a forward ball, never square or back), the most advanced one.
--- Nothing if nobody is ahead — then the carrier just keeps dribbling.
+-- Nothing if nobody is ahead, then the carrier just keeps dribbling.
 bestPassTarget : Model -> Player -> Int -> Maybe Player
 bestPassTarget model p sdir =
     let
@@ -1434,7 +1434,7 @@ cpuShouldPass model p =
 -- ball forward to a team-mate upfield instead of dribbling all the way in. The pass
 -- is a real loose ball (owner cleared, so it has pace + friction and a Blue can read
 -- the lane and pick it off). Runs just before cpuShoot; if it fires, the ball is
--- loose so cpuShoot's `owner >= 0` guard skips it. Near goal it never passes — it
+-- loose so cpuShoot's `owner >= 0` guard skips it. Near goal it never passes: it
 -- leaves the finish to cpuShoot.
 cpuPass : Model -> Model
 cpuPass model =
@@ -1476,7 +1476,7 @@ cpuPass model =
         model
 
 
--- a player mid-slide that reaches the ball wins it — as long as the ball is up
+-- a player mid-slide that reaches the ball wins it: as long as the ball is up
 -- for grabs (not inside a grace window). This is the payoff for a carrinho.
 slideTackles : Model -> Model
 slideTackles model =
@@ -1611,8 +1611,8 @@ kickoffForwardId team =
     if team == Blue then 0 else 4
 
 
--- queue both teams just off the touchlines at the halfway line — blue above the
--- top line, red below the bottom line — single file (entry index 0 = keeper at
+-- queue both teams just off the touchlines at the halfway line: blue above the
+-- top line, red below the bottom line: single file (entry index 0 = keeper at
 -- the front, then the field players stacked behind, partly off-screen). Each trots
 -- on when its wave is released (see warmupTick / walkOn), so the two teams file on
 -- one player at a time. The ball is parked away; `warm` restarts the entry clock.
@@ -1648,8 +1648,8 @@ queueStart p =
 
 
 -- the walk-on order within a team (0 = first on): the keeper leads (longest trek),
--- the field players follow, and the kicking team's taker — who stays on the centre
--- spot to pass — comes on LAST. The two teams share each wave (one blue, one red).
+-- the field players follow, and the kicking team's taker, who stays on the centre
+-- spot to pass: comes on LAST. The two teams share each wave (one blue, one red).
 entryIndex : Team -> Player -> Int
 entryIndex kicker p =
     if p.role == Keeper then
@@ -2016,7 +2016,7 @@ inCircle x y c r =
 -- Screen positions of the d-pad + the three action buttons. PORTRAIT: they live in
 -- the DECK below the pitch (anchored to the screen's bottom corners, which IS the
 -- deck). LANDSCAPE: they sit over the GRASS in the pitch's bottom corners, inset from
--- the goals and touchlines — computed from the SAME `lay` the pitch is drawn with, so
+-- the goals and touchlines: computed from the SAME `lay` the pitch is drawn with, so
 -- they always land on green, never lost in the dark bezel or sitting on a goal.
 controlAnchors : Model -> { scale : Int, ox : Int, oy : Int, portrait : Bool } -> { dpad : Vec, kick : Vec, slide : Vec, switch : Vec }
 controlAnchors model lay =
@@ -2087,7 +2087,7 @@ touchDown model x y =
 
 
 -- drag: while a steering touch is down, keep re-reading the direction off the FIXED
--- d-pad centre — the finger can slide beyond the pad and still steer.
+-- d-pad centre: the finger can slide beyond the pad and still steer.
 touchDrag : Model -> Int -> Int -> Model
 touchDrag model x y =
     if model.padOn then
@@ -2113,7 +2113,7 @@ touchUp model x y =
 -- so they sit fixed in the corners. In PORTRAIT a dark DECK panel first fills the
 -- band below the pitch, so the controls get their own area and never cover play.
 -- Shown through the WHOLE match (walk-on, set, play, goal break) so they don't flicker
--- in and out at each kickoff — just not on the title or the end screen.
+-- in and out at each kickoff, just not on the title or the end screen.
 drawControls : Model -> { scale : Int, ox : Int, oy : Int, portrait : Bool } -> List Shape
 drawControls model lay =
     if model.phase /= Title && model.phase /= Full then
@@ -2144,7 +2144,7 @@ drawControls model lay =
 
 
 -- a fixed d-pad: a dark plus-shaped plate with four directional nubs that light
--- amber while that direction is held (by touch OR the keys — it mirrors `held`).
+-- amber while that direction is held (by touch OR the keys: it mirrors `held`).
 dpadShape : Int -> Int -> Int -> Held -> List Shape
 dpadShape cx cy r held =
     let
@@ -2242,7 +2242,7 @@ stands model =
 
 -- During the sideline walk-on each player marches up from a tunnel OFF the pitch,
 -- so its sprite starts above the top touchline (blue) or below the bottom one (red),
--- out in the dark bezel. We want them to look like they're EMERGING — only the part
+-- out in the dark bezel. We want them to look like they're EMERGING: only the part
 -- already past the touchline visible. With no clip primitive, we redraw whatever
 -- normally sits off the pitch (the bezel, then the crowd stands) ON TOP of the
 -- players: the off-pitch part of each body is covered and the on-pitch part shows,
@@ -2344,7 +2344,7 @@ pauseShapes model =
         []
 
 
--- the centre circle as a ring of blocky dots — no smooth curve on an 8-bit pitch.
+-- the centre circle as a ring of blocky dots: no smooth curve on an 8-bit pitch.
 centreRing : Int -> Int -> List Shape
 centreRing cx cy =
     [ rect (cx + 44) (cy - 2) 4 4 lineWhite
@@ -2394,7 +2394,7 @@ drawPlayer ctrl anim p =
         kit = kitColor p
         trim = trimColor p
         sel = p.id == ctrl
-        -- run cycle: while the player is moving, a 2-frame stride — the legs
+        -- run cycle: while the player is moving, a 2-frame stride, the legs
         -- swap length (feet rise + fall), the arms swing opposite, and the
         -- whole body bobs 1px. Frozen to a neutral stance when standing still.
         phase = if p.moving then mod2 (anim // 6) else 0
@@ -2440,7 +2440,7 @@ drawPlayer ctrl anim p =
             , armCol (cx - 8) aL kit
             , armCol (cx + 6) aR kit
             -- shirt: flat kit with a single trim waistband stripe (kept plain
-            -- on purpose — extra highlight/shadow columns made the chest busy)
+            -- on purpose: extra highlight/shadow columns made the chest busy)
             , outlined (cx - 5) (y0 - 8) 10 9 kit
             , [ rect (cx - 5) (y0 - 1) 10 2 trim ]
             -- head: skin block, then the face OR the back of the head (faceRects)
@@ -2478,7 +2478,7 @@ drawSlide sel p =
         ]
 
 
--- a rect with a 1px black border — the classic pixel-sprite outline.
+-- a rect with a 1px black border: the classic pixel-sprite outline.
 outlined : Int -> Int -> Int -> Int -> Color -> List Shape
 outlined x y w h fill =
     [ rect (x - 1) (y - 1) (w + 2) (h + 2) ink, rect x y w h fill ]
@@ -2588,7 +2588,7 @@ titleScreen model =
     let
         cx = model.w // 2
         -- anchor the whole ~290px block by its TOP so it's vertically centred, but
-        -- never let the top rise above an 8px margin — that way it fits even a SHORT
+        -- never let the top rise above an 8px margin: that way it fits even a SHORT
         -- landscape phone (where centring on h/2 pushed the footer off the bottom).
         ty = max 8 ((model.h - 290) // 2)
         glow = titleGlow model.intro
@@ -2705,7 +2705,7 @@ teamKit team =
 -- Confetti in the celebrating team's colours: their kit dominates (about half the
 -- pieces), sprinkled with neutral festive tones (gold, white, pale cream). The
 -- OPPONENT's kit never appears, so a Blue party reads blue+gold+white and a Red
--- party reads red+gold+white — the shower always belongs to the team that scored.
+-- party reads red+gold+white: the shower always belongs to the team that scored.
 confColor : Team -> Int -> Color
 confColor team i =
     case imodP i 6 of
@@ -2735,7 +2735,7 @@ confettiPiece team i elapsed w h =
     rect (x + sway) yy sz sz (confColor team i)
 
 
--- grey rain for a loss — thin streaks looping down the screen, a gloomy foil to
+-- grey rain for a loss: thin streaks looping down the screen, a gloomy foil to
 -- the win confetti.
 gloomFall : Int -> Int -> Int -> List Shape
 gloomFall elapsed w h =
@@ -2807,7 +2807,7 @@ muteIcon cx cy muted =
 
 
 -- ===== pixel font (3x5 glyphs drawn as rects, so text is blocky like the HUD
--- of an 8-bit game — the canvas `text` primitive uses the system sans, which
+-- of an 8-bit game: the canvas `text` primitive uses the system sans, which
 -- would break the retro look) =====
 
 
@@ -3069,7 +3069,7 @@ clampPX x =
 
 -- keep the player between the touchlines (the sideline is the limit), so nobody
 -- walks out onto the terraces. The top bound is inset a little more than the
--- bottom because the sprite is drawn UPWARD from its feet — this keeps the head
+-- bottom because the sprite is drawn UPWARD from its feet: this keeps the head
 -- clear of the top stand.
 clampPY : Int -> Int
 clampPY y =
@@ -3121,7 +3121,7 @@ mod4 n =
     n - (n // 4) * 4
 
 
--- positive modulo (n >= 0, m > 0) — used to scatter confetti deterministically.
+-- positive modulo (n >= 0, m > 0): used to scatter confetti deterministically.
 imodP : Int -> Int -> Int
 imodP n m =
     n - (n // m) * m
@@ -3288,7 +3288,7 @@ whistleSfx : Sound
 whistleSfx = Sound.volume 70 (Sound.vibrato 40 12 (Sound.sweep 2700 (Sound.tone Sound.Square 2300 240)))
 
 
--- the FULL-TIME whistle: ONE long, CONSTANT referee's blast — the same steady peep
+-- the FULL-TIME whistle: ONE long, CONSTANT referee's blast, the same steady peep
 -- as the half-time whistle, just held far longer. It's cued in playTick the instant
 -- the clock reaches 0 (full time), so it lands ON the final second, not after it.
 finalWhistleSfx : Sound
@@ -3375,7 +3375,7 @@ winSfx =
         ]
 
 
--- the sad-trombone fall — the lose jingle at full time (a descending minor line
+-- the sad-trombone fall: the lose jingle at full time (a descending minor line
 -- sliding into the cellar).
 loseSfx : Sound
 loseSfx =
@@ -3387,7 +3387,7 @@ loseSfx =
         ]
 
 
--- the HALF-TIME whistle: a single, steady referee's peep — same character as the
+-- the HALF-TIME whistle: a single, steady referee's peep, same character as the
 -- kickoff whistle, a touch longer so it reads as "end of half", but clearly shorter
 -- than the drawn-out full-time blast.
 halftimeSfx : Sound

@@ -18,7 +18,7 @@ import UI exposing
 --   Members → can read + create + edit team notes
 --   Admins  → all of the above + can delete
 --
--- The UI gating is pure UX — the actual security is enforced by the
+-- The UI gating is pure UX: the actual security is enforced by the
 -- backend decorators in Backend/Notes.mar (Auth.requireRole Admin
 -- on deleteNote). If the user spoofs the request, the server
 -- rejects with 403 regardless of what the UI offered.
@@ -27,7 +27,7 @@ import UI exposing
 -- The notes list is a small state machine instead of a bare
 -- `List Note`. Bare list forces `init` to start with `[]`, which
 -- the view then renders as "0 notes" while the fetch is still in
--- flight — misleading UX. The three explicit states surface the
+-- flight: misleading UX. The three explicit states surface the
 -- loading + error cases honestly AND let the typechecker enforce
 -- that the view handles them all.
 type Notes
@@ -110,12 +110,12 @@ update _ msg model =
 
 -- renderNote shows Delete only for Admins. The user's role is
 -- threaded through from Page.protected, so this is pure rendering
--- — no extra fetch.
+--: no extra fetch.
 --
 -- The body+timestamp area is a `navigationLink` (SwiftUI mirror
 -- name): the typed Path + record build the destination, the child
 -- view is the row label. On iOS this maps to NavigationLink
--- wrapping a vstack — multi-line tappable area with the chevron
+-- wrapping a vstack: multi-line tappable area with the chevron
 -- vertically centered and the whole row as the tap target. The
 -- Delete button stays outside the link so admins can tap it
 -- without triggering navigation.

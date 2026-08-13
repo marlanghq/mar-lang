@@ -18,7 +18,7 @@ import (
 // The distinction hinges on makeIOSPagesCapture recording kindFullstack
 // (not kindFrontend) for the record-shaped App.fullstack call. Before that
 // fix both collapsed to kindFrontend and fullstack apps were wrongly
-// classified as frontend — this test pins the two apart using real fixtures.
+// classified as frontend: this test pins the two apart using real fixtures.
 func TestBuildIOS_FrontendOnly(t *testing.T) {
 	t.Cleanup(runtime.ResetForReload)
 
@@ -26,8 +26,8 @@ func TestBuildIOS_FrontendOnly(t *testing.T) {
 		example          string
 		wantFrontendOnly bool
 	}{
-		{"seasons-gp", true},    // App.frontend — no backend
-		{"pet-expenses", false}, // App.fullstack — has a backend
+		{"seasons-gp", true},    // App.frontend: no backend
+		{"pet-expenses", false}, // App.fullstack, has a backend
 	}
 
 	for _, tc := range cases {
@@ -49,7 +49,7 @@ func TestBuildIOS_FrontendOnly(t *testing.T) {
 					tc.example, res.FrontendOnly, tc.wantFrontendOnly)
 			}
 			// Both fixtures ship an ios block without serverUrl, so the
-			// missing-URL fact holds for both — what changes is only the
+			// missing-URL fact holds for both: what changes is only the
 			// presentation gate (FrontendOnly), verified above.
 			if !res.MissingServerURL {
 				t.Errorf("%s: expected MissingServerURL (fixtures set no serverUrl)", tc.example)

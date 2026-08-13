@@ -9,7 +9,7 @@ import (
 // TestGeneratedRegistrationsAreCurrent is the lock on the whole scheme: it
 // regenerates both outputs in memory and fails if the committed files
 // disagree. This is what makes "add a constructor in typecheck and forget a
-// runtime" impossible to merge — the exact drift class that regex-based
+// runtime" impossible to merge: the exact drift class that regex-based
 // coverage tests missed for qualified-only constructors (146 names were
 // invisible to them when this landed).
 func TestGeneratedRegistrationsAreCurrent(t *testing.T) {

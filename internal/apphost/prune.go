@@ -9,12 +9,12 @@ import (
 // they happen to live next to.
 //
 // Reachability used to be per-module: if a page imported a module, the whole
-// module shipped. That is how a schema written the way the examples write it —
+// module shipped. That is how a schema written the way the examples write it:
 //
 //	module Backend.Notes exposing (Note, notes)
 //	notes = Entity.define { name = "notes", columns = { ... } }
 //
-// — ended up in the browser in full, table name and columns and constraints,
+//: ended up in the browser in full, table name and columns and constraints,
 // because the page imported that module for the `Note` TYPE ALIAS. The alias
 // erases; the `notes` value shipped anyway, and `Entity.define` then had to
 // evaluate client-side, which is the only reason the JS runtime carries stubs
@@ -220,7 +220,7 @@ func (idx *declIndex) resolveAlias(from string, path ast.ModuleName) string {
 // This is the backstop that makes the client stubs redundant rather than
 // load-bearing. Before pruning, `Entity.*` and `Repo.*` reached the browser
 // routinely and the JS runtime defused them one name at a time; the name
-// nobody remembered — `Entity.enum` — was a crash in production. After
+// nobody remembered, `Entity.enum`, was a crash in production. After
 // pruning, a server-only builtin in client-reachable code means the author
 // actually wrote one there, which is a mistake worth a compile error naming
 // the file rather than a stub that quietly does nothing.

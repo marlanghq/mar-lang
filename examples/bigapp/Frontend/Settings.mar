@@ -9,7 +9,7 @@ import UI exposing
     )
 
 
--- Settings — read-only summary of the current user + jump-offs to
+-- Settings: read-only summary of the current user + jump-offs to
 -- team management and sign-out. Editing the profile is out of scope
 -- for this example app; the page demonstrates how to assemble a
 -- multi-section status page without any service round-trips.

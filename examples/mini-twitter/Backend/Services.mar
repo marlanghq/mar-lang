@@ -17,7 +17,7 @@ import Backend.Follows exposing (follows)
 --     |> Auth.authorize loadResource policy   -- ABAC
 --
 -- The handler signature is `input -> User -> Task result`
--- — every protected handler receives the authenticated user. The
+--: every protected handler receives the authenticated user. The
 -- decorators run BEFORE the handler; a denial short-circuits with
 -- 403 (or 404 if the loader returned Nothing).
 
@@ -85,7 +85,7 @@ tweetIsOwn _ user tweet =
 --   (b) tweets whose author appears in my Follow rows
 --
 -- Implemented as two Repo lookups + an in-process merge to keep the
--- queries simple — JOIN support is on the roadmap but not required
+-- queries simple: JOIN support is on the roadmap but not required
 -- here. For real Twitter you'd cap with cursor pagination; this
 -- example is unbounded and trusts the rate-limit middleware to
 -- prevent abuse.
@@ -110,7 +110,7 @@ loadTimeline _ user =
             -- then reverse so the newest serial-ids come first.
             -- Each Repo.findBy returns rows in insertion order
             -- (sqlite's implicit rowid order), so reversing the
-            -- concatenated list approximates "newest first" — good
+            -- concatenated list approximates "newest first": good
             -- enough for a demo. A real feed would cap with
             -- cursor pagination and let the DB order via SQL.
             Task.sequence tweetFetches
@@ -140,7 +140,7 @@ toTweetView viewer tweet =
 
                 Nothing ->
                     -- Author was deleted (currently not possible in
-                    -- this example — users have no delete service).
+                    -- this example: users have no delete service).
                     -- Defensive: surface a placeholder so the row
                     -- doesn't disappear from the feed silently.
                     Task.succeed
@@ -228,7 +228,7 @@ followUser input user =
                             }
                             |> Task.andThen (\existing ->
                                 if List.length existing > 0 then
-                                    -- Already following — idempotent.
+                                    -- Already following: idempotent.
                                     Task.succeed Shared.Followed
                                 else
                                     Time.now
@@ -259,7 +259,7 @@ unfollowUser input user =
                         |> Task.andThen (\edges ->
                             case edges of
                                 [] ->
-                                    -- Not following — idempotent.
+                                    -- Not following: idempotent.
                                     Task.succeed ()
 
                                 edge :: _ ->

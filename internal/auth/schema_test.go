@@ -15,7 +15,7 @@ func openTestDB(t *testing.T) *sql.DB {
 		t.Fatalf("open: %v", err)
 	}
 	// modernc.org/sqlite gives each *connection* a separate :memory:
-	// database — so the goroutine pool's second connection wouldn't
+	// database, so the goroutine pool's second connection wouldn't
 	// see the tables Migrate ran on the first. Pinning to a single
 	// connection makes the in-memory DB behave as one shared store
 	// across all queries (including from background sweeper goroutines).
@@ -56,7 +56,7 @@ func TestSweepDeletesOldCodesAndSessions(t *testing.T) {
 		t.Fatalf("Migrate: %v", err)
 	}
 	now := time.Now().Unix()
-	stale := now - 48*3600 // expired 2 days ago — past the 1-day grace
+	stale := now - 48*3600 // expired 2 days ago: past the 1-day grace
 	live := now + 600      // expires 10 min from now
 
 	mustExec(t, db,

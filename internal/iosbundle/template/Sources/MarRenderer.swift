@@ -25,7 +25,7 @@ struct MarRenderer: View {
     let dispatch: (MarValue) -> Void
 
     var body: some View {
-        // Universal layout pass — every view honors the `width fill`
+        // Universal layout pass: every view honors the `width fill`
         // / `height fill` sizing attrs (the iOS mirror of the web's
         // applyLayoutAttrs + .mar-w-fill / .mar-h-fill classes).
         // Wrapped around the per-tag content so the attr composes
@@ -88,7 +88,7 @@ struct MarRenderer: View {
             //     wakes up to render the destination.
             //
             //   - Absolute URL with scheme (https://, mailto:): hand
-            //     off to the system via SwiftUI.Link — routes
+            //     off to the system via SwiftUI.Link: routes
             //     through LaunchServices to the appropriate app.
             //     Mar's `navigationLink` isn't supposed to take an
             //     external URL (it's for in-app navigation), but
@@ -104,7 +104,7 @@ struct MarRenderer: View {
             // (applyAnchorDisabled pulls the anchor out of tab order and the
             // click handler swallows the navigation); iOS did not, so a
             // greyed-out row still pushed. Every sibling case below already
-            // had the modifier — this one was simply missed.
+            // had the modifier: this one was simply missed.
             if let href = attrString("href") {
                 let child = view.children.first
                 if href.hasPrefix("/") {
@@ -157,13 +157,13 @@ struct MarRenderer: View {
             // Lift editMode to the Form level so SwiftUI's chrome
             // (drag handles ≡, delete circles, etc.) shows up for
             // any Section with .onMove. editMode propagates DOWN
-            // from Form into descendants — setting it inside a
+            // from Form into descendants: setting it inside a
             // Section is too deep, the Form above doesn\'t see it
             // and its chrome stays inactive.
             //
             // We scan children to detect whether ANY section
             // wants edit mode. Trade-off: when one section enters
-            // editing, the entire Form\'s chrome activates — for
+            // editing, the entire Form\'s chrome activates: for
             // sections WITHOUT .onMove this is a visual no-op
             // (no handle to draw), so it doesn\'t bleed weird UI
             // into unrelated sections. In practice a page tends
@@ -190,15 +190,15 @@ struct MarRenderer: View {
             // per-child `key` attr (injected by UI.keyed for keyedList
             // children) as the ForEach identity. Sharing the renderer
             // is safe because the type-level distinction is enforced
-            // by the typechecker — uiKeyedList children always carry
+            // by the typechecker: uiKeyedList children always carry
             // keys, while uiSection children may or may not.
             MarUISection(view: view, dispatch: dispatch)
 
         case "hstack":
-            // SwiftUI-style: children HUG their content — no stretch.
+            // SwiftUI-style: children HUG their content, no stretch.
             // To distribute, insert a `spacer` (pushes siblings
             // apart) or give a child `width fill` (claims the free
-            // space) — mirroring HStack + Spacer() +
+            // space): mirroring HStack + Spacer() +
             // .frame(maxWidth: .infinity). textField stays greedy on
             // its own (like SwiftUI's TextField), so
             // `hstack [ textField, button ]` still works.
@@ -223,7 +223,7 @@ struct MarRenderer: View {
             //   - No `align` attr (default): children FILL the column
             //     width (web's `align-items: stretch`), left-aligned.
             //     The pragmatic deviation from SwiftUI's hug-width
-            //     VStack — column-fill is what almost every layout
+            //     VStack: column-fill is what almost every layout
             //     wants, and it keeps web + iOS in lockstep.
             //
             //   - `align leading/center/trailing`: children HUG and
@@ -275,7 +275,7 @@ struct MarRenderer: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
 
         case "sheet":
-            // iOS page sheet — same modal-from-bottom behavior we get
+            // iOS page sheet: same modal-from-bottom behavior we get
             // on web. SwiftUI's .sheet attaches at the window level
             // regardless of where the trigger view sits in the tree,
             // so anchoring the modifier on a zero-size Color.clear
@@ -284,13 +284,13 @@ struct MarRenderer: View {
             //
             // The Binding's getter reads our static "open" attr off
             // the view; the setter only acts on dismissals (false
-            // transitions) — it dispatches the user's onDismiss Msg
+            // transitions): it dispatches the user's onDismiss Msg
             // so the parent Model flips its open flag, which on the
             // next render brings `open` back to false naturally.
             MarUISheet(view: view, dispatch: dispatch)
 
         case "confirmDialog":
-            // SwiftUI .confirmationDialog — the system modal that
+            // SwiftUI .confirmationDialog: the system modal that
             // matches Apple Music's "delete from library" dialog.
             // Implemented as a zero-size Color.clear with the
             // modifier attached at this point in the tree; SwiftUI
@@ -303,8 +303,8 @@ struct MarRenderer: View {
         case "paragraph":
             // Flowing inline text. Each child is a `span` carrying its
             // own inline attrs; we fold them into one AttributedString
-            // so SwiftUI renders the run styling — and, for link spans,
-            // a tappable link that opens via the system — as a single
+            // so SwiftUI renders the run styling, and, for link spans,
+            // a tappable link that opens via the system: as a single
             // wrapping Text. Mirrors the .mar-paragraph / .mar-inline-*
             // CSS on web.
             Text(view.children.reduce(into: AttributedString()) { acc, span in
@@ -313,7 +313,7 @@ struct MarRenderer: View {
             .frame(maxWidth: .infinity, alignment: .leading)
 
         default:
-            // Unknown tag — render children straight so we don't
+            // Unknown tag: render children straight so we don't
             // lose content when the user adds something not yet
             // mapped (e.g. a future view type).
             VStack(alignment: .leading) {
@@ -339,7 +339,7 @@ struct MarRenderer: View {
     }
 
     // Cross-axis alignment from the stack `align` attr. Each stack
-    // honors only its own axis's values plus center — vstack:
+    // honors only its own axis's values plus center, vstack:
     // leading/center/trailing, hstack: top/center/bottom; a
     // wrong-axis value is ignored (falls back to the default), the
     // same policy as the web renderer's applyAlignAttr.
@@ -363,7 +363,7 @@ struct MarRenderer: View {
 
 // MarFillSizing applies the universal `width fill` / `height fill`
 // sizing attrs (Size records with __unit == "fill") to any rendered
-// view — SwiftUI's .frame(maxWidth/maxHeight: .infinity), the iOS
+// view, SwiftUI's .frame(maxWidth/maxHeight: .infinity), the iOS
 // mirror of the web's contextual .mar-w-fill / .mar-h-fill classes.
 // Alignment is leading/top so a filling text reads like a row cell
 // (web parity: a stretched child's text stays left-aligned, not
@@ -436,7 +436,7 @@ private func readInputAttrs(_ view: MarView) -> InputAttrs {
             attrs.textContentType = .oneTimeCode
         case "inputKindNumericCode":
             // UI.numericCode bundles numeric keypad + Code-from-Mail
-            // autofill — the OTP/2FA case in one attr.
+            // autofill: the OTP/2FA case in one attr.
             attrs.keyboardType = .numberPad
             attrs.textContentType = .oneTimeCode
         default: break
@@ -454,8 +454,8 @@ private func submitAttr(_ view: MarView) -> MarValue? {
 }
 
 /// Builds the styled AttributedString fragment for one `span` inline
-/// atom. Reads the same flag attrs the JS renderer keys off —
-/// inlineBold / inlineItalic / inlineStrikethrough / inlineCode — plus
+/// atom. Reads the same flag attrs the JS renderer keys off:
+/// inlineBold / inlineItalic / inlineStrikethrough / inlineCode: plus
 /// inlineLink, which carries the destination URL. Attrs compose: a
 /// span tagged [code, italic] renders monospaced + italic; a link span
 /// becomes a tappable run that SwiftUI opens via the system.
@@ -499,13 +499,13 @@ private func attributedFromSpan(_ span: MarView) -> AttributedString {
 // the input-kind attrs above.
 
 /// Renders the body of a mar `navigationStack` view. Does NOT wrap
-/// in a SwiftUI NavigationStack itself — ContentView's StackShell
+/// in a SwiftUI NavigationStack itself: ContentView's StackShell
 /// (and MarApp's MarSinglePageView) already provide one as ambient
 /// chrome. Wrapping again would nest stacks, which SwiftUI handles
 /// poorly (the inner content can render as a black screen).
 ///
 /// Instead we rely on `.navigationTitle(...)` and `.toolbar { ... }`
-/// being preference-based modifiers — they propagate up to whichever
+/// being preference-based modifiers: they propagate up to whichever
 /// NavigationStack is the nearest ancestor.
 private struct MarNavigationStack: View {
     let view: MarView
@@ -513,7 +513,7 @@ private struct MarNavigationStack: View {
 
     var body: some View {
         // Group (rather than VStack) so child layout-impacting views
-        // — Form, List — render at their natural height. VStack
+        //, Form, List, render at their natural height. VStack
         // collapses Form to zero height because Form measures itself
         // against its container's height which VStack doesn't provide.
         Group {
@@ -561,7 +561,7 @@ private struct MarNavigationStack: View {
 }
 
 /// SwiftUI Section with header/footer pulled from mar attrs. Lives
-/// inside a Form or List — outside, SwiftUI just stacks the contents.
+/// inside a Form or List: outside, SwiftUI just stacks the contents.
 ///
 /// When the section carries an `onMove` attr with editing=true the
 /// children become reorderable via SwiftUI's native `.onMove`
@@ -587,19 +587,19 @@ private struct MarUISection: View {
         // identity, NOT the positional index. SwiftUI's .onMove
         // animation depends on stable per-row identity: with
         // index-based id, the row at slot 0 is "still the same
-        // row" after a move, just with different content — so
+        // row" after a move, just with different content, so
         // SwiftUI cross-fades the content instead of sliding the
         // row to its new position. Using the key (injected by
         // `UI.keyed` on every KeyedView) tracks each row as it
         // moves, producing the smooth slide animation iOS users
         // expect.
         //
-        // Falls back to "__idx_N" for rows without a key —
+        // Falls back to "__idx_N" for rows without a key:
         // happens only inside plain `section` (which doesn\'t
         // support reorder/delete), where positional identity is
         // fine because the children don\'t mutate.
         //
-        // Only attach .onMove when editing — outside of edit mode
+        // Only attach .onMove when editing: outside of edit mode
         // we don't want reorder gestures available. The actual
         // edit-mode CHROME (drag handles ≡ at row edges, delete
         // circles for any .onDelete) is drawn by the SURROUNDING
@@ -619,7 +619,7 @@ private struct MarUISection: View {
             }
             .onMove(perform: editing ? performMove : nil)
             // `.onDelete` is always attached when the attr is
-            // present — SwiftUI uses the SAME modifier for both
+            // present: SwiftUI uses the SAME modifier for both
             // swipe-to-delete (normal mode) and the edit-mode
             // minus-circle. The editing flag in the Mar attr is
             // informational: iOS surfaces both at all times. (Web
@@ -687,7 +687,7 @@ private struct MarUISection: View {
     }
 
     /// SwiftUI's `.onDelete` passes an IndexSet of rows to remove. We
-    /// dispatch the Mar handler once per index — Mar's signature is
+    /// dispatch the Mar handler once per index: Mar's signature is
     /// `Int -> Msg`, so multiple deletes (rare in a single gesture
     /// but possible via multi-select in edit mode) become multiple
     /// dispatches in descending-index order. Descending so each
@@ -703,13 +703,13 @@ private struct MarUISection: View {
                 Task { @MainActor in dispatch(msg) }
             } catch {
                 // Mar effects don't crash the UI on dispatch failure
-                // — log silently and move on.
+                //: log silently and move on.
             }
         }
     }
 }
 
-/// Mar's UI.toggle — SwiftUI Toggle with a label, a current-value
+/// Mar's UI.toggle: SwiftUI Toggle with a label, a current-value
 /// attr, and a `Bool -> msg` callback bound to the binding's setter.
 /// SwiftUI handles the platform-native iOS switch chrome; we just
 /// wire the binding so flips become dispatched messages.
@@ -741,7 +741,7 @@ private struct MarUIToggle: View {
     }
 }
 
-/// Mar's UI.sheet — anchors a SwiftUI `.sheet(isPresented:)` modifier
+/// Mar's UI.sheet, anchors a SwiftUI `.sheet(isPresented:)` modifier
 /// on a zero-size invisible view. The sheet itself renders at the
 /// window level (SwiftUI handles that), so the anchor position
 /// doesn't matter.
@@ -776,7 +776,7 @@ private struct MarUISheet: View {
         Binding(
             get: { isOpen },
             set: { newValue in
-                // We only react to "user dismissed the sheet" — when
+                // We only react to "user dismissed the sheet", when
                 // SwiftUI flips the binding from true → false. The
                 // opposite transition is driven by the parent's Model;
                 // attempting to honor it here would create a loop.
@@ -788,7 +788,7 @@ private struct MarUISheet: View {
     }
 }
 
-/// Mar's UI.confirm — SwiftUI .confirmationDialog modifier anchored on a
+/// Mar's UI.confirm: SwiftUI .confirmationDialog modifier anchored on a
 /// zero-size Color.clear. Same trick as MarUISheet: SwiftUI routes the
 /// actual modal presentation to window level, so the anchor view's
 /// position in the tree doesn't matter visually.
@@ -798,7 +798,7 @@ private struct MarUISheet: View {
 /// The binding's getter returns true while we're mounted; its setter
 /// fires onCancel when SwiftUI flips it false (user tapped outside,
 /// swiped down, or hit a Cancel button that SwiftUI added on its own
-/// — though we provide our own explicit Cancel button via .cancel role).
+///, though we provide our own explicit Cancel button via .cancel role).
 private struct MarUIConfirmDialog: View {
     let view: MarView
     let dispatch: (MarValue) -> Void
@@ -814,7 +814,7 @@ private struct MarUIConfirmDialog: View {
                     set: { newValue in
                         // SwiftUI flips this to false on dismissal
                         // (Cancel button, outside tap, swipe down).
-                        // Fire onCancel — the parent's Model will
+                        // Fire onCancel: the parent's Model will
                         // remove this view from the tree on the next
                         // render, and the local @State will be
                         // discarded along with it.
@@ -864,7 +864,7 @@ private struct MarUIConfirmDialog: View {
     }
 }
 
-/// Mar's UI.textField — TextField with a placeholder argument and the
+/// Mar's UI.textField: TextField with a placeholder argument and the
 /// shared input-kind / submit logic.
 private struct MarUITextField: View {
     let view: MarView
@@ -888,13 +888,13 @@ private struct MarUITextField: View {
                 dispatch(submitMsg)
             }
         }
-        // Honor `disabled` on text fields too — not just buttons.
+        // Honor `disabled` on text fields too, not just buttons.
         // Without this, the JS side correctly locks the input
         // during a busy/loading service call but iOS keeps the
         // field editable: the operator can keep typing AFTER
         // pressing Send / Submit, and their post-submit keystrokes
         // silently land in the model AFTER the response resets
-        // draft="" — a confusing "where did my text go" moment.
+        // draft="": a confusing "where did my text go" moment.
         // Mirrors the .disabled() applied to the button case
         // upstream in the renderer.
         .disabled(isDisabled(view))
@@ -928,7 +928,7 @@ private struct MarUITextField: View {
     }
 }
 
-/// Mar's UI.textArea — multi-line TextEditor mirroring textField's
+/// Mar's UI.textArea: multi-line TextEditor mirroring textField's
 /// wiring (value binding, width / height sizing, disabled). TextEditor
 /// has no placeholder, so we overlay one while the value is empty.
 private struct MarUITextArea: View {
@@ -977,7 +977,7 @@ private struct MarUITextArea: View {
     }
 }
 
-/// Mar's UI.picker — single-selection menu. The builtin stashes the
+/// Mar's UI.picker: single-selection menu. The builtin stashes the
 /// selected value, the option list, and the `(a -> String)` label fn
 /// as attrs; the `(a -> msg)` onChange rides on `view.msg`. MarValue
 /// isn't Hashable, so we tag options by index and match the current
@@ -1009,7 +1009,7 @@ private struct MarUIPicker: View {
     }
 }
 
-/// Mar's UI.datePicker — a date-only field. The builtin stashes the
+/// Mar's UI.datePicker: a date-only field. The builtin stashes the
 /// current Time as the `value` attr; the `(Time -> msg)` onChange rides
 /// on `view.msg`. SwiftUI's DatePicker shows the device-local calendar
 /// date; on change we normalize to the start of that local day (the web
@@ -1019,7 +1019,7 @@ private struct MarUIDatePicker: View {
     let dispatch: (MarValue) -> Void
 
     private var current: Date {
-        // value is a concrete Time — datePicker is pure; the program owns
+        // value is a concrete Time: datePicker is pure; the program owns
         // the value and seeds "today" via `Cmd.perform GotToday Time.now`.
         // Read it directly, no clock fallback.
         if case .time(let ms)? = attrValue(view, "value") {
@@ -1066,7 +1066,7 @@ private func pickerLabel(_ view: MarView, _ value: MarValue) -> String {
     return s
 }
 
-/// UI.image — AsyncImage with optional fixed size + content mode.
+/// UI.image: AsyncImage with optional fixed size + content mode.
 /// Without a `size` attr the image fills its container width and keeps
 /// its aspect ratio; with one it pins width + height in points. fit
 /// (default) shows the whole image; fill crops to cover. alt is always
@@ -1134,7 +1134,7 @@ private func pxAmount(_ v: MarValue?) -> CGFloat? {
 // so any of the per-tag private structs (MarUITextField,
 // MarUIToggle, etc.) can use it without the outer MarRenderer
 // instance's private boolAttr method. Defaults to false when the
-// attr is missing — same fallback the button case at the top of
+// attr is missing: same fallback the button case at the top of
 // MarRenderer uses.
 func isDisabled(_ view: MarView) -> Bool {
     for a in view.attrs where a.name == "disabled" {
@@ -1171,7 +1171,7 @@ func rowIdentity(_ v: MarView, index: Int) -> String {
 // at the list-level environment.
 //
 // Why list-level: SwiftUI's editMode environment value flows
-// DOWN from the enclosing List/Form into descendants — setting
+// DOWN from the enclosing List/Form into descendants: setting
 // it inside a Section can\'t reach the Form\'s chrome rendering.
 // So whichever section wants reorder/delete, we propagate up to
 // the nearest list-shaped container.
@@ -1205,7 +1205,7 @@ func anySectionEditing(_ views: [MarView]) -> Bool {
 // inputs (numeric codes, ages, etc.); proportional letters in
 // other inputs vary but average close to the same. The +24pt
 // constant covers TextField\'s internal padding (~16pt) plus a
-// few points of cursor / focus-ring room — without it, `chars 6`
+// few points of cursor / focus-ring room: without it, `chars 6`
 // rendered as 54pt, which clipped the 6th digit of a verification
 // code visibly.
 //

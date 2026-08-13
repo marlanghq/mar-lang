@@ -39,7 +39,7 @@ func (VDecimal) isValue()          {}
 func (v VDecimal) Display() string { return decString(v) }
 
 // VDivision is the inert exact quotient `/` produces: both operands,
-// held in suspense. Opaque on purpose — no codec, no arithmetic, not
+// held in suspense. Opaque on purpose: no codec, no arithmetic, not
 // comparable; only the Decimal.rounded / exact / withRemainder
 // resolvers turn it into a value.
 type VDivision struct {
@@ -67,7 +67,7 @@ func (v VString) Display() string { return fmt.Sprintf("%q", v.V) }
 // silently-true equality, and so List Char / String round-trip
 // (via String.toList / fromList) stays meaningful.
 //
-// Wire format on the JSON boundary is `{"__char": "x"}` — see json.go.
+// Wire format on the JSON boundary is `{"__char": "x"}`, see json.go.
 type VChar struct{ V rune }
 
 func (VChar) isValue()          {}
@@ -93,7 +93,7 @@ func (VUnit) Display() string { return "()" }
 // VDuration is a time interval, normalized to seconds (fractional, so
 // Time.millis can express sub-second intervals). Built only via
 // Time.millis / Time.seconds / Time.minutes / Time.hours / Time.days /
-// Time.weeks — there's no public number → Duration coercion, so unit
+// Time.weeks: there's no public number → Duration coercion, so unit
 // confusion is impossible at the call site.
 type VDuration struct{ Seconds float64 }
 
@@ -104,7 +104,7 @@ func (v VDuration) Display() string {
 }
 
 // VAngle is a rotation, carried as a whole number of deci-degrees in
-// 0..3599. Built only via Math.degrees / Math.deciDegrees / Math.turns —
+// 0..3599. Built only via Math.degrees / Math.deciDegrees / Math.turns:
 // the constructor names the unit and it is the only place a bare Int
 // appears (ADR 0029), which is what makes passing degrees where
 // deci-degrees were meant a compile error instead of a game that turns
@@ -112,7 +112,7 @@ func (v VDuration) Display() string {
 //
 // The deci-degree representation is normative (it fixes the resolution:
 // a program can tell 45.0° from 45.1° and nothing finer) but not
-// observable — no builtin hands the number back. Wire format on the JSON
+// observable: no builtin hands the number back. Wire format on the JSON
 // boundary is `{"__angle": 450}`.
 type VAngle struct{ Deci int64 }
 
@@ -139,7 +139,7 @@ func (v VTime) Display() string {
 type VFn struct {
 	// For closures:
 	Params []string
-	Body   any // *ast.Expr — typed as any to avoid import cycle
+	Body   any // *ast.Expr: typed as any to avoid import cycle
 	Env    *Env
 	// For built-ins:
 	Native func([]Value) (Value, error)
@@ -149,7 +149,7 @@ type VFn struct {
 	Arity int
 	// How deep the call chain was when this value was produced. Set by
 	// applyAt so that a function handed to a builtin (List.map, Dict.foldl)
-	// resumes the count instead of restarting at zero — see MaxCallDepth.
+	// resumes the count instead of restarting at zero: see MaxCallDepth.
 	Depth int
 	// CtorTag is set when this VFn was produced by makeCtorValue for a
 	// custom-type constructor with arity ≥ 1. Empty string for plain
@@ -237,7 +237,7 @@ func (t VTuple) Display() string {
 
 // VDict is an ordered dictionary value (the Dict module's underlying
 // representation). Keys are kept sorted by compareValues to give
-// O(n) ops on insert/get/remove for now — a simple, easy-to-audit
+// O(n) ops on insert/get/remove for now: a simple, easy-to-audit
 // implementation. Upgrade to a balanced tree if perfilation shows a
 // hot path.
 //
@@ -247,12 +247,12 @@ func (t VTuple) Display() string {
 //   - Iterate in deterministic key order (so toList is stable)
 //   - Equality-compare via memberwise pair equality (no rebalance noise)
 //
-// Keys must be "comparable" per compareValues — Int / Float / String /
+// Keys must be "comparable" per compareValues: Int / Float / String /
 // Char. The typechecker enforces this at call sites; the runtime
 // returns an error if a non-comparable key sneaks through.
 type VDict struct {
 	// Pairs is sorted ascending by Key (per compareValues). MUST
-	// stay sorted across mutations — every helper that touches
+	// stay sorted across mutations: every helper that touches
 	// pairs rebuilds them in order.
 	Pairs []VDictPair
 }
@@ -279,7 +279,7 @@ func (d VDict) Display() string {
 
 // VSet is an ordered set value (the Set module's underlying
 // representation). Items are kept sorted by compareValues. Same
-// "comparable-only" key constraint as VDict — the typechecker
+// "comparable-only" key constraint as VDict: the typechecker
 // enforces it at call sites, the runtime guards against accidents.
 //
 // Internally we could have reused VDict-with-Unit-values (which is how
@@ -289,7 +289,7 @@ func (d VDict) Display() string {
 // Unit on every entry.
 type VSet struct {
 	// Items is sorted ascending per compareValues. MUST stay sorted
-	// across mutations — every helper rebuilds them in order.
+	// across mutations: every helper rebuilds them in order.
 	Items []Value
 }
 

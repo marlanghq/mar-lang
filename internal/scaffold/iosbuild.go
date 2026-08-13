@@ -13,7 +13,7 @@ import (
 	"mar/internal/runtime"
 )
 
-// IOSBuildResult is the structured outcome of BuildIOS — what the
+// IOSBuildResult is the structured outcome of BuildIOS: what the
 // caller needs to render a properly-formatted summary at the
 // presentation layer. Returning a value (instead of printing inline)
 // lets cmd/mar own the color palette and spacing rules without
@@ -45,7 +45,7 @@ type IOSBuildResult struct {
 	BuildNumber      string
 
 	// BaseURL is the production backend URL baked into Info.plist
-	// as MarBaseURL — what RELEASE builds talk to. When empty,
+	// as MarBaseURL: what RELEASE builds talk to. When empty,
 	// the bundle falls back to http://localhost:3000 and
 	// MissingServerURL is true.
 	BaseURL string
@@ -56,8 +56,8 @@ type IOSBuildResult struct {
 	MissingServerURL bool
 
 	// FrontendOnly is true when the app is App.frontend (no backend).
-	// Such an app is self-contained — it renders from the embedded
-	// program and calls no Services — so ios.serverUrl is irrelevant
+	// Such an app is self-contained: it renders from the embedded
+	// program and calls no Services, so ios.serverUrl is irrelevant
 	// and the "missing serverUrl / no production backend" warning is
 	// noise. Backend and fullstack apps DO talk to a server, so the
 	// warning stands for them.
@@ -67,7 +67,7 @@ type IOSBuildResult struct {
 // IOSConfigError reports that mar.json's `ios` block is missing
 // required fields. cmd/mar prints it as a typed error with a
 // paste-ready JSON snippet that combines the missing fields with
-// reasonable starter values — the operator can copy the block into
+// reasonable starter values: the operator can copy the block into
 // mar.json and have a working build on the next attempt.
 //
 // Captured separately from a plain `error` so cmd/mar can render it
@@ -76,7 +76,7 @@ type IOSBuildResult struct {
 // color helpers.
 type IOSConfigError struct {
 	// Missing lists the field names that aren't set in mar.json,
-	// in stable order. Always at least one entry — empty Missing
+	// in stable order. Always at least one entry: empty Missing
 	// means the validation passed and IOSConfigError shouldn't
 	// have been constructed.
 	Missing []string
@@ -98,7 +98,7 @@ func (e *IOSConfigError) Error() string {
 // <distDir>/<AppName>/, wired to talk to a mar backend via /_mar/schema.
 //
 // Unlike Build (native binaries), this doesn't evaluate the user's
-// mar program — the iOS app is fully schema-driven and discovers what
+// mar program: the iOS app is fully schema-driven and discovers what
 // services/routes exist at runtime. We only need:
 //
 //   - the project's display name (from mar.json `name`, or directory

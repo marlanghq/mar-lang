@@ -1,4 +1,4 @@
-// `mar fly` — Fly.io deployment wrapper.
+// `mar fly`: Fly.io deployment wrapper.
 //
 // The operator never invokes the `fly` CLI directly. `mar fly` reads
 // everything from mar.json (the `deploy.fly` block) and translates
@@ -161,7 +161,7 @@ func runFlyPreview(path string) int {
 
 	// Always-print educational note for frontend-only. preview is the
 	// "tell me about my deploy" command, so the trade-off note fits
-	// naturally here — and the operator can re-run it any time to
+	// naturally here, and the operator can re-run it any time to
 	// re-read the alternatives.
 	if flyTopology(topo) == flyTopologyFrontend {
 		fmt.Println()
@@ -177,7 +177,7 @@ func runFlyPreview(path string) int {
 
 // runFlyDestroy tears down the Fly app + volume. Two-stage confirm:
 // first a generic Y/N, then the operator must type the app name back.
-// Stays interactive even in CI — destruction shouldn\'t auto-confirm.
+// Stays interactive even in CI: destruction shouldn\'t auto-confirm.
 func runFlyDestroy(path string) int {
 	appName, projectDir, _, err := resolveFlyApp(path)
 	if err != nil {
@@ -445,7 +445,7 @@ func printManifestError(prefix string, err error) {
 				colorCyan("https://dash.cloudflare.com/profile/api-tokens"),
 				colorBold("Account.Cloudflare Pages: Edit"))
 		case strings.HasPrefix(envErr.Field, "deploy.cloudflare-pages."):
-			// Other CF fields (app, account) — env: is optional
+			// Other CF fields (app, account), env: is optional
 			// here, so hitting this branch means the operator
 			// chose env: voluntarily and forgot to set it. Brief
 			// hint, no dashboard link.
@@ -494,7 +494,7 @@ func resolveFlyApp(path string) (appName, projectDir string, m *project.Manifest
 	if verr := project.ValidateDeployFly(m); verr != nil {
 		return "", "", nil, verr
 	}
-	// ValidateDeployFly only checks that region is non-empty — it
+	// ValidateDeployFly only checks that region is non-empty: it
 	// doesn\'t know which 3-letter codes Fly actually offers (that
 	// list lives in cmd/mar/fly_deploy.go alongside the live-fetch
 	// fallback). Catch typos like "gr" instead of "gru" here,
@@ -509,7 +509,7 @@ func resolveFlyApp(path string) (appName, projectDir string, m *project.Manifest
 }
 
 // loadFlyManifest resolves projectDir from `path` (file or dir) and
-// loads mar.json structurally (no env:VAR resolution — the values
+// loads mar.json structurally (no env:VAR resolution, the values
 // live in Fly Secrets at runtime, not in the operator\'s shell).
 func loadFlyManifest(path string) (projectDir string, m *project.Manifest, err error) {
 	info, err := os.Stat(path)
@@ -611,7 +611,7 @@ func ensureFlyAppExists(appName string) error {
 // missingFlySecrets returns the subset of `wantNames` not currently
 // set on the Fly app. Uses `fly secrets list -a APP --json` for a
 // stable shape across flyctl versions. Returns nil ("treat as all
-// set") on any failure — the pre-flight is best-effort; the actual
+// set") on any failure: the pre-flight is best-effort; the actual
 // deploy will surface its own issues.
 func missingFlySecrets(appName string, wantNames []string) []string {
 	if appName == "" {
@@ -654,7 +654,7 @@ func pluralizeSecrets(n int) string {
 //     auto-generate a 32-byte URL-safe base64 value via auth.Token.
 //     Asking the operator to invent one risks low-entropy keys.
 //   - Otherwise (SMTP passwords, third-party API keys), prompt with
-//     echo off. Required — empty input re-prompts.
+//     echo off. Required: empty input re-prompts.
 //
 // Pushes everything in one `fly secrets set` call.
 func promptAndSetFlySecrets(appName string, envRefs []string, sessionVar string) error {
@@ -770,7 +770,7 @@ func stdinIsTerminal() bool {
 }
 
 // flySuggestion formats a "next command" hint with the standard
-// styling — green `mar` + bold rest, via cmdSuggest — omitting the
+// styling, green `mar` + bold rest, via cmdSuggest, omitting the
 // path argument when it's the default. Used by sibling subcommands
 // (secrets, health check) when surfacing the canonical next step.
 func flySuggestion(sub, path string) string {

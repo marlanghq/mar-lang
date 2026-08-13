@@ -21,7 +21,7 @@ import (
 //
 // This lives next to the route handlers it mirrors. `mar build`
 // (scaffold.copyPublicDir) and `mar dev` (ValidatePublicDir) both call it so
-// the two agree on what's allowed in public/ — keep it in sync with the
+// the two agree on what's allowed in public/: keep it in sync with the
 // prefixes registered in this package when adding a top-level route.
 func ReservedPublicPath(rel string) string {
 	slash := filepath.ToSlash(rel)
@@ -42,7 +42,7 @@ func ReservedPublicPath(rel string) string {
 
 // ValidatePublicDir walks dir and returns an error for the first file whose
 // path collides with Mar's reserved namespace (see ReservedPublicPath). A
-// missing dir (or "") is fine — most projects have none. Dotfiles are skipped
+// missing dir (or "") is fine: most projects have none. Dotfiles are skipped
 // to match copyPublicDir / serveStaticOrShell, which never ship or serve them.
 //
 // Called at `mar dev` startup so a colliding asset fails fast with the same
@@ -51,7 +51,7 @@ func ReservedPublicPath(rel string) string {
 func ValidatePublicDir(dir string) error {
 	info, err := os.Stat(dir)
 	if err != nil || !info.IsDir() {
-		return nil // no public/ folder — nothing to validate
+		return nil // no public/ folder: nothing to validate
 	}
 	return filepath.Walk(dir, func(p string, fi os.FileInfo, err error) error {
 		if err != nil {

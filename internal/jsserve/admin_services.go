@@ -1,11 +1,11 @@
-// Admin panel server-side infrastructure — request instrumentation
+// Admin panel server-side infrastructure: request instrumentation
 // (counters + the recent-requests ring buffer), boot metadata, and the
 // SQLite introspection helpers (listTables, tableColumns, dbFileSizes,
 // …). These feed the Mar panel's Mar.Admin.* bodies (admin_mar.go),
 // which project the same data as Mar Values for the frontend.
 //
 // (The hand-written SPA that used to consume plain-JSON variants of
-// these — /_mar/admin/api/{server-info,db-stats,…} — was retired; the
+// these, /_mar/admin/api/{server-info,db-stats,…}, was retired; the
 // Mar-native panel reads /_mar/admin/api/mar/* instead.)
 
 package jsserve
@@ -24,7 +24,7 @@ import (
 	"mar/internal/runtime"
 )
 
-// Boot metadata — set by the CLI at ServeLive call time.
+// Boot metadata: set by the CLI at ServeLive call time.
 var (
 	bootStartedAtMs int64
 	marVersion      string
@@ -35,7 +35,7 @@ var (
 // ServeLive. Empty values are tolerated and rendered as "dev" by the
 // introspection body.
 //
-// Build target is intentionally NOT taken as a parameter — it's
+// Build target is intentionally NOT taken as a parameter: it's
 // always derived from runtime.GOOS/GOARCH at request time (see
 // hostTarget). If we ever want to differentiate the target the
 // binary was BUILT for vs the host it's running on (cross-compiled
@@ -49,7 +49,7 @@ func SetAdminBuildInfo(version string) {
 // MarVersion returns the build-time version string set by
 // SetAdminBuildInfo. Empty when the CLI didn't pass one (test paths,
 // rare). Used by the X-Mar-Runtime header middleware so each response
-// advertises the runtime that's serving it — clients compare against
+// advertises the runtime that's serving it: clients compare against
 // their own embedded version to decide whether to apply OTA updates.
 func MarVersion() string {
 	authMu.Lock()
@@ -63,12 +63,12 @@ func MarVersion() string {
 func noteServerBooted() {
 	atomic.StoreInt64(&bootStartedAtMs, time.Now().UnixMilli())
 	// Wire the Mar.Admin.* runtime bodies now that server state (DB, request
-	// counters, log buffer) is live. Idempotent — just re-registers the same
+	// counters, log buffer) is live. Idempotent, just re-registers the same
 	// closures on hot reload.
 	registerAdminMarServices()
 }
 
-// Request counters — atomic so middleware can read without locking.
+// Request counters: atomic so middleware can read without locking.
 var (
 	requestsTotal    int64
 	requestsInFlight int64
@@ -102,14 +102,14 @@ func adminRecord(entry admin.RequestLog) {
 
 // adminInstrument wraps a handler with the request log middleware.
 // Captures method/path/status/duration on every request. The user
-// email field is best-effort — we sniff the user-auth cookie's
+// email field is best-effort: we sniff the user-auth cookie's
 // email when present, but skip the heavier admin-cookie lookup.
 //
 // Skipped paths (no recording, no counter bump):
 //
-//   - /_mar/reload    — SSE channel; long-lived connections would
+//   - /_mar/reload    - SSE channel; long-lived connections would
 //     dominate the buffer and noise out the panel.
-//   - /_mar/admin/*   — the admin panel polling itself (the dashboard
+//   - /_mar/admin/*   - the admin panel polling itself (the dashboard
 //     fetches server-info / db-stats / recent-requests on each
 //     refresh, plus the program/shell). Including these makes the
 //     "recent requests" view show the panel watching itself,
@@ -148,7 +148,7 @@ func adminInstrument(h http.Handler) http.Handler {
 // request log so the panel's "recent requests" section reflects
 // what the app is doing, not what the panel itself is doing.
 //
-// Note: /_auth/* is intentionally NOT excluded — sign-ins are
+// Note: /_auth/* is intentionally NOT excluded, sign-ins are
 // real application traffic the operator does want to see.
 func isFrameworkInternalPath(path string) bool {
 	if path == "/_mar/reload" {
@@ -174,7 +174,7 @@ func (s *statusRecorder) WriteHeader(code int) {
 }
 
 // bestEffortUserEmail looks for a logged-in user-auth session and
-// returns the email if found. Best-effort — never blocks, never
+// returns the email if found. Best-effort, never blocks, never
 // fails the request, returns "" when the user is anonymous or
 // when anything goes wrong.
 func bestEffortUserEmail(r *http.Request) string {
@@ -241,7 +241,7 @@ func statSize(path string) int64 {
 // SQLite database. Skips SQLite-internal tables (sqlite_*).
 //
 // On error (open or iteration) we return nil rather than propagating
-// — callers use the result as an allowlist for the entity browser,
+// : callers use the result as an allowlist for the entity browser,
 // and a nil allowlist correctly rejects every entity-name request
 // (slices.Contains(nil, x) is false). Iteration errors are still
 // checked so a partial result doesn't masquerade as the full list.

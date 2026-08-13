@@ -25,7 +25,7 @@ import (
 )
 
 // makeSpec builds a VRecord matching the new Entity.define signature
-// shape — `{ name, columns, uniques }` — from raw pieces. Centralized
+// shape, `{ name, columns, uniques }`, from raw pieces. Centralized
 // so tests stay focused on what they're checking.
 func makeSpec(name string, columns []EntityField, uniques [][]string) VRecord {
 	colFields := map[string]Value{}
@@ -67,7 +67,7 @@ func buildUniquesList(uniques [][]string) VList {
 }
 
 // sampleColumns returns a small set of EntityField suitable for
-// unique-constraint tests — multiple non-PK columns we can name.
+// unique-constraint tests: multiple non-PK columns we can name.
 func sampleColumns() []EntityField {
 	return []EntityField{
 		{Name: "id", SQLType: "INTEGER", NotNull: true, Serial: true},
@@ -275,7 +275,7 @@ func TestEntityDefine_AcceptsValidNames(t *testing.T) {
 func TestEntityDefine_RejectsSecondRegistrationOfSameTable(t *testing.T) {
 	// Two Entity.define calls with the same name in one program eval
 	// = programmer bug. RegisterEntity flags it. (Hot-reload calls
-	// ResetForReload before re-evaluating, so reloads still work —
+	// ResetForReload before re-evaluating, so reloads still work:
 	// that's the difference between "second call in same pass" and
 	// "second call after reset".)
 	ResetRegisteredEntities()
@@ -294,7 +294,7 @@ func TestEntityDefine_RejectsSecondRegistrationOfSameTable(t *testing.T) {
 
 func TestEntityDefine_AllowsRegistrationAfterReset(t *testing.T) {
 	// Reset emulates hot-reload. After reset, the same table name
-	// can be registered again — this is what makes `mar dev` work.
+	// can be registered again: this is what makes `mar dev` work.
 	ResetRegisteredEntities()
 	t.Cleanup(ResetRegisteredEntities)
 	if _, err := callDefine(t, makeSpec("checkins", sampleColumns(), [][]string{})); err != nil {

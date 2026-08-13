@@ -11,7 +11,7 @@ import UI exposing
     )
 
 
--- MyIssues — every Open / InProgress issue assigned to the
+-- MyIssues: every Open / InProgress issue assigned to the
 -- caller. The service-side filter does the work; this page just
 -- groups by project for legibility.
 

@@ -69,7 +69,7 @@ func TestRunDeploy_noDeployBlock(t *testing.T) {
 	}
 }
 
-// Both targets declared is ambiguous — an app deploys to exactly one.
+// Both targets declared is ambiguous: an app deploys to exactly one.
 // runDeploy must reject it (exit 2) rather than silently picking one.
 func TestRunDeploy_bothBlocksRejected(t *testing.T) {
 	dir := writeDeployManifest(t, `{

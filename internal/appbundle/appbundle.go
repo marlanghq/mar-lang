@@ -223,7 +223,7 @@ func parsePayload(payload []byte) (*Bundle, error) {
 			bundle.Assets[rel] = data
 		default:
 			// safeBundleEntryName already constrained the name to
-			// either manifestFile or sourceDir + clean rel — any
+			// either manifestFile or sourceDir + clean rel: any
 			// path that reaches this branch is a bug in that helper.
 			return nil, fmt.Errorf("appbundle: unexpected entry %q (bug: name passed validation but matched no known shape)", file.Name)
 		}
@@ -249,7 +249,7 @@ func parsePayload(payload []byte) (*Bundle, error) {
 //     a malformed archive or a deliberate attempt to slip past path
 //     parsers).
 //   - No absolute paths.
-//   - No empty/"."/".." segments after splitting on "/" — blocks
+//   - No empty/"."/".." segments after splitting on "/": blocks
 //     traversal in any position.
 //   - For "src/<rel>" entries, the rel portion must be non-empty.
 //
@@ -357,7 +357,7 @@ func ExtractToDir(b *Bundle, destDir string) error {
 		}
 	}
 	// Static assets land back under public/ so the runtime serves them
-	// from destDir/public — the same layout `mar dev` reads from disk.
+	// from destDir/public: the same layout `mar dev` reads from disk.
 	for rel, data := range b.Assets {
 		if err := writeUnderDir(absDestDir, destDir, filepath.Join("public", filepath.FromSlash(rel)), data); err != nil {
 			return err
@@ -394,12 +394,12 @@ func writeUnderDir(absDestDir, destDir, relPath string, data []byte) error {
 // file keyed by its path relative to public/ (e.g. public/logo.png ->
 // "logo.png"). Dotfiles are skipped, matching copyPublicDir /
 // serveStaticOrShell, which never ship or serve them. A missing public/
-// is not an error — most projects have none, so nil is returned.
+// is not an error: most projects have none, so nil is returned.
 func CollectAssets(projectDir string) (map[string][]byte, error) {
 	root := filepath.Join(projectDir, "public")
 	info, err := os.Stat(root)
 	if err != nil || !info.IsDir() {
-		return nil, nil // no public/ folder — nothing to bundle
+		return nil, nil // no public/ folder: nothing to bundle
 	}
 	out := map[string][]byte{}
 	err = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {

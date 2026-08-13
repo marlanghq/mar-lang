@@ -13,7 +13,7 @@ import (
 //
 // Char in Mar is a Unicode code point (rune), the same model used by
 // Elm / Go / Rust / JS / Swift's `Unicode.Scalar`. NOT a grapheme
-// cluster — `String.toList "🇧🇷"` yields TWO Chars (the two regional
+// cluster: `String.toList "🇧🇷"` yields TWO Chars (the two regional
 // indicator scalars), matching Elm semantics.
 //
 // charFromCode normalizes invalid inputs (negative, > 0x10FFFF, or
@@ -35,8 +35,8 @@ func charBuiltins() map[string]Value {
 			}
 			return VChar{V: sanitizeCodePoint(n.V)}, nil
 		}),
-		// Predicates — operate on the Unicode property of the rune.
-		// unicode.IsDigit etc. cover full Unicode, not just ASCII —
+		// Predicates: operate on the Unicode property of the rune.
+		// unicode.IsDigit etc. cover full Unicode, not just ASCII:
 		// matches Elm's intent (Char.isDigit '٥' is True for Arabic-
 		// Indic digit five).
 		"charIsDigit": nativeFn(1, func(args []Value) (Value, error) {
@@ -124,7 +124,7 @@ func charBuiltins() map[string]Value {
 		// String.map : (Char -> Char) -> String -> String
 		// Apply fn to every Char, build a new String. Iterating with
 		// `range` over a Go string yields runes (Unicode code points)
-		// — same model as the JS for..of and Swift's
+		//: same model as the JS for..of and Swift's
 		// .unicodeScalars iteration. Multi-byte chars stay intact.
 		"stringMap": nativeFn(2, func(args []Value) (Value, error) {
 			fn := args[0]
@@ -171,7 +171,7 @@ func charBuiltins() map[string]Value {
 		}),
 		// String.foldl : (Char -> b -> b) -> b -> String -> b
 		// Walks chars left-to-right. Combine fn takes Char first,
-		// accumulator second — matches the Elm signature exactly so
+		// accumulator second: matches the Elm signature exactly so
 		// `String.foldl (\c acc -> ...) seed s` reads naturally.
 		"stringFoldl": nativeFn(3, func(args []Value) (Value, error) {
 			fn := args[0]
@@ -193,7 +193,7 @@ func charBuiltins() map[string]Value {
 			}
 			return acc, nil
 		}),
-		// String.any : (Char -> Bool) -> String -> Bool — short-circuit.
+		// String.any : (Char -> Bool) -> String -> Bool, short-circuit.
 		"stringAny": nativeFn(2, func(args []Value) (Value, error) {
 			fn := args[0]
 			s, ok := args[1].(VString)
@@ -221,7 +221,7 @@ func charBuiltins() map[string]Value {
 // sanitizeCodePoint clamps an arbitrary Int to a representable
 // Unicode scalar value. Out-of-range or surrogate inputs collapse to
 // U+FFFD (REPLACEMENT CHARACTER). This is the contract guaranteed
-// across all three runtimes — Swift's Unicode.Scalar rejects
+// across all three runtimes: Swift's Unicode.Scalar rejects
 // surrogates outright, so we substitute up front rather than have
 // JSON encode fail later.
 func sanitizeCodePoint(n int64) rune {

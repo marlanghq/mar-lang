@@ -6,7 +6,7 @@ import "fmt"
 // server programs.
 //
 // IO.print / IO.println / IO.readLine were removed when mar narrowed
-// to full-stack web — they don't fit the topologies (frontend / backend
+// to full-stack web: they don't fit the topologies (frontend / backend
 // / fullstack) and the previous CLI sub-commands that exercised them
 // (`mar run`) are gone too. If a future use-case needs them back,
 // reintroduce as `Process.print` etc. with explicit semantics.
@@ -19,7 +19,7 @@ import "fmt"
 func ioBuiltins() map[string]Value {
 	return map[string]Value{
 		// Http.get / Http.post : implemented client-side by the JS runtime.
-		// On the Go side they're stubs that error out — server-side code
+		// On the Go side they're stubs that error out: server-side code
 		// that depends on Http is not supported.
 		"httpGet": nativeFn(2, func(args []Value) (Value, error) {
 			return VEffect{

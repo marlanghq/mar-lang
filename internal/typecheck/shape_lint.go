@@ -1,11 +1,11 @@
-// Boundary shape lint — catches record-shape mismatches at framework
+// Boundary shape lint: catches record-shape mismatches at framework
 // callsites that Mar's polymorphic Repo / Auth.config signatures let
 // through.
 //
 // Mar's HM typechecker accepts the patches / filter / signup records
 // passed to Repo.create / Repo.update / Repo.findBy / Auth.config as
 // fully-polymorphic `b`. Concrete column shapes are only enforced at
-// runtime, inside repoCreateInner et al. — see internal/typecheck/env.go
+// runtime, inside repoCreateInner et al.: see internal/typecheck/env.go
 // around line 710 for the documented trade-off.
 //
 // This pass closes the most common cases by walking the AST after
@@ -22,7 +22,7 @@
 //        - for `create`, missing required column → error
 //   3. For Auth.config record literals, find the `entity` + `signup`
 //      fields. If `signup = \e -> { record }`, check the record
-//      against the entity (timestamps get a pass — the framework
+//      against the entity (timestamps get a pass: the framework
 //      auto-fills them, see runtime/auth.go::fillTimestampsForSignup).
 //
 // The pass is intentionally conservative: it only fires when the AST
@@ -115,7 +115,7 @@ type entitySchema struct {
 //
 // `exprTypes` is the per-expression type map produced by the
 // typechecker when expression tracking is enabled. The lint uses it
-// to validate non-literal record values like `body = input.body` —
+// to validate non-literal record values like `body = input.body`:
 // without it, only literal values can be checked. Pass nil if
 // inference info isn't available; literal-only mode still catches
 // the bulk of mistakes.
@@ -189,7 +189,7 @@ func extractEntities(mods []*ast.Module) (map[string]entitySchema, []ShapeIssue)
 				continue
 			}
 			// Validate the name. Skip registering the schema if the
-			// name is invalid — the rest of the lint can't make sense
+			// name is invalid: the rest of the lint can't make sense
 			// of a broken declaration. The user still gets the error.
 			issues = append(issues, validateEntityDefineName(parse, modName)...)
 			if parse.nameLiteral == "" {
@@ -208,7 +208,7 @@ func extractEntities(mods []*ast.Module) (map[string]entitySchema, []ShapeIssue)
 							"  Other declaration: %s.mar (around line %d)",
 						parse.nameLiteral, prior.module, prior.module, prior.pos.Line),
 				})
-				// Don't overwrite the first registration — keep the
+				// Don't overwrite the first registration: keep the
 				// "first wins" mental model consistent with the
 				// runtime registry.
 				continue
@@ -252,7 +252,7 @@ type parsedEntityDefine struct {
 //	EApp { Fn: EQualified{"Entity","define"},
 //	       Arg: ERecord{ name, columns, uniques } }
 //
-// Returns ok=false on anything else — the binding stays unknown to
+// Returns ok=false on anything else: the binding stays unknown to
 // the lint and any Repo.* against it is silently skipped (as a
 // non-Entity.define expression).
 //
@@ -286,13 +286,13 @@ func tryParseEntityDefine(e ast.Expr) (parsedEntityDefine, bool) {
 				out.nameKnown = true
 			}
 			// If it's not a literal, we leave nameLiteral empty and
-			// nameKnown false — the validator will flag it.
+			// nameKnown false: the validator will flag it.
 		case "columns":
 			if rec, ok := f.Value.(*ast.ERecord); ok {
 				columnsRec = rec
 			}
 		}
-		// uniques is parsed at runtime only — the lint doesn't need to
+		// uniques is parsed at runtime only: the lint doesn't need to
 		// understand its values, just acknowledge the field exists.
 	}
 
@@ -320,7 +320,7 @@ func tryParseEntityDefine(e ast.Expr) (parsedEntityDefine, bool) {
 //   - name starting with reserved prefix (sqlite_ / _mar_)
 //   - name containing characters outside [A-Za-z0-9_] or starting with a digit
 //
-// Doesn't validate against duplicates — that's done by the caller
+// Doesn't validate against duplicates: that's done by the caller
 // once it has visibility into the full project.
 func validateEntityDefineName(p parsedEntityDefine, module string) []ShapeIssue {
 	var issues []ShapeIssue
@@ -435,7 +435,7 @@ func walkExpr(e ast.Expr, ctx lintCtx) []ShapeIssue {
 	return issues
 }
 
-// walkChildren dispatches into the children of e — generic AST
+// walkChildren dispatches into the children of e: generic AST
 // recursion for the lint. Stays narrow on purpose: any expr the
 // lint introduces support for is handled at the parent (walkExpr's
 // EApp branch), so this function only walks subtrees forward.
@@ -565,7 +565,7 @@ func matchRepoOp(app *ast.EApp, ctx lintCtx) []ShapeIssue {
 
 // matchAuthConfig recognizes Auth.config { entity = X, signup = (\e -> {...}) }
 // and checks the signup record against X's schema. Only the direct
-// shape — no `if`/`let`/effect chains — is supported here.
+// shape, no `if`/`let`/effect chains, is supported here.
 func matchAuthConfig(app *ast.EApp, ctx lintCtx) []ShapeIssue {
 	head, args := flattenApp(app)
 	if !isQualified(head, "Auth", "config") {
@@ -603,7 +603,7 @@ func matchAuthConfig(app *ast.EApp, ctx lintCtx) []ShapeIssue {
 	if !ok {
 		return nil
 	}
-	// Signup record is a partial create — required columns the
+	// Signup record is a partial create: required columns the
 	// framework auto-fills (timestamps) get a pass; everything else
 	// follows the full-create rules.
 	return checkSignupRecord(rec, schema, ctx)
@@ -611,7 +611,7 @@ func matchAuthConfig(app *ast.EApp, ctx lintCtx) []ShapeIssue {
 
 // checkRecordAgainstSchema is the workhorse: for each field in the
 // record literal, verify the name exists in the schema and the
-// value matches the column kind — using literal pattern matching
+// value matches the column kind: using literal pattern matching
 // first, then falling back to the typechecker's per-expression type
 // map when the value isn't a literal. When requireFull is true,
 // also flag every non-serial, non-timestamp column the record omits.
@@ -645,7 +645,7 @@ func checkRecordAgainstSchema(rec *ast.ERecord, schema entitySchema, op string, 
 			if col.kind == kindTime {
 				// Timestamps in Repo.create still need a value, but
 				// the typical pattern threads Time.now in via an
-				// Effect chain — we'd flag that as missing too. To
+				// Effect chain: we'd flag that as missing too. To
 				// avoid false positives, allow timestamps to be
 				// silently omitted from create literals; the runtime
 				// will catch genuine omissions.
@@ -667,7 +667,7 @@ func checkRecordAgainstSchema(rec *ast.ERecord, schema entitySchema, op string, 
 // in via runtime.fillTimestampsForSignup), missing non-timestamps
 // are NOT flagged either (a future iteration could surface them
 // once we're confident the lint doesn't over-fire), and any literal
-// value supplied for a timestamp column is also a pass — a sentinel
+// value supplied for a timestamp column is also a pass: a sentinel
 // like `createdAt = 0` would crash the old runtime but now gets
 // quietly replaced by Time.now.
 func checkSignupRecord(rec *ast.ERecord, schema entitySchema, ctx lintCtx) []ShapeIssue {
@@ -682,7 +682,7 @@ func checkSignupRecord(rec *ast.ERecord, schema entitySchema, ctx lintCtx) []Sha
 			})
 			continue
 		}
-		// Timestamps get a free pass — see comment above.
+		// Timestamps get a free pass: see comment above.
 		if col.kind == kindTime {
 			continue
 		}
@@ -698,7 +698,7 @@ func checkSignupRecord(rec *ast.ERecord, schema entitySchema, ctx lintCtx) []Sha
 
 // checkValueAgainstKind is the two-stage check used for every field
 // value. First it tries the literal-shape check (handles EInt /
-// EString / EBool / ECtor — fast, no inference needed). If that's
+// EString / EBool / ECtor: fast, no inference needed). If that's
 // inconclusive (the value isn't a literal we can categorize) AND
 // the lint has per-expression type info available, it falls back to
 // the typechecker's inferred type for the expression. Returns "" on
@@ -707,7 +707,7 @@ func checkValueAgainstKind(e ast.Expr, kind columnKind, ctx lintCtx) string {
 	if msg := checkLiteralAgainstKind(e, kind); msg != "" {
 		return msg
 	}
-	// Literal check returned "" — either the value matched a literal
+	// Literal check returned "": either the value matched a literal
 	// of the right kind (we're done) or it wasn't a literal we
 	// understand. Tell the two apart by re-inspecting the AST node;
 	// if it's NOT one of the literal types we handle, try inference.
@@ -728,14 +728,14 @@ func checkValueAgainstKind(e ast.Expr, kind columnKind, ctx lintCtx) string {
 
 // checkInferredAgainstKind compares a typechecker-inferred type
 // against the expected column kind. Only fires on concrete TCon
-// shapes — anything that's still a variable (free row, unresolved
+// shapes: anything that's still a variable (free row, unresolved
 // generic) is treated as "unknown, skip". False negatives are
 // acceptable; false positives would be confusing because the
 // typechecker already approved the expression's type.
 func checkInferredAgainstKind(t Type, kind columnKind) string {
 	con, ok := t.(TCon)
 	if !ok {
-		// TVar / TRecord / TArrow etc. — the value isn't a primitive
+		// TVar / TRecord / TArrow etc.: the value isn't a primitive
 		// scalar, which is mismatched for every column kind we know.
 		// Skip rather than report (the column might genuinely take a
 		// scalar that's typed as a record alias somewhere).
@@ -776,7 +776,7 @@ func checkInferredAgainstKind(t Type, kind columnKind) string {
 		}
 		return "got Decimal"
 	}
-	return "" // unknown constructor (Maybe, List, custom types) — skip
+	return "" // unknown constructor (Maybe, List, custom types): skip
 }
 
 // checkLiteralAgainstKind compares a literal value expression with
@@ -807,14 +807,14 @@ func checkLiteralAgainstKind(e ast.Expr, kind columnKind) string {
 		case kindEnum:
 			// Conservative: any constructor that fits the column's
 			// declared type passes. We don't enforce that the ctor
-			// is in the entity's accepted list — capturing the
+			// is in the entity's accepted list: capturing the
 			// list at extraction time would cost ~30 LOC, but HM
 			// already catches the common case (the ctor's custom
 			// type is pinned by `Entity.enum [A, B]` so a ctor of
 			// a DIFFERENT custom type fails to unify).
 			//
 			// The remaining gap is "schema accepts a strict subset
-			// of the type's ctors" — e.g. `Role = Admin | Member |
+			// of the type's ctors": e.g. `Role = Admin | Member |
 			// Owner` but `Entity.enum [Admin, Member]`. Then writing
 			// `role = Owner` typechecks (Owner : Role) but the
 			// SQLite CHECK constraint rejects it at INSERT time.
@@ -832,5 +832,5 @@ func checkLiteralAgainstKind(e ast.Expr, kind columnKind) string {
 			return fmt.Sprintf("got constructor %s", v.Name)
 		}
 	}
-	return "" // non-literal — skip
+	return "" // non-literal: skip
 }

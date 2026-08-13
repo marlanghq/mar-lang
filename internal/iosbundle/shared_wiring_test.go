@@ -12,7 +12,7 @@ import (
 // exactly the gap the deferral comment warned about: stubbing the names would
 // let an app compile for iOS and then quietly lose its cart.
 //
-// So this file checks the WIRING instead — the five places where a missing
+// So this file checks the WIRING instead: the five places where a missing
 // line turns the feature into a stub that compiles. Each check names the
 // symptom, because a failure here is silent at runtime: nothing crashes, the
 // screen simply stops agreeing with the model.
@@ -110,12 +110,12 @@ func TestSharedStoreIsWiredNotStubbed(t *testing.T) {
 	// The store must not be touched from `init`. SwiftUI evaluates
 	// `PageRuntime(page:)` on every pass of the parent's body and keeps only
 	// the first instance, so a side effect here runs on objects that are
-	// discarded a moment later — the callback they installed dies with them.
+	// discarded a moment later: the callback they installed dies with them.
 	// Checked as an absence, because the symptom (a screen that stops
 	// following the model after any unrelated re-render) points nowhere near
 	// the line that caused it.
 	// The designated initializer, not the convenience one that forwards to
-	// it — anchoring on the shorter signature matched the wrong two lines and
+	// it: anchoring on the shorter signature matched the wrong two lines and
 	// the sabotage sailed through.
 	const designatedInit = "init(page: DecodedPage, user: MarValue?, params: MarValue?) {"
 	i := strings.Index(runtime, designatedInit)

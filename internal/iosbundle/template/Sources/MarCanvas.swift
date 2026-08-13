@@ -1,4 +1,4 @@
-// Canvas (v0.0.7) — the 2D draw-list, native mirror of the web canvas in
+// Canvas (v0.0.7): the 2D draw-list, native mirror of the web canvas in
 // internal/jsserve/runtime.js. The .mar builders assemble opaque Shape / Color
 // / Transform values (rect / circle / Canvas.text / group / rgb / Canvas.
 // Translate|Scale|Rotate|Left|Center|Right); `canvas` is a View carrying the
@@ -8,10 +8,10 @@
 // size back as Msgs.
 //
 // Unlike the web (which draws at 1 CSS px + image-rendering: pixelated to dodge
-// a retina fill-rate trap — ADR-0001), SwiftUI's Canvas already works in points,
+// a retina fill-rate trap: ADR-0001), SwiftUI's Canvas already works in points,
 // so the shapes' coordinate space IS the size watchSize reports. No dpr scaling.
 //
-// Compile-checked, not run, in the build environment — pixels verified on device.
+// Compile-checked, not run, in the build environment: pixels verified on device.
 
 import Foundation
 import SwiftUI
@@ -53,9 +53,9 @@ enum MarCanvas {
         env.defineFn("group", "Canvas.group", 2) { a in .ctor(tag: "group", args: [a[0], a[1]], origin: nil) }
 
         // Transform / Align / Blend constructors (Canvas.Translate, ...) come
-        // from the generated registry — see MarBuiltinCtors.swift.
+        // from the generated registry: see MarBuiltinCtors.swift.
 
-        // CanvasMode constructors — global (bare), nullary, like Pointer's
+        // CanvasMode constructors: global (bare), nullary, like Pointer's
         // Coarse / Fine. The mandatory first arg of `canvas`.
         env.define("Pixelated", .ctor(tag: "Pixelated", args: [], origin: nil))
         env.define("Crisp",     .ctor(tag: "Crisp", args: [], origin: nil))
@@ -83,7 +83,7 @@ enum MarCanvas {
         // Desktop-input trio (parity). Registered so a shared .mar using them
         // compiles and runs on iOS. onAltTap fires on long-press; onHover and
         // onWheel are inert on pure touch (no hover / no wheel), exactly as the
-        // web ones are — a trackpad/pencil mapping is a later refinement.
+        // web ones are: a trackpad/pencil mapping is a later refinement.
         env.defineFn("onHover", "Canvas.onHover", 1) { a in attr("onHover", a[0]) }
         env.defineFn("onAltTap", "Canvas.onAltTap", 1) { a in attr("onAltTap", a[0]) }
         env.defineFn("onWheel", "Canvas.onWheel", 1) { a in attr("onWheel", a[0]) }
@@ -132,8 +132,8 @@ struct MarCanvasView: View {
             }
             .contentShape(Rectangle())
             #if canImport(UIKit)
-            // All pointer input — the tap / drag / release edges AND the
-            // watchPointers mirror — flows through ONE multi-touch view, the way
+            // All pointer input: the tap / drag / release edges AND the
+            // watchPointers mirror: flows through ONE multi-touch view, the way
             // the web feeds both from the same pointer handlers. Real
             // multi-touch: each finger is tracked under a small stable id.
             .overlay(
@@ -216,7 +216,7 @@ struct MarCanvasView: View {
             let alpha = groupAlpha(transforms)
             let mode = groupBlend(transforms)
             // No Alpha: draw straight through under the group's blend mode.
-            // Free — a copied context is the whole cost, and GraphicsContext
+            // Free: a copied context is the whole cost, and GraphicsContext
             // being a value type means the scoping needs no save/restore.
             // Erase included: erasing shape by shape leaves dst × Π(1-aᵢ),
             // exactly what one stamp of their union would leave.
@@ -281,7 +281,7 @@ struct MarCanvasView: View {
         return out
     }
 
-    /// Canvas.Blend on a group, or nil when absent (which means Normal — what
+    /// Canvas.Blend on a group, or nil when absent (which means Normal: what
     /// every group did before Blend existed). Unlike Alpha, repeats do NOT
     /// combine: opacities compose, modes don't, so the last one wins. The
     /// mapping mirrors the web's globalCompositeOperation names exactly.

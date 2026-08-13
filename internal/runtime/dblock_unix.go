@@ -1,4 +1,4 @@
-// DB advisory lock — POSIX flock implementation.
+// DB advisory lock: POSIX flock implementation.
 //
 // Used by `mar dev` / `mar-runtime` on startup (held for the lifetime
 // of the process) and by `mar-runtime restore-db` to detect whether a
@@ -7,7 +7,7 @@
 // Why flock instead of a PID file: the kernel guarantees release on
 // process exit regardless of how the process died (clean shutdown,
 // SIGKILL, panic, OOM kill, power loss). There's no stale-lockfile
-// recovery path to get wrong — the lock is a property of the open
+// recovery path to get wrong: the lock is a property of the open
 // file descriptor.
 //
 // Why a sidecar lock file (`<db>.lock`) instead of locking the DB
@@ -54,7 +54,7 @@ func lockFilePath(dbPath string) string {
 // lock held. Closing the file releases; the kernel also releases
 // on process exit, regardless of how the process died.
 //
-// The DB file itself does not need to exist — the sidecar is
+// The DB file itself does not need to exist: the sidecar is
 // created on demand. This lets the runtime acquire the lock
 // before SQLite has bootstrapped the schema.
 //

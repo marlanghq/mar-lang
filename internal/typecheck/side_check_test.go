@@ -83,7 +83,7 @@ main = App.frontend [ home ]
 
 // A fullstack module may hold both halves: the build prunes to what the pages
 // reach, and the handler is not among them. examples/guestbook is exactly this
-// shape, and a module-level version of this check rejected it — which is why
+// shape, and a module-level version of this check rejected it, which is why
 // the granularity is the declaration.
 func TestHandlerBesideAPageIsAccepted(t *testing.T) {
 	mods := parseModules(t, `
@@ -175,7 +175,7 @@ main = App.fullstack { pages = [ Page.home ], services = [] }
 	}
 }
 
-// No pages, no roots, nothing to say — a backend-only project must not trip
+// No pages, no roots, nothing to say: a backend-only project must not trip
 // over its own `Repo` calls.
 func TestBackendOnlyProjectIsAccepted(t *testing.T) {
 	mods := parseModules(t, `

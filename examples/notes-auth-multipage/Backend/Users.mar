@@ -5,7 +5,7 @@ import Shared
 
 
 -- The users entity. Auth.config (in Main) reads this to know what
--- shape to materialize for the logged-in user. Keep it minimal —
+-- shape to materialize for the logged-in user. Keep it minimal:
 -- just the fields the framework needs.
 users : Entity Shared.User
 users =

@@ -1,15 +1,15 @@
 // Database backup endpoints for the admin panel.
 //
 //   GET  /_mar/admin/api/database-backups
-//        — list catalog entries (newest first)
+//        - list catalog entries (newest first)
 //
 //   GET  /_mar/admin/api/database-backup/<id>
-//        — download the bundle .tar.gz
+//        - download the bundle .tar.gz
 //
 // Restore is intentionally NOT exposed over HTTP: it needs a process
 // restart + supervisor coordination that varies by platform, and the
 // `mar dev` loop has no supervisor at all. The supported restore flow
-// is the `mar-runtime restore-db` CLI — operator downloads the bundle,
+// is the `mar-runtime restore-db` CLI: operator downloads the bundle,
 // stops the process, runs the restore command, restarts.
 
 package jsserve
@@ -70,7 +70,7 @@ func handleAdminListBackups(w http.ResponseWriter, r *http.Request) {
 
 // handleAdminBackupAction serves GET /<id> (download the bundle).
 // Restore is handled out-of-band by the `mar-runtime restore-db`
-// CLI — see file-level comment.
+// CLI: see file-level comment.
 func handleAdminBackupAction(w http.ResponseWriter, r *http.Request) {
 	if _, ok := gateAdminSession(w, r); !ok {
 		return
@@ -133,7 +133,7 @@ func serveBundleDownload(w http.ResponseWriter, bundlePath string) {
 
 // backupFilename prefixes the bundle's base name with a filesystem-safe
 // slug of the project name (mar.json "name"), so a download landing in a
-// shared Downloads folder is identifiable — e.g.
+// shared Downloads folder is identifiable: e.g.
 // "myapp-2026-06-09-120000.tar.gz". Falls back to the bare base name when
 // no project name is configured.
 func backupFilename(base string) string {

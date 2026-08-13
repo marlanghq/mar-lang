@@ -23,7 +23,7 @@ func readSecure(buf []byte) (int, error) {
 // RateLimitConfig is the `rateLimit` block in mar.json. Tunes the
 // per-IP token-bucket rate limiter that wraps the service routes,
 // /_mar/admin/api/*, /_auth/whoami, /_auth/logout. Rate limit is
-// always on — no opt-out — but the values can stretch from very
+// always on, no opt-out, but the values can stretch from very
 // strict to very permissive within hard bounds.
 //
 // Defaults (when block absent OR field zero):
@@ -32,7 +32,7 @@ func readSecure(buf []byte) (int, error) {
 //	burst             = 60
 //
 // The /_auth/request-code endpoint keeps its own stricter limit
-// (3/h/email + 20/h/IP) regardless of this block — it triggers
+// (3/h/email + 20/h/IP) regardless of this block: it triggers
 // SMTP sends which are expensive and the standard email-flood
 // vector.
 type RateLimitConfig struct {
@@ -41,7 +41,7 @@ type RateLimitConfig struct {
 	// [1, 100000].
 	RequestsPerMinute int `json:"requestsPerMinute,omitempty"`
 
-	// Burst is the bucket capacity — both the initial state for
+	// Burst is the bucket capacity: both the initial state for
 	// first-seen IPs and the max ceiling during refill. Must be
 	// in [1, 10000].
 	Burst int `json:"burst,omitempty"`
@@ -79,7 +79,7 @@ type IOSConfig struct {
 
 	// DisplayName is the human-readable name shown on the home
 	// screen and in the iOS app switcher. Required. Allowed to
-	// contain spaces / accents — unlike the project's internal
+	// contain spaces / accents: unlike the project's internal
 	// SwiftIdentifier name. Goes into Info.plist as
 	// CFBundleDisplayName.
 	DisplayName string `json:"displayName,omitempty"`
@@ -92,7 +92,7 @@ type IOSConfig struct {
 
 	// BuildNumber is the internal build counter, monotonically
 	// increasing per upload to TestFlight / App Store. Required.
-	// Strings are accepted (Apple stores it as a string) — common
+	// Strings are accepted (Apple stores it as a string): common
 	// patterns are "1", "42", or a CI counter. Goes into the
 	// .pbxproj as CURRENT_PROJECT_VERSION.
 	BuildNumber string `json:"buildNumber,omitempty"`
@@ -101,7 +101,7 @@ type IOSConfig struct {
 	// in RELEASE builds. Optional: when absent, `mar build` warns
 	// but still produces a bundle (useful for dev / sideload
 	// against a local `mar dev` discovered via Bonjour). Must be
-	// HTTPS — App Store transport security rejects plain HTTP
+	// HTTPS: App Store transport security rejects plain HTTP
 	// without ATS exceptions, which we don't grant. Goes into
 	// Info.plist as MarBaseURL.
 	//
@@ -118,7 +118,7 @@ type IOSConfig struct {
 // (strict schema). Sensitive fields (e.g. passwords) require the
 // env: prefix.
 //
-// `entry` is optional — when omitted, mar dev / mar build look for
+// `entry` is optional, when omitted, mar dev / mar build look for
 // `Main.mar` at the project root (the convention). Only set it for
 // the unusual case of a non-conventional entry filename.
 type Manifest struct {
@@ -136,7 +136,7 @@ type Manifest struct {
 	PWA        *PWAConfig        `json:"pwa,omitempty"`
 }
 
-// PWAConfig is the manifest's `pwa` block — Progressive Web App
+// PWAConfig is the manifest's `pwa` block: Progressive Web App
 // install metadata. Every field (and the whole block) is optional:
 // the one mandatory manifest field, `name`, comes from the top-level
 // manifest, and the rest have defaults that always produce a valid,
@@ -212,11 +212,11 @@ func (m *Manifest) ResolvePWA(projectDir string) pwa.Config {
 	}
 }
 
-// DeployConfig is the manifest's `deploy` block — per-target deploy
+// DeployConfig is the manifest's `deploy` block: per-target deploy
 // configuration. Each field is a sibling for a specific provider
 // (Fly.io for fullstack VMs, Cloudflare Pages for static bundles).
 // Future targets (`aws`, `render`, `github-pages`, etc.) would be
-// sibling fields. The block is optional — projects without it can\'t
+// sibling fields. The block is optional: projects without it can\'t
 // run `mar deploy`, but `mar dev` / `mar build` work fine.
 //
 // Conventional pairing today:
@@ -235,7 +235,7 @@ type DeployConfig struct {
 // fullstack project to Fly.io. The block is required for `mar deploy`
 // and any `mar fly *` subcommand to work; all three fields are
 // required (validated in
-// validate.go) — none have defaults because each represents a real
+// validate.go): none have defaults because each represents a real
 // decision the operator must make consciously:
 //
 //   - App pins the global Fly identity (becomes <app>.fly.dev)
@@ -253,7 +253,7 @@ type FlyDeployConfig struct {
 
 	// Region is the primary Fly region code (e.g. "gru", "iad",
 	// "fra"). See https://fly.io/docs/reference/regions for the
-	// full list. Single region for now — multi-region is out of
+	// full list. Single region for now: multi-region is out of
 	// scope until someone needs it.
 	Region string `json:"region,omitempty"`
 
@@ -266,14 +266,14 @@ type FlyDeployConfig struct {
 
 // CloudflarePagesDeployConfig holds everything `mar deploy` needs to
 // push a static App.frontend bundle to Cloudflare Pages. All three
-// fields are required (validated in validate.go) —
+// fields are required (validated in validate.go):
 // none have defaults because each pins a real choice the operator
 // makes:
 //
 //   - App ties the deployment to a name in the operator's CF
 //     account (becomes <app>.pages.dev).
 //   - Account ties it to a specific Cloudflare account.
-//   - APIToken is the credential used to upload. Always env:VAR —
+//   - APIToken is the credential used to upload. Always env:VAR:
 //     literal values are rejected at compile-time (same rule as
 //     auth.sessionSecret and mail.smtpPassword).
 //
@@ -284,14 +284,14 @@ type FlyDeployConfig struct {
 // field across providers.
 //
 // Why not a CLI customization for headers / build hooks / etc.: same
-// philosophy as deploy.fly — the framework picks the right defaults
+// philosophy as deploy.fly: the framework picks the right defaults
 // and that's the contract. If an app needs something the defaults
 // don't give, that's a feature request.
 type CloudflarePagesDeployConfig struct {
 	// App is the Cloudflare Pages project name. Becomes the
 	// hostname: <app>.pages.dev. Auto-created on the first
 	// `mar deploy` (with operator confirmation in interactive
-	// mode) if it doesn\'t already exist on the account — no
+	// mode) if it doesn\'t already exist on the account: no
 	// manual dashboard setup needed.
 	//
 	// Accepts an env:VAR reference for operators who want it
@@ -305,7 +305,7 @@ type CloudflarePagesDeployConfig struct {
 	Account string `json:"account,omitempty"`
 
 	// APIToken is the Cloudflare API token used to authenticate
-	// uploads and project management calls. ALWAYS env:VAR —
+	// uploads and project management calls. ALWAYS env:VAR:
 	// a literal value is rejected at compile-time by checkSecrets,
 	// since committing a token would be a credential leak.
 	//
@@ -314,7 +314,7 @@ type CloudflarePagesDeployConfig struct {
 	APIToken string `json:"apiToken,omitempty"` // must be env:VAR
 }
 
-// AdminPanelConfig is the manifest's `adminPanel` block — knobs for
+// AdminPanelConfig is the manifest's `adminPanel` block: knobs for
 // the framework-built-in admin panel served at /_mar/admin.
 //
 // All fields are optional with documented defaults; see
@@ -326,7 +326,7 @@ type AdminPanelConfig struct {
 }
 
 // AuthConfig is the manifest's `auth` block. The session secret is the
-// HMAC key used to derive stored hashes for codes and session tokens —
+// HMAC key used to derive stored hashes for codes and session tokens:
 // production deploys must set it via env var; `mar dev` auto-generates
 // a random secret on first run (see ResolveSessionSecret).
 type AuthConfig struct {
@@ -341,12 +341,12 @@ type ServerConfig struct {
 	// MaxBodyBytes caps the size of incoming request bodies on the
 	// service routes. Default 1 MiB. Bounded [1 KiB, 32 MiB].
 	// Zero means "use default" (consistent with the other bounded
-	// knobs); there's no opt-out — a missing cap is a DoS vector and
+	// knobs); there's no opt-out: a missing cap is a DoS vector and
 	// the policy is "seguro por default" across the framework.
 	//
 	// 32 MiB upper bound matches what most JSON APIs need; bigger
 	// payloads (file uploads, video chunks) belong on a dedicated
-	// streaming route — a future feature, not a knob to bypass this
+	// streaming route: a future feature, not a knob to bypass this
 	// cap. /_auth/* and /_mar/admin/* have their own tighter caps in
 	// their handlers and aren't affected by this value.
 	MaxBodyBytes int64 `json:"maxBodyBytes,omitempty"`
@@ -358,7 +358,7 @@ type ServerConfig struct {
 	//
 	//   - omitted (nil): trust the headers only when the connecting peer
 	//     (RemoteAddr) is loopback or a private address (RFC1918 /
-	//     RFC4193) — covers reverse-proxy-on-host, sidecar, Docker
+	//     RFC4193): covers reverse-proxy-on-host, sidecar, Docker
 	//     bridge, and private cloud networks.
 	//   - [] (present but empty): never trust the headers (paranoid mode,
 	//     for a listener exposed directly to the internet).
@@ -381,7 +381,7 @@ func (s *ServerConfig) ResolvedMaxBodyBytes() int64 {
 }
 
 // ResolvedTrustedProxies returns the configured trusted-proxy CIDRs.
-// nil (the nil receiver included) means "unset" — the runtime applies
+// nil (the nil receiver included) means "unset": the runtime applies
 // its loopback + private-range default. A non-nil empty slice means
 // "trust nothing" and is preserved distinct from nil.
 func (s *ServerConfig) ResolvedTrustedProxies() []string {
@@ -399,7 +399,7 @@ type DatabaseConfig struct {
 // DatabaseAutoBackup configures the periodic-backup goroutine that
 // writes consistent snapshots into a catalog on the same volume as
 // mar.db. Defaults (when the block is absent OR fields are zero):
-// enabled=true, intervalHours=6, retentionCount=28 — i.e. a week of
+// enabled=true, intervalHours=6, retentionCount=28: i.e. a week of
 // 4-per-day backups.
 //
 // Bounds are validated at compile time so misconfigured values fail
@@ -462,7 +462,7 @@ type MailConfig struct {
 // IANA-assigned SMTP submission port with STARTTLS that virtually
 // every modern provider supports (Resend, SendGrid, Mailgun, AWS
 // SES, Postmark, Brevo, Mailjet, …). Set `smtpPort` explicitly only
-// when the provider needs something else — most commonly 465 for
+// when the provider needs something else: most commonly 465 for
 // implicit-TLS-on-connect or 25 for legacy MTA-to-MTA setups.
 func (m *MailConfig) ResolvedSMTPPort() int {
 	if m == nil || m.SMTPPort == 0 {
@@ -474,7 +474,7 @@ func (m *MailConfig) ResolvedSMTPPort() int {
 // ToSMTPConfig converts the manifest's mail block into the runtime
 // SMTPConfig shape consumed by `auth.Send` and the boot-time SMTP
 // connectivity check. Returns the zero value when no mail is
-// configured — `auth.Send` then falls back to the stdout sink so
+// configured: `auth.Send` then falls back to the stdout sink so
 // `mar dev` keeps working without any setup.
 //
 // Defined here (in project) rather than auth so the conversion
@@ -508,7 +508,7 @@ func LoadManifestStructure(root string) (*Manifest, error) {
 
 // LoadManifest reads and parses mar.json under root, resolving env var
 // references (env:NAME prefix) to actual environment values. Missing
-// env vars are a hard error — production runtime startup, fly deploy
+// env vars are a hard error: production runtime startup, fly deploy
 // validation, etc. all go through this path.
 //
 // Returns nil, nil if no mar.json exists (treated as empty).
@@ -521,7 +521,7 @@ func LoadManifest(root string) (*Manifest, error) {
 // `mar dev` uses this so the operator can run a project locally
 // without configuring production secrets (SMTP_PASSWORD, etc.). The
 // downstream auth path detects empty SMTP and falls back to its
-// stdout sink — auth codes print to the terminal where the dev
+// stdout sink: auth codes print to the terminal where the dev
 // server is already running.
 //
 // Strict callers (mar-runtime, mar fly *) keep using LoadManifest:
@@ -533,11 +533,11 @@ func LoadManifestDev(root string) (*Manifest, error) {
 
 // loadManifestInternal is the shared parser. `resolveEnv` controls
 // whether env:VAR references are substituted with their runtime
-// values — true for runtime callers (mar dev, mar-runtime), false
+// values: true for runtime callers (mar dev, mar-runtime), false
 // for build-time validators that don't have prod env vars.
 // `tolerateMissingEnv` softens the failure mode: when true, an
 // `env:VAR` that resolves to nothing leaves the field as the empty
-// string instead of erroring out — see LoadManifestDev's doc for
+// string instead of erroring out: see LoadManifestDev's doc for
 // why dev wants this.
 func loadManifestInternal(root string, resolveEnv bool, tolerateMissingEnv bool) (*Manifest, error) {
 	path := filepath.Join(root, "mar.json")
@@ -568,7 +568,7 @@ func loadManifestInternal(root string, resolveEnv bool, tolerateMissingEnv bool)
 	}
 	// json.Decoder is stream-oriented: it stops after the first
 	// complete JSON value and silently ignores anything after.
-	// mar.json is supposed to be one root object total — anything
+	// mar.json is supposed to be one root object total: anything
 	// trailing (a stray `}`, leftover commented-out config, etc.) is
 	// a mistake. Catch it by trying to read another token: io.EOF
 	// confirms a clean end; anything else points at the extra data.
@@ -606,7 +606,7 @@ func checkUnknownTopFields(m map[string]json.RawMessage) error {
 	// Keep this map in lockstep with the JSON tags on the Manifest
 	// struct (above). Forgetting an entry here causes a strict-mode
 	// rejection ("unknown field X") even when the field decodes
-	// cleanly into the Manifest struct itself — the strict probe
+	// cleanly into the Manifest struct itself: the strict probe
 	// runs BEFORE the typed decode.
 	known := map[string]bool{
 		"name":       true,
@@ -634,7 +634,7 @@ func checkUnknownTopFields(m map[string]json.RawMessage) error {
 // environment variable's value. When `tolerateMissing` is false
 // (production callers), a missing var fails the load. When true
 // (mar dev), a missing var resolves the field to the empty string
-// — letting `mar dev` boot without prod secrets configured; the
+// : letting `mar dev` boot without prod secrets configured; the
 // downstream auth path detects empty SMTP and prints codes to
 // stdout instead of trying to send mail.
 //
@@ -721,8 +721,8 @@ func resolveEnvRefs(m *Manifest, tolerateMissing bool) error {
 }
 
 // ManifestSyntaxError is returned when mar.json fails to parse as
-// JSON. Carries enough context — file path, raw bytes, byte offset,
-// derived line/column — for callers to render a rich error message
+// JSON. Carries enough context: file path, raw bytes, byte offset,
+// derived line/column: for callers to render a rich error message
 // with snippet + caret + heuristic hint. Its Error() method already
 // returns the full multi-line description (with no colors) so even
 // handlers that don't detect the type via errors.As surface useful
@@ -783,7 +783,7 @@ func (e *ManifestSyntaxError) Error() string {
 func (e *ManifestSyntaxError) Unwrap() error { return e.Underlying }
 
 // checkTrailingData verifies that the decoder has consumed all of
-// raw — i.e. that mar.json doesn't contain stray content after the
+// raw: i.e. that mar.json doesn't contain stray content after the
 // root JSON object. Returns nil on a clean end; otherwise returns a
 // ManifestSyntaxError positioned at the first byte of the offending
 // trailing content.
@@ -799,7 +799,7 @@ func checkTrailingData(path string, raw []byte, dec *json.Decoder) error {
 	}
 	// Either Token returned a token (real trailing data) or some
 	// other error parsing trailing junk. Either way, point at where
-	// the decoder stopped consuming the root value — that's the
+	// the decoder stopped consuming the root value: that's the
 	// first byte the user needs to delete or fix.
 	offset := dec.InputOffset()
 	line, col := lineColFromOffset(raw, offset)
@@ -828,7 +828,7 @@ func wrapManifestJSONError(path string, raw []byte, err error) error {
 	case *json.UnmarshalTypeError:
 		offset = je.Offset
 	default:
-		// No position info — best we can do is prefix with the path.
+		// No position info: best we can do is prefix with the path.
 		return fmt.Errorf("%s: %v", path, err)
 	}
 	line, col := lineColFromOffset(raw, offset)
@@ -846,7 +846,7 @@ func wrapManifestJSONError(path string, raw []byte, err error) error {
 }
 
 // lineColFromOffset maps a byte offset back to a 1-based line and
-// column position. Bytes (not runes) — matches what json.SyntaxError
+// column position. Bytes (not runes): matches what json.SyntaxError
 // reports and keeps the math straightforward; for the kinds of
 // punctuation errors that fire syntax errors, multi-byte characters
 // are never the culprit.
@@ -904,7 +904,7 @@ func hintForJSONError(msg string) string {
 // can read, while preserving the offending character info that the
 // stdlib message embeds (e.g. `'"'`, `'}'`).
 //
-// Falls through to the raw stdlib message when nothing matches —
+// Falls through to the raw stdlib message when nothing matches:
 // safer to show something verbatim than to silently drop info.
 func humanizeJSONError(msg string) string {
 	char := extractInvalidChar(msg)
@@ -964,7 +964,7 @@ func joinChar(prefix, char, suffix string) string {
 // `mail.from` address uses a domain Mar recognizes as free-mail
 // (gmail.com, outlook.com, etc). The CLI catches this specifically
 // to render an "Error + Hint" block explaining why provider SMTP
-// always rejects these — users on free-mail-as-from-address are
+// always rejects these: users on free-mail-as-from-address are
 // universally misconfigured, never intentional.
 type FreeMailDomainError struct {
 	From   string // e.g. "support@gmail.com"
@@ -1087,13 +1087,13 @@ func checkSecrets(m *Manifest) error {
 //  4. No name available either → empty string. Repo.* calls error
 //     out with a clear message.
 //
-// The "launch cwd" is the user's working directory at process start —
+// The "launch cwd" is the user's working directory at process start:
 // captured into MAR_LAUNCH_CWD by mar-runtime BEFORE extracting an
 // embedded payload to a temp dir. Without that capture, projectDir
 // would point inside `/tmp/mar-runtime-xxx/` and `./notes.db` would
 // land in ephemeral storage. Falls back to projectDir for dev (`mar
 // dev`), where no extraction happens and projectDir is the user's
-// source directory next to mar.json — exactly what they want.
+// source directory next to mar.json: exactly what they want.
 func ResolveDatabasePath(m *Manifest, projectDir string) (path, source string) {
 	if v, ok := os.LookupEnv("MAR_DATABASE_PATH"); ok {
 		if v == "" {
@@ -1127,7 +1127,7 @@ func ResolveDatabasePath(m *Manifest, projectDir string) (path, source string) {
 // file lands where I ran the binary from", not in /tmp/mar-runtime-*
 // which the OS reaps).
 //
-// Falls back to projectDir when the env var isn't set — that's the
+// Falls back to projectDir when the env var isn't set: that's the
 // `mar dev` case (no extraction happens; projectDir IS the user's
 // source directory next to mar.json, exactly the right anchor).
 func launchCwd(projectDir string) string {
@@ -1141,7 +1141,7 @@ func launchCwd(projectDir string) string {
 // use, with this priority:
 //
 //  1. mar.json auth.sessionSecret (already env-resolved at load time).
-//  2. .mar/dev-secrets.json under projectDir — auto-generated on first
+//  2. .mar/dev-secrets.json under projectDir: auto-generated on first
 //     run, gitignored, so `mar dev` works with zero setup.
 //  3. Newly generated secret, written to (2), returned.
 //
@@ -1196,7 +1196,7 @@ func randomDevSecret() (string, error) {
 }
 
 // ensureGitignored appends `entry` to .gitignore if absent. Best-effort
-// — we don't want a .gitignore write failure to block dev workflow.
+// : we don't want a .gitignore write failure to block dev workflow.
 func ensureGitignored(path, entry string) {
 	existing, err := os.ReadFile(path)
 	if err != nil {

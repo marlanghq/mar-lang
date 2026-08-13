@@ -7,9 +7,9 @@ import (
 
 // The whole point of the AdminSession capability: Mar.Admin.* requires an
 // AdminSession as its first argument, and only Page.adminProtected ever hands
-// one out. So normal code can't call Mar.Admin.* — caught at COMPILE time, not
+// one out. So normal code can't call Mar.Admin.*: caught at COMPILE time, not
 // runtime. (The functions are shaped like Service.call:
-// AdminSession -> (Result String resp -> msg) -> Effect String msg.)
+// AdminSession -> (Result String resp -> msg) -> Cmd msg.)
 
 // A plain top-level reference can't satisfy the AdminSession argument
 // (there's no value of that type anywhere in user-reachable scope).
@@ -53,7 +53,7 @@ page =
 }
 
 // An ADMIN page (Page.adminProtected) is handed an AdminSession in
-// init/update/view, so it CAN call Mar.Admin.* — performing the result through
+// init/update/view, so it CAN call Mar.Admin.*: performing the result through
 // a toMsg, exactly like Service.call.
 func TestAdminGateAllowsInAdminPage(t *testing.T) {
 	src := `module M exposing (..)

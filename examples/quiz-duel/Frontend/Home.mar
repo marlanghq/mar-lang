@@ -16,16 +16,16 @@ import UI exposing
 -- The hub. Loads the caller's profile (bouncing to the nickname gate
 -- if they have none) and their whole lobby, split into four buckets:
 --
---   Caixa de entrada  — someone challenged you; accept or decline
---   Sua vez           — a duel waiting on your answers; tap to play
---   Aguardando        — you're done, the rival hasn't finished
---   Resultados        — finished (or declined) duels, newest first
+--   Caixa de entrada  - someone challenged you; accept or decline
+--   Sua vez           - a duel waiting on your answers; tap to play
+--   Aguardando        - you're done, the rival hasn't finished
+--   Resultados        - finished (or declined) duels, newest first
 --
 -- There's no realtime push in Mar, so we poll the lobby every few
 -- seconds to pick up a rival accepting or finishing WHILE you're looking
 -- at this screen. Returning to Home doesn't rely on the poll: Mar re-runs
 -- `init` on every navigation (including Back), so coming back refetches
--- the lobby fresh — you never see a previous visit's stale list.
+-- the lobby fresh: you never see a previous visit's stale list.
 
 
 type alias Model =
@@ -229,7 +229,7 @@ accountContent user model =
                 Nothing -> ""
 
         -- Save is offered only once the (trimmed) draft differs from the
-        -- saved nick — a no-op rename can't be submitted.
+        -- saved nick: a no-op rename can't be submitted.
         unchanged =
             String.trim model.nickDraft == currentNick
     in

@@ -27,12 +27,12 @@ func withInstalledLimiter(t *testing.T, l *ratelimit.Limiter) {
 	t.Cleanup(func() { SetRateLimit(prev) })
 }
 
-// okHandler is the inner handler under test — always writes "ok".
+// okHandler is the inner handler under test: always writes "ok".
 func okHandler(w http.ResponseWriter, r *http.Request) {
 	_, _ = io.WriteString(w, "ok")
 }
 
-// TestRateLimit_NoLimiterInstalled — when SetRateLimit(nil) the
+// TestRateLimit_NoLimiterInstalled, when SetRateLimit(nil) the
 // middleware is a transparent pass-through. Protects the test path
 // + the "limiter not yet plumbed" boot window.
 func TestRateLimit_NoLimiterInstalled(t *testing.T) {
@@ -50,7 +50,7 @@ func TestRateLimit_NoLimiterInstalled(t *testing.T) {
 	}
 }
 
-// TestRateLimit_AllowsWithinBudget — under the per-IP budget,
+// TestRateLimit_AllowsWithinBudget: under the per-IP budget,
 // every request reaches the inner handler.
 func TestRateLimit_AllowsWithinBudget(t *testing.T) {
 	l := ratelimit.New(ratelimit.Policy{Rate: 100, Burst: 5})
@@ -68,7 +68,7 @@ func TestRateLimit_AllowsWithinBudget(t *testing.T) {
 	}
 }
 
-// TestRateLimit_RejectsBeyondBudget — once the bucket is empty,
+// TestRateLimit_RejectsBeyondBudget: once the bucket is empty,
 // requests get 429 with Retry-After + JSON body.
 func TestRateLimit_RejectsBeyondBudget(t *testing.T) {
 	// Rate=0.001/s effectively pins the bucket empty after burst.
@@ -115,7 +115,7 @@ func TestRateLimit_RejectsBeyondBudget(t *testing.T) {
 	}
 }
 
-// TestRateLimit_KeysPerIP — exhausting one IP's bucket doesn't
+// TestRateLimit_KeysPerIP: exhausting one IP's bucket doesn't
 // block requests from a different IP.
 func TestRateLimit_KeysPerIP(t *testing.T) {
 	l := ratelimit.New(ratelimit.Policy{Rate: 0.001, Burst: 1})
@@ -145,7 +145,7 @@ func TestRateLimit_KeysPerIP(t *testing.T) {
 	}
 }
 
-// TestRateLimit_RespectsXForwardedFor — when the proxy header is
+// TestRateLimit_RespectsXForwardedFor, when the proxy header is
 // set, keying uses the originating IP rather than the proxy
 // connection address. Critical: behind Fly's proxy every request
 // has the same RemoteAddr (the proxy), so keying on it would
@@ -156,7 +156,7 @@ func TestRateLimit_RespectsXForwardedFor(t *testing.T) {
 	withInstalledLimiter(t, l)
 
 	// Both requests come through the same proxy RemoteAddr but
-	// from different upstream IPs — they must NOT share a bucket.
+	// from different upstream IPs: they must NOT share a bucket.
 	rr := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/x", nil)
 	req.RemoteAddr = "10.0.0.1:443" // proxy

@@ -9,7 +9,7 @@ import (
 	"mar/internal/clio"
 )
 
-// TestColors_disabled covers the case where colors are off — every
+// TestColors_disabled covers the case where colors are off: every
 // helper should pass the input through verbatim with no ANSI bytes.
 // This is the path most CI logs and piped output take.
 func TestColors_disabled(t *testing.T) {
@@ -64,7 +64,7 @@ func TestColors_enabled(t *testing.T) {
 // TestCmdSuggest_placeholderColoring verifies that <placeholder>
 // segments inside a cmdSuggest argument get the cyan ("identifier")
 // treatment while the literal command parts stay bold. Colors-off
-// mode should pass everything through verbatim — no special
+// mode should pass everything through verbatim: no special
 // handling of <...> segments.
 func TestCmdSuggest_placeholderColoring(t *testing.T) {
 	t.Run("colors off — verbatim pass-through", func(t *testing.T) {
@@ -154,7 +154,7 @@ func withCapturedStderr(t *testing.T, fn func()) string {
 	}
 	orig := os.Stderr
 	os.Stderr = w
-	// Reset shared state — earlier tests in the same process may
+	// Reset shared state: earlier tests in the same process may
 	// have left hasTrail=true, which would suppress the leading
 	// blank we're trying to verify. The state lives in
 	// internal/clio so a single ClearTrailingBlank covers both
@@ -175,7 +175,7 @@ func withCapturedStderr(t *testing.T, fn func()) string {
 	return out
 }
 
-// TestFprintError_StandaloneEmitsLeadingAndTrailingBlank — single
+// TestFprintError_StandaloneEmitsLeadingAndTrailingBlank: single
 // Error: line gets `\nError: ...\n\n`. The trailing blank pushes
 // the shell prompt off the message (docs/cli-style.md §1).
 func TestFprintError_StandaloneEmitsLeadingAndTrailingBlank(t *testing.T) {
@@ -189,7 +189,7 @@ func TestFprintError_StandaloneEmitsLeadingAndTrailingBlank(t *testing.T) {
 	}
 }
 
-// TestFprintErrorThenHint_SingleBlankBetween — chained Error → Hint
+// TestFprintErrorThenHint_SingleBlankBetween: chained Error → Hint
 // should have ONE blank line between (not two from each helper's
 // own leading+trailing). The state flag suppresses Hint's leading
 // blank when Error just emitted a trailing one.
@@ -205,7 +205,7 @@ func TestFprintErrorThenHint_SingleBlankBetween(t *testing.T) {
 	}
 }
 
-// TestFprintHint_Standalone — a Hint with no preceding helper call
+// TestFprintHint_Standalone: a Hint with no preceding helper call
 // still gets its leading + trailing blanks.
 func TestFprintHint_Standalone(t *testing.T) {
 	SetColorEnabled(false)
@@ -218,7 +218,7 @@ func TestFprintHint_Standalone(t *testing.T) {
 	}
 }
 
-// TestFprintHint_MultiLineContinuation — hints with embedded `\n`
+// TestFprintHint_MultiLineContinuation: hints with embedded `\n`
 // in the format string are emitted as a single block with the
 // trailing blank AFTER the last continuation, not between the
 // header line and the continuation.
@@ -235,7 +235,7 @@ func TestFprintHint_MultiLineContinuation(t *testing.T) {
 
 // TestColorizeHint_PreservesEmbeddedANSI pins the rule that lines
 // already carrying ANSI escapes are treated as prose, not as code
-// blocks — so any color the CLI embedded (e.g. colorGreen on a
+// blocks, so any color the CLI embedded (e.g. colorGreen on a
 // runnable command suggestion) survives intact regardless of
 // indent.
 //
@@ -258,7 +258,7 @@ func TestColorizeHint_PreservesEmbeddedANSI(t *testing.T) {
 	got := colorizeHint(hint)
 
 	// Both runnable commands must appear verbatim with their full
-	// green span — no fragment dim-wrapping. The exact ANSI prefix
+	// green span: no fragment dim-wrapping. The exact ANSI prefix
 	// for colorGreen is `ansiBoldGreen`; the trailing reset is
 	// `ansiReset`.
 	wantA := ansiBoldGreen + "mar fly provision" + ansiReset

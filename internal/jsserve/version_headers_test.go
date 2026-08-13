@@ -19,14 +19,14 @@ import (
 
 func TestWithVersionHeaders_setsBothWhenAvailable(t *testing.T) {
 	// Set the package-level mar version. SetAdminBuildInfo locks
-	// authMu — safe to call from a test.
+	// authMu: safe to call from a test.
 	SetAdminBuildInfo("0.4.2")
 	t.Cleanup(func() { SetAdminBuildInfo("") })
 
 	lp := &LiveProgram{}
 	// Simulate a successful Update having populated programHash.
 	// We can't call Update directly (it requires modules), so we
-	// poke the field via a small helper — programHash is the
+	// poke the field via a small helper: programHash is the
 	// internal name; the public-facing read is ProgramHash().
 	lp.programHash = "deadbeefcafebabe"
 
@@ -75,7 +75,7 @@ func TestWithVersionHeaders_omitsEmptyValues(t *testing.T) {
 }
 
 func TestWithVersionHeaders_setsBeforeInnerWrites(t *testing.T) {
-	// The middleware must set headers BEFORE next.ServeHTTP runs —
+	// The middleware must set headers BEFORE next.ServeHTTP runs:
 	// otherwise an inner handler that calls Write() before the
 	// middleware could finalize the header map.
 	//
@@ -89,7 +89,7 @@ func TestWithVersionHeaders_setsBeforeInnerWrites(t *testing.T) {
 	lp.programHash = "abc123"
 
 	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Inner handler writes immediately — would lose any
+		// Inner handler writes immediately, would lose any
 		// header set AFTER this call.
 		_, _ = w.Write([]byte("hello"))
 	})
@@ -113,7 +113,7 @@ func TestWithVersionHeaders_setsBeforeInnerWrites(t *testing.T) {
 func TestMarVersion_threadSafe(t *testing.T) {
 	// Sanity check that MarVersion() reads what SetAdminBuildInfo
 	// wrote. The mutex protects against torn reads, but the test
-	// just verifies the round-trip works — the contention case is
+	// just verifies the round-trip works: the contention case is
 	// covered by `go test -race` on the broader suite.
 	SetAdminBuildInfo("0.6.0")
 	t.Cleanup(func() { SetAdminBuildInfo("") })

@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// ADR 0028: a failure whose site is `view` or `init` halts the program — every
+// ADR 0028: a failure whose site is `view` or `init` halts the program, every
 // subscription torn down, every further dispatch refused. A failure in
 // `update` does not, because the model it would have produced was never
 // installed and the next message may take a different branch.
@@ -15,7 +15,7 @@ import (
 // The regression this pins is not subtle and cost eleven hours of battery: a
 // game left in a hidden window divided by a zero width, `view` threw, and the
 // runtime kept ticking sixty times a second behind the failure message for the
-// rest of the night — 2.4 million dispatches nobody would ever see.
+// rest of the night: 2.4 million dispatches nobody would ever see.
 //
 // Source-level, like TestFailureScreensInstallTheStylesheetThemselves above:
 // there is no DOM harness here that could run a program to completion. What it

@@ -13,7 +13,7 @@ import (
 // editor knows about the language's built-ins in addition to the
 // user's own declarations.
 //
-// They never appear in document indexes — go-to-definition has nowhere
+// They never appear in document indexes: go-to-definition has nowhere
 // to navigate, since the implementation lives in Go. That's why hover
 // renders them with a "_built-in_" footer and definition handlers
 // return null for them.
@@ -76,7 +76,7 @@ func buildStdlib() {
 				Summary: stdlibBuiltinTag,
 			}
 			stdlibCache = append(stdlibCache, cs)
-			// First-write wins — value-env entries (Just/Nothing/Ok/Err)
+			// First-write wins: value-env entries (Just/Nothing/Ok/Err)
 			// in BaseQualifiedSymbols may have already inserted a
 			// constructor symbol; don't shadow it with the customs
 			// reconstruction.
@@ -95,7 +95,7 @@ func buildStdlib() {
 const stdlibBuiltinTag = "__mar_stdlib__"
 
 // customSummaryFromBase reconstructs a one-line summary mirroring
-// `customSummary` for user-defined types — `type Maybe a = Just _ | Nothing`.
+// `customSummary` for user-defined types: `type Maybe a = Just _ | Nothing`.
 func customSummaryFromBase(ct typecheck.CustomType) string {
 	out := "type " + ct.Name
 	for _, p := range ct.Params {
@@ -117,7 +117,7 @@ func customSummaryFromBase(ct typecheck.CustomType) string {
 }
 
 // constructorTypeFromCustom synthesizes a printable type for a
-// stdlib constructor — e.g. `Just : a -> Maybe a`. Falls back to a
+// stdlib constructor, e.g. `Just : a -> Maybe a`. Falls back to a
 // bare name when the variant carries no args.
 func constructorTypeFromCustom(ct typecheck.CustomType, ctorName string) string {
 	c, ok := ct.Constructors[ctorName]

@@ -1,4 +1,4 @@
-// Schema fingerprint — a deterministic hash of a SQLite database's
+// Schema fingerprint: a deterministic hash of a SQLite database's
 // structure. Used by the backup/restore flow to reject restores
 // whose schema doesn't match the running app's schema.
 //
@@ -9,7 +9,7 @@
 //   - rowid / page count / sequence values (data-dependent, not schema)
 //
 // Two databases with the same fingerprint are guaranteed to have
-// the same column types, constraints, indexes — anything the app
+// the same column types, constraints, indexes: anything the app
 // code might rely on. Different fingerprints mean a migration ran
 // (or the file is corrupt / from a different app); restore against
 // such a target should refuse rather than silently invite "data
@@ -32,7 +32,7 @@ import (
 //
 // Determinism: rows are sorted by (type, name) so insertion order
 // doesn't matter. Whitespace inside CREATE statements is collapsed
-// — SQLite preserves user-provided formatting in sqlite_master.sql,
+// : SQLite preserves user-provided formatting in sqlite_master.sql,
 // and we don't want a re-formatting roundtrip to flip the hash.
 func SchemaFingerprint(db *sql.DB) (string, error) {
 	rows, err := db.Query(
@@ -58,7 +58,7 @@ func SchemaFingerprint(db *sql.DB) (string, error) {
 		return "", fmt.Errorf("admin.SchemaFingerprint iter: %w", err)
 	}
 
-	// Sort for determinism — sqlite_master row order isn't guaranteed
+	// Sort for determinism: sqlite_master row order isn't guaranteed
 	// across SQLite versions or after VACUUM.
 	sort.Slice(entries, func(i, j int) bool {
 		if entries[i].kind != entries[j].kind {
@@ -76,7 +76,7 @@ func SchemaFingerprint(db *sql.DB) (string, error) {
 
 // normalizeSQL collapses whitespace so two semantically-identical
 // CREATE statements with different formatting hash the same. It does
-// NOT lowercase or otherwise touch the SQL — case is significant
+// NOT lowercase or otherwise touch the SQL: case is significant
 // inside string literals and could change semantics.
 func normalizeSQL(s string) string {
 	// Replace any run of whitespace (space, tab, newline) with a

@@ -12,18 +12,18 @@ func TestReservedPublicPath(t *testing.T) {
 		rel      string
 		reserved bool
 	}{
-		// Generated bundle files — would overwrite the real ones.
+		// Generated bundle files, would overwrite the real ones.
 		{"index.html", true},
 		{"runtime.js", true},
 		{"program.json", true},
 		{"_headers", true},
-		// Server route prefixes — owned by the runtime.
+		// Server route prefixes: owned by the runtime.
 		{"api/notes.json", true},
 		{"_mar/x", true},
 		{"_auth/logo.png", true},
 		{"services/y", true},
 		{filepath.Join("api", "deep", "z.txt"), true},
-		// Fine — ordinary assets.
+		// Fine: ordinary assets.
 		{"logo.png", false},
 		{"showcase-sample.png", false},
 		{filepath.Join("img", "a.jpg"), false},

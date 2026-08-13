@@ -118,11 +118,11 @@ sameTeam _ user project =
 -- Service manifest. Reads top-to-bottom as the security policy of
 -- the projects subdomain:
 --
---   listMine — any authed user, scoped to their team
---   getOne   — any authed user, must be sameTeam
---   create   — any authed user, scoped to their team via signup hook
---   edit     — sameTeam, admin only
---   remove   — sameTeam, admin only
+--   listMine: any authed user, scoped to their team
+--   getOne   - any authed user, must be sameTeam
+--   create   - any authed user, scoped to their team via signup hook
+--   edit     - sameTeam, admin only
+--   remove   - sameTeam, admin only
 services =
     [ Auth.protect Shared.listProjects  listMine
     , Auth.protect Shared.createProject create

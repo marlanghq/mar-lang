@@ -240,7 +240,7 @@ func TestMigrate_PlanShowsBlockedSteps(t *testing.T) {
 		t.Fatalf("seed row: %v", err)
 	}
 
-	// Add a NOT NULL column on a non-empty table — should plan as
+	// Add a NOT NULL column on a non-empty table, should plan as
 	// Blocked.
 	withRequired := VEntity{
 		Table: "notes",
@@ -269,7 +269,7 @@ func TestMigrate_PlanShowsBlockedSteps(t *testing.T) {
 // Blocked migrations must expose a *BlockedMigrationError so the CLI
 // can split the message into the standard `Error:` (red headline) +
 // `Hint:` (yellow body) blocks. The whole point of the structured
-// type is to enable colored rendering — if the underlying error
+// type is to enable colored rendering, if the underlying error
 // degrades to a generic fmt.Errorf, the CLI loses both the split and
 // the colors and the message falls back to a plain raw print.
 //
@@ -333,7 +333,7 @@ func TestMigrate_BlockedErrorIsStructured(t *testing.T) {
 	}
 	// Migration errors must follow the established prefix grammar
 	// (`Error:` / `Hint:` only, no ad-hoc labels) and must never
-	// promise unreleased features — both rules came from operator
+	// promise unreleased features: both rules came from operator
 	// pushback. Catch the patterns, not the specific phrasings,
 	// so future drift toward the same shape gets blocked.
 	bannedSubstrings := []string{
@@ -347,7 +347,7 @@ func TestMigrate_BlockedErrorIsStructured(t *testing.T) {
 		"once it lands",       // "once it lands, the migrator..."
 		"once X lands",        // generic "once X lands"
 		"coming soon",         // "coming soon"
-		"not yet implemented", // "not yet implemented" — implies "but will be"
+		"not yet implemented", // "not yet implemented": implies "but will be"
 		"deferred to",         // "deferred to v1"
 	}
 	for _, s := range bannedSubstrings {
@@ -375,7 +375,7 @@ func TestMigrate_OrphanTable_NoteOnly(t *testing.T) {
 	if _, err := NewMigrator(db, []VEntity{notesEntity()}).Run(); err != nil {
 		t.Fatalf("seed migrate: %v", err)
 	}
-	// Now run with an empty entity list — notes is orphan.
+	// Now run with an empty entity list: notes is orphan.
 	summary, err := NewMigrator(db, nil).Run()
 	if err != nil {
 		t.Fatalf("Run on empty entities: %v", err)
@@ -454,7 +454,7 @@ func TestMigrate_NullabilityChange_NonEmpty_Blocked(t *testing.T) {
 // nothing implemented. One prescribed a full table copy for something
 // SQLite does as a schema-only change. And one, the expensive kind of
 // wrong, told you to rename a table, copy into a table that did not
-// exist yet, and then DROP the rename — which, since `sqlite3` does
+// exist yet, and then DROP the rename, which, since `sqlite3` does
 // not stop at a failed statement unless you pass -bail, deleted the
 // data it was supposed to be preserving. Prose review caught none of
 // the three. Running them catches all three.

@@ -12,7 +12,7 @@ import Shared
 -- so the backend module graph stays acyclic (Attendance ← Students ←
 -- Classes ← Account). Ownership is enforced the same way everywhere:
 -- every read filters by `teacherId = caller.id`, every write stamps
--- it. A mark is therefore always bound to the caller — a forged
+-- it. A mark is therefore always bound to the caller: a forged
 -- studentId in a request can at worst litter the caller's own space,
 -- never touch or reveal another teacher's rows.
 

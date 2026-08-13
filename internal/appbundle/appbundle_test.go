@@ -18,7 +18,7 @@ import (
 )
 
 // buildPayloadWithEntries packages a custom set of (name, body)
-// entries as a ZIP — bypassing BuildPayload's shape constraints
+// entries as a ZIP: bypassing BuildPayload's shape constraints
 // (which only ever writes mar.json + src/*). Used by the zip-slip
 // tests to simulate a tampered bundle.
 func buildPayloadWithEntries(t *testing.T, entries map[string][]byte) []byte {
@@ -71,7 +71,7 @@ func TestSafeBundleEntryName_Rejects(t *testing.T) {
 	}
 }
 
-// TestSafeBundleEntryName_Accepts — the legitimate shapes must pass.
+// TestSafeBundleEntryName_Accepts: the legitimate shapes must pass.
 func TestSafeBundleEntryName_Accepts(t *testing.T) {
 	good := []string{
 		"mar.json",
@@ -88,9 +88,9 @@ func TestSafeBundleEntryName_Accepts(t *testing.T) {
 	}
 }
 
-// TestParsePayload_RejectsZipSlip — end-to-end check that a ZIP
+// TestParsePayload_RejectsZipSlip: end-to-end check that a ZIP
 // with a traversal entry is refused at load time. This is the
-// primary defense — even if ExtractToDir is bypassed (e.g. a future
+// primary defense, even if ExtractToDir is bypassed (e.g. a future
 // caller iterates Bundle.Sources directly and writes wherever), the
 // Bundle never gets constructed in the first place.
 func TestParsePayload_RejectsZipSlip(t *testing.T) {
@@ -107,7 +107,7 @@ func TestParsePayload_RejectsZipSlip(t *testing.T) {
 	}
 }
 
-// TestParsePayload_RejectsAbsolutePath — another zip-slip vector
+// TestParsePayload_RejectsAbsolutePath: another zip-slip vector
 // (entry name starts with /).
 func TestParsePayload_RejectsAbsolutePath(t *testing.T) {
 	payload := buildPayloadWithEntries(t, map[string][]byte{
@@ -120,7 +120,7 @@ func TestParsePayload_RejectsAbsolutePath(t *testing.T) {
 	}
 }
 
-// TestParsePayload_RejectsForeignTopLevel — entries that aren't
+// TestParsePayload_RejectsForeignTopLevel: entries that aren't
 // mar.json and don't live under src/ are tampering signals, not
 // silently ignored.
 func TestParsePayload_RejectsForeignTopLevel(t *testing.T) {
@@ -135,7 +135,7 @@ func TestParsePayload_RejectsForeignTopLevel(t *testing.T) {
 	}
 }
 
-// TestParsePayload_AcceptsLegitimateBundle — sanity that the fix
+// TestParsePayload_AcceptsLegitimateBundle: sanity that the fix
 // didn't break valid bundles. We exercise the full BuildPayload →
 // parsePayload roundtrip used by `mar build` / `mar-runtime`.
 func TestParsePayload_AcceptsLegitimateBundle(t *testing.T) {
@@ -161,7 +161,7 @@ func TestParsePayload_AcceptsLegitimateBundle(t *testing.T) {
 	}
 }
 
-// TestExtractToDir_DefenseInDepth — even if a caller hand-builds a
+// TestExtractToDir_DefenseInDepth, even if a caller hand-builds a
 // Bundle skipping parsePayload (tests, future programmatic uses),
 // ExtractToDir must still refuse to write outside destDir. This
 // guards against the safeguards being shifted around in the future
@@ -187,7 +187,7 @@ func TestExtractToDir_DefenseInDepth(t *testing.T) {
 	}
 }
 
-// TestExtractToDir_Legit — happy path: a normal Bundle materializes
+// TestExtractToDir_Legit, happy path: a normal Bundle materializes
 // the expected files in destDir.
 func TestExtractToDir_Legit(t *testing.T) {
 	destDir := t.TempDir()
@@ -215,7 +215,7 @@ func TestExtractToDir_Legit(t *testing.T) {
 	}
 }
 
-// TestLoadReaderAt_FullRoundtrip — sanity that WriteExecutable + the
+// TestLoadReaderAt_FullRoundtrip: sanity that WriteExecutable + the
 // trailing-footer probe still work end-to-end. This protects against
 // the fix accidentally breaking the production code path that
 // mar-runtime walks on startup.
@@ -245,7 +245,7 @@ func TestLoadReaderAt_FullRoundtrip(t *testing.T) {
 }
 
 // TestAssets_Roundtrip covers public/ assets making it through the whole
-// bundle pipeline — the gap that made a fullstack app's /logo.png work in
+// bundle pipeline: the gap that made a fullstack app's /logo.png work in
 // `mar dev` but 404 after `mar deploy`. Build with an asset, roundtrip
 // through the executable stamp, and confirm ExtractToDir lands it back
 // under public/ (where the runtime points SetPublicDir).

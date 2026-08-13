@@ -9,7 +9,7 @@ import UI exposing (navigationStack, navigationTitle, form, section, text)
 --
 --   subscriptions = Time.every (Time.seconds 1) Tick
 --
--- `Time.every` is a subscription — a standing declaration the runtime
+-- `Time.every` is a subscription: a standing declaration the runtime
 -- reconciles against the model after every update: started while the page
 -- returns it, torn down when the page returns it no longer (e.g. on
 -- navigation). The first tick fires after one interval, so we seed the

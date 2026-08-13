@@ -11,7 +11,7 @@ module Backend.Bank exposing
 import Shared
 
 
--- The question bank — static Mar data, backend-only. It never becomes
+-- The question bank: static Mar data, backend-only. It never becomes
 -- a database table: there's nothing per-user to store, keeping it in
 -- code means no seeding step, and (crucially) the `correct` index
 -- lives ONLY on the server. The serve service copies a question into

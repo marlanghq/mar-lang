@@ -14,13 +14,13 @@ import (
 
 // Sound.lowCut / Sound.highCut are the app's handle on tone. The band they
 // replace used to be hardcoded at 340-2600Hz inside the ambient bed, tuned so
-// one game's stadium crowd sat right — which meant every sustained noise in
+// one game's stadium crowd sat right, which meant every sustained noise in
 // every Mar app came out crowd-shaped, with no way to ask for wind instead.
 // (See docs/adrs/0006-app-taste-belongs-in-apps.md.)
 //
 // Two tests pin the two halves of that fix: the cuts an app asks for survive
 // into the voice record, and the renderer builds exactly the filters they name
-// — nothing more, so a sound asking for neither keeps the graph it always had.
+// : nothing more, so a sound asking for neither keeps the graph it always had.
 const soundShapingSrc = `module Shape exposing (..)
 
 
@@ -146,7 +146,7 @@ func runSoundDriverSrc(t *testing.T, src, driver string) string {
 	return strings.TrimSpace(string(out))
 }
 
-// Half one: the cuts survive the combinator chain. They did not always — the
+// Half one: the cuts survive the combinator chain. They did not always, the
 // voice clone copied a NAMED LIST of fields, so chaining two patches kept only
 // the outermost and `lowCut 340 (highCut 2600 s)` silently lost the 2600.
 func TestSoundCutsReachTheVoice(t *testing.T) {
@@ -241,11 +241,11 @@ process.stdout.write(
 
 // Sound.voice holds a voice instead of re-triggering it, which is the only way
 // to sustain a note without an audible re-attack. But the bed used to build a
-// BARE oscillator — no duty, no vibrato, no filters — so a patch lost its timbre
+// BARE oscillator, no duty, no vibrato, no filters, so a patch lost its timbre
 // the moment it stopped looping, and "held" was only usable for flat drones.
 //
 // This pins the fix: the held bed applies the same shaping as the one-shot path.
-// `plain` is the load-bearing case in the other direction — a voice that asks for
+// `plain` is the load-bearing case in the other direction: a voice that asks for
 // no shaping must still build a bare oscillator, so ordinary drones are untouched.
 func TestHeldVoiceKeepsShaping(t *testing.T) {
 	got := runSoundDriver(t, `
@@ -307,7 +307,7 @@ process.stdout.write([bedOf('Shape.pad'), bedOf('Shape.warm'), bedOf('Shape.plai
 // Two held notes at different pitches must be two VOICES and one GLIDE. That is
 // the whole difference between the two Subs, and getting it wrong is not a
 // theoretical risk: `Sound.hold` was both of them at once, and its key left
-// pitch out — correct for an engine note that slides with speed, fatal for a
+// pitch out: correct for an engine note that slides with speed, fatal for a
 // keyboard. Two held organ keys hashed to the same key, collapsed into one
 // oscillator, and releasing one slid the survivor to the other note.
 //
@@ -343,7 +343,7 @@ process.stdout.write([
 // The master bus sums voices linearly, so an app that sounds several things at
 // once can ask for more than full scale. It used to get there: three held organ
 // notes in examples/pocket-synth measured 1.05 to 1.29 at the bus depending on
-// where their phases landed, and past 1.0 the device hard-clips — a chord that is
+// where their phases landed, and past 1.0 the device hard-clips: a chord that is
 // not merely louder but broken.
 //
 // Two properties, and BOTH matter. The ceiling has to be inescapable, or it is

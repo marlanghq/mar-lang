@@ -11,11 +11,11 @@ import UI exposing
     )
 
 
--- Pet management — a secondary screen, pushed from the expenses home.
+-- Pet management: a secondary screen, pushed from the expenses home.
 -- Pets are just optional tags for expenses, so this is plain CRUD: add a
 -- pet, see the list, delete one. Deleting is tucked behind the top-bar
 -- "Edit" toggle (swipe / hover also work). Deleting a pet does NOT
--- delete its expenses — the backend re-tags them to "all pets".
+-- delete its expenses: the backend re-tags them to "all pets".
 
 
 type alias Model =

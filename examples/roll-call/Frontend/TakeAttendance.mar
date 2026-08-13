@@ -14,20 +14,20 @@ import UI exposing
 -- The hero screen: mark every student present / late / absent for a
 -- chosen day. Mounted at /classes/{id:Int}/attendance, and PRESENTED
 -- over the class it belongs to (Page.sheet) rather than pushed onto the
--- stack — taking attendance is a task with a beginning and an end, not a
+-- stack: taking attendance is a task with a beginning and an end, not a
 -- place you browse into. It is still a real route: the URL works as a
 -- deep link, and opened cold it renders as a full screen.
 --
 -- The chosen day starts at today (read from the clock on entry) and
 -- is editable with a datePicker; changing it refetches that day's
--- marks. Each tap on a status is optimistic — it updates the local
+-- marks. Each tap on a status is optimistic: it updates the local
 -- `picks` immediately and fires an upsert (Shared.setMark) in the
 -- background, so marking a full class feels instant.
 --
 -- `picks` is the single source of truth the row controls read: one
 -- entry per student that's been marked, seeded from the server and
 -- overlaid by taps. It's a plain list of records (studentId + status)
--- rather than a Dict — the roster is small, a linear lookup is
+-- rather than a Dict: the roster is small, a linear lookup is
 -- nothing, and it keeps the model to types the runtime exercises
 -- everywhere.
 
@@ -143,7 +143,7 @@ picksFromMarks marks =
 
 
 -- Upsert a pick: drop any existing entry for this student, prepend the
--- new one. Order doesn't matter — lookups are by studentId.
+-- new one. Order doesn't matter: lookups are by studentId.
 setPick : Int -> Int -> List Pick -> List Pick
 setPick studentId statusInt picks =
     { studentId = studentId, status = statusInt }
@@ -183,7 +183,7 @@ sections model =
                 ]
 
         _ ->
-            -- Still loading — but never swallow an error while we wait,
+            -- Still loading, but never swallow an error while we wait,
             -- or a failed fetch would spin forever with no explanation.
             List.concat
                 [ errorSection model

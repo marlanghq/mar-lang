@@ -11,7 +11,7 @@
 //     run from there.
 //   - Bare (development / debugging the stub itself): no payload found.
 //     Falls back to taking a project directory or Main.mar path on the
-//     command line — useful for testing the runtime stub directly
+//     command line: useful for testing the runtime stub directly
 //     before plumbing the bundle pipeline.
 package main
 
@@ -91,7 +91,7 @@ func main() {
 // invokes this over SSH. Operates on the local mar.db without
 // going through HTTP.
 //
-// v1 implements `list` only — the spec deliberately excludes
+// v1 implements `list` only: the spec deliberately excludes
 // runtime add/remove (see admin-panel.md §6.2). Adding admins
 // happens via mar.json + redeploy.
 func runRuntimeAdmin(args []string) int {
@@ -201,7 +201,7 @@ func loadRuntimeManifest() (*project.Manifest, string, error) {
 }
 
 // loadRuntimeManifestWith mirrors loadRuntimeManifest but lets the
-// caller skip env:VAR resolution. Used by `mar-runtime backup` —
+// caller skip env:VAR resolution. Used by `mar-runtime backup`:
 // backup just snapshots the DB + copies mar.json verbatim, so the
 // env vars don't need to be in scope. Admin list keeps the default
 // resolve=true (production runtime where vars are set anyway).
@@ -244,7 +244,7 @@ func loadRuntimeManifestWith(resolveEnv bool) (*project.Manifest, string, error)
 // runEmbeddedOrArg first checks whether this binary was stamped with an
 // app-bundle payload (the normal case for `mar build` output). If so we
 // extract and run that. Otherwise we expect a CLI argument pointing at
-// a project directory or Main.mar — the dev-time path.
+// a project directory or Main.mar: the dev-time path.
 func runEmbeddedOrArg() error {
 	exePath, err := os.Executable()
 	if err == nil {
@@ -275,7 +275,7 @@ func runEmbeddedOrArg() error {
 // resolve against the directory the user launched the binary from, not
 // against the temp extraction dir. Without that, the SQLite file would
 // land inside `/tmp/mar-runtime-xxx/` and disappear at the next OS
-// cleanup — silently destroying production data on every restart.
+// cleanup: silently destroying production data on every restart.
 func runEmbedded(b *appbundle.Bundle) error {
 	if _, set := os.LookupEnv("MAR_LAUNCH_CWD"); !set {
 		if cwd, err := os.Getwd(); err == nil {
@@ -288,7 +288,7 @@ func runEmbedded(b *appbundle.Bundle) error {
 	}
 	// Best-effort cleanup. We don't defer the rmdir because the server
 	// loop (jsserve.ServeLive → http.Serve) never returns cleanly in
-	// the success path — the process blocks there until SIGTERM. So
+	// the success path: the process blocks there until SIGTERM. So
 	// the temp dir lives until the OS reaps it on exit.
 	if err := appbundle.ExtractToDir(b, tmp); err != nil {
 		os.RemoveAll(tmp)
@@ -323,7 +323,7 @@ func runFromPath(path string) error {
 
 	// Wire auth runtime from the manifest. Without this, the
 	// production binary boots with an empty session secret and
-	// every /_auth/* request returns 503 — same handlers `mar dev`
+	// every /_auth/* request returns 503: same handlers `mar dev`
 	// uses, just never told what secret/SMTP to use. Resolving
 	// happens here and only here for prod.
 	secret, _, err := project.ResolveSessionSecret(manifest, projectDir)
@@ -339,7 +339,7 @@ func runFromPath(path string) error {
 	jsserve.SetAdminBuildInfo("dev") // production fills this via ldflags later
 	jsserve.SetAdminRequestBufferSize(project.ResolvedRecentRequestsSize(manifest))
 
-	// Gateway rate limiter — always on, per-IP, configured via
+	// Gateway rate limiter: always on, per-IP, configured via
 	// mar.json["rateLimit"]. validateRateLimit already ran during
 	// LoadManifest above; here we just resolve the policy. Rate is
 	// converted from per-minute (operator-friendly) to per-second
@@ -361,7 +361,7 @@ func runFromPath(path string) error {
 	// `mar dev`. In a deployed binary `mar build` bundles public/ into
 	// the payload and runEmbedded extracts it to projectDir/public, so
 	// this points at real files (e.g. a logo referenced as /logo.png).
-	// A missing public/ is a no-op — ValidatePublicDir returns nil and
+	// A missing public/ is a no-op: ValidatePublicDir returns nil and
 	// serveStaticOrShell falls through to the shell.
 	publicDir := filepath.Join(projectDir, "public")
 	if err := jsserve.ValidatePublicDir(publicDir); err != nil {
@@ -377,7 +377,7 @@ func runFromPath(path string) error {
 	jsserve.SetMaxBodyBytes(serverCfg.ResolvedMaxBodyBytes())
 	jsserve.SetTrustedProxies(serverCfg.ResolvedTrustedProxies())
 
-	// Admin panel boot — schema + sync from mar.json["admins"]. Same
+	// Admin panel boot: schema + sync from mar.json["admins"]. Same
 	// DB the user-auth uses; the _mar_admin_* tables coexist with
 	// user entities under the reserved framework prefix.
 	if dbPath != "" {
@@ -389,7 +389,7 @@ func runFromPath(path string) error {
 		// for the process lifetime. Blocks a second instance of the
 		// runtime against the same DB, and signals the restore CLI
 		// that the server is in use. Kernel releases on process exit
-		// regardless of how — clean shutdown, SIGKILL, panic, etc.
+		// regardless of how: clean shutdown, SIGKILL, panic, etc.
 		if err := runtime.HoldDBLock(dbPath); err != nil {
 			if errors.Is(err, runtime.ErrDBLocked) {
 				return fmt.Errorf("database %s is locked by another process (another mar-runtime instance, or restore-db in progress)", dbPath)
@@ -408,7 +408,7 @@ func runFromPath(path string) error {
 			fmt.Fprintln(os.Stderr, "mar: admin panel locked (no admins in mar.json). /_mar/admin will reject all logins.")
 		}
 
-		// Auto-backup scheduler — runs in the background for the
+		// Auto-backup scheduler: runs in the background for the
 		// process lifetime. No-op when disabled or no DB. The
 		// goroutine inherits this binary's stderr for status logs.
 		//
@@ -430,7 +430,7 @@ func runFromPath(path string) error {
 	// devMode stays false so the JS bundle skips dev affordances and
 	// ServeLive (called with hub=nil below) doesn't register /_mar/reload.
 
-	// Parse-only loader (no typecheck pass) — the embedded payload
+	// Parse-only loader (no typecheck pass): the embedded payload
 	// was already type-checked at `mar build` time, so re-checking
 	// every boot wastes startup AND pulls `internal/typecheck`
 	// (~100 KB + crypto/fips140 init data) into the link graph for

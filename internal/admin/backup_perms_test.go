@@ -19,7 +19,7 @@ func skipIfNoUnixPerms(t *testing.T) {
 	}
 }
 
-// TestWriteSnapshot_OwnerOnlyPerms — a fresh snapshot into a
+// TestWriteSnapshot_OwnerOnlyPerms: a fresh snapshot into a
 // not-yet-existing catalog dir must leave the dir 0o700 and the
 // bundle 0o600. The bundle is a full copy of the database, so a
 // group/world-readable mode would hand every table (sessions, auth
@@ -63,7 +63,7 @@ func TestWriteSnapshot_OwnerOnlyPerms(t *testing.T) {
 	}
 }
 
-// TestEnsureBackupDir_TightensExisting — catalogs created before the
+// TestEnsureBackupDir_TightensExisting: catalogs created before the
 // 0o700 policy sit at 0o755 on disk; MkdirAll alone would leave them
 // that way forever, so ensureBackupDir must chmod them down.
 func TestEnsureBackupDir_TightensExisting(t *testing.T) {

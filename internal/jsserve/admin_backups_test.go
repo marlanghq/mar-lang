@@ -134,7 +134,7 @@ func TestListBackups_EmptyCatalog(t *testing.T) {
 	}
 }
 
-// TestListBackups_WithEntries — items come back newest-first with
+// TestListBackups_WithEntries: items come back newest-first with
 // the size+createdAt fields the UI needs.
 func TestListBackups_WithEntries(t *testing.T) {
 	srv, cleanup := adminBackupsTestServer(t)
@@ -203,7 +203,7 @@ func TestDownloadBackup(t *testing.T) {
 
 // TestDownloadBackup_UnknownIDIs404 prevents enumeration of arbitrary
 // catalog paths. Uses a well-shaped catalog id (YYYY-MM-DD-HHMMSS)
-// that doesn't exist on disk — the shape check passes, the file
+// that doesn't exist on disk: the shape check passes, the file
 // lookup fails. Malformed ids go through TestDownloadBackup_InvalidIDIs400.
 func TestDownloadBackup_UnknownIDIs404(t *testing.T) {
 	srv, cleanup := adminBackupsTestServer(t)
@@ -222,7 +222,7 @@ func TestDownloadBackup_UnknownIDIs404(t *testing.T) {
 	}
 }
 
-// TestDownloadBackup_InvalidIDIs400 — ids that don't match the
+// TestDownloadBackup_InvalidIDIs400: ids that don't match the
 // catalog shape (path-traversal attempts, random strings) get
 // rejected at the shape check before any filesystem lookup. Defense
 // in depth: prevents the os.Stat → 404 path from ever touching
@@ -254,7 +254,7 @@ func TestDownloadBackup_InvalidIDIs400(t *testing.T) {
 	}
 }
 
-// TestDownloadBackup_RequiresAuth — GET without session → 401.
+// TestDownloadBackup_RequiresAuth: GET without session → 401.
 func TestDownloadBackup_RequiresAuth(t *testing.T) {
 	server, cleanup := adminTestServer(t, []string{"admin@x.com"})
 	defer cleanup()

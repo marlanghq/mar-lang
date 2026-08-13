@@ -20,11 +20,11 @@ import (
 // Install registers project-aware versions of App.frontend / App.backend /
 // App.fullstack on the given runtime env. Each captures its arguments
 // (routes, services, pages) into the supplied LiveProgram and returns a
-// no-op effect — the actual server lifecycle is driven by the host
+// no-op effect: the actual server lifecycle is driven by the host
 // (mar dev or mar-runtime), not by the user's `main`.
 //
 // `mods` is the full project AST (used to slice the page-reachable subset
-// for the browser bundle). `port` is the listening port — the App.* effect
+// for the browser bundle). `port` is the listening port: the App.* effect
 // signature takes none, so we wire it in at install time.
 func Install(env *runtime.Env, mods []*ast.Module, port int, lp *jsserve.LiveProgram) {
 	fs := MakeFullstackBuiltin(mods, port, lp)
@@ -40,7 +40,7 @@ func Install(env *runtime.Env, mods []*ast.Module, port int, lp *jsserve.LivePro
 	env.Define("App.backend", be)
 }
 
-// MakeFrontendBuiltin overrides `App.frontend : List Page -> Effect String ()`.
+// MakeFrontendBuiltin overrides `App.frontend : List Page -> Cmd ()`.
 // Captures the page list, slices the AST modules reachable from those
 // pages, hands them to the LiveProgram so the dev server / production
 // runtime both ship the same bundle to the browser.
@@ -65,7 +65,7 @@ func MakeFrontendBuiltin(mods []*ast.Module, port int, lp *jsserve.LiveProgram) 
 	}
 }
 
-// MakeBackendBuiltin overrides `App.backend : { services } -> Effect String ()`.
+// MakeBackendBuiltin overrides `App.backend : { services } -> Task ()`.
 // Services are typed RPC services, each mounted at the verb and path it
 // was declared with.
 func MakeBackendBuiltin(port int, lp *jsserve.LiveProgram) runtime.Value {
@@ -89,7 +89,7 @@ func MakeBackendBuiltin(port int, lp *jsserve.LiveProgram) runtime.Value {
 	}
 }
 
-// MakeFullstackBuiltin overrides `App.fullstack : { services, pages } -> Effect String ()`.
+// MakeFullstackBuiltin overrides `App.fullstack : { services, pages } -> Cmd ()`.
 // `services` mount at the verb + path each was declared with; `pages`
 // ship to the browser via the LiveProgram.
 func MakeFullstackBuiltin(mods []*ast.Module, port int, lp *jsserve.LiveProgram) runtime.Value {
@@ -164,7 +164,7 @@ func PickFrontMods(pages []runtime.Value, mods []*ast.Module) ([]*ast.Module, er
 			merged = append(merged, m)
 		}
 	}
-	// Synthetic entry module — Name nil so the page title heuristic
+	// Synthetic entry module: Name nil so the page title heuristic
 	// doesn't pick "__Entry" over the user's actual module name.
 	entryModule := &ast.Module{
 		Decls: []ast.Decl{
@@ -178,7 +178,7 @@ func PickFrontMods(pages []runtime.Value, mods []*ast.Module) ([]*ast.Module, er
 		},
 	}
 	// Built here, not parsed, so the typechecker never sees it. Nothing in
-	// it needs elaborating — no numeric literals, no polymorphic references,
+	// it needs elaborating: no numeric literals, no polymorphic references,
 	// just a call over the page references collected above. The claim is
 	// explicit because the evaluating and serializing sides refuse a tree
 	// that has not been through the checker.
@@ -199,7 +199,7 @@ func PickFrontMods(pages []runtime.Value, mods []*ast.Module) ([]*ast.Module, er
 
 // ExtractServices reads the `services` field (List ExposedService) and
 // turns each entry into the internal route record the HTTP dispatcher
-// consumes — mounted at the verb + path the service was declared with.
+// consumes: mounted at the verb + path the service was declared with.
 func ExtractServices(rec runtime.VRecord, who string) ([]runtime.Value, error) {
 	var out []runtime.Value
 	if v, ok := rec.Fields["services"]; ok {
@@ -272,7 +272,7 @@ func parseModulePath(dotted string) ast.ModuleName {
 }
 
 // noopEffect returns an Effect that does nothing on Run. Used by the
-// App.* overrides — the side effect they care about (capturing args
+// App.* overrides: the side effect they care about (capturing args
 // into the LiveProgram) happens during the function call, not when the
 // Effect runs.
 func noopEffect(tag string) runtime.VEffect {

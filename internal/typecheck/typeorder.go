@@ -18,7 +18,7 @@ import (
 //	type alias Inner = { n : Int }         -- so it becomes an opaque TCon
 //
 // and `{ inner = { n = 1 } }` then fails with "cannot unify { n : number }
-// with Inner" — a confusing error on a program that is fine. Unlike the value
+// with Inner": a confusing error on a program that is fine. Unlike the value
 // case this is caught at compile time, so it costs an afternoon rather than a
 // production incident, but it is the same defect and the same fix.
 //

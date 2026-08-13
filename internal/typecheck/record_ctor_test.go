@@ -9,7 +9,7 @@ import (
 // `type alias Point = { x : Int, y : Int }` introduces
 // `Point : Int -> Int -> Point`. It resolves as an ordinary value, so it can
 // be applied directly or passed bare to a higher-order function like
-// Random.map2 — the shape a faithful "Touch me When" port needs.
+// Random.map2: the shape a faithful "Touch me When" port needs.
 func TestRecordAliasConstructorResolves(t *testing.T) {
 	src := `module M exposing (..)
 type Shape = Circle | Square
@@ -29,7 +29,7 @@ cmd = Random.generate Got shapesGen
 
 // Because the constructor is a named value (not a desugared anonymous
 // lambda), a misapplication is reported against the alias name with the
-// offending argument pointed at — the same diagnostic quality as any named
+// offending argument pointed at: the same diagnostic quality as any named
 // function, instead of a generic "cannot unify" anchored at the binding.
 // This is the whole reason for registering it in the typechecker rather than
 // desugaring before inference.

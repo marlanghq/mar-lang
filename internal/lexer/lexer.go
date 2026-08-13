@@ -21,7 +21,7 @@ const (
 	KindInt    Kind = "int"
 	KindFloat  Kind = "float"
 	KindString Kind = "string"
-	// KindChar — single-quoted Unicode code point literal, e.g. 'a',
+	// KindChar: single-quoted Unicode code point literal, e.g. 'a',
 	// '\n', '\u{1F600}'. The Value field carries the decoded
 	// single-character string (UTF-8 of the rune), so a parser can do
 	// utf8.DecodeRuneInString(tok.Value) to get the int code point.
@@ -222,7 +222,7 @@ func (l *lexer) advance() rune {
 
 func (l *lexer) emit(kind Kind, value string) {
 	// l.line / l.column are the cursor AFTER consuming the lexeme, i.e.
-	// exactly one past the token's last character — its exclusive end.
+	// exactly one past the token's last character: its exclusive end.
 	l.tokens = append(l.tokens, Token{
 		Kind:      kind,
 		Value:     value,
@@ -382,10 +382,10 @@ func (l *lexer) readString() error {
 	return l.errorf("unterminated string literal")
 }
 
-// readChar: single-quoted character literal — 'a', '\n', '\u{1F600}'.
+// readChar: single-quoted character literal, 'a', '\n', '\u{1F600}'.
 //
 // One Unicode code point per literal (rune in Go, Unicode.Scalar in
-// Swift, code point in JS). The contents are exactly ONE character —
+// Swift, code point in JS). The contents are exactly ONE character:
 // `'ab'` is a lex error, not a two-char "string". Use a String for
 // that.
 //
@@ -427,7 +427,7 @@ func (l *lexer) readChar() error {
 			r = '\\'
 			l.advance()
 		case 'u':
-			// \u{HEX} — up to 6 hex digits, must be a valid scalar.
+			// \u{HEX}: up to 6 hex digits, must be a valid scalar.
 			l.advance() // u
 			if l.peek() != '{' {
 				return l.errorf("expected '{' after \\u")

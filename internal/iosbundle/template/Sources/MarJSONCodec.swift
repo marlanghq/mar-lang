@@ -10,7 +10,7 @@
 //     consume. The shape is dictated by Go-side
 //     `internal/jsserve.SerializeModule`; field names match exactly.
 //
-// Both directions are non-throwing where reasonable — malformed
+// Both directions are non-throwing where reasonable: malformed
 // values fall back to `.unit` rather than crash, since we'd rather
 // surface a runtime error in a specific place than blow up the
 // whole load.
@@ -24,13 +24,13 @@ enum MarJSONCodec {
     /// Foundation JSON value → MarValue. Mirrors `jsToMar` in
     /// runtime.js: numbers → Int, strings → String, bools → Bool,
     /// null → unit, arrays → List, objects → Record.
-    /// (null maps to unit, NOT to Nothing — Nothing tags uniformly
+    /// (null maps to unit, NOT to Nothing: Nothing tags uniformly
     /// via {"__ctor":"Nothing"} so it doesn\'t collide with VUnit\'s
     /// null encoding.)
     static func jsonToMar(_ any: Any) -> MarValue {
         if any is NSNull { return .unit }
         if let n = any as? NSNumber {
-            // Distinguish Bool from numeric — NSNumber wraps both
+            // Distinguish Bool from numeric: NSNumber wraps both
             // and `is Bool` only catches CFBoolean.
             if CFGetTypeID(n) == CFBooleanGetTypeID() {
                 return .bool(n.boolValue)
@@ -54,7 +54,7 @@ enum MarJSONCodec {
             return .list(arr.map(jsonToMar))
         }
         if let dict = any as? [String: Any] {
-            // Tagged constructor — round-trip from {__ctor: "Tag"} or
+            // Tagged constructor, round-trip from {__ctor: "Tag"} or
             // {__ctor: "Tag", __args: [...]}. Same convention as the
             // Go encoders and the JS jsToMar.
             if let tag = dict["__ctor"] as? String {
@@ -66,10 +66,10 @@ enum MarJSONCodec {
                 }
                 return .ctor(tag: tag, args: args, origin: nil)
             }
-            // Char round-trip — `{__char: "x"}` rebuilds a .char from
+            // Char round-trip, `{__char: "x"}` rebuilds a .char from
             // the first Unicode scalar of the payload. Same convention
             // as Go's convertJSON and JS jsToMar. If the scalar isn't
-            // a valid Unicode.Scalar (shouldn't happen — the producer
+            // a valid Unicode.Scalar (shouldn't happen: the producer
             // is trusted), we fall back to U+FFFD.
             if let s = dict["__char"] as? String, dict.count == 1 {
                 if let scalar = s.unicodeScalars.first {
@@ -77,20 +77,20 @@ enum MarJSONCodec {
                 }
                 return .char(Unicode.Scalar(0xFFFD)!)
             }
-            // Decimal round-trip — `{__dec: "1.50"}`. Rebuilt textually
+            // Decimal round-trip, `{__dec: "1.50"}`. Rebuilt textually
             // so the exact coefficient + scale survive; same convention
             // as the Go and JS decoders.
             if let s = dict["__dec"] as? String, dict.count == 1,
                let dec = DecMath.parseDecimalString(s) {
                 return .decimal(dec)
             }
-            // Angle round-trip — `{__angle: 450}`, deci-degrees. Wrapped
+            // Angle round-trip, `{__angle: 450}`, deci-degrees. Wrapped
             // rather than trusted: the payload crossed a network boundary,
             // and every other way to build an Angle normalizes.
             if let d = dict["__angle"] as? Int, dict.count == 1 {
                 return .angle(MarMath.posMod(d, MarMath.deciFull))
             }
-            // Time round-trip — `{__time: "ISO 8601"}` rebuilds a
+            // Time round-trip, `{__time: "ISO 8601"}` rebuilds a
             // VTime so user code typed as `createdAt : Time`
             // actually receives a Time, not a String.
             if let iso = dict["__time"] as? String {
@@ -166,7 +166,7 @@ enum MarJSONCodec {
             }
             return dict
         case .ctor(let tag, let args, _):
-            // Every ctor — Nothing and Just included — uses the
+            // Every ctor, Nothing and Just included, uses the
             // {"__ctor": ...} marker so generic decoders can
             // round-trip them without collisions (transparent
             // Nothing → null would clash with .unit\'s null
@@ -184,11 +184,11 @@ enum MarJSONCodec {
                 return ["__ctor": tag, "__args": args.map(marToJSON)] as [String: Any]
             }
         case .char(let scalar):
-            // `{"__char": "x"}` — wraps the scalar in a 1-char string
+            // `{"__char": "x"}`, wraps the scalar in a 1-char string
             // so non-Mar JSON consumers can still read it as text.
             return ["__char": String(scalar)] as [String: Any]
         case .dict(let pairs):
-            // `{"__dict": [[k, v], ...]}` — marker matches the Go and
+            // `{"__dict": [[k, v], ...]}`, marker matches the Go and
             // JS encoders. Pairs ride as 2-element arrays so non-
             // String keys (Int / Float) round-trip too.
             let arr = pairs.map { [marToJSON($0.0), marToJSON($0.1)] as [Any] }
@@ -204,7 +204,7 @@ enum MarJSONCodec {
 
     /// Parse a top-level program.json blob into a Program value.
     /// Throws on malformed shape (missing required fields, wrong
-    /// types) — caller surfaces the error to the user via the
+    /// types): caller surfaces the error to the user via the
     /// AppViewModel's failed state.
     static func decodeProgram(_ data: Data) throws -> Program {
         let any = try JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed])
@@ -248,7 +248,7 @@ enum MarJSONCodec {
         let exposing: [String] = exposingArr.compactMap { item in
             if let s = item as? String { return s }
             // Server may emit either bare strings or {name: "..."}
-            // shapes depending on version — accept both.
+            // shapes depending on version: accept both.
             if let dict = item as? [String: Any], let n = dict["name"] as? String { return n }
             return nil
         }
@@ -296,7 +296,7 @@ enum MarJSONCodec {
         case "EChar":
             // Go side ships the int code point; we sanitize and wrap
             // in Unicode.Scalar. Invalid (surrogate / out-of-range)
-            // values fall back to U+FFFD — same contract as the JS
+            // values fall back to U+FFFD: same contract as the JS
             // side's sanitizeCodePoint.
             return .char(scalarFromCode(intOf(dict["value"])))
         case "EUnit":
@@ -395,7 +395,7 @@ enum MarJSONCodec {
         case "PRecord":
             // Field names arrive as a [String]; in the JSON they're
             // typed as Any because the wire format uses []any. Coerce
-            // each to String, dropping any that aren't (defensive —
+            // each to String, dropping any that aren't (defensive:
             // the server should only ever emit strings here).
             let raw = (any["fields"] as? [Any]) ?? []
             let fields = raw.compactMap { $0 as? String }
@@ -421,7 +421,7 @@ enum MarJSONCodec {
     }
 
     /// `impl` is the native implementation the typechecker chose for this
-    /// reference (ast.EVar.Impl / ast.EQualified.Impl) — today only a
+    /// reference (ast.EVar.Impl / ast.EQualified.Impl): today only a
     /// Decimal List.sum / List.product, whose empty-list zero the values
     /// cannot reveal. The Go runtime reads the flag off the shared AST; the
     /// wire has no shared AST, so this side resolves the reference at decode
@@ -434,7 +434,7 @@ enum MarJSONCodec {
     /// Build a Unicode.Scalar from an Int code point, substituting
     /// U+FFFD for out-of-range or surrogate values. Mirrors the
     /// runtime/char.go sanitizeCodePoint and JS sanitizeCodePoint.
-    /// Force-unwrap on U+FFFD is safe — it's a valid scalar.
+    /// Force-unwrap on U+FFFD is safe: it's a valid scalar.
     static func scalarFromCode(_ n: Int) -> Unicode.Scalar {
         if n < 0 || n > 0x10FFFF { return Unicode.Scalar(0xFFFD)! }
         if n >= 0xD800 && n <= 0xDFFF { return Unicode.Scalar(0xFFFD)! }

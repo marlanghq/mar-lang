@@ -527,7 +527,7 @@ create =
 // Int is 53 bits (see internal/runtime/intrange.go), so a literal past that
 // range cannot be represented by the program that wrote it. Refusing at parse
 // time is the earliest possible answer, and the only one that is the same on
-// every runtime — the bound used to be 64 bits, back when the three runtimes
+// every runtime: the bound used to be 64 bits, back when the three runtimes
 // disagreed about what an Int was.
 func TestIntegerLiteralsStopAtFiftyThreeBits(t *testing.T) {
 	for _, tc := range []struct {

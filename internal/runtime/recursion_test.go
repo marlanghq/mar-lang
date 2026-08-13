@@ -13,7 +13,7 @@ import (
 // the request boundary never ran and a server answering other users died
 // because one request called a function that never reached a base case.
 //
-// These evaluate real Mar and require a returned error — the point is that the
+// These evaluate real Mar and require a returned error: the point is that the
 // test process is still alive to report it.
 
 func evalTop(t *testing.T, src, name string) (Value, error) {
@@ -238,14 +238,14 @@ func TestCheckerRuledOutStatesReportAsInternalErrors(t *testing.T) {
 	}
 
 	// `no case branch matched` is NOT a compiler bug, and must not claim to
-	// be one — but it can no longer be produced from checked source at all.
+	// be one, but it can no longer be produced from checked source at all.
 	// Exhaustiveness now covers unions, lists, tuples and the unbounded
 	// scalars, so every `case` a program can write is total.
 	//
 	// What still reaches it is the runtime feeding a case a value its types
 	// never sanctioned: an async result from a page the user already
 	// navigated away from, delivered into the live page's `update`. Both
-	// client runtimes depend on recognising it — see `marNoCaseBranch` in
+	// client runtimes depend on recognising it: see `marNoCaseBranch` in
 	// internal/jsserve/runtime.js and MarRuntimeError.noMatch on iOS, which
 	// drop the stale message instead of crashing the app.
 	//

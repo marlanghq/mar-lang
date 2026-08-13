@@ -14,7 +14,7 @@ import (
 // in docs/mar.md.
 //
 //	JSON.encode  : a -> String
-//	JSON.decode  : String -> Result String a   -- (decoded shape is "any" — uses VRecord/VList/VBool/etc.)
+//	JSON.decode  : String -> Result String a   -- (decoded shape is "any", uses VRecord/VList/VBool/etc.)
 func jsonBuiltins() map[string]Value {
 	return map[string]Value{
 		"jsonEncode": nativeFn(1, func(args []Value) (Value, error) {
@@ -49,7 +49,7 @@ func jsonBuiltins() map[string]Value {
 //     reads null as VUnit unambiguously)
 //   - VList -> array
 //   - VRecord -> object
-//   - Every VCtor — Nothing included — uses the {"__ctor":"Name"} marker
+//   - Every VCtor, Nothing included, uses the {"__ctor":"Name"} marker
 //     (with optional "__args"). Tagging Nothing like every other ctor
 //     keeps it distinguishable from VUnit on the wire: a service
 //     `Int -> ()` returns bare null, and `Ok ()` patterns must still
@@ -64,7 +64,7 @@ func encodeValue(v Value) (string, error) {
 		b, _ := json.Marshal(x.V)
 		return string(b), nil
 	case VChar:
-		// Wire format `{"__char": "x"}` — a 1-char string under the
+		// Wire format `{"__char": "x"}`, a 1-char string under the
 		// marker. JSON itself has no Char type; this marker tells the
 		// decoder side (Go's convertJSON / JS jsToMar / Swift
 		// MarJSONCodec) to rebuild a VChar instead of degrading to a
@@ -77,7 +77,7 @@ func encodeValue(v Value) (string, error) {
 		}
 		return "false", nil
 	case VDecimal:
-		// Wire format `{"__dec": "1.50"}` — the value rides as a STRING
+		// Wire format `{"__dec": "1.50"}`, the value rides as a STRING
 		// so no JSON parser on any side ever runs it through binary
 		// floating point. The marker (same convention as __time/__char)
 		// lets jsToMar / MarJSONCodec rebuild a Decimal instead of a
@@ -94,11 +94,11 @@ func encodeValue(v Value) (string, error) {
 		return "null", nil
 	case VDuration:
 		// -1 precision drops trailing zeros, so whole-second durations
-		// still serialize as integers ("2") — only sub-second ones carry
+		// still serialize as integers ("2"): only sub-second ones carry
 		// a fraction ("1.5"). Keeps the wire format stable for existing data.
 		return strconv.FormatFloat(x.Seconds, 'f', -1, 64), nil
 	case VAngle:
-		// Wire format is `{"__angle": 450}` — deci-degrees, the same
+		// Wire format is `{"__angle": 450}`, deci-degrees, the same
 		// marker-object shape as __char / __time / __dec, so the client
 		// and iOS decoders rebuild an Angle instead of a plain Int. An
 		// angle in a model has to survive the wire: it goes to App.shared,
@@ -106,7 +106,7 @@ func encodeValue(v Value) (string, error) {
 		// sides.
 		return `{"__angle":` + strconv.FormatInt(x.Deci, 10) + `}`, nil
 	case VTime:
-		// Wire format is `{"__time": "ISO 8601"}` — marker keeps the
+		// Wire format is `{"__time": "ISO 8601"}`, marker keeps the
 		// type round-trippable on the client (jsToMar / iOS decoder
 		// recognize it and produce a VTime, not a plain VString).
 		// The value itself is ISO so the same wire is readable by
@@ -134,7 +134,7 @@ func encodeValue(v Value) (string, error) {
 		// `Order` is where the fields appeared in the source, which is not
 		// part of the value: `{ a = 1, b = 2 }` and `{ b = 2, a = 1 }` are
 		// equal, and encoding them differently would break the one property
-		// a pure function must have — equal inputs, equal output. It also
+		// a pure function must have: equal inputs, equal output. It also
 		// puts the three runtimes on the same answer; the iOS encoder already
 		// sorted, so web and server were the odd ones out.
 		names := make([]string, len(x.Order))
@@ -158,21 +158,21 @@ func encodeValue(v Value) (string, error) {
 		sb.WriteByte('}')
 		return sb.String(), nil
 	case VCtor:
-		// Every constructor — Nothing and Just included — round-trips
+		// Every constructor, Nothing and Just included, round-trips
 		// as `{"__ctor":"Name"}` (zero-arg) or
 		// `{"__ctor":"Name","__args":[...]}` (with payload). The marker
 		// prefix keeps it distinguishable from user records that happen
 		// to have a `tag` field. The JS runtime's jsToMar / marToJs and
 		// the iOS MarJSONCodec use the same convention.
 		//
-		// All constructors tag uniformly — even Nothing and Just. A
+		// All constructors tag uniformly, even Nothing and Just. A
 		// transparent encoding (Nothing → null, Just x → x) would
 		// collide with VUnit's null and break generic decoders for
 		// payload records. The tag costs a few bytes on the wire but
 		// makes the round-trip predictable.
 		//
 		// `__args` is written before `__ctor` because every object this
-		// encoder emits has its keys in sorted order — see the record case.
+		// encoder emits has its keys in sorted order: see the record case.
 		// The iOS encoder hands its tree to JSONSerialization, which can only
 		// be made deterministic with `.sortedKeys`, so sorted is the one order
 		// all three runtimes can agree on. Decoders look keys up, so none of
@@ -214,7 +214,7 @@ func encodeValue(v Value) (string, error) {
 		sb.WriteByte(']')
 		return sb.String(), nil
 	case VDict:
-		// `{"__dict": [[k1,v1], [k2,v2], ...]}` — the marker tells
+		// `{"__dict": [[k1,v1], [k2,v2], ...]}`, the marker tells
 		// the decoder side to rebuild a VDict rather than treating
 		// the object as a plain VRecord. Pairs ride as 2-element
 		// arrays so non-string keys (Int, Float) round-trip too;
@@ -245,7 +245,7 @@ func encodeValue(v Value) (string, error) {
 		sb.WriteString("]}")
 		return sb.String(), nil
 	case VSet:
-		// `{"__set":[i1,i2,...]}` — counterpart to the VDict marker.
+		// `{"__set":[i1,i2,...]}`, counterpart to the VDict marker.
 		// Items are already sorted; the decoder rebuilds via setInsert
 		// to keep the sorted invariant even if a hand-crafted payload
 		// arrives out of order.
@@ -270,7 +270,7 @@ func encodeValue(v Value) (string, error) {
 }
 
 // EncodeValueJSON serializes a Mar Value into the JSON wire format the frontend
-// runtime decodes (jsToMar) — the same encoding Service responses use (see
+// runtime decodes (jsToMar): the same encoding Service responses use (see
 // service.go). Exposed so the server layer (internal/jsserve) can hand the
 // admin panel its Mar.Admin.* introspection results.
 func EncodeValueJSON(v Value) (string, error) {
@@ -312,7 +312,7 @@ func convertJSON(raw any) (Value, error) {
 			}
 			return VInt{V: i}, nil
 		}
-		// A fractional JSON number decodes TEXTUALLY into a Decimal —
+		// A fractional JSON number decodes TEXTUALLY into a Decimal:
 		// `19.99` arrives as exactly 19.99, never a float64 approximation.
 		// Exponent forms (1.5e10) and out-of-bound widths fall back to
 		// VFloat, the runtime-only interop representation.
@@ -335,16 +335,16 @@ func convertJSON(raw any) (Value, error) {
 		}
 		return VList{Elements: out}, nil
 	case map[string]any:
-		// Tagged constructor — round-trips from `{"__ctor": "Tag"}` or
+		// Tagged constructor, round-trips from `{"__ctor": "Tag"}` or
 		// `{"__ctor": "Tag", "__args": [...]}`. Same convention the
 		// encoder side uses (see VCtor in encodeValue), shared with
 		// the JS runtime's jsToMar and the iOS MarJSONCodec. Without
 		// this branch, an enum value sent across the wire (e.g.
 		// Service.call's request body containing `status = Open`)
 		// would arrive at the handler as a plain VRecord and any
-		// downstream pattern match — or Repo.findBy enum lookup —
+		// downstream pattern match, or Repo.findBy enum lookup:
 		// would explode with "expected a constructor (got VRecord)".
-		// Tagged decimal — `{"__dec": "1.50"}`. Counterpart to the
+		// Tagged decimal, `{"__dec": "1.50"}`. Counterpart to the
 		// VDecimal encoder: rebuilds the exact coefficient + scale from
 		// the digit string, keeping binary floating point out of the
 		// round-trip entirely.
@@ -373,7 +373,7 @@ func convertJSON(raw any) (Value, error) {
 			}
 			return VCtor{Tag: tag, Args: argsV}, nil
 		}
-		// Tagged dict — `{"__dict": [[k,v], [k,v], ...]}`. Counterpart
+		// Tagged dict, `{"__dict": [[k,v], [k,v], ...]}`. Counterpart
 		// to the VDict encoder; rebuilds the sorted-pair invariant
 		// the runtime expects. Pairs come over as arbitrary nested
 		// values; we convertJSON each side and then insert into a
@@ -406,7 +406,7 @@ func convertJSON(raw any) (Value, error) {
 			}
 			return d, nil
 		}
-		// Tagged set — `{"__set": [i1, i2, ...]}`. Same idea as __dict:
+		// Tagged set, `{"__set": [i1, i2, ...]}`. Same idea as __dict:
 		// rebuild via setInsert so the sorted/dedup invariants hold
 		// even for a hand-crafted out-of-order payload.
 		if rawItems, ok := x["__set"]; ok && len(x) == 1 {
@@ -428,7 +428,7 @@ func convertJSON(raw any) (Value, error) {
 			}
 			return s, nil
 		}
-		// Tagged char — `{"__char": "x"}`. Counterpart to VChar's
+		// Tagged char, `{"__char": "x"}`. Counterpart to VChar's
 		// encoder. Takes the FIRST Unicode scalar of the string
 		// (covers ASCII, BMP, and supplementary planes). A multi-char
 		// payload would mean the producer is buggy; we tolerate it
@@ -441,14 +441,14 @@ func convertJSON(raw any) (Value, error) {
 			}
 			return nil, fmt.Errorf("JSON.decode: empty __char")
 		}
-		// Tagged angle — `{"__angle": 450}`, deci-degrees. Counterpart to
+		// Tagged angle, `{"__angle": 450}`, deci-degrees. Counterpart to
 		// the VAngle encoder. Wrapped on the way in rather than trusted:
 		// the payload crossed a network boundary, and every other way to
 		// build an Angle normalizes, so this one does too.
 		if d, ok := x["__angle"].(float64); ok && len(x) == 1 {
 			return VAngle{Deci: posMod(int64(d), deciFull)}, nil
 		}
-		// Tagged time — `{"__time": "ISO 8601"}`. Counterpart to the
+		// Tagged time, `{"__time": "ISO 8601"}`. Counterpart to the
 		// VTime encoder; reconstructing a VTime here keeps round-trip
 		// fidelity so `createdAt : Time` stays a Time after a service
 		// call (rather than degrading to a VString that no longer
@@ -460,7 +460,7 @@ func convertJSON(raw any) (Value, error) {
 			}
 			return VTime{Millis: t.UnixMilli()}, nil
 		}
-		// A decoded object has no declared field order to inherit — the
+		// A decoded object has no declared field order to inherit: the
 		// JSON text's order is gone by the time it is a Go map, and map
 		// iteration is deliberately randomized. Sorting is the only order
 		// available that is the same twice, and Order is what Display and

@@ -1,5 +1,5 @@
 // Generators for the Fly deploy artifacts. These live entirely in Go
-// strings — there are no template files on disk for the operator to
+// strings: there are no template files on disk for the operator to
 // edit. Docker is treated as an implementation detail of `mar fly`;
 // every deploy regenerates the Dockerfile + fly.toml from scratch
 // against mar.json + the current project topology, then deploys, then
@@ -8,11 +8,11 @@
 //
 // This file produces two artifacts:
 //
-//   - Dockerfile — one of two shapes, picked from topology:
+//   - Dockerfile, one of two shapes, picked from topology:
 //     * frontend  → Caddy serving the static bundle
 //     * backend / fullstack → debian + the prebuilt mar binary
 //
-//   - fly.toml — driven by manifest.Deploy.Fly + topology:
+//   - fly.toml, driven by manifest.Deploy.Fly + topology:
 //     * volume mount only for backend/fullstack (SQLite persistence)
 //     * internal_port from manifest.Server.Port (default 3000) for
 //       backend/fullstack, 80 for frontend (Caddy default)
@@ -30,7 +30,7 @@ import (
 // unexported scaffold types. Callers detect topology via
 // scaffold.Topology (which runs main and inspects which
 // App.frontend/backend/fullstack was called) and pass the result here
-// as a string. Tiny coupling surface — only the topology matters for
+// as a string. Tiny coupling surface: only the topology matters for
 // generation, not the rest of buildCtx.
 type flyTopology string
 
@@ -45,7 +45,7 @@ const (
 // fullstack uses debian + the prebuilt mar binary (which the deploy
 // flow writes into the same dir at `dist/<binaryName>`).
 //
-// The Dockerfile is regenerated every deploy — no hand-edits to
+// The Dockerfile is regenerated every deploy: no hand-edits to
 // preserve, no drift to worry about. The body is laid out as a
 // plain string for readability; %s substitutions are limited to
 // the few values that vary (binary name, port).
@@ -64,7 +64,7 @@ EXPOSE 80
 		// Debian slim + the self-contained mar binary (which
 		// embeds mar.json + all .mar source files + the SQLite
 		// driver; statically linked). ca-certificates is the
-		// only runtime dep — the binary needs it to validate
+		// only runtime dep: the binary needs it to validate
 		// outbound TLS (SMTP, webhooks, third-party APIs).
 		return fmt.Sprintf(`FROM debian:bookworm-slim
 
@@ -79,7 +79,7 @@ EXPOSE %d
 CMD ["/app/%s"]
 `, binaryName, binaryName, port, binaryName)
 	default:
-		// Defensive — unknown topology is a bug in the caller,
+		// Defensive: unknown topology is a bug in the caller,
 		// not a user error.
 		return ""
 	}
@@ -121,7 +121,7 @@ func generateFlyToml(m *project.Manifest, topo flyTopology) string {
 		}
 		// MAR_DATABASE_PATH redirects SQLite onto the mounted
 		// volume. Without this, the runtime defaults to
-		// `<name>.db` next to mar.json — which inside the
+		// `<name>.db` next to mar.json, which inside the
 		// container lands on ephemeral storage that\'s wiped on
 		// every restart.
 		b.WriteString("[env]\n")
@@ -135,7 +135,7 @@ func generateFlyToml(m *project.Manifest, topo flyTopology) string {
 		fmt.Fprintf(&b, "  internal_port = %d\n", port)
 	}
 
-	// Common service flags — terminate TLS at Fly\'s edge (free
+	// Common service flags: terminate TLS at Fly\'s edge (free
 	// certs), auto-stop the machine when idle (cuts the bill to
 	// near-zero on low-traffic apps), auto-start on the first
 	// request after stop.
@@ -145,7 +145,7 @@ func generateFlyToml(m *project.Manifest, topo flyTopology) string {
 	b.WriteString("  min_machines_running = 0\n")
 	b.WriteString("\n")
 
-	// VM size. shared-cpu-1x for everyone — promoted to dedicated
+	// VM size. shared-cpu-1x for everyone: promoted to dedicated
 	// CPU is an opt-in we don\'t expose yet (not a knob in
 	// deploy.fly because the cost jump is large and the use case
 	// rare; if it ever matters we add it then).

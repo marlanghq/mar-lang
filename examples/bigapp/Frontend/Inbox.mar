@@ -11,7 +11,7 @@ import UI exposing
     )
 
 
--- Inbox — every @-mention pointed at the logged user, newest first.
+-- Inbox: every @-mention pointed at the logged user, newest first.
 -- A row shows who mentioned them, in which issue, and the first
 -- ~140 chars of the comment body. Tap to deep-link into the issue;
 -- tapping also marks the mention as seen (server-side state).
@@ -61,7 +61,7 @@ update _ msg model =
 
         OpenMention mentionId _ ->
             -- Mark seen as we open it. We don't refresh the local
-            -- list immediately — the user is navigating away; the
+            -- list immediately: the user is navigating away; the
             -- next visit will reflect the seenAt update.
             ( model
             , Service.call Shared.markMentionSeen { id = mentionId } SeenAcknowledged

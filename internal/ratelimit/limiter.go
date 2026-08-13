@@ -31,7 +31,7 @@ type Policy struct {
 	// sustained. Must be > 0.
 	Rate float64
 
-	// Burst is the bucket capacity — the max tokens at any moment
+	// Burst is the bucket capacity: the max tokens at any moment
 	// and the initial state for first-seen keys. Must be >= 1.
 	Burst int
 }
@@ -78,7 +78,7 @@ func (l *Limiter) Allow(key string) (bool, time.Duration) {
 
 	b, ok := l.keys[key]
 	if !ok {
-		// First seen — bucket starts at full burst, deduct 1.
+		// First seen: bucket starts at full burst, deduct 1.
 		b = &bucket{tokens: float64(l.policy.Burst) - 1, last: now}
 		l.keys[key] = b
 		return true, 0
@@ -97,7 +97,7 @@ func (l *Limiter) Allow(key string) (bool, time.Duration) {
 		return true, 0
 	}
 
-	// Empty bucket — compute how long until 1 token refills.
+	// Empty bucket: compute how long until 1 token refills.
 	needed := 1 - b.tokens
 	wait := time.Duration(needed / l.policy.Rate * float64(time.Second))
 	return false, wait
@@ -110,7 +110,7 @@ func (l *Limiter) Stop() {
 
 // evictionLoop drops idle keys every minute. A key is idle when
 // its bucket has fully refilled AND it's been >1h since last
-// access — by then there's no information to preserve and
+// access: by then there's no information to preserve and
 // dropping the entry just makes future Allow(key) start fresh.
 func (l *Limiter) evictionLoop(ctx context.Context) {
 	tick := time.NewTicker(time.Minute)
@@ -129,7 +129,7 @@ func (l *Limiter) evictionLoop(ctx context.Context) {
 }
 
 func (l *Limiter) evict(now time.Time) {
-	// Idle threshold — past this, drop regardless of token level.
+	// Idle threshold: past this, drop regardless of token level.
 	// Even if the bucket isn't notionally "full" by our stored
 	// state, after an hour without any traffic the next request
 	// from this key gets a fresh bucket either way, so keeping

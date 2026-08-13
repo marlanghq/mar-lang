@@ -5,11 +5,11 @@ import "fmt"
 // AdminServices supplies the runtime bodies for the Mar.Admin.* builtins.
 //
 // The internal/runtime package can't reach the live request counters, the DB
-// handle, or the request-log ring buffer — those live up in the server layer
+// handle, or the request-log ring buffer: those live up in the server layer
 // (internal/jsserve). So the server injects an implementation at boot, the
 // same dependency-inversion trick used by RegisterAuth and apphost.Install.
 //
-// Until something registers an implementation — and in `mar repl` — every
+// Until something registers an implementation, and in `mar repl`, every
 // Mar.Admin.* effect resolves to an Err through its toMsg. That's only defense
 // in depth: the compile-time AdminSession capability (see Page.adminProtected)
 // already guarantees normal app code can never reach these builtins, and the
@@ -36,11 +36,11 @@ var adminServices *AdminServices
 func RegisterAdminServices(s *AdminServices) { adminServices = s }
 
 // adminBuiltins registers the privileged Mar.Admin.* server-introspection
-// builtins. Each is shaped like Service.call —
+// builtins. Each is shaped like Service.call:
 //
-//	AdminSession -> (Result String resp -> msg) -> Effect String msg
+//	AdminSession -> (Result String resp -> msg) -> Cmd msg
 //
-// — so the panel performs it as a frontend Cmd and receives the result through
+// , so the panel performs it as a frontend Cmd and receives the result through
 // the toMsg. The AdminSession argument is the compile-time capability gate:
 // only a Page.adminProtected page is handed one, so normal app code can't call
 // these (caught at typecheck).
@@ -57,7 +57,7 @@ func adminBuiltins() map[string]Value {
 				})
 			}), nil
 		}),
-		// Sign-in flow — frontend-transported (JS hits /_mar/admin/auth/*); the
+		// Sign-in flow: frontend-transported (JS hits /_mar/admin/auth/*); the
 		// Go runtime never performs these, so they're drift-coverage stubs.
 		"marAdminRequestCode": nativeFn(2, func(_ []Value) (Value, error) {
 			return adminEffect("Mar.Admin.requestCode", func() (Value, error) {
@@ -139,8 +139,8 @@ func adminBuiltins() map[string]Value {
 }
 
 // adminDispatch runs the introspection body and threads its outcome through
-// toMsg as a Result — toMsg (Ok value) on success, toMsg (Err message) on
-// failure — mirroring how Service.call delivers its response.
+// toMsg as a Result: toMsg (Ok value) on success, toMsg (Err message) on
+// failure: mirroring how Service.call delivers its response.
 func adminDispatch(toMsg Value, produce func() (Value, error)) (Value, error) {
 	v, err := produce()
 	if err != nil {

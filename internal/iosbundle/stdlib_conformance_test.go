@@ -22,7 +22,7 @@ import (
 // exactly the hole `==` fell through: defined in all three, wrong in one.
 //
 // The evaluator, the loader and the stdlib are Foundation-only, so they compile
-// and run headless on the host — no simulator, no Xcode project. Only the two
+// and run headless on the host: no simulator, no Xcode project. Only the two
 // display files need UIKit, and they are shimmed out; the guard below keeps
 // that from quietly excusing a stdlib function.
 
@@ -163,7 +163,7 @@ func extractHeadlessSwift(t *testing.T, dir string) map[string]string {
 
 // assertShimsHideNoStdlib is the price of shimming. A display file that
 // registered, say, `List.map` would have that name silently missing from the
-// headless env, and the run would fail in a way that looks like a stdlib bug —
+// headless env, and the run would fail in a way that looks like a stdlib bug:
 // or worse, a name the corpus does not reach would go untested while the gate
 // reports full coverage. Neither is true today; this keeps it that way.
 func assertShimsHideNoStdlib(t *testing.T, shimmed map[string]string) {

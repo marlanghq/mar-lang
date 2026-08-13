@@ -18,7 +18,7 @@
 // name (see AppViewModel.maybeAutoPick), showing an orange "Dev
 // server" banner while the override is active; in RELEASE, the
 // baked-in `ios.serverUrl` from mar.json is the only target. No
-// user-facing "settings" UI — the backend is configuration, not
+// user-facing "settings" UI: the backend is configuration, not
 // preference.
 
 import SwiftUI
@@ -39,7 +39,7 @@ struct ContentView: View {
         }
         .animation(.default, value: viewModel.state)
         // DEBUG-only dev-server banner. When Bonjour swaps the backend
-        // to a LAN `mar dev`, say so on screen — sign-in codes then go
+        // to a LAN `mar dev`, say so on screen: sign-in codes then go
         // to that terminal's stdout, not to real email, and without
         // this banner that reads as "login is broken".
         .overlay(alignment: .bottom) {
@@ -57,7 +57,7 @@ struct ContentView: View {
         // The server is running a different mar than this binary, so
         // the program it is serving was refused (see loadAll). The app
         // keeps working on the program it already has, but everything
-        // deployed since is invisible — which would otherwise look like
+        // deployed since is invisible, which would otherwise look like
         // "my deploy didn't go out". Say it on screen.
         //
         // A banner rather than a blocking dialog: the app is still
@@ -83,7 +83,7 @@ struct ContentView: View {
             // shows the loading indicator. If state is already .loaded
             // (embedded paint succeeded in init), loadAll detects
             // pages.isEmpty == false and runs as a silent background
-            // refresh — the user sees the embedded UI immediately and
+            // refresh: the user sees the embedded UI immediately and
             // it updates if the server has a fresher version.
             await viewModel.loadAll()
         }
@@ -105,7 +105,7 @@ private struct LoadedShell: View {
                 MarSinglePageView(page: pages[0])
             }
         } else {
-            // A stack, because that is what iPhone navigation looks like —
+            // A stack, because that is what iPhone navigation looks like:
             // not because the program demands one. The chrome is this
             // platform's to choose, and on another one (an iPad sidebar, an
             // Android drawer) it should look different.
@@ -115,7 +115,7 @@ private struct LoadedShell: View {
             // the path, and the problem was not the tab bar: it mounted every
             // page at once and switched by visibility, so navPath never moved
             // and ADR-0009 had no push to re-init from. The model an app left
-            // behind on a page came back on iOS and did not on the web — the
+            // behind on a page came back on iOS and did not on the web: the
             // same program behaving two ways.
             //
             // A tab bar whose selection writes navPath would keep the
@@ -130,7 +130,7 @@ private struct LoadedShell: View {
 /// Stack-mode renderer backed by SwiftUI's native NavigationStack.
 ///
 /// `AppContext.navPath` is the source of truth for the navigation
-/// stack — it's a `[String]` where each entry is the path of a
+/// stack: it's a `[String]` where each entry is the path of a
 /// page on the stack (bottom-first). Bound directly into
 /// `NavigationStack(path:)` so:
 ///
@@ -145,7 +145,7 @@ private struct LoadedShell: View {
 /// the rest are pushed via `.navigationDestination(for: String.self)`.
 /// Keeping the first entry as the root (instead of an invisible
 /// placeholder) means swipe-back from the only entry has nothing to
-/// pop, which is the correct behavior — there's no "blank screen"
+/// pop, which is the correct behavior: there's no "blank screen"
 /// the user could end up on.
 private struct StackShell: View {
     let pages: [DecodedPage]
@@ -158,12 +158,12 @@ private struct StackShell: View {
         // "pushed" portion); set rewrites that suffix while
         // preserving the root entry. When the user swipes back the
         // only pushed entry, set is called with [], leaving navPath
-        // with just the root — correct.
+        // with just the root: correct.
         // A Page.sheet route at the TOP of the stack is presented, not
         // pushed: it comes off the pushed array and goes to `.sheet`
         // below, so the screen it was reached from stays on screen
         // underneath. As the ROOT it has nothing to present over and
-        // mounts normally — the same graceful fallback the web gives a
+        // mounts normally: the same graceful fallback the web gives a
         // cold load of a sheet route.
         let presented: String? = {
             var route: String? = nil
@@ -203,7 +203,7 @@ private struct StackShell: View {
         )
 
         // Dismissal drops the presented entry from navPath, so the route
-        // and what is on screen can never disagree — the same rule the
+        // and what is on screen can never disagree: the same rule the
         // web follows by routing every dismissal through history.
         let presentedBinding = Binding<Bool>(
             get: { presented != nil },
@@ -217,8 +217,8 @@ private struct StackShell: View {
         // Cross-fade between root swaps. SwiftUI's NavigationStack
         // animates push/pop internally with the standard slide-from-
         // right; that's the right cue for "going deeper / coming back".
-        // But `Nav.replace` is destructive — the previous stack is
-        // discarded — and the slide animation would visually lie
+        // But `Nav.replace` is destructive: the previous stack is
+        // discarded, and the slide animation would visually lie
         // about that. We swap the entire NavigationStack identity on
         // each replace (via `.id(rootGeneration)`), and the surrounding
         // `.animation(_:value:)` triggers an opacity transition for
@@ -249,7 +249,7 @@ private struct StackShell: View {
     /// The path SwiftUI renders as the root view of NavigationStack.
     /// In normal operation this is `navPath.first`; the empty-path
     /// fallback covers the brief window during cold-start before
-    /// `seedRoot` runs in AppViewModel — falling back to the first
+    /// `seedRoot` runs in AppViewModel: falling back to the first
     /// declared page keeps the renderer from blanking out.
     private var rootPath: String {
         ctx.navPath.first ?? pages.first?.path ?? "/"
@@ -263,7 +263,7 @@ private struct StackShell: View {
 /// Single-destination wrapper: matches `path` against the declared
 /// pages, applies the protected-page gate when needed, and mounts the
 /// PageHost. Lives outside StackShell so each entry on the
-/// NavigationStack gets its own scope — including its own `.task`
+/// NavigationStack gets its own scope: including its own `.task`
 /// that bootstraps Auth.me when first appearing.
 private struct RouteView: View {
     let path: String
@@ -290,7 +290,7 @@ private struct RouteView: View {
     /// Resolve `path` to a page + params. Static pages match first
     /// (so a literal "/notes/new" beats the pattern "/notes/{id:Int}"),
     /// then dynamic patterns are tried in declaration order. No
-    /// fallback — a missing match surfaces a "Page not found" view
+    /// fallback: a missing match surfaces a "Page not found" view
     /// instead of silently mounting the wrong page.
     private func matchPath(_ url: String) -> PageMatch? {
         for pg in pages where !pg.isDynamic {
@@ -325,7 +325,7 @@ private struct ProtectedRoute: View {
                                                  user: user,
                                                  params: match.page.isDynamic ? match.params : nil))
             } else if !ctx.signInPath.isEmpty {
-                // No session — replace the stack with [signInPath].
+                // No session: replace the stack with [signInPath].
                 // navigate(replace:true) wipes the back-history so a
                 // post-login navigate can return the user to wherever
                 // they intended to land (via Auth.completeSignIn +
@@ -367,7 +367,7 @@ private struct ProtectedRoute: View {
     }
 }
 
-/// Result of resolving the current URL — the matching page plus the
+/// Result of resolving the current URL: the matching page plus the
 /// captured Params record (empty for static pages).
 private struct PageMatch {
     let page: DecodedPage

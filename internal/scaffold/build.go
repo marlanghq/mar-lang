@@ -37,13 +37,13 @@ import (
 //     The mar-runtime stub for `target` is concatenated with a ZIP
 //     payload containing mar.json + every .mar source file. On startup
 //     the binary reads its own bytes, extracts the payload, and serves
-//     HTTP — no external mar toolchain required on the deploy host.
+//     HTTP: no external mar toolchain required on the deploy host.
 func Build(entry, distDir, target string) error {
-	// Validate mar.json structure up front — before running any user
+	// Validate mar.json structure up front: before running any user
 	// code or writing output: unknown/misplaced keys + shape. Mirrors
 	// what `mar dev` enforces at load (same strict path), so a typo'd or
 	// misplaced config key fails the build here instead of being silently
-	// ignored — then only surfacing under `mar dev`, or worse, in
+	// ignored, then only surfacing under `mar dev`, or worse, in
 	// production falling back to a default. Structure-only (no env
 	// resolution), so it never trips on unset prod secrets. `entry` may
 	// be a file or a directory.
@@ -77,7 +77,7 @@ func Build(entry, distDir, target string) error {
 		if err := ValidateProductionConfig(projectDir); err != nil {
 			return err
 		}
-		// Discovery warning — admin panel is opt-in and many projects
+		// Discovery warning: admin panel is opt-in and many projects
 		// won't bother. But silent absence means devs who don't know
 		// about the panel never benefit. Print once per build, not an
 		// error. Suppressed via --no-admin-warning in case CI noise
@@ -113,8 +113,8 @@ func isProductionTarget(target string) bool {
 }
 
 // warnIfNoAdmins prints a stderr block when a production build has
-// no admins configured. Doesn't fail the build — some apps legitimately
-// don't want an admin panel — but flags the situation prominently so
+// no admins configured. Doesn't fail the build: some apps legitimately
+// don't want an admin panel, but flags the situation prominently so
 // the operator doesn't realize too late that prod has no admin access.
 //
 // `cmd/mar/fly.go` repeats this warning at the END of `mar deploy`
@@ -129,7 +129,7 @@ func warnIfNoAdmins(projectDir string) {
 		return
 	}
 	// Multi-line block. Blank line BEFORE only (docs/cli-style.md §1
-	// "adjacent blocks rule") — next caller adds their own leading
+	// "adjacent blocks rule"): next caller adds their own leading
 	// blank.
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr,
@@ -184,7 +184,7 @@ Hints:
 //
 // The connecting comma always lands on the closing line of one
 // entry, just before the newline-then-next-entry. The last entry
-// has no comma — it might be the last property in the user's
+// has no comma: it might be the last property in the user's
 // mar.json or might already have a comma in the user's file.
 func joinMissingForPaste(missing []string) string {
 	if len(missing) == 0 {
@@ -229,7 +229,7 @@ func loadAndRunForBuild(entry string) (projectDir string, bc *buildCtx, err erro
 	}
 
 	// Clear per-load global runtime state (entity registry, Path enum
-	// types, etc.) before evaluating — exactly as `mar dev` and
+	// types, etc.) before evaluating: exactly as `mar dev` and
 	// `mar migrate` do before their own loads. Without it, a caller
 	// that evaluates twice in one process trips a false "declared more
 	// than once" guard: `mar deploy` runs Topology (eval #1) then
@@ -270,7 +270,7 @@ func loadAndRunForBuild(entry string) (projectDir string, bc *buildCtx, err erro
 	return projectDir, bc, nil
 }
 
-// Topology reports which App.* the project's main calls — "frontend",
+// Topology reports which App.* the project's main calls: "frontend",
 // "backend", or "fullstack". Runs main as a side effect (same path
 // Build / Preflight take), so the cost is one full evaluation.
 //
@@ -310,11 +310,11 @@ func Topology(projectDir string) (string, error) {
 //
 // Called automatically by Build for production targets, AND by
 // `mar fly provision` as a pre-flight (so the operator catches the
-// gap before any Fly resources are created — otherwise provision
+// gap before any Fly resources are created: otherwise provision
 // would succeed and the deploy would fail late with the same error).
 // Public so external callers (the fly provision wrapper) can run it.
 func ValidateProductionConfig(projectDir string) error {
-	// LoadManifestStructure reads without env-resolving — fly
+	// LoadManifestStructure reads without env-resolving: fly
 	// secrets aren't visible at build time, but we don't need
 	// their values, only that the env:VAR placeholder is wired.
 	manifest, err := project.LoadManifestStructure(projectDir)
@@ -323,8 +323,8 @@ func ValidateProductionConfig(projectDir string) error {
 	}
 
 	// Two triggers for sessionSecret + mail config:
-	//   - User auth (Auth.config registered) — needs both.
-	//   - Admin panel (mar.json admins non-empty) — needs sessionSecret
+	//   - User auth (Auth.config registered): needs both.
+	//   - Admin panel (mar.json admins non-empty): needs sessionSecret
 	//     (shared HMAC) but mail is best-effort (admin login degrades
 	//     to "doesn't work" rather than blocking the whole app).
 	authInUse := runtime.CurrentAuth() != nil
@@ -338,7 +338,7 @@ func ValidateProductionConfig(projectDir string) error {
 		missing = append(missing, `"auth": { "sessionSecret": "env:SESSION_SECRET" }`)
 	}
 	// Mail required only when user-auth is in use. Admin-only projects
-	// can still ship — the panel just won't be able to send codes
+	// can still ship: the panel just won't be able to send codes
 	// until SMTP is configured (logged at boot).
 	if authInUse {
 		if manifest == nil || manifest.Mail == nil {
@@ -346,7 +346,7 @@ func ValidateProductionConfig(projectDir string) error {
 			// directly into mar.json. The cmd/mar formatter adds
 			// 2 spaces of left padding on each line, so the JSON
 			// here uses 2-space inner indent (printed: 4) and
-			// no indent for the closing brace (printed: 2) —
+			// no indent for the closing brace (printed: 2):
 			// matches typical mar.json formatting.
 			missing = append(missing, `"mail": {
   "from": "...",
@@ -383,7 +383,7 @@ func ValidateProductionConfig(projectDir string) error {
 // projects. Output is plain files servable by any HTTP host.
 //
 // program.json is embedded directly into the index.html so the browser
-// boots in a single round-trip — no waterfall fetch for the AST after
+// boots in a single round-trip: no waterfall fetch for the AST after
 // the runtime loads. runtime.js stays separate but is revalidated on
 // every load (see the `_headers` file below) so a framework upgrade is
 // never masked by a stale cached copy.
@@ -395,7 +395,7 @@ func buildFrontendDist(projectDir, distDir string, bc *buildCtx) error {
 	// appends to bc.frontMods. Using "main" here would crash the
 	// browser with "entry not found: main" because the Main module
 	// itself isn\'t in frontMods (only modules reachable FROM pages
-	// are) — same convention as dev (apphost.go) and iOS (iosbuild.go).
+	// are): same convention as dev (apphost.go) and iOS (iosbuild.go).
 	progJSON, err := makeProgramJSON(bc.frontMods, "__entry", false)
 	if err != nil {
 		return err
@@ -414,7 +414,7 @@ func buildFrontendDist(projectDir, distDir string, bc *buildCtx) error {
 		// whole old app), and runtime.js keeps a fixed name across
 		// deploys (a framework bump would otherwise be masked by a
 		// cached copy). `no-cache` still lets the browser STORE the
-		// response and send a conditional request — the host's ETag
+		// response and send a conditional request: the host's ETag
 		// turns the common unchanged case into a cheap 304. This is
 		// what stops "I see the old version until I hard-refresh"
 		// without re-downloading everything on each load. Hosts that
@@ -429,7 +429,7 @@ func buildFrontendDist(projectDir, distDir string, bc *buildCtx) error {
 	// PWA: write the Web App Manifest + icons into dist/_mar/ so the
 	// deployed static bundle is installable (the HTML shell references
 	// /_mar/manifest.json + /_mar/icon-*.png). Mirrors what `mar dev`
-	// serves live from the same config. Always emitted — every Mar
+	// serves live from the same config. Always emitted: every Mar
 	// frontend is installable by default.
 	pwaCount, err := writePWAAssets(projectDir, distDir)
 	if err != nil {
@@ -476,7 +476,7 @@ func writePWAAssets(projectDir, distDir string) (int, error) {
 		}
 		count++
 	}
-	// /favicon.ico at the dist root — the path browsers request
+	// /favicon.ico at the dist root: the path browsers request
 	// implicitly. PNG bytes (browsers accept PNG at .ico).
 	fav, err := pwa.IconPNG(cfg, pwa.FaviconSize)
 	if err != nil {
@@ -491,12 +491,12 @@ func writePWAAssets(projectDir, distDir string) (int, error) {
 
 // copyPublicDir copies every file under src into distDir, preserving
 // the relative tree (src/img/a.png → distDir/img/a.png). A missing src
-// is not an error — most projects have no public/ folder. Dotfiles are
+// is not an error: most projects have no public/ folder. Dotfiles are
 // skipped (e.g. .DS_Store). Returns the number of files copied.
 func copyPublicDir(src, distDir string) (int, error) {
 	info, err := os.Stat(src)
 	if err != nil || !info.IsDir() {
-		return 0, nil // no public/ folder — nothing to copy
+		return 0, nil // no public/ folder: nothing to copy
 	}
 	count := 0
 	err = filepath.Walk(src, func(p string, fi os.FileInfo, err error) error {
@@ -513,7 +513,7 @@ func copyPublicDir(src, distDir string) (int, error) {
 		if err != nil {
 			return err
 		}
-		// Refuse files that collide with Mar's reserved namespace —
+		// Refuse files that collide with Mar's reserved namespace:
 		// either a generated dist file we'd silently overwrite, or a
 		// server route prefix the runtime owns (so the asset would be
 		// shadowed in dev/fullstack and never served). Fail loud at
@@ -660,7 +660,7 @@ func makeFrontendCapture(mods []*ast.Module, bc *buildCtx) runtime.Value {
 			if !ok {
 				return nil, fmt.Errorf("App.frontend: expected List Page (got %T)", args[0])
 			}
-			// Delegate to apphost.PickFrontMods — the single source of
+			// Delegate to apphost.PickFrontMods: the single source of
 			// truth for "page-reachable modules + synthetic __entry
 			// module". All three build paths (dev/apphost.go,
 			// web/here, iOS/iosbuild.go) go through it so the
@@ -716,14 +716,14 @@ func makeFullstackCapture(bc *buildCtx) runtime.Value {
 
 // makeProgramJSON serializes the merged frontend modules as the
 // browser bundle. devMode controls whether the JS runtime sets up
-// dev affordances (banner, SSE, time-travel) — false for built dists.
+// dev affordances (banner, SSE, time-travel): false for built dists.
 func makeProgramJSON(mods []*ast.Module, entry string, devMode bool) ([]byte, error) {
 	// Send modules separately so the browser/iOS runtime can register
 	// each decl under both its bare name (for intra-module references
 	// during evaluation) and a qualified `Module.name` form (so
 	// EQualified lookups from other modules resolve correctly).
 	// Merging everything into one module here is tempting but silently
-	// overwrites same-named decls across modules — e.g. both
+	// overwrites same-named decls across modules: e.g. both
 	// `Frontend.SignIn.page` and `Frontend.Home.page` would collapse
 	// into whichever was evaluated last, breaking multi-page apps.
 	serializedModules := make([]any, 0, len(mods))
@@ -740,13 +740,13 @@ func makeProgramJSON(mods []*ast.Module, entry string, devMode bool) ([]byte, er
 // buildIndexHTML produces the production HTML page with `program.json`
 // embedded inline as a JSON script element. Differences from the dev
 // version: no SSE reload connection, no dev banner, no waterfall fetch
-// of the AST — boot is one round-trip total (HTML + runtime.js).
+// of the AST: boot is one round-trip total (HTML + runtime.js).
 func buildIndexHTML(title string, programJSON []byte) string {
 	if title == "" {
 		title = "mar app"
 	}
 	// </script> inside JSON would prematurely close the script tag.
-	// Escape the < as < — JSON.parse ignores it, no other char
+	// Escape the < as <: JSON.parse ignores it, no other char
 	// classes need escaping in <script type="application/json">.
 	safeProgram := strings.ReplaceAll(string(programJSON), "</", `</`)
 	return fmt.Sprintf(productionPageHTML, title, safeProgram)

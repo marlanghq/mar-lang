@@ -34,7 +34,7 @@ type SMTPConfig struct {
 	// production stdout is the log stream: Fly, journald and friends
 	// capture it, so printing there means anyone who can read the logs
 	// can read a valid one-time code. Security audit 2026-07-15, finding
-	// #6 — an admin-only project could boot without SMTP and leak admin
+	// #6: an admin-only project could boot without SMTP and leak admin
 	// OTPs into production logs.
 	//
 	// A zero-value SMTPConfig is therefore safe by construction: a new
@@ -45,7 +45,7 @@ type SMTPConfig struct {
 // Complete reports whether the config can actually authenticate against
 // a provider. Both Host AND Password are needed: providers (Resend,
 // SendGrid, …) reject anonymous SMTP, so a bare Host cannot deliver.
-// This is the single definition of "SMTP is usable" — Send routes on it
+// This is the single definition of "SMTP is usable": Send routes on it
 // and the boot guard checks it, so the two can never disagree.
 func (c SMTPConfig) Complete() bool {
 	return c.Host != "" && c.Password != ""

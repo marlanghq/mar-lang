@@ -14,7 +14,7 @@ import UI exposing
 -- Code-entry half of the sign-in flow. Mounted at the dynamic path
 -- /sign-in/verify/{email:String}; the framework decodes the segment
 -- into a typed params record so we don't need any global state for
--- the email — the URL itself is the source of truth.
+-- the email: the URL itself is the source of truth.
 
 
 type alias Model =

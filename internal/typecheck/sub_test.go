@@ -27,7 +27,7 @@ page =
 
 // Sub and Cmd are distinct types: returning a Sub where `update` expects a Cmd
 // is a compile error. This is the footgun the Effect → Task/Cmd/Sub split kills
-// — a subscription can never be silently handed to the command runner (which
+// : a subscription can never be silently handed to the command runner (which
 // would no-op it). The type system forces `Cmd.perform` / the subscriptions
 // field, not an accidental return.
 func TestSubIsNotCmd(t *testing.T) {
@@ -49,7 +49,7 @@ page =
 
 // Page.sheet is a decorator over a Page, not a fifth constructor. That shape is
 // the load-bearing part of the API: it has to accept the output of ANY page
-// constructor and hand back something still usable as a Page — otherwise the
+// constructor and hand back something still usable as a Page: otherwise the
 // four dynamic x protected combinations would have to double.
 func TestPageSheetWrapsAnyPageConstructor(t *testing.T) {
 	src := `module Main exposing (main)

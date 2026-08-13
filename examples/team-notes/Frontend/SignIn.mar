@@ -13,7 +13,7 @@ import UI exposing
 
 -- Sign-in flow with visible error feedback.
 --
--- The model splits into a `step` (what the user is doing right now —
+-- The model splits into a `step` (what the user is doing right now:
 -- entering email, waiting on the network, entering code) and a
 -- separate `error` field. Errors stay visible until the user tries
 -- again, instead of the form silently flashing back to the previous

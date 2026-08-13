@@ -1,4 +1,4 @@
-// Persistent secret storage for the iOS runtime — currently a single
+// Persistent secret storage for the iOS runtime: currently a single
 // slot: the user's session token, set on /_auth/verify-code and
 // attached to every subsequent request as `Authorization: Bearer …`.
 //
@@ -15,7 +15,7 @@
 //   - URLSession's HTTPCookieStorage has a long-standing quirk where
 //     cookies with only Max-Age (no Expires) are dropped at app exit.
 //     Going Keychain-backed Bearer instead means we never depend on
-//     CFNetwork's cookie persistence — and the same code shape will
+//     CFNetwork's cookie persistence, and the same code shape will
 //     work on Android (EncryptedSharedPreferences) and Windows
 //     (Credential Manager) when those runtimes land.
 //
@@ -29,13 +29,13 @@ import Security
 
 enum MarKeychain {
 
-    /// Key under which the session token lives. Logical name only —
+    /// Key under which the session token lives. Logical name only:
     /// the actual lookup is service+account scoped via Keychain
     /// queries below.
     static let sessionTokenKey = "session"
 
     /// Persist `value` against `key`. Replaces the existing entry if
-    /// present. Failure is logged (DEBUG) and otherwise silent —
+    /// present. Failure is logged (DEBUG) and otherwise silent:
     /// failing to persist a token isn't fatal: the user will be asked
     /// to sign in again on next launch, which degrades the experience
     /// but doesn't crash the app.
@@ -104,7 +104,7 @@ enum MarKeychain {
         SecItemDelete(query as CFDictionary)
     }
 
-    /// Service identifier — scopes Keychain queries to this app so two
+    /// Service identifier: scopes Keychain queries to this app so two
     /// Mar apps on the same device don't share session tokens. Falls
     /// back to a constant string on the off chance bundleIdentifier is
     /// nil (test harnesses, hosted previews); not a real-world path

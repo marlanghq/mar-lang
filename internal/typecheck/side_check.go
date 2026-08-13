@@ -12,7 +12,7 @@ import (
 // EITHER direction.
 //
 // The unit is the top-level declaration, not the module. Roots are the
-// declarations that define a page — a body applying `Page.create` and friends —
+// declarations that define a page, a body applying `Page.create` and friends:
 // and from each root the check follows the call graph. A root that reaches a
 // backend builtin is an error: the code goes into the client bundle, and the
 // name it calls exists only on the server.
@@ -29,9 +29,9 @@ import (
 // and the LSP never evaluate and stayed silent. `Page.create` is visible in the
 // source, so the roots are too, and now every command reports the same thing.
 //
-// The call graph is keyed by MODULE-QUALIFIED name. Keying by simple name — as
+// The call graph is keyed by MODULE-QUALIFIED name. Keying by simple name: as
 // the GET read-only pass does, deliberately, for a case where over-reporting is
-// harmless — would be wrong here: a `load` in a page module and a `load` in a
+// harmless, would be wrong here: a `load` in a page module and a `load` in a
 // service module is ordinary in a fullstack app, and conflating them would
 // reject working code.
 //

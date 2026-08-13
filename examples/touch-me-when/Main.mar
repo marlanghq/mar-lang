@@ -1,7 +1,7 @@
 module Main exposing (main)
 
 
--- Touch me When — a 2-player reaction duel on one device.
+-- Touch me When: a 2-player reaction duel on one device.
 --
 -- Two shapes morph (type + color) every second. The instant they match (same
 -- type AND color), the first player to tap their own zone scores; tapping when
@@ -28,7 +28,7 @@ import Random
 import Time
 
 
--- `Shape`, `Color`, `Transform`, and `Align` are Canvas's own types — they
+-- `Shape`, `Color`, `Transform`, and `Align` are Canvas's own types: they
 -- resolve without importing (like `Maybe`), and their constructors are
 -- qualified: `Canvas.Translate`, `Canvas.Rotate`, `Canvas.Center`.
 
@@ -47,10 +47,10 @@ type Player
 
 
 -- The board's lifecycle:
---   Title         — the opening menu; tap anywhere to start
---   Playing       — shapes morph each second; a tap on a zone scores
---   Celebrating p — p just scored; the winning zone holds green for a beat
---   GameOver p    — p reached the target; tap anywhere to start over
+--   Title         - the opening menu; tap anywhere to start
+--   Playing       - shapes morph each second; a tap on a zone scores
+--   Celebrating p: p just scored; the winning zone holds green for a beat
+--   GameOver p    - p reached the target; tap anywhere to start over
 type Phase
     = Title
     | Playing
@@ -132,7 +132,7 @@ update msg model =
         Spawned round ->
             -- Reject a re-roll identical to the current pair: a morph that
             -- changes nothing reads as a frozen frame. (The two shapes within
-            -- a round CAN equal each other — that's the score cue — we only
+            -- a round CAN equal each other, that's the score cue, we only
             -- avoid repeating the *previous* round.)
             if round.left == model.left && round.right == model.right then
                 ( model, newRound )
@@ -270,7 +270,7 @@ playfield model =
         gap  = w // 5
     in
     List.concat
-        [ [ rect 0 0 w h (rgb 240 240 240) ]                       -- light field — shows through as the divider
+        [ [ rect 0 0 w h (rgb 240 240 240) ]                       -- light field: shows through as the divider
         , [ rect 0 0 w band (zoneColor P2 model) ]                 -- player 2 zone (top fifth)
         , [ rect 0 (band - 3) w 3 (rgb 170 170 170) ]              -- its edge line
         , [ rect 0 (h - band) w band (zoneColor P1 model) ]        -- player 1 zone (bottom fifth)

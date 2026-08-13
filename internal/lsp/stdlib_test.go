@@ -76,7 +76,7 @@ func TestLookupStdlibUnknown(t *testing.T) {
 
 func TestStdlibValuesHavePrettyTypes(t *testing.T) {
 	// Built-in values without a type signature would render as a bare
-	// name in hover — almost certainly a regression in BaseEnv plumbing.
+	// name in hover: almost certainly a regression in BaseEnv plumbing.
 	for _, s := range StdlibSymbols() {
 		if s.Kind != SymValue {
 			continue
@@ -120,7 +120,7 @@ func TestStdlibCustomTypeSummary(t *testing.T) {
 	if s.Kind != SymCustomType {
 		t.Fatalf("Maybe kind=%v, want SymCustomType", s.Kind)
 	}
-	// Summary should look like `type Maybe a = Just _ | Nothing` —
+	// Summary should look like `type Maybe a = Just _ | Nothing`:
 	// we only assert it starts with "type Maybe" so additions to the
 	// constructor list don't break the test, but the prefix proves the
 	// reconstruction happened.

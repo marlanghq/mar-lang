@@ -7,7 +7,7 @@ import Shared
 -- The framework's user table. Auth owns its lifecycle: `Auth.config`
 -- (in Main) reads this entity, and the email-code sign-in flow inserts
 -- a row on first login via the `signup` callback. Quiz Duel never
--- writes it directly — a player's game identity (nick, record) lives
+-- writes it directly: a player's game identity (nick, record) lives
 -- in the separate `profiles` entity, joined by userId. We only read
 -- users here to resolve a userId back to its email when no profile
 -- exists yet.

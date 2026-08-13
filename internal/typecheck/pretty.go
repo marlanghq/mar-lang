@@ -10,8 +10,8 @@ import (
 // type variables to lowercase letters in order of first appearance (a, b, c,
 // ..., z, then a1, b1, ...) for readability.
 //
-// A *constrained* variable prints as its constraint — `number`, `comparable`,
-// `appendable` — rather than a letter, so `+` reads `number -> number -> number`
+// A *constrained* variable prints as its constraint: `number`, `comparable`,
+// `appendable`: rather than a letter, so `+` reads `number -> number -> number`
 // like Elm's. That is not cosmetic: Pretty is what the LSP shows on hover and
 // what the /reference generator publishes as each function's signature, so a
 // letter there would advertise `List.sum : List a -> a`, which the compiler
@@ -118,7 +118,7 @@ func (r *renamer) format(t Type) string {
 		// module is noise in a message about the type you are looking at:
 		// "Model -> View Msg" beats "Frontend.Home.Model -> View
 		// Frontend.Home.Msg". The qualifier is printed only where it
-		// disambiguates — see qualifyClashing, used by the mismatch
+		// disambiguates: see qualifyClashing, used by the mismatch
 		// message when both sides share a base name.
 		name := displayTypeName(v.Name)
 		if len(v.Args) == 0 {
@@ -165,7 +165,7 @@ func (r *renamer) format(t Type) string {
 			sb.WriteString(" : ")
 			sb.WriteString(r.format(fields[n]))
 		}
-		// Unbound row vars render as `, …` — internal var name is noise
+		// Unbound row vars render as `, …`: internal var name is noise
 		// to the user. Concrete tails (rare after flattening) print inline.
 		if tail != nil {
 			if _, isVar := tail.(TVar); isVar {
@@ -226,7 +226,7 @@ func (r *renamer) formatArrowFrom(t Type) string {
 // flattenRecord unwraps `{ a | { b | { c | tail } } }` into a single
 // record `{ a, b, c | tail }`. Inner-record tails come from the way
 // row-polymorphic unification represents "a record with at least these
-// fields plus more" — fine internally, confusing in error messages.
+// fields plus more": fine internally, confusing in error messages.
 // Inner duplicate field names take precedence (shouldn't happen for
 // well-typed code, but be defensive).
 func flattenRecord(r TRecord) (fields map[string]Type, order []string, tail Type) {
@@ -299,7 +299,7 @@ func displayTypeName(canonical string) string {
 }
 
 // SameNameDifferentTypes reports whether two types print identically but are
-// NOT the same type — the one case where hiding the module would turn a real
+// NOT the same type: the one case where hiding the module would turn a real
 // error into a baffling one ("expected Color, got Color"). The mismatch message
 // checks this and falls back to the canonical names.
 func SameNameDifferentTypes(a, b Type) bool {

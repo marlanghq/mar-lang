@@ -8,7 +8,7 @@ import UI exposing
     )
 
 
--- "Como jogar" — the in-app rulebook. A public, static page (no auth,
+-- "Como jogar": the in-app rulebook. A public, static page (no auth,
 -- no model): reachable from the lobby and from the "?" on the match
 -- table, so a confused player never has to leave the game to learn it.
 -- The prose mirrors REGRAS.md; the CONTROLES section is the one that

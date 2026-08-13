@@ -9,7 +9,7 @@ import (
 
 // LoadIntoEnvForRuntime is the path a DEPLOYED app takes: the mar-runtime stub
 // unpacks the bundled sources and loads them. It used to skip type-checking on
-// the grounds that the build already validated types — true, and beside the
+// the grounds that the build already validated types: true, and beside the
 // point. Checking is what ELABORATES the tree, and an unelaborated tree does
 // not fail loudly; it produces a confident wrong answer or dies inside a
 // builtin. `1 + 1.50` type-checks, runs under `mar dev`, and used to die here

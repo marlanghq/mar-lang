@@ -16,11 +16,11 @@ import Frontend.Profile
 --
 -- This is the wiring module. Reading top-to-bottom shows:
 --
---   1. The auth config — entity, identify, signup, email subject.
+--   1. The auth config: entity, identify, signup, email subject.
 --      The session secret is read from env (mar.json delegates to
 --      env:SESSION_SECRET, set by `mar fly provision`).
 --
---   2. The main effect — App.fullstack with the service list from
+--   2. The main effect: App.fullstack with the service list from
 --      Backend.Services and the page list of the four screens.
 
 

@@ -5,7 +5,7 @@ import "testing"
 // Keyboard.Key is a builtin union whose ~100 constructors mirror the DOM
 // event.code set. These lock in the two things that matter: valid key patterns
 // compile, and a code that is NOT in the enum is a COMPILE error rather than a
-// silent no-op — the whole reason Key is an enum instead of a raw String.
+// silent no-op: the whole reason Key is an enum instead of a raw String.
 
 func TestKeyboardKeySubscriptionCompiles(t *testing.T) {
 	src := `module M exposing (..)
@@ -30,7 +30,7 @@ subs =
 }
 
 func TestKeyboardUnknownKeyRejected(t *testing.T) {
-	// KeyQQ is not a real event.code. Matching it must be rejected — that
+	// KeyQQ is not a real event.code. Matching it must be rejected: that
 	// compile error is exactly what the enum buys over a stringly-typed key.
 	src := `module M exposing (..)
 

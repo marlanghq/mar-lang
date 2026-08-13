@@ -1,4 +1,4 @@
-// Exact base-10 arithmetic — the Swift mirror of the Go runtime's
+// Exact base-10 arithmetic: the Swift mirror of the Go runtime's
 // internal/runtime/decimal.go and the BigInt block in runtime.js.
 // Semantics must match those two byte-for-byte (the conformance
 // vectors in decimal_test.go / decimal_conformance_test.go are the
@@ -7,7 +7,7 @@
 // Swift has no arbitrary-precision integer in the stdlib, and
 // Foundation.Decimal's rounding surface doesn't expose the integer
 // quotient/remainder split our resolvers are specified in. So the
-// coefficient is a plain big-endian base-10 digit array — the values
+// coefficient is a plain big-endian base-10 digit array: the values
 // are bounded at 34 significant digits and this code runs on user
 // actions (money math), not in the frame loop, so schoolbook
 // arithmetic is more than fast enough and trivially deterministic.
@@ -218,7 +218,7 @@ enum DecMath {
     }
 
     /// Canonical form only (optional sign, digits, optional point +
-    /// digits) — exponents and anything else return nil.
+    /// digits): exponents and anything else return nil.
     static func parseDecimalString(_ s: String) -> MarDec? {
         var t = s.trimmingCharacters(in: .whitespacesAndNewlines)
         if t.isEmpty { return nil }

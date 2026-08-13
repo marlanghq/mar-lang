@@ -1,4 +1,4 @@
-// Backup subcommand for mar-runtime — produces a Level-2 restorable
+// Backup subcommand for mar-runtime: produces a Level-2 restorable
 // bundle via internal/admin/snapshot.go. Invoked over SSH by
 // `mar fly database backup` (ad-hoc snapshots that land in the
 // catalog) and as the SnapshotFunc supplied to admin.StartScheduler
@@ -19,7 +19,7 @@ import (
 // runRuntimeBackup is the CLI entry point. Produces a snapshot at
 // the path the caller provides. (A future refactor may switch this
 // to "force a snapshot into the catalog directory" with auto-naming
-// via NewCatalogID — for now the explicit path keeps the SSH-driven
+// via NewCatalogID: for now the explicit path keeps the SSH-driven
 // flow in `mar fly database backup` straightforward.)
 func runRuntimeBackup(args []string) int {
 	if len(args) == 0 || args[0] == "-h" || args[0] == "--help" {

@@ -71,7 +71,7 @@ func TestEnvRefsFromBytes(t *testing.T) {
 	}
 }
 
-// TestSessionSecretEnvVar — extracts the env var name from
+// TestSessionSecretEnvVar: extracts the env var name from
 // auth.sessionSecret when it's an env:VAR reference. Used by
 // `mar fly provision` to know which secret to auto-generate
 // (instead of prompting the operator for a value they wouldn't

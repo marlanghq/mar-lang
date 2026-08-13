@@ -1,4 +1,4 @@
-// Package admin owns the framework-built-in admin panel — schema,
+// Package admin owns the framework-built-in admin panel: schema,
 // boot-time sync of the admins list, and (later phases) the auth
 // flow + embedded Mar-source page rendering.
 //
@@ -27,13 +27,13 @@ import (
 //   - _mar_admin_sessions  (hashed token, email, expiresAt, createdAt)
 //
 // Schema choices:
-//   - email is the natural key — no surrogate id. Sync inserts/deletes
+//   - email is the natural key: no surrogate id. Sync inserts/deletes
 //     by email; sessions/codes reference admins by email so deletes
 //     can be done in one DELETE per email when an admin is removed.
 //   - timestamps are stored as Unix epoch ms (INTEGER). Same convention
 //     the user-auth tables use; lets us compare without timezone fuss.
 //   - The codes/sessions hash columns are TEXT (base64 of HMAC-SHA256)
-//     per the existing user-auth convention — auth.Hash returns
+//     per the existing user-auth convention: auth.Hash returns
 //     base64-encoded strings, and storing them as TEXT lets `mar
 //     admin list` debug queries use plain SELECT without hex juggling.
 func EnsureSchema(db *sql.DB) error {
@@ -192,7 +192,7 @@ type Admin struct {
 // boot-time wiring in mar dev and mar-runtime.
 //
 // `desired` should be the canonicalized list (lowercase, trimmed,
-// deduped, sorted) — see cmd/mar.LoadAdminsFromManifest.
+// deduped, sorted): see cmd/mar.LoadAdminsFromManifest.
 //
 // Returns the (added, removed) counts so callers can log a one-line
 // summary. Errors propagate up; ServeLive should refuse to boot if

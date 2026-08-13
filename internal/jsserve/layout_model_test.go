@@ -10,7 +10,7 @@ import (
 // / `height fill` attrs are the explicit distribution tools; `align`
 // positions hugging children on the cross axis. These assertions pin
 // the flip so a later edit can't silently revert hstack to the old
-// "stretch every child" (flex: 1) behavior — the source of the
+// "stretch every child" (flex: 1) behavior, the source of the
 // "alignment is implicit / secret knowledge" problem this model was
 // built to fix.
 func TestHStackHugsByDefault(t *testing.T) {
@@ -84,7 +84,7 @@ func TestAlignAttrClasses(t *testing.T) {
 // `centered` is pure two-axis alignment: it claims the space its
 // PARENT provides and never invents a size of its own. The magic
 // min-heights (60vh full-page, 160px in-section) are exactly what this
-// pins against — sizes must come from the height-propagation chain
+// pins against: sizes must come from the height-propagation chain
 // (#mar-root → .mar-nav-stack → .mar-nav-body), not from constants
 // baked into the primitive.
 func TestCenteredHasNoMagicSize(t *testing.T) {

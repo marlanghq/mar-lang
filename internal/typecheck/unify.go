@@ -8,8 +8,8 @@ type UnifyError struct {
 	Reason string
 	// KindMismatch is true when the failure is a constraint violation
 	// (e.g. Comparable var bound to a Record). Callers that wrap this
-	// error with a higher-level message — like "argument has the wrong
-	// type" in inferApp — should bypass that wrapping when KindMismatch
+	// error with a higher-level message: like "argument has the wrong
+	// type" in inferApp, should bypass that wrapping when KindMismatch
 	// is set, since the underlying Reason already explains the problem
 	// in user-facing terms ("a record is not comparable; allowed key
 	// types are Int, Float, String, Char").
@@ -120,25 +120,25 @@ func bindVar(v TVar, t Type, s *Subst) error {
 		return &UnifyError{A: v, B: t, Reason: "occurs check"}
 	}
 
-	// Constraint enforcement — Elm-style. If v carries a Kind
+	// Constraint enforcement: Elm-style. If v carries a Kind
 	// restriction (Comparable / Appendable), check that t honors it.
 	//
 	// Two cases:
 	//
-	//   1. t is a TVar — merge the constraints. If t is weaker
+	//   1. t is a TVar: merge the constraints. If t is weaker
 	//      (KindAny), the BOUND var becomes the stronger one so future
 	//      unifications stay honest: we bind v -> t', where t' is a
 	//      fresh TVar carrying the merged constraint, then bind the
 	//      original t.ID to t' too. Two DIFFERENT non-Any kinds (a
 	//      value used as both comparable and appendable) have no
-	//      representable intersection — Elm's `compappend` — so we
+	//      representable intersection, Elm's `compappend`, so we
 	//      reject the overlap.
 	//
-	//   2. t is concrete — call satisfiesKind. Fail with a clear
+	//   2. t is concrete: call satisfiesKind. Fail with a clear
 	//      message naming the constraint and the allowed types.
 	if v.Constraint != KindAny {
 		if other, ok := t.(TVar); ok {
-			// Two TVars unifying — keep the stronger constraint and
+			// Two TVars unifying: keep the stronger constraint and
 			// make sure both ends resolve to a var that carries it.
 			merged, ok := mergeKinds(v.Constraint, other.Constraint)
 			if !ok {
@@ -150,13 +150,13 @@ func bindVar(v TVar, t Type, s *Subst) error {
 				}
 			}
 			if merged == other.Constraint {
-				// `other` is already at least as strong — just bind v to other.
+				// `other` is already at least as strong, just bind v to other.
 				s.Bind(v.ID, other)
 				return nil
 			}
 			// Promote: mint a FRESH var (new ID) with the merged
 			// constraint, then bind both v and other to it. Using a
-			// fresh ID matters — binding `other.ID -> TVar{ID:
+			// fresh ID matters, binding `other.ID -> TVar{ID:
 			// other.ID, Constraint: ...}` would be a self-loop that
 			// infinite-recurses inside Apply.
 			fresh := TVar{ID: int(atomicNextVarID()), Constraint: merged}
@@ -243,7 +243,7 @@ func kindMismatchReason(k Kind, t Type) string {
 	}
 	switch k {
 	case KindComparable:
-		// Phrasing stays neutral — "key types" was Dict-specific
+		// Phrasing stays neutral: "key types" was Dict-specific
 		// jargon; this message also fires for the ordering operators
 		// (`<`, `>`, `<=`, `>=`), where "key" makes no sense.
 		return fmt.Sprintf(
@@ -384,7 +384,7 @@ func makeRowExtension(names []string, src TRecord, tail Type) TRecord {
 }
 
 // extendTail returns a type that represents "extra fields plus tail." When
-// there are no extra fields, it's just the tail itself — wrapping in a
+// there are no extra fields, it's just the tail itself: wrapping in a
 // `{Fields:{}, Tail: tail}` record creates an indirection that, after
 // substitution, produces non-canonical types like `{| {| {| ...}}}` which
 // makes Apply / Unify / occursIn diverge when two such tails are unified.

@@ -4,22 +4,22 @@ import (
 	"testing"
 )
 
-// A decoded record has no source order to inherit — the JSON text's key order
+// A decoded record has no source order to inherit: the JSON text's key order
 // is gone by the time each runtime holds a dictionary, and Go's map iteration
 // is randomized outright. So the three runtimes have to agree on an order they
 // can all produce, and sorted is the only one: iOS already sorted, Go now does,
 // and this pins the web.
 //
-// This order is not observable from a Mar program — nothing in the language
+// This order is not observable from a Mar program: nothing in the language
 // reads a record's field order, and JSON.encode sorts on the way out in all
 // three, which is why there is no case for it in the shared conformance
 // corpus. It surfaces in the two places a person READS a value rather than
 // computes with it: debug output, and the "record has no field" message. That
-// message is why it matters — it lists the fields the record does have, and a
+// message is why it matters: it lists the fields the record does have, and a
 // list that reads differently on each runtime (or, before the Go fix, on each
 // run) is a poor answer to "what did I actually get?".
 func TestDecodedRecordFieldOrderIsSorted(t *testing.T) {
-	// Hand-written JSON with the keys deliberately out of order — the shape
+	// Hand-written JSON with the keys deliberately out of order: the shape
 	// that reaches JSON.decode from a file or a service that did not sort.
 	src := `module Ord exposing (..)
 

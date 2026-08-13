@@ -108,7 +108,7 @@ update _ params msg model =
 -- decimal only at the very end. "Showed up" folds Late in with
 -- Present. Multiply before dividing so the ratio keeps its precision;
 -- `/` yields a Decimal.Division (a held quotient) that Decimal.rounded
--- resolves with an explicit mode + scale — no silent float rounding.
+-- resolves with an explicit mode + scale: no silent float rounding.
 ratePercent : Int -> Int -> String
 ratePercent showedUp total =
     if total == 0 then

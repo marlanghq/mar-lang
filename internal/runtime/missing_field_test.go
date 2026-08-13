@@ -9,8 +9,8 @@ import (
 	"mar/internal/typecheck"
 )
 
-// A record missing a field cannot be written in a program that compiles — the
-// checker rejects it — so these tests build the record by hand, the way the
+// A record missing a field cannot be written in a program that compiles: the
+// checker rejects it, so these tests build the record by hand, the way the
 // two paths that CAN produce one do: decoded wire data, and a model a dev
 // server preserved across a reload. What matters is that the read fails
 // loudly and says which field and which record, rather than handing back a
@@ -54,7 +54,7 @@ func TestFieldAccessorMissingFieldErrors(t *testing.T) {
 	}
 }
 
-// Without a declared order — a record rebuilt from decoded data — the listing
+// Without a declared order, a record rebuilt from decoded data, the listing
 // still has to be stable, or the same failure prints a different list each run.
 func TestMissingFieldListIsStableWithoutOrder(t *testing.T) {
 	rec := VRecord{Fields: map[string]Value{"zeta": VUnit{}, "alpha": VUnit{}, "mid": VUnit{}}}
@@ -77,7 +77,7 @@ func TestMissingFieldOnEmptyRecord(t *testing.T) {
 }
 
 // JSON.decode is the one path in the Go runtime that can build a record whose
-// field set is not the declared one — its type is `String -> Result String a`,
+// field set is not the declared one: its type is `String -> Result String a`,
 // so the checker takes the call site's word for the shape and nothing verifies
 // it. That makes it the one path that reaches the message above, and the
 // decoded record has no declared order to inherit, so the order it prints has

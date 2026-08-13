@@ -1,4 +1,4 @@
-// `mar migrate` subcommand — read-only inspection of schema state.
+// `mar migrate` subcommand: read-only inspection of schema state.
 //
 // Two modes:
 //
@@ -29,7 +29,7 @@ import (
 
 func runMigrate(args []string) int {
 	// fprintError adds leading + trailing blanks. The usage line
-	// + final blank go right after — no extra separator needed.
+	// + final blank go right after: no extra separator needed.
 	if len(args) < 1 {
 		fprintError("mar migrate: missing subcommand")
 		fmt.Fprintf(os.Stderr, "usage: %s\n",
@@ -116,7 +116,7 @@ func runMigratePlan(path string) int {
 		for _, s := range blocked {
 			// printError handles the *BlockedMigrationError split into
 			// Error: + Hint: blocks (colored) automatically and falls
-			// back to diag.Format for anything else. No prefix here —
+			// back to diag.Format for anything else. No prefix here:
 			// the surrounding "[migrate plan] N change(s) would FAIL"
 			// header already sets the context.
 			printError("", s.Error)
@@ -127,7 +127,7 @@ func runMigratePlan(path string) int {
 }
 
 // runMigrateStatus prints the contents of _mar_schema_migrations.
-// Read-only; doesn't even need the entity declarations — useful for
+// Read-only; doesn't even need the entity declarations: useful for
 // "what changed last deploy?" forensics where the source code may
 // not match the production schema.
 func runMigrateStatus(path string) int {
@@ -148,7 +148,7 @@ func runMigrateStatus(path string) int {
 	`)
 	if err != nil {
 		// If the table doesn't exist, the DB has never had a
-		// migrator run — surface that as a friendly message
+		// migrator run: surface that as a friendly message
 		// rather than a SQL error.
 		if strings.Contains(err.Error(), "no such table") {
 			fmt.Printf("%s no migrations recorded yet (the database was never touched by the migrator).\n",
@@ -188,7 +188,7 @@ func runMigrateStatus(path string) int {
 
 // loadProjectAndOpenDB runs the project up to the point where
 // entities have registered, opens the configured DB, and returns
-// the handle. Returns (nil, nil) when the project doesn't use a DB —
+// the handle. Returns (nil, nil) when the project doesn't use a DB:
 // a "nothing to do" signal the callers turn into a friendly message.
 func loadProjectAndOpenDB(path string) (*sql.DB, error) {
 	entryFile, projectDir, err := resolveDevEntry(path)
@@ -199,7 +199,7 @@ func loadProjectAndOpenDB(path string) (*sql.DB, error) {
 	if dbPath, _ := project.ResolveDatabasePath(manifest, projectDir); dbPath != "" {
 		runtime.SetDBPath(dbPath)
 	}
-	// Fresh registries for this command invocation. Defensive — the
+	// Fresh registries for this command invocation. Defensive: the
 	// process is one-shot so the maps are already empty, but using
 	// the shared helper keeps the reset surface in sync with
 	// `mar dev`'s hot-reload path.

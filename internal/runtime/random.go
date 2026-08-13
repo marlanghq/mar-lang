@@ -6,16 +6,16 @@ import (
 	"math/bits"
 )
 
-// Random — Elm-style generators with a PURE, seedable core.
+// Random: Elm-style generators with a PURE, seedable core.
 //
 // A `Generator a` is `Seed -> (a, Seed)`: a nativeFn(1) that takes a Seed and
 // returns VTuple{value, nextSeed}. Because it threads an explicit Seed instead
 // of drawing from the ambient RNG, randomness now RUNS AND REPLAYS identically
-// on every runtime and on both sides (the server included) — the property the
+// on every runtime and on both sides (the server included): the property the
 // games hand-rolled an LCG for, and the reason `Random` is a both-side module.
 //
 // PRNG: PCG-XSH-RR 32 with a fixed odd increment (the "oneseq" stream). The
-// 64-bit state is carried, opaquely, as two 32-bit halves inside a VTuple —
+// 64-bit state is carried, opaquely, as two 32-bit halves inside a VTuple:
 // `Random.Seed` at the type level, so well-typed code can't take it apart, and
 // no new Value/codec/eq is needed (a Seed serializes and compares as any tuple
 // does, and the two halves each fit a JS Number exactly). The constants below
@@ -23,7 +23,7 @@ import (
 // vector test pins Go = JS = Swift for a fixed seed.
 //
 // `Random.generate` stays: it seeds from OS entropy and steps, so its Cmd is
-// still one fresh unpredictable draw — same observable behaviour as before.
+// still one fresh unpredictable draw: same observable behaviour as before.
 const (
 	pcgMul = 6364136223846793005 // PCG / MMIX LCG multiplier
 	pcgInc = 1442695040888963407 // fixed odd increment (oneseq stream)
@@ -112,7 +112,7 @@ func randomBuiltins() map[string]Value {
 			return makeSeed(scramble(n.V)), nil
 		}),
 
-		// Random.step : Generator a -> Seed -> (a, Seed) — pure, runs anywhere.
+		// Random.step : Generator a -> Seed -> (a, Seed), pure, runs anywhere.
 		"randomStep": nativeFn(2, func(args []Value) (Value, error) {
 			val, next, err := runGen(args[0], args[1])
 			if err != nil {
@@ -121,13 +121,13 @@ func randomBuiltins() map[string]Value {
 			return VTuple{Members: []Value{val, next}}, nil
 		}),
 
-		// Random.seed : Task Seed — real OS entropy as a Seed (both sides).
+		// Random.seed : Task Seed, real OS entropy as a Seed (both sides).
 		"randomSeed": VEffect{
 			Tag: "randomSeed",
 			Run: func() (Value, error) { return entropySeed("Random.seed") },
 		},
 
-		// Random.generate : (a -> msg) -> Generator a -> Cmd msg — seeds from
+		// Random.generate : (a -> msg) -> Generator a -> Cmd msg, seeds from
 		// entropy, steps once, delivers the value as a Msg.
 		"randomGenerate": nativeFn(2, func(args []Value) (Value, error) {
 			toMsg, g := args[0], args[1]
@@ -148,7 +148,7 @@ func randomBuiltins() map[string]Value {
 		}),
 
 		// Random.int : Int -> Int -> Generator Int (inclusive range).
-		// One 32-bit draw, so ranges up to ~2^32 are uniform — ample for games.
+		// One 32-bit draw, so ranges up to ~2^32 are uniform: ample for games.
 		"randomInt": nativeFn(2, func(args []Value) (Value, error) {
 			lo, ok1 := args[0].(VInt)
 			hi, ok2 := args[1].(VInt)

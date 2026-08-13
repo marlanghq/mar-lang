@@ -17,7 +17,7 @@ import (
 // LoadForServeTyped does the same load as LoadForServe but also returns
 // the global type environment built during checking, keyed by qualified
 // name ("Module.value"). `mar dev` uses this to enforce that
-// `Main.main : Effect String ()` before kicking off the server.
+// `Main.main : Cmd ()` before kicking off the server.
 //
 // Built-in stdlib modules (List, String, UI, Dict, Time, etc.) are
 // runtime-provided and are not loaded as files; see isStdlib in project.go,
@@ -84,7 +84,7 @@ func LoadForServeTypedWithOverrides(entry string, overrides map[string]string) (
 			}
 			impPath, err := resolveImport(dir, imp.Module)
 			if err != nil {
-				continue // import not found locally — assume external/stdlib-ish
+				continue // import not found locally: assume external/stdlib-ish
 			}
 			if !visited[impPath] {
 				visited[impPath] = true
@@ -100,7 +100,7 @@ func LoadForServeTypedWithOverrides(entry string, overrides map[string]string) (
 	}
 
 	// Type-check in order. Types defined in a module are only visible
-	// to other modules that import it — without this scoping, two
+	// to other modules that import it: without this scoping, two
 	// pages could not both define `type Model = ...`.
 	tEnv := typecheck.BaseEnv()
 	aliasesByModule := map[string]map[string]typecheck.TypeAlias{}
@@ -162,7 +162,7 @@ func LoadForServeTypedWithOverrides(entry string, overrides map[string]string) (
 	// Boundary shape lint. Catches record-shape mismatches at
 	// Repo.* / Auth.config callsites that BaseEnv's polymorphic
 	// types let through. Surfaces the FIRST issue as a regular
-	// source error so the CLI's snippet renderer kicks in — same
+	// source error so the CLI's snippet renderer kicks in: same
 	// shape as a typecheck.InferError. (Reporting them all at once
 	// would need a multi-error wrapper; one-at-a-time fits the
 	// existing pipeline and matches how typecheck.CheckModule
@@ -185,7 +185,7 @@ func LoadForServeTypedWithOverrides(entry string, overrides map[string]string) (
 
 	// Every module runs on one side. A module that reaches both the browser
 	// and the server has no machine to run on. Lives here rather than in the
-	// build so the editor reports it too — this function is what the LSP
+	// build so the editor reports it too: this function is what the LSP
 	// calls with the unsaved buffer substituted.
 	if issues := typecheck.RunSideCheck(out); len(issues) > 0 {
 		issue := issues[0]
@@ -235,7 +235,7 @@ func resolveImport(dir string, moduleName ast.ModuleName) (string, error) {
 // them and errors out).
 //
 // Returns the env, modules, and a "Module.value" -> Type map so callers
-// can enforce signatures (e.g. `Main.main : Effect String ()`) before
+// can enforce signatures (e.g. `Main.main : Cmd ()`) before
 // running anything.
 func LoadIntoEnvWithModulesAndHook(
 	entry string,

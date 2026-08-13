@@ -5,7 +5,7 @@ import (
 	"sort"
 )
 
-// dictBuiltins returns runtime functions for the Dict module — an
+// dictBuiltins returns runtime functions for the Dict module: an
 // ordered, polymorphic key-value map. Keys must be "comparable" per
 // compareValues (Int / Float / String); the typechecker doesn't yet
 // enforce that constraint, so the runtime returns an error if a
@@ -14,7 +14,7 @@ import (
 // The underlying VDict value keeps its Pairs slice sorted ascending
 // by key, which gives:
 //   - O(log n) get / member via binary search
-//   - O(n) insert / remove (slice rebuild — fine for the sizes we
+//   - O(n) insert / remove (slice rebuild: fine for the sizes we
 //     expect in user code; a balanced tree is the upgrade path)
 //   - O(n) union / intersect / diff via two-pointer merge
 //   - Deterministic toList / keys / values iteration
@@ -303,7 +303,7 @@ func dictBuiltins() map[string]Value {
 				if inA {
 					return av, true, nil
 				}
-				// Only in b — keep b's value.
+				// Only in b: keep b's value.
 				return nil, true, nil
 			})
 			if err != nil {
@@ -377,7 +377,7 @@ func dictBuiltins() map[string]Value {
 
 // setBuiltins returns runtime functions for the Set module. Sets are
 // internally `VSet { Items []Value }` with `Items` kept sorted by
-// compareValues — same comparable-key constraint as Dict.
+// compareValues: same comparable-key constraint as Dict.
 //
 // The signatures mirror Elm's Set API; under the hood many ops
 // reuse the same two-pointer merge logic that powers Dict.

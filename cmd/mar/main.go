@@ -41,7 +41,7 @@ import (
 )
 
 // openURL invokes the OS-native "open this URL" command. Errors are
-// non-fatal — the dev server keeps running even if the browser launch
+// non-fatal: the dev server keeps running even if the browser launch
 // fails (e.g. on a headless box without the helper binary installed).
 func openURL(url string) {
 	var cmd *exec.Cmd
@@ -57,7 +57,7 @@ func openURL(url string) {
 }
 
 // extractNoOpenFlag pulls `--no-open` out of args, returning
-// (flagPresent, argsWithoutFlag). Order-independent — the flag can
+// (flagPresent, argsWithoutFlag). Order-independent: the flag can
 // appear before or after the positional path argument:
 //
 //	mar dev --no-open examples/foo
@@ -89,7 +89,7 @@ func extractNoOpenFlag(args []string) (bool, []string) {
 //     the browser open (which would fail in headless environments
 //     and litter the logs with errors).
 //
-// Returns true otherwise — the default-on behavior for local dev.
+// Returns true otherwise: the default-on behavior for local dev.
 func shouldOpenBrowser(noOpen bool) bool {
 	if noOpen {
 		return false
@@ -216,7 +216,7 @@ func runBuild(args []string) int {
 // other typed errors.
 func printManifestSyntaxError(e *project.ManifestSyntaxError) {
 	// Embed "at line N, column M:" into the same fprintError call as
-	// the main message so they read as one sentence — they ARE one
+	// the main message so they read as one sentence: they ARE one
 	// sentence semantically (the location is part of the error), and
 	// a blank line between them adds visual noise without helping.
 	fprintError("%s is not valid JSON: %s\nat line %s, column %s:",
@@ -227,7 +227,7 @@ func printManifestSyntaxError(e *project.ManifestSyntaxError) {
 	// fprintError already added the trailing blank, which serves as
 	// the visual break between the narrative (Error + at line) and
 	// the code block (snippet + caret). Snippet gets a 2-space indent
-	// — the "code block" idiom — so the eye reads it as content from
+	//, the "code block" idiom, so the eye reads it as content from
 	// the file, distinct from the narrative.
 	fmt.Fprintln(os.Stderr, "  "+e.Snippet)
 	caretCol := e.Column
@@ -255,7 +255,7 @@ func printFreeMailDomainError(prefix string, e *project.FreeMailDomainError) {
 		colorMagenta("mail.from"),
 		e.From,
 		colorMagenta(e.Domain))
-	// Multi-paragraph hint — the `\n\n      ` keeps the second
+	// Multi-paragraph hint: the `\n\n      ` keeps the second
 	// paragraph aligned under the Hint: indent but visually
 	// separated. fprintHint adds the leading + trailing blanks
 	// around the whole block as a single unit.
@@ -284,7 +284,7 @@ func isSourceError(err error) bool {
 // colorJSONSuggestion paints one line of a mar.json suggestion for
 // the operator. Two visual signals beyond plain magenta:
 //
-//   - "..." placeholders dim — they're the only thing the user
+//   - "..." placeholders dim: they're the only thing the user
 //     actually has to replace; everything else (keys, env: refs,
 //     braces) gets pasted verbatim. Dimming them says "I'm a stub,
 //     fill me in" without making the whole snippet noisy.
@@ -292,7 +292,7 @@ func isSourceError(err error) bool {
 //     cli-style.md §3).
 //
 // Quotes around the placeholders stay magenta so the JSON shape
-// is preserved visually — only the inside-of-quotes "..." dims.
+// is preserved visually: only the inside-of-quotes "..." dims.
 func colorJSONSuggestion(line string) string {
 	// Replace each "..." placeholder by an ANSI-bracketed dim run
 	// inside the surrounding magenta. Done by tokenizing the line
@@ -333,12 +333,12 @@ func colorJSONSuggestion(line string) string {
 //
 // Sections, top-to-bottom:
 //
-//  1. Warn block when ios.serverUrl is missing (always optional —
+//  1. Warn block when ios.serverUrl is missing (always optional:
 //     dev runs work without it, but the operator needs to know
 //     before shipping to TestFlight / App Store).
-//  2. "iOS scaffold written" line — the output path in magenta so
+//  2. "iOS scaffold written" line: the output path in magenta so
 //     it stands out as something the operator will cd into.
-//  3. Metadata continuation lines — app name + bundle id, then
+//  3. Metadata continuation lines: app name + bundle id, then
 //     display name + marketing version + build number, then base
 //     URL. Mirrors the shape of `buildServerExecutable`'s output:
 //     the primary path on its own line, the details one level
@@ -350,7 +350,7 @@ func printIOSBuildSummary(r scaffold.IOSBuildResult) {
 	// The serverUrl warning only makes sense when the app HAS a backend
 	// to reach. A pure App.frontend app is self-contained (renders from
 	// the embedded program, calls no Services), so a missing serverUrl
-	// is expected, not a problem — warning about "no production backend"
+	// is expected, not a problem: warning about "no production backend"
 	// would be noise. Backend / fullstack apps keep the warning.
 	if r.MissingServerURL && !r.FrontendOnly {
 		// Warn states the problem (what's missing, what falls back
@@ -358,7 +358,7 @@ func printIOSBuildSummary(r scaffold.IOSBuildResult) {
 		// for mar.json, formatted multi-line with key-per-line so
 		// the operator can paste straight into a `{ ... }` block.
 		// The JSON sits 2 spaces deeper than the Hint body (so 8
-		// total) — matching how nested code reads in the surrounding
+		// total): matching how nested code reads in the surrounding
 		// terminal.
 		fprintWarn(
 			"%s is not set in %s. The generated app will\n"+
@@ -368,7 +368,7 @@ func printIOSBuildSummary(r scaffold.IOSBuildResult) {
 			colorMagenta("mar.json"),
 			colorCyan("http://localhost:3000"))
 		// If mar.json declares deploy.fly.app, use that slug to
-		// build the suggested URL — operator can paste verbatim
+		// build the suggested URL: operator can paste verbatim
 		// instead of swapping `my-app` for their real name.
 		suggestedURL := "https://my-app.fly.dev"
 		if mf, err := project.LoadManifestStructure(r.ProjectDir); err == nil &&
@@ -392,7 +392,7 @@ func printIOSBuildSummary(r scaffold.IOSBuildResult) {
 	}
 
 	fmt.Printf("[mar build] iOS scaffold written to %s\n", colorMagenta(r.OutputDir))
-	// Metadata block — one field per line. The earlier layout packed
+	// Metadata block: one field per line. The earlier layout packed
 	// two fields per line (app + bundle, display + version), which
 	// read tightly when values were short but became uncomfortable
 	// once a bundleId or displayName ran long enough to wrap. One
@@ -400,7 +400,7 @@ func printIOSBuildSummary(r scaffold.IOSBuildResult) {
 	// proper "manifest" block.
 	//
 	// base url gets the " (default)" tag when ios.serverUrl wasn't
-	// set — the warn block above already told the full story, this
+	// set: the warn block above already told the full story, this
 	// is just an unambiguous tag on the value the bundle carries.
 	baseURLNote := ""
 	if r.MissingServerURL && !r.FrontendOnly {
@@ -423,11 +423,11 @@ func printIOSBuildSummary(r scaffold.IOSBuildResult) {
 	// The `open` command follows the project-wide convention for
 	// shell commands: executable in green, arguments in bold
 	// (matching the `mar X Y` pattern enforced via cmdSuggest).
-	// Applies to non-mar binaries too — `open` is the executable
+	// Applies to non-mar binaries too: `open` is the executable
 	// here, the .xcodeproj path is the argument.
 	//
 	// Step 2 (signing team) only matters the first time the project
-	// opens — Xcode persists the choice in the .pbxproj. The
+	// opens: Xcode persists the choice in the .pbxproj. The
 	// "(first time only)" annotation keeps repeat builders from
 	// thinking they have to revisit Signing & Capabilities each
 	// time. Even simulator builds need a team set since Xcode 16
@@ -448,13 +448,13 @@ func printIOSBuildSummary(r scaffold.IOSBuildResult) {
 // Renders a paste-ready JSON snippet so the operator can copy it
 // into mar.json and retry without re-reading the docs.
 //
-// Only the missing fields appear in the snippet — if the operator
+// Only the missing fields appear in the snippet, if the operator
 // already set serverUrl but forgot bundleId, we don't echo serverUrl
 // back at them (avoids implying they need to overwrite what's there).
 func printIOSConfigError(e *scaffold.IOSConfigError) {
 	// Error: names the problem. Each missing field is a config key, so
 	// color them magenta individually (plain commas between) rather than
-	// dyeing the whole "a, b, c" blob — matches how paths/keys are colored
+	// dyeing the whole "a, b, c" blob: matches how paths/keys are colored
 	// everywhere else per cli-style.md §3.
 	missing := make([]string, len(e.Missing))
 	for i, m := range e.Missing {
@@ -467,7 +467,7 @@ func printIOSConfigError(e *scaffold.IOSConfigError) {
 
 	// Hint: states the fix as paste-ready JSON, one field per line in the
 	// canonical order (only the missing ones). Built as the Hint body so it
-	// gets the yellow "Hint:" label + the shared blank-line handling — the
+	// gets the yellow "Hint:" label + the shared blank-line handling, the
 	// same shape as the ios.serverUrl hint above. The block sits 8 spaces
 	// in (under the Hint body), inner keys 2 deeper, so it reads as nested
 	// JSON and pastes straight into a `{ ... }`.
@@ -589,7 +589,7 @@ func buildUsage() string {
 
 // runFormat handles `mar format [--check] <files...>`. With files,
 // each is rewritten in place. With --check, the command exits 1 if
-// any file would change — useful in CI to enforce formatting.
+// any file would change: useful in CI to enforce formatting.
 func runFormat(args []string) int {
 	check := false
 	files := []string{}
@@ -644,8 +644,8 @@ func runFormat(args []string) int {
 }
 
 // lookupMainType finds the type of the entry module's `main`. Module
-// names vary (`Main`, `Calculator`, etc.) — keys in valueTypes are
-// "Module.value" — so just pick the first ".main" entry. There's only
+// names vary (`Main`, `Calculator`, etc.): keys in valueTypes are
+// "Module.value", so just pick the first ".main" entry. There's only
 // ever one `main` in a project (the entry's), so this is unambiguous.
 func lookupMainType(valueTypes map[string]typecheck.Type) typecheck.Type {
 	if t, ok := valueTypes["Main.main"]; ok {
@@ -661,7 +661,7 @@ func lookupMainType(valueTypes map[string]typecheck.Type) typecheck.Type {
 
 // checkMainSignature reports whether t is `Cmd ()`. Returns an empty
 // string when the signature is acceptable, else a short human-readable
-// message describing the mismatch. Wrapping in a `forall` is fine — main
+// message describing the mismatch. Wrapping in a `forall` is fine: main
 // can be polymorphic in unused variables.
 func checkMainSignature(t typecheck.Type) string {
 	if f, ok := t.(typecheck.TForall); ok {
@@ -714,7 +714,7 @@ func main() {
 		}
 		os.Exit(runDev(path, noOpen))
 	case "format":
-		// `mar format <file>` — rewrite in place. `mar format --check`
+		// `mar format <file>`: rewrite in place. `mar format --check`
 		// exits 1 if any file needs reformatting (CI-friendly).
 		os.Exit(runFormat(os.Args[2:]))
 	case "lsp":
@@ -782,13 +782,13 @@ func main() {
 	default:
 		// `mar foo.mar` or `mar examples/notes-auth` look like the
 		// user wanted to run a project but forgot the subcommand.
-		// Don't infer — make the intent explicit. Suggest the right
+		// Don't infer: make the intent explicit. Suggest the right
 		// command and exit non-zero so scripts notice.
 		arg := os.Args[1]
 		// Before treating arg as a path, check if it's a known
 		// sub-subcommand name (logs, status, secrets, ...) that lives
 		// under a parent command. Suggesting `mar dev logs` when the
-		// operator typed `mar logs` is actively misleading — and the
+		// operator typed `mar logs` is actively misleading, and the
 		// looksLikePath check can return true just because a directory
 		// named "logs" happens to exist in the cwd (very common).
 		// Surface the real path (`mar fly logs`) instead.
@@ -815,7 +815,7 @@ func main() {
 // Returns "" when the name isn't a known sub-subcommand.
 //
 // Kept in lockstep with the dispatchers in fly.go / fly_database.go /
-// fly_secrets.go / admin.go / migrate.go — if a new sub is added
+// fly_secrets.go / admin.go / migrate.go, if a new sub is added
 // there, mirror it here so the typo hint stays useful. (`deploy` is a
 // top-level command now, so it's dispatched directly, not routed here.)
 func parentForSubcommand(name string) string {
@@ -832,7 +832,7 @@ func parentForSubcommand(name string) string {
 	return ""
 }
 
-// looksLikePath reports whether `s` looks like a path attempt —
+// looksLikePath reports whether `s` looks like a path attempt:
 // contains a separator, ends in .mar, or actually exists on disk.
 // Used to give a more specific "did you mean" hint when the user
 // almost-but-not-quite typed a real command.
@@ -862,12 +862,12 @@ func looksLikePath(s string) bool {
 func usage() {
 	// Two distinct command stylings:
 	//
-	//   exe  — the `mar` executable itself and full command lines like
+	//   exe  - the `mar` executable itself and full command lines like
 	//          `mar <command> --help`. Green, matching the project-wide
 	//          "commands to run" convention used everywhere else (see
 	//          docs/cli-style.md §3).
 	//
-	//   name — command names in the Commands: list (dev, build, etc.).
+	//   name, command names in the Commands: list (dev, build, etc.).
 	//          Bold without color: a list of names is structural, not
 	//          actionable in the same way an inline "run THIS" is.
 	//          Bold green became visually loud once the help expanded
@@ -884,7 +884,7 @@ func usage() {
 	// build's flag list, etc.).
 	//
 	// Single source of truth: `entries` below. If you add a new
-	// top-level command, just append a row here — the renderer takes
+	// top-level command, just append a row here: the renderer takes
 	// care of the rest.
 	type cmdEntry struct{ name, args, desc string }
 	entries := []cmdEntry{
@@ -937,7 +937,7 @@ func runCheck(path string) int {
 			printError("", err)
 			return 1
 		}
-		// `project.Load` only loads the .mar modules — validate mar.json
+		// `project.Load` only loads the .mar modules: validate mar.json
 		// too, so a typo'd/misplaced config key (e.g. top-level "port"
 		// instead of "server"."port") is caught here, matching what
 		// `mar dev` and `mar build` enforce. Without this it passes
@@ -1002,12 +1002,12 @@ func runCheck(path string) int {
 // database for a project, given the result of scaffold.Topology.
 //
 // Only a KNOWN server app (App.backend / App.fullstack) gets one. A
-// frontend app has no server-side state, so it gets nothing — no file, no
+// frontend app has no server-side state, so it gets nothing: no file, no
 // advisory lock, no /_mar/admin. Crucially, an UNKNOWN topology (topoErr
 // set because `main` doesn't compile yet) ALSO provisions nothing: a
 // non-compiling app serves nothing, so eagerly opening a DB there would
 // just drop stray .db / .db.lock files next to a frontend app that will
-// never use them. A backend app started with a typo still recovers — the
+// never use them. A backend app started with a typo still recovers: the
 // dev server's compile() wires the DB path once its entities register on
 // the first good reload.
 func topologyNeedsDB(topo string, topoErr error) bool {
@@ -1039,14 +1039,14 @@ func runDev(path string, noOpen bool) int {
 	}
 
 	// Resolve port from mar.json (default 3000). Same value used by
-	// App.fullstack / App.serve / App.serveScreens — the language no
+	// App.fullstack / App.serve / App.serveScreens: the language no
 	// longer takes port as a code argument. Validation errors in the
 	// manifest are fatal: surface them now rather than fall back silently.
 	port := 3000
 	// LoadManifestDev tolerates missing env vars (resolves them to
 	// empty) so the operator can run `mar dev` locally without
 	// configuring production secrets. Auth flows fall back to
-	// printing codes to the terminal when SMTP isn't fully wired —
+	// printing codes to the terminal when SMTP isn't fully wired:
 	// mailer.Send detects empty Host/Password and uses its stdout
 	// sink. Production paths (mar-runtime, mar fly *) stay strict
 	// via LoadManifest.
@@ -1062,11 +1062,11 @@ func runDev(path string, noOpen bool) int {
 	// Decide whether to provision a SQLite database. A frontend app has no
 	// server-side state, so it gets none (no file, no advisory lock, no
 	// /_mar/admin). We learn the topology by evaluating `main` once up
-	// front — see topologyNeedsDB for why an UNKNOWN topology (main not
+	// front: see topologyNeedsDB for why an UNKNOWN topology (main not
 	// compiling yet) also provisions nothing.
 	provisionDB := topologyNeedsDB(scaffold.Topology(projectDir))
 
-	// Wire the SQLite path into the runtime — Repo.* lazy-opens this on
+	// Wire the SQLite path into the runtime: Repo.* lazy-opens this on
 	// first use. ResolveDatabasePath honors MAR_DATABASE_PATH (override
 	// for production deploys) and resolves relative paths against the
 	// project directory so `./notes.db` lands next to Main.mar. Skipped
@@ -1079,7 +1079,7 @@ func runDev(path string, noOpen bool) int {
 
 	// Auth: derive (or auto-generate, in dev) the session secret and
 	// pass the SMTP credentials to the auth runtime. The handlers stay
-	// dormant until the user's program calls `Auth.config` — at that
+	// dormant until the user's program calls `Auth.config`: at that
 	// point ServeLive sees a registered VAuth and mounts /_auth/*.
 	secret, secretSrc, err := project.ResolveSessionSecret(manifest, projectDir)
 	if err != nil {
@@ -1088,7 +1088,7 @@ func runDev(path string, noOpen bool) int {
 	}
 	if secret != "" {
 		// `mar dev` is the ONE place allowed to print a sign-in code to
-		// the terminal instead of emailing it — that is what makes the
+		// the terminal instead of emailing it: that is what makes the
 		// auth flow usable with zero mail setup. Production leaves this
 		// false (see auth.SMTPConfig.AllowStdoutSink) and refuses to boot
 		// rather than write codes to its log stream.
@@ -1103,7 +1103,7 @@ func runDev(path string, noOpen bool) int {
 	jsserve.SetAdminBuildInfo(version)
 	jsserve.SetAdminRequestBufferSize(project.ResolvedRecentRequestsSize(manifest))
 
-	// Gateway rate limiter — always on, per-IP, configured via
+	// Gateway rate limiter: always on, per-IP, configured via
 	// mar.json["rateLimit"]. validateRateLimit already ensured the
 	// values are in bounds (or applied defaults). Rate is converted
 	// from per-minute (the operator-friendly unit) to per-second
@@ -1120,11 +1120,11 @@ func runDev(path string, noOpen bool) int {
 	// Static assets: files in the project's public/ folder are served
 	// verbatim at the site root (e.g. public/logo.svg → /logo.svg).
 	// `mar build` copies the same folder into dist/, so paths match in
-	// dev and in a deployed bundle. Set unconditionally — a missing
+	// dev and in a deployed bundle. Set unconditionally: a missing
 	// folder just means no files match.
 	//
-	// First reject files that collide with Mar's reserved namespace — the
-	// same check `mar build` runs — so a colliding asset fails fast here
+	// First reject files that collide with Mar's reserved namespace: the
+	// same check `mar build` runs, so a colliding asset fails fast here
 	// instead of being silently shadowed in dev and only rejected at build.
 	publicDir := filepath.Join(projectDir, "public")
 	if err := jsserve.ValidatePublicDir(publicDir); err != nil {
@@ -1135,7 +1135,7 @@ func runDev(path string, noOpen bool) int {
 
 	// PWA: validate the icon (fail fast on a bad master) and install
 	// the resolved config so /_mar/manifest.json + /_mar/icon-*.png
-	// serve. Always on for frontends — every app is installable.
+	// serve. Always on for frontends: every app is installable.
 	if err := project.ValidatePWAIcon(projectDir, manifest); err != nil {
 		printError("mar dev", err)
 		return 1
@@ -1151,11 +1151,11 @@ func runDev(path string, noOpen bool) int {
 	jsserve.SetMaxBodyBytes(serverCfg.ResolvedMaxBodyBytes())
 	jsserve.SetTrustedProxies(serverCfg.ResolvedTrustedProxies())
 
-	// Auto-backup scheduler — periodic VACUUM INTO into a catalog
+	// Auto-backup scheduler: periodic VACUUM INTO into a catalog
 	// directory alongside mar.db. No-op when the manifest disables
 	// it (`database.autoBackup.enabled: false`) or when there's no
 	// database configured. Runs in dev too so the developer sees
-	// the catalog grow alongside their app — same code path as
+	// the catalog grow alongside their app: same code path as
 	// production, no surprises at deploy time.
 	if provisionDB && dbPath != "" {
 		// The scheduler gets its OWN connection (not the app's
@@ -1209,7 +1209,7 @@ func runDev(path string, noOpen bool) int {
 		}
 
 		// Find main and validate its type signature. mar is a web language
-		// — every entry point ships through `main : Cmd ()`,
+		//, every entry point ships through `main : Cmd ()`,
 		// where the Effect chooses the topology by calling App.frontend /
 		// App.backend / App.fullstack. Reject anything else here so users
 		// get a clear up-front error instead of confusing runtime
@@ -1240,14 +1240,14 @@ func runDev(path string, noOpen bool) int {
 		}
 		// Running the Effect calls one of the overridden builtins, which
 		// captures (api, pages) and updates lp. The builtin's Effect is a
-		// no-op — we drive the server lifecycle from the CLI, not the
+		// no-op: we drive the server lifecycle from the CLI, not the
 		// user's main.
 		if _, err := eff.Run(); err != nil {
 			return err
 		}
 		// If we deferred the DB at startup because the topology was
 		// unknown (main didn't compile then), wire the path now that we
-		// have a valid program WITH entities — so a backend app started
+		// have a valid program WITH entities, so a backend app started
 		// with a typo recovers on its first good reload, no restart. A
 		// frontend app registers no entities, so this stays a no-op for
 		// it and never creates a file.
@@ -1271,13 +1271,13 @@ func runDev(path string, noOpen bool) int {
 		return nil
 	}
 
-	// First compile must succeed — otherwise there's nothing to serve.
+	// First compile must succeed: otherwise there's nothing to serve.
 	if err := compile(); err != nil {
 		printError("", err)
 		return 1
 	}
 	if lp.Port() == 0 {
-		// `main` didn't call any of the App.* overrides — nothing to host.
+		// `main` didn't call any of the App.* overrides: nothing to host.
 		// Just exit; this isn't a server.
 		fprintError("mar dev: main returned without invoking App.serve / App.fullstack / App.serveScreens: nothing to host")
 		return 0
@@ -1289,7 +1289,7 @@ func runDev(path string, noOpen bool) int {
 	go watchAndReload(projectDir, compile, hub, lp)
 
 	// Open the browser to the dev URL only after ServeLive confirms
-	// the bind succeeded — passed as a callback so the open never
+	// the bind succeeded: passed as a callback so the open never
 	// fires when another `mar dev` already holds the port. The
 	// `--no-open` flag and a CI=true environment both suppress this
 	// (see shouldOpenBrowser).
@@ -1309,7 +1309,7 @@ func runDev(path string, noOpen bool) int {
 		// an actionable hint.
 		if isAddrInUseErr(err) {
 			fprintError("port %d is already in use.", port)
-			// Multi-line hint — embedded continuation lines so the
+			// Multi-line hint: embedded continuation lines so the
 			// helper emits the block as one unit (otherwise the
 			// trailing blank from fprintHint would split the Hint
 			// from its continuation).
@@ -1402,7 +1402,7 @@ func errorParts(err error) (summary, hint string) {
 //
 // `prefix` is an optional command marker prepended to the summary
 // (e.g. "mar dev", "mar check"). Pass "" when the error already
-// carries enough context on its own — typical for compile errors that
+// carries enough context on its own: typical for compile errors that
 // come back from diag.Format with their own "Type error:" / "Parse
 // error:" prefix.
 //
@@ -1417,7 +1417,7 @@ func errorParts(err error) (summary, hint string) {
 //   - Plain error: routed through diag.Format. If a prefix is given,
 //     the whole rendered string is printed under fprintError (so the
 //     prefix and Error: marker share one line). Otherwise printed
-//     raw, preserving the diag.Format output verbatim — important for
+//     raw, preserving the diag.Format output verbatim: important for
 //     positioned compile errors that already have their own colored
 //     "Type error:" prefix and source snippet.
 func printError(prefix string, err error) string {
@@ -1456,7 +1456,7 @@ func printError(prefix string, err error) string {
 
 // watchAndReload polls .mar / .json files under root every ~250ms. On any
 // change (mtime / size / file added / removed), it runs compile and
-// broadcasts the result on the hub. Compile errors don't stop the loop —
+// broadcasts the result on the hub. Compile errors don't stop the loop:
 // the dev banner shows them in the browser; the previous good version
 // keeps running.
 func watchAndReload(root string, compile func() error, hub *jsserve.ReloadHub, lp *jsserve.LiveProgram) {
@@ -1517,7 +1517,7 @@ func watchAndReload(root string, compile func() error, hub *jsserve.ReloadHub, l
 //
 // Convention: when `path` is a directory, the entry file is `Main.mar`
 // unless mar.json specifies a different `entry`. Most projects don't
-// need to set it — the default is enough.
+// need to set it: the default is enough.
 func resolveDevEntry(path string) (entryFile string, projectDir string, err error) {
 	info, statErr := os.Stat(path)
 	if statErr != nil {
@@ -1525,7 +1525,7 @@ func resolveDevEntry(path string) (entryFile string, projectDir string, err erro
 	}
 	if info.IsDir() {
 		// Honor an explicit `entry` field in mar.json; fall back to
-		// the conventional Main.mar otherwise. Structural load — the
+		// the conventional Main.mar otherwise. Structural load: the
 		// entry filename is a literal, never an env:VAR reference,
 		// and trying to resolve env here would block on unset
 		// secrets that runDev handles correctly downstream.
@@ -1558,10 +1558,10 @@ func resolveDevEntry(path string) (entryFile string, projectDir string, err erro
 }
 
 // (App.* override builtins, page-bundle slicing, and route assembly all
-// moved to internal/apphost — shared between `mar dev` and `mar-runtime`.)
+// moved to internal/apphost: shared between `mar dev` and `mar-runtime`.)
 
 func runConfig(dir string) int {
-	// Structural load — prints whatever the operator wrote in
+	// Structural load: prints whatever the operator wrote in
 	// mar.json verbatim (including `env:VAR` references as-is).
 	// Avoids needing the production env vars set in the shell where
 	// `mar config` runs, and gives a more honest answer ("here's

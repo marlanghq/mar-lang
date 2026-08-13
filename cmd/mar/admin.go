@@ -1,4 +1,4 @@
-// `mar admin` — manage the project's admin panel access list.
+// `mar admin`: manage the project's admin panel access list.
 //
 // Three subcommands, all operating on mar.json from the project root:
 //
@@ -6,7 +6,7 @@
 //   mar admin remove EMAIL  - remove email from mar.json["admins"]
 //   mar admin list          - print the current admins
 //
-// The CLI never opens the production DB — it only edits mar.json.
+// The CLI never opens the production DB: it only edits mar.json.
 // Runtime sync of _mar_admins happens at boot (or via the mar dev
 // file watcher in development). For production runtime inspection,
 // see `mar fly admin list` (Phase 5).
@@ -99,7 +99,7 @@ func runAdminAdd(email string) int {
 		return 1
 	}
 	// Validate the existing manifest before mutating it. If mar.json
-	// is already broken, no point in editing it further — the user
+	// is already broken, no point in editing it further: the user
 	// needs to fix the underlying error first.
 	manifest, err := project.LoadManifestStructure(".")
 	if err != nil {
@@ -114,7 +114,7 @@ func runAdminAdd(email string) int {
 
 	patched, changed, err := patchAdmins(raw, func(admins []string) []string {
 		// Append + dedupe (case-insensitive). Preserves existing order
-		// — we don't sort because the user may have intentional ordering.
+		//: we don't sort because the user may have intentional ordering.
 		for _, e := range admins {
 			if strings.EqualFold(e, email) {
 				return admins // already present
@@ -160,7 +160,7 @@ func runAdminAdd(email string) int {
 
 // devAdminURL builds the admin URL for `mar dev` from the manifest's
 // configured server.port (default 3000). Exists so the post-add
-// confirmation always points at the right port — projects that
+// confirmation always points at the right port: projects that
 // changed it via mar.json["server"]["port"] would otherwise see an
 // incorrect 3000 and have to figure out the override themselves.
 func devAdminURL(m *project.Manifest) string {
@@ -223,7 +223,7 @@ func runAdminRemove(email string) int {
 }
 
 func runAdminList() int {
-	// Validate the manifest before printing — surfaces typos and
+	// Validate the manifest before printing: surfaces typos and
 	// range violations at the CLI rather than letting them slide
 	// until the next mar dev / mar build.
 	if _, err := project.LoadManifestStructure("."); err != nil {
@@ -260,7 +260,7 @@ func runAdminList() int {
 }
 
 // readMarJSON locates mar.json in the current directory (the
-// convention — the user runs `mar admin add` from the project
+// convention: the user runs `mar admin add` from the project
 // root) and returns its absolute path + raw bytes.
 func readMarJSON() (path string, raw []byte, err error) {
 	path = "mar.json"
@@ -284,7 +284,7 @@ func readMarJSON() (path string, raw []byte, err error) {
 //
 // Trade-off: re-encoding preserves all other top-level fields but
 // not necessarily their original ordering / whitespace. For the v1
-// CLI this is acceptable — `mar admin add` is rare; users can
+// CLI this is acceptable: `mar admin add` is rare; users can
 // re-format with their editor if they care about layout.
 func patchAdmins(raw []byte, transform func([]string) []string) ([]byte, bool, error) {
 	// Decode to ordered keys so we can update only `admins` and
@@ -310,7 +310,7 @@ func patchAdmins(raw []byte, transform func([]string) []string) ([]byte, bool, e
 		return raw, false, nil
 	}
 
-	// Re-encode admins as a JSON array with one entry per line —
+	// Re-encode admins as a JSON array with one entry per line:
 	// human-friendly diffs.
 	var sb strings.Builder
 	if len(updated) == 0 {
@@ -351,7 +351,7 @@ func patchAdmins(raw []byte, transform func([]string) []string) ([]byte, bool, e
 }
 
 // readAdminsFromRaw extracts the admins list from raw mar.json bytes
-// without going through full Manifest validation — `mar admin list`
+// without going through full Manifest validation: `mar admin list`
 // should work even if some unrelated field is malformed.
 func readAdminsFromRaw(raw []byte) ([]string, error) {
 	if len(raw) == 0 {
@@ -443,7 +443,7 @@ func reindent(raw json.RawMessage, prefix string) ([]byte, error) {
 		return []byte("null"), nil
 	}
 	first := trimmed[0]
-	// Scalars (string/number/bool/null) — emit verbatim.
+	// Scalars (string/number/bool/null): emit verbatim.
 	if first != '{' && first != '[' {
 		return []byte(trimmed), nil
 	}
@@ -473,7 +473,7 @@ func equalStringSlice(a, b []string) bool {
 }
 
 // LoadAdminsFromManifest is a small convenience for callers (the
-// boot-time sync, mostly) that don't need to mutate mar.json — they
+// boot-time sync, mostly) that don't need to mutate mar.json: they
 // just want the validated admins slice with consistent canonicalization.
 func LoadAdminsFromManifest(m *project.Manifest) []string {
 	if m == nil {
@@ -518,7 +518,7 @@ func bootAdminPanel(manifest *project.Manifest) error {
 		fmt.Printf("[mar] admin panel: synced %d admins (+%d -%d)\n", len(desired), added, removed)
 	}
 	if len(desired) == 0 && !adminHintShown {
-		// Multi-line hint — continuation embedded in the format
+		// Multi-line hint: continuation embedded in the format
 		// string so fprintHint emits the whole block as one unit
 		// (otherwise its trailing blank would split the Hint from
 		// the "run ..." line).
@@ -532,6 +532,6 @@ func bootAdminPanel(manifest *project.Manifest) error {
 	return nil
 }
 
-// adminHintShown — print the discovery hint only once per `mar dev`
+// adminHintShown: print the discovery hint only once per `mar dev`
 // session, even though boot runs on every hot-reload.
 var adminHintShown bool

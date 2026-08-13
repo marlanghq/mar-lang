@@ -25,7 +25,7 @@ func TestCatalogDir(t *testing.T) {
 	}
 }
 
-// TestListCatalog_Empty — non-existent directory returns nil + no error.
+// TestListCatalog_Empty: non-existent directory returns nil + no error.
 func TestListCatalog_Empty(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "no-such")
 	got, err := ListCatalog(dir)
@@ -37,7 +37,7 @@ func TestListCatalog_Empty(t *testing.T) {
 	}
 }
 
-// TestListCatalog_NewestFirst — entries come back sorted newest-first.
+// TestListCatalog_NewestFirst: entries come back sorted newest-first.
 func TestListCatalog_NewestFirst(t *testing.T) {
 	dir := t.TempDir()
 	ids := []string{
@@ -64,7 +64,7 @@ func TestListCatalog_NewestFirst(t *testing.T) {
 	}
 }
 
-// TestListCatalog_IgnoresForeignFiles — files that aren't named like
+// TestListCatalog_IgnoresForeignFiles: files that aren't named like
 // catalog entries (or aren't .tar.gz) are silently skipped.
 func TestListCatalog_IgnoresForeignFiles(t *testing.T) {
 	dir := t.TempDir()
@@ -82,7 +82,7 @@ func TestListCatalog_IgnoresForeignFiles(t *testing.T) {
 	}
 }
 
-// TestPruneCatalog_KeepsNewest — pruning to N keeps the N newest.
+// TestPruneCatalog_KeepsNewest: pruning to N keeps the N newest.
 func TestPruneCatalog_KeepsNewest(t *testing.T) {
 	dir := t.TempDir()
 	for _, id := range []string{
@@ -112,7 +112,7 @@ func TestPruneCatalog_KeepsNewest(t *testing.T) {
 	}
 }
 
-// TestPruneCatalog_NoOpWhenUnderLimit — keep ≥ count is a no-op.
+// TestPruneCatalog_NoOpWhenUnderLimit: keep ≥ count is a no-op.
 func TestPruneCatalog_NoOpWhenUnderLimit(t *testing.T) {
 	dir := t.TempDir()
 	mustTouch(t, filepath.Join(dir, "2026-05-08-100000.tar.gz"))
@@ -126,7 +126,7 @@ func TestPruneCatalog_NoOpWhenUnderLimit(t *testing.T) {
 	}
 }
 
-// TestNewCatalogID — IDs are UTC, lexicographically sortable.
+// TestNewCatalogID: IDs are UTC, lexicographically sortable.
 func TestNewCatalogID(t *testing.T) {
 	tm := time.Date(2026, 5, 8, 14, 30, 22, 0, time.UTC)
 	got := NewCatalogID(tm)
@@ -136,7 +136,7 @@ func TestNewCatalogID(t *testing.T) {
 	}
 }
 
-// TestIsValidCatalogID — the defense-in-depth shape check the admin
+// TestIsValidCatalogID: the defense-in-depth shape check the admin
 // download/restore handlers use before joining the id into a
 // filesystem path. Anything that isn't the exact layout
 // YYYY-MM-DD-HHMMSS gets rejected; this includes path-traversal

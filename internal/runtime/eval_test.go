@@ -11,7 +11,7 @@ import (
 // checkAndLoad is how every runtime test gets a module: through the
 // typechecker, not around it. LoadModule refuses a tree the checker has not
 // elaborated, because an unelaborated tree makes the runtime disagree with
-// the compiler instead of failing — so these tests exercise the same
+// the compiler instead of failing, so these tests exercise the same
 // pipeline production does, which is the only version worth testing.
 func checkAndLoad(t *testing.T, src string) *Module {
 	t.Helper()
@@ -263,7 +263,7 @@ func TestEvalLetWithFunction(t *testing.T) {
 	}
 }
 
-// Record-pattern destructuring — runtime side. Typechecker tests cover
+// Record-pattern destructuring: runtime side. Typechecker tests cover
 // type inference + scope; these tests cover that values actually get
 // bound to the right fields at eval time.
 
@@ -276,7 +276,7 @@ func TestEvalRecordPatternInCase(t *testing.T) {
 }
 
 func TestEvalRecordPatternBindsByFieldName(t *testing.T) {
-	// Order in the pattern shouldn't matter — bindings are by name,
+	// Order in the pattern shouldn't matter: bindings are by name,
 	// not position.
 	src := `case { name = "Alice", age = 30 } of
         { age, name } -> age`
@@ -306,7 +306,7 @@ func TestEvalRecordPatternNestedInCtor(t *testing.T) {
 }
 
 func TestEvalRecordPatternPartialMatch(t *testing.T) {
-	// Pattern lists fewer fields than the record has — the extras
+	// Pattern lists fewer fields than the record has: the extras
 	// are silently passed over.
 	src := `case { a = 1, b = 2, c = 3, d = 4 } of
         { b, d } -> b + d`

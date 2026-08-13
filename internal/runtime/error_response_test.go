@@ -27,7 +27,7 @@ func TestServerErrorResponseSanitizesInternalDetail(t *testing.T) {
 }
 
 // A user-authored Effect.fail value is intentional, app-level error text (the
-// `String` error channel of `Effect String resp`) and must still reach the
+// `String` error channel a Task carries) and must still reach the
 // client unchanged.
 func TestServerErrorResponsePreservesUserFailure(t *testing.T) {
 	resp, ok := serverErrorResponse(effectError{value: VString{V: "order not found"}}).(VRecord)

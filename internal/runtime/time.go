@@ -36,7 +36,7 @@ func timeBuiltins() map[string]Value {
 			return VInt{V: int64(d.Seconds)}, nil
 		}),
 
-		// Absolute time. Time.now reads the wall clock — wrapped as
+		// Absolute time. Time.now reads the wall clock: wrapped as
 		// an Effect so it stays out of the pure path. Server-side
 		// uses Go's time.Now(); browser/iOS override later if they
 		// want their own clock source.
@@ -60,7 +60,7 @@ func timeBuiltins() map[string]Value {
 		}),
 
 		// Time.add / Time.sub shift a moment by a duration.
-		// Returning a new VTime — durations are seconds, times are
+		// Returning a new VTime: durations are seconds, times are
 		// milliseconds, so multiply by 1000 to align units.
 		"timeAdd": nativeFn(2, func(args []Value) (Value, error) {
 			t, ok1 := args[0].(VTime)
@@ -129,10 +129,10 @@ func timeBuiltins() map[string]Value {
 			return VInt{V: t.Millis}, nil
 		}),
 
-		// Time.fromYMD year month day — midnight UTC of that date.
+		// Time.fromYMD year month day: midnight UTC of that date.
 		// Out-of-range components (month=13, day=32) normalize per
 		// Go's time.Date convention: the value is *valid* but not
-		// what the caller probably typed. We don't reject — same as
+		// what the caller probably typed. We don't reject: same as
 		// JavaScript's Date constructor.
 		"timeFromYMD": nativeFn(3, func(args []Value) (Value, error) {
 			y, ok1 := args[0].(VInt)
@@ -180,7 +180,7 @@ func makeComponent(name string, get func(time.Time) int) func([]Value) (Value, e
 
 // makeCalendarShift returns a Time -> Int -> Time builder that adds
 // `n * (years, months, days)` to the input Time. AddDate normalizes
-// — e.g. Jan 31 + 1 month = Mar 3 (not Feb 31), matching Go's stdlib
+// : e.g. Jan 31 + 1 month = Mar 3 (not Feb 31), matching Go's stdlib
 // + JS Date conventions. If exact "last day of month" semantics ever
 // matter, we'd add a separate addMonthsClamped.
 func makeCalendarShift(name string, yearMul, monthMul, dayMul int) func([]Value) (Value, error) {

@@ -1,12 +1,12 @@
 module Shared exposing (..)
 
 
--- LENDAS — the contract layer AND the rules engine, shared by the
+-- LENDAS: the contract layer AND the rules engine, shared by the
 -- Backend (which validates and persists every move) and the Frontend
 -- (which replays the same moves to draw the board and predict
 -- legality). The engine is a pure, DETERMINISTIC fold: given the same
 -- seed, decks and move list, the server (Go runtime) and the client
--- (JS runtime) reach bit-identical states — which is why the LCG below
+-- (JS runtime) reach bit-identical states, which is why the LCG below
 -- uses a Park-Miller multiplier small enough to stay exact in float64.
 --
 -- Player-facing copy is Brazilian Portuguese; code stays English.
@@ -37,10 +37,10 @@ type alias Player =
 -- ====================================================================
 
 
--- Desafio   — created, waiting for the opponent to accept (or refuse)
--- Ativa     — both decks locked, being played (maybe over days)
--- Encerrada — someone hit 0 life or conceded; winnerN says who
--- Recusada  — the challenged player said no (terminal)
+-- Desafio   - created, waiting for the opponent to accept (or refuse)
+-- Ativa     - both decks locked, being played (maybe over days)
+-- Encerrada: someone hit 0 life or conceded; winnerN says who
+-- Recusada  - the challenged player said no (terminal)
 type Status
     = Desafio
     | Ativa
@@ -330,7 +330,7 @@ type alias GState =
 -- Deterministic shuffle on the stdlib `Random`: a Seed threaded through
 -- `Random.step`. The PCG is bit-identical across the Go server and the JS
 -- client, so a replay from the same stored seed lands on the same shuffle
--- everywhere — the same guarantee the hand-rolled Park-Miller LCG gave, now
+-- everywhere: the same guarantee the hand-rolled Park-Miller LCG gave, now
 -- from the language instead of copied into the app.
 
 
@@ -362,7 +362,7 @@ shuffle seed cards =
 
 
 -- ====================================================================
--- ENGINE — INIT
+-- ENGINE: INIT
 -- ====================================================================
 
 
@@ -395,7 +395,7 @@ initState rawSeed dkA dkB =
 
 
 -- ====================================================================
--- ENGINE — SMALL ACCESS HELPERS
+-- ENGINE: SMALL ACCESS HELPERS
 -- ====================================================================
 
 
@@ -420,7 +420,7 @@ setSide isA side st =
 
 
 -- After any life change: has someone died? (Both can't drop in one
--- move — every effect hits a single hero.)
+-- move: every effect hits a single hero.)
 checkWin : GState -> GState
 checkWin st =
     if st.winner /= 0 then
@@ -492,7 +492,7 @@ sleepAt i board =
 
 
 -- ====================================================================
--- ENGINE — APPLY ONE MOVE
+-- ENGINE: APPLY ONE MOVE
 -- ====================================================================
 --
 -- Moves are compact strings in the append-only log:
@@ -753,7 +753,7 @@ markAttacked i board =
 
 
 -- ====================================================================
--- ENGINE — REPLAY
+-- ENGINE: REPLAY
 -- ====================================================================
 
 

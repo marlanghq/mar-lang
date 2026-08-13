@@ -8,7 +8,7 @@ import (
 
 // ADR 0020 gives a runtime failure three screens, and the words on them are
 // part of the decision rather than decoration. Two runtimes write those words
-// independently — internal/jsserve/runtime.js and the Swift template — so
+// independently, internal/jsserve/runtime.js and the Swift template, so
 // nothing but a test stops one from drifting into a friendlier, less honest
 // phrasing than the other.
 //
@@ -17,10 +17,10 @@ import (
 // nobody agreed to.
 var failureCopy = []string{
 	"This app has a critical bug.",
-	// update, a tagger, or an effect — the app is still standing.
+	// update, a tagger, or an effect: the app is still standing.
 	"Something unexpected happened and your request could not be completed.",
 	"Nothing was changed. The app is back at its last consistent state.",
-	// view or init — the message takes the page.
+	// view or init: the message takes the page.
 	"Something unexpected happened and this screen could not be shown.",
 	"Go back to return the app to its last consistent state.",
 	// view or init with nothing underneath. Promises nothing, because
@@ -54,7 +54,7 @@ func TestBothRuntimesShipTheSameFailureCopy(t *testing.T) {
 // The copy exists to avoid a specific dishonesty: every runtime error a checked
 // program can still raise is deterministic, so telling someone to try again is
 // telling them to do something that cannot work. `Service.errorToString` says
-// it and is right to — a network comes back — which is exactly why this must
+// it and is right to, a network comes back, which is exactly why this must
 // not borrow the phrasing.
 func TestFailureCopyNeverOffersARetry(t *testing.T) {
 	for _, line := range failureCopy {

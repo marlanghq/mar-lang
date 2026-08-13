@@ -23,7 +23,7 @@ import UI exposing
 -- because forgetting happens and a hole in the middle of the series
 -- hurts every comparison. Past three days it is read-only, because
 -- memory for how a Tuesday felt decays fast enough that a late entry is
--- worse than a missing one — and because a log you can rewrite forever
+-- worse than a missing one, and because a log you can rewrite forever
 -- stops being a record and becomes a story.
 --
 -- Editing here is always one answer at a time, never a run: you came

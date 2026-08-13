@@ -12,7 +12,7 @@ import (
 // stylesheet arrives as a side effect of something rendering. That holds for
 // every screen except these two: a cold load whose `init` or `view` throws
 // never reaches a renderer, and the message drew as unstyled black text on
-// white — found by taking a screenshot, not by a test, because the tests
+// white: found by taking a screenshot, not by a test, because the tests
 // checked the class and the words and nothing checks that CSS arrived.
 //
 // This is a source-level assertion rather than a rendered one. It cannot prove

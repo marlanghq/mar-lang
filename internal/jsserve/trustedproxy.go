@@ -18,7 +18,7 @@ type proxyTrust struct {
 var trustedProxyCfg atomic.Pointer[proxyTrust]
 
 // SetTrustedProxies installs the trusted-proxy policy from
-// mar.json["server"]["trustedProxies"]. nil means "unset" — the default
+// mar.json["server"]["trustedProxies"]. nil means "unset": the default
 // of loopback + RFC1918/RFC4193 private ranges. A non-nil slice (empty
 // included) is authoritative: empty trusts no proxy. Invalid CIDRs are
 // skipped here; the manifest validator rejects them earlier, so this is
@@ -38,7 +38,7 @@ func SetTrustedProxies(cidrs []string) {
 
 // isTrustedProxy reports whether a connecting peer is allowed to set the
 // X-Forwarded-For / X-Forwarded-Proto headers the server honors. Default
-// (unset config): loopback or a private address — covers reverse-proxy-
+// (unset config): loopback or a private address, covers reverse-proxy-
 // on-host, sidecars, the Docker bridge, and private cloud networks.
 // Configured: membership in one of the operator-supplied CIDRs.
 func isTrustedProxy(ip net.IP) bool {

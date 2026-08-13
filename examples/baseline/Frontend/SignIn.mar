@@ -19,7 +19,7 @@ import UI exposing
 --
 -- It carries the whole pitch rather than just an email box on purpose.
 -- Nobody hands over an address, let alone a year of their moods, to a
--- screen that has not said what it is for — and this app asks for
+-- screen that has not said what it is for, and this app asks for
 -- something more personal than most. So the page answers, in order:
 -- what it does, what it gives back, when it will speak, and what it
 -- will never do. The email field is at the bottom, after the case has
@@ -92,7 +92,7 @@ update msg model =
 --
 -- Four weeks of somebody's log: a good start, a rough stretch, a
 -- recovery, and two days nobody filled in. The blanks are there on
--- purpose — missing days are normal here, and the app that pretends
+-- purpose: missing days are normal here, and the app that pretends
 -- otherwise is the app people quit out of guilt.
 
 

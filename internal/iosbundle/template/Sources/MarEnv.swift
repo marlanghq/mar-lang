@@ -1,4 +1,4 @@
-// Environment / scope chain — port of `envNew/envBind/envDefine/
+// Environment / scope chain: port of `envNew/envBind/envDefine/
 // envLookup` in runtime.js. Reference type so a child Env can extend
 // its parent without copying; lookups walk up the chain.
 //
@@ -10,7 +10,7 @@
 //    couple of small-string comparisons (two word-compares each for
 //    identifiers ≤ 15 UTF-8 bytes). A Dictionary here paid a SipHash of
 //    the name on EVERY insert and EVERY probe of every frame the chain
-//    walk crossed — at millions of lookups per canvas frame that hashing
+//    walk crossed: at millions of lookups per canvas frame that hashing
 //    was one of the interpreter's biggest line items.
 //
 //  - The module root (hundreds of builtins + the program's top-level
@@ -65,7 +65,7 @@ final class Env {
 
     /// Append WITHOUT scanning for an existing entry. Callers guarantee
     /// the name isn't already in this frame (params of one call, the
-    /// variables of one pattern — both distinct by construction). Reverse
+    /// variables of one pattern: both distinct by construction). Reverse
     /// lookup keeps shadowing correct even if that guarantee ever slips.
     func appendBinding(_ name: String, _ value: MarValue) {
         if dict != nil {
@@ -82,7 +82,7 @@ final class Env {
     }
 
     /// Register a native builtin under BOTH its bare desugared name
-    /// (`soundTone`) and its dotted user-facing name (`Sound.tone`) —
+    /// (`soundTone`) and its dotted user-facing name (`Sound.tone`):
     /// the standard two-key convention. Convenience used by the
     /// web-first subsystems (Sound / Canvas / Gamepad / Keyboard / Device).
     func defineFn(_ bare: String, _ dotted: String, _ arity: Int,
@@ -114,7 +114,7 @@ final class Env {
     /// `Mar.Admin.x` exports from `Mar.Admin`, not from `Mar`).
     /// Powers `import M exposing (..)`, mirroring the Go runtime's
     /// Env.ExportsOf. Frames are applied outermost-first so inner
-    /// bindings win, matching lookup's shadowing order. (Cold path —
+    /// bindings win, matching lookup's shadowing order. (Cold path:
     /// runs once per import at load, never per frame.)
     func exportsOf(_ modName: String) -> [String: MarValue] {
         let prefix = modName + "."
@@ -134,7 +134,7 @@ final class Env {
                     out[suffix] = v
                 }
             }
-            // Within one array frame, later slots must win — iterate in
+            // Within one array frame, later slots must win: iterate in
             // insertion order so the last write lands in `out`.
             for (name, v) in e.slots {
                 guard name.hasPrefix(prefix) else { continue }

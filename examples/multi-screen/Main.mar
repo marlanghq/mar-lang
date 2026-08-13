@@ -16,7 +16,7 @@ import UI exposing
 -- Each has its own model, persisted per browser session.
 --
 -- Routes are declared as typed `Path {}` values so the in-app links
--- (`navigationLink counterPath ...`) are refactor-safe — change the
+-- (`navigationLink counterPath ...`) are refactor-safe: change the
 -- URL pattern and every callsite flags in compile time.
 
 

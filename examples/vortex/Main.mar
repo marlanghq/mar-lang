@@ -1,15 +1,15 @@
 module Main exposing (main)
 
 
--- VORTEX — a tube shooter. You are a claw on the near rim of a geometric
+-- VORTEX: a tube shooter. You are a claw on the near rim of a geometric
 -- well, one kind of thing climbs the lanes toward you, and you shoot it
 -- before it arrives. That is the whole game.
 --
 -- It got here by subtraction. The first version was a faithful Tempest 2000
 -- clone: five enemies, four power-ups, a superzapper, spikes, jump, warp
 -- tokens, a bonus round. All of it worked and none of it was the reason the
--- thing was fun. What was fun was the well — the sense of looking INTO
--- something and of a shape rushing out of it — and every system on top was
+-- thing was fun. What was fun was the well: the sense of looking INTO
+-- something and of a shape rushing out of it, and every system on top was
 -- another rule standing between a player and that. So they are gone. What is
 -- left is one enemy, one gun, and a shape that changes every level.
 --
@@ -21,7 +21,7 @@ module Main exposing (main)
 --   1. A real perspective divide. A point at depth z lands at
 --      `far + (rim - far) * D / (D + z)`. That hyperbola is why something at
 --      the far end crawls and the same thing at your feet is on you before
---      you finish the thought — constant speed in the well, accelerating on
+--      you finish the thought: constant speed in the well, accelerating on
 --      screen. A linear interpolation gets the picture right and the FEEL
 --      completely wrong.
 --
@@ -35,12 +35,12 @@ module Main exposing (main)
 --      else: the lean is a function of where you stand, so a still player is
 --      a still screen. An earlier version turned the web on a free-running
 --      counter and wobbled the vanishing point on a sine, and both were
---      wrong the same way — motion that is not a reaction to you is not a
+--      wrong the same way: motion that is not a reaction to you is not a
 --      camera, it is a screensaver. Each web has its own fixed orientation,
 --      set once on arrival, and holds it.
 --
--- What it never does is shake. Death and impact change the OBJECT — colour,
--- shape, the web going white — and leave the frame where it is.
+-- What it never does is shake. Death and impact change the OBJECT: colour,
+-- shape, the web going white, and leave the frame where it is.
 --
 -- ARITHMETIC. Mar has no floats, so everything here is fixed point at 1024,
 -- and every angle is a BRAD: one 256th of a turn, so wrapping is `modBy 256`
@@ -49,8 +49,8 @@ module Main exposing (main)
 -- web and on iOS.
 --
 -- Controls: left/right (or A/D) walk the rim, space or Z fires, enter starts.
---   Touch: a stick on the bottom left — grab anywhere in that half and push,
---   and how far you push is how fast you walk — and fire on the bottom right.
+--   Touch: a stick on the bottom left, grab anywhere in that half and push,
+--   and how far you push is how fast you walk, and fire on the bottom right.
 --
 -- Run: mar dev examples/vortex   (port 3042)
 
@@ -98,7 +98,7 @@ cosB a =
     Math.cos (Math.turns a) * one // 1000
 
 
--- Integer square root by Newton's method. Used for line thickness — a line
+-- Integer square root by Newton's method. Used for line thickness: a line
 -- needs a perpendicular of a known length, and that is the only place in the
 -- game that needs a magnitude rather than an angle.
 isqrt : Int -> Int
@@ -164,7 +164,7 @@ midpoint a b =
 --
 -- A web is a rim: a list of points in web space, where the radius is `webR`.
 -- Consecutive points bound a LANE, which is the whole coordinate system of
--- the game — every enemy and every shot lives in some lane at some depth.
+-- the game: every enemy and every shot lives in some lane at some depth.
 --
 -- A closed web wraps (lane N-1 borders lane 0) and you can walk it forever;
 -- an open one has two ends you cannot walk past. That difference is one
@@ -235,7 +235,7 @@ starRim points inner =
 --
 -- It sits BELOW the middle on purpose. The lanes converge upward toward the
 -- vanishing point, so the near wall is low and wide and the far one is high
--- and short — you are looking up a slope at things coming down it, which is
+-- and short: you are looking up a slope at things coming down it, which is
 -- what this level is in the arcade and what makes it read at a glance.
 lineRim : Int -> List Pt
 lineRim n =
@@ -278,7 +278,7 @@ webFor level =
 
 -- THE ORDER IS THE DIFFICULTY CURVE.
 --
--- There are no difficulty settings in this game and the numbers barely move —
+-- There are no difficulty settings in this game and the numbers barely move:
 -- what changes between levels is the PLACE. So the order these arrive in is
 -- the whole ramp, and it has one rule: a CLOSED web is a kinder web. It has
 -- no ends, you can walk it forever, and nothing can ever corner you. An open
@@ -287,7 +287,7 @@ webFor level =
 --
 -- Ranked, easiest first:
 --
---   RINGS are the kindest. Regular, symmetric, endless — the shape teaches
+--   RINGS are the kindest. Regular, symmetric, endless: the shape teaches
 --     you the well and asks nothing else.
 --   POLYGONS next. Still closed and still regular, but the corners make the
 --     lanes uneven, so a lane is no longer just "one step".
@@ -408,7 +408,7 @@ stepLane closed count lane dir =
 -- It started at 340, which put the far end at a quarter of the rim's size and
 -- made the well read as a shallow dish rather than a shaft. At 200 the far
 -- end is a sixth, the lane walls converge hard, and there is visibly a long
--- way for something to come from — which is the point, because that distance
+-- way for something to come from, which is the point, because that distance
 -- is the only warning the game gives you.
 
 
@@ -460,13 +460,13 @@ project cam p z =
 --
 -- Canvas has rectangles, circles and triangles but no line, and a tube
 -- shooter is nothing but lines at arbitrary angles. A line is therefore a
--- quad — two triangles — built from the perpendicular of its own direction.
+-- quad, two triangles, built from the perpendicular of its own direction.
 -- That needs a magnitude, which is the one place `isqrt` earns its keep, and
 -- no angle at all.
 --
 -- The perpendicular is computed in FIXED POINT and rounded, and that detail is
 -- the whole function. Done in plain integers, `-dy * halfWidth / length` is
--- zero for any line more than a couple of pixels long — the width the line
+-- zero for any line more than a couple of pixels long: the width the line
 -- wants is under one pixel per axis, truncation takes it to nothing, and the
 -- two triangles collapse into a line of zero area that draws nothing at all.
 -- Most of the web simply did not appear. Rounding through 8.8 fixes the
@@ -533,8 +533,8 @@ type alias Shot =
 -- flips fast, in a direction of its own; near the rim it flips slowly, and
 -- toward you. It is the game's verb: something is coming, get in front of it.
 --
--- The TANKER is the same idea asked as a question. It only climbs — no flip,
--- no drift, no hunt — and when you shoot it, it becomes two flippers, one to
+-- The TANKER is the same idea asked as a question. It only climbs: no flip,
+-- no drift, no hunt, and when you shoot it, it becomes two flippers, one to
 -- each side. That is its entire behaviour, and it earns its keep because it
 -- adds no new movement to read and one new decision to make: kill it deep and
 -- the halves have the whole well to hunt you across, kill it late and they
@@ -561,7 +561,7 @@ type alias Foe =
 --
 -- Something that gets all the way up does NOT end your run on the spot. It
 -- takes the rim and comes along it for you, which is the best thing in this
--- game to watch and the thing you actually play against — and it costs a life
+-- game to watch and the thing you actually play against, and it costs a life
 -- only if it reaches you.
 --
 -- What that needs, and what it did not have, is an ending. A rim-walker moves
@@ -591,8 +591,8 @@ rimDepth = 24
 
 
 -- `rim` holds the frames of stay left, and this while it is still climbing.
--- One field with two readings, but they are the same fact — how much of its
--- welcome is left, and "not yet" — and a separate flag would be a second thing
+-- One field with two readings, but they are the same fact: how much of its
+-- welcome is left, and "not yet", and a separate flag would be a second thing
 -- to keep in step with it.
 climbing : Int
 climbing = 0 - 1
@@ -733,7 +733,7 @@ enterLevel level m =
         -- not all arrive square-on. But that only makes sense for a CLOSED
         -- web: a ring has no ends, so any angle is as good as another. An
         -- open one has two, and where they are is part of what the shape
-        -- means — a wall you can be cornered against is a wall along the
+        -- means: a wall you can be cornered against is a wall along the
         -- BOTTOM, and left on the keyboard has to mean left on the screen.
         -- Spun 104 degrees, the flat level became a near-vertical cliff you
         -- climbed sideways, which is the one thing it must never be.
@@ -837,7 +837,7 @@ newRun m =
 
 
 -- Touch: a band across the bottom, walking on the left of it and firing on
--- the right, and nothing anywhere else — the middle and top of the screen is
+-- the right, and nothing anywhere else: the middle and top of the screen is
 -- the well and must never be under a thumb.
 --
 -- WHY A STICK AND NOT TWO ARROWS. The claw walks the rim at one speed, so a
@@ -845,7 +845,7 @@ newRun m =
 -- that is exactly the problem: two squares big enough to hit are two squares
 -- big enough to be in the way, and the game is a thing you read. A stick is
 -- one control, it is smaller than either button was, and it earns its
--- footprint by being ANALOG — a nudge crawls you one lane over, a shove
+-- footprint by being ANALOG: a nudge crawls you one lane over, a shove
 -- sprints you across the web.
 --
 -- It also does not need to be aimed. You grab it anywhere in the walking
@@ -966,8 +966,8 @@ stickPush m =
                 d
 
 
--- A finger has no key-down edge the way a keyboard does — `press` only ever
--- sees KeysChanged — so holding the fire pad did precisely nothing. That was
+-- A finger has no key-down edge the way a keyboard does: `press` only ever
+-- sees KeysChanged, so holding the fire pad did precisely nothing. That was
 -- the whole of "not playable on a phone": you could walk and never shoot.
 --
 -- It repeats rather than firing once per tap, because a shot cap already
@@ -1072,7 +1072,7 @@ padDir m =
 
 -- How far the left stick is pushed, 0..100, past the runtime's own deadzone.
 -- The mirror already zeroes anything under a quarter deflection, so the live
--- range is 25..100 and this stretches it back over the whole ramp — otherwise
+-- range is 25..100 and this stretches it back over the whole ramp: otherwise
 -- the gentlest push you can even express would already be a third of the way
 -- to full speed.
 padLock : Int -> Int
@@ -1095,7 +1095,7 @@ padLock tilt =
 -- So both are here. Holding gives you a steady stream off `fireEvery`; a tap
 -- fires the instant you press, so a fast finger still beats the stream and
 -- runs into the ceiling instead. `held` reads the keyboard and the touch pad
--- through the same list, so there is one rule and not one per device — the
+-- through the same list, so there is one rule and not one per device: the
 -- two used to disagree, with the pad auto-firing off the global frame counter
 -- and the key firing only on the press edge.
 maxShots : Int
@@ -1228,7 +1228,7 @@ walkStep m =
 
         -- Four ways to ask for the same thing, in the order you would be
         -- holding them: a key, then the d-pad, then either analog control.
-        -- They are not summed — whichever one is live wins outright, so a
+        -- They are not summed: whichever one is live wins outright, so a
         -- controller left resting against something cannot fight a hand on
         -- the keyboard.
         dir =
@@ -1251,7 +1251,7 @@ walkStep m =
                 0
 
         -- A key is a key: one lane every `walkFrames`, always. So is a d-pad,
-        -- for the same reason — a switch has one position. Both analog
+        -- for the same reason: a switch has one position. Both analog
         -- controls ramp instead, and how far you push is how fast you go.
         period =
             if keyDir /= 0 || hat /= 0 then
@@ -1286,15 +1286,15 @@ walkStep m =
 -- This used to advance `phaseT` too, on the grounds that it ran once a frame.
 -- So did `attractStep`, and on the title screen both ran, so the phase clock
 -- went up by TWO every frame and only ever held even values by the time a
--- frame ended — and odd ones when the pilot read it. Every `modBy n phaseT`
+-- frame ended, and odd ones when the pilot read it. Every `modBy n phaseT`
 -- in the attract was therefore testing a number that could never be zero:
 -- the demo could not fire, the web changed twice as fast as `attractWebFrames`
 -- says, and the death pause lasted half of what `Dying` asks for. One stray
 -- increment, three symptoms, none of which looked like a clock. A step named
 -- for the lean now does the lean, and each phase advances its own clock once.
 --
--- What actually moves in a tube shooter is the LEAN — the far end pushing
--- away from wherever you are standing — and that is a function of your
+-- What actually moves in a tube shooter is the LEAN: the far end pushing
+-- away from wherever you are standing, and that is a function of your
 -- position, so it stops dead when you do. It is eased rather than snapped
 -- because the claw jumps a whole lane at a time; following that instantly
 -- would make the well twitch once per step.
@@ -1319,7 +1319,7 @@ leanStep m =
 -- has nothing to do with you: far enough away to be a shape you can lead, and
 -- slow enough to be worth aiming at. The hunt only starts near the rim, which
 -- is why the last stretch of a lane is the frightening part rather than all
--- of it. The first two levels have no drift at all — meeting one that comes
+-- of it. The first two levels have no drift at all: meeting one that comes
 -- straight at you is how you learn what a lane is.
 
 
@@ -1338,7 +1338,7 @@ pointsFor kind =
 
 
 -- How long the well takes to cross is the difficulty dial. Three units a
--- frame is about five and a half seconds at the start — long enough to pick
+-- frame is about five and a half seconds at the start: long enough to pick
 -- which lane deserves the shot, short enough that ignoring one costs you.
 foeSpeed : Kind -> Int -> Int
 foeSpeed kind level =
@@ -1376,7 +1376,7 @@ moveFoe m f =
         -- also the one that has to ARRIVE gently: levels one and two have no
         -- deep flipping at all, so whatever number this starts at is a step
         -- change the player feels on level three and nowhere else. It used to
-        -- start at 46 and that step was far too big — the well went from still
+        -- start at 46 and that step was far too big: the well went from still
         -- to busy in one level. Starting at 76 and tightening five frames a
         -- level puts level three back near the old feel and still reaches a
         -- properly frantic floor by the time anyone gets there.
@@ -1389,7 +1389,7 @@ moveFoe m f =
     in
     if f.rim >= 0 then
         -- Up here it does not climb any more. It walks the rim toward you and
-        -- its welcome runs out, and both kinds do it — a tanker that made the
+        -- its welcome runs out, and both kinds do it: a tanker that made the
         -- trip has earned the same right to come and get you.
         { f
             | rim = f.rim - 1
@@ -1421,7 +1421,7 @@ moveFoe m f =
         -- well is not something you dodge, it is something you guess: you
         -- commit to a lane, it corrects, and the correction lands before you
         -- have finished stepping. Losing to that reads as unfair, because it
-        -- is — the game asked for a decision and then took the decision back.
+        -- is: the game asked for a decision and then took the decision back.
         --
         -- Slow it down here and the same move becomes a threat you can
         -- answer. It will come for you, about once every second and a half,
@@ -1522,7 +1522,7 @@ collide m =
 
 
 -- A tanker is two enemies wearing one coat. They come out at the depth it
--- died at, one lane to each side, already moving apart — which is what makes
+-- died at, one lane to each side, already moving apart, which is what makes
 -- WHEN you shoot it the only interesting thing about it.
 splitOf : Model -> Foe -> List Foe
 splitOf m f =
@@ -1593,7 +1593,7 @@ waveSize level =
 
 -- The first two levels are pure flippers: you learn the lane before you learn
 -- the choice. After that a quarter of what arrives is a tanker, rising to a
--- third — enough that every wave has one, never so many that the well is
+-- third: enough that every wave has one, never so many that the well is
 -- mostly things waiting to become other things.
 kindFor : Int -> Int -> Kind
 kindFor level roll =
@@ -1680,7 +1680,7 @@ warpStep m =
 -- cabinet did with the minute nobody was holding it: a demo pilot walks the
 -- rim and shoots, on a well that changes shape every few seconds so you see
 -- there is more than one. It costs almost nothing because every part of it
--- already exists — same tick, same enemy, same camera — with the keyboard
+-- already exists, same tick, same enemy, same camera, with the keyboard
 -- swapped for a small pilot and lives swapped for nothing at all.
 --
 -- It also means the camera on the title moves for exactly the reason it moves
@@ -1694,7 +1694,7 @@ attractWebFrames = 60 * 7
 -- The title is STAGED, in three beats: the letters arrive on an empty well,
 -- the screen holds while you read them, and only then does the game start
 -- playing itself. Running the logo and the demo together made one beat out of
--- two, and the logo was the half that lost — six letters flying in over a
+-- two, and the logo was the half that lost: six letters flying in over a
 -- firefight is six letters nobody looks at.
 --
 -- The wait is a wait, not an intermission: the well and the sky are up and
@@ -1746,7 +1746,7 @@ attractStep m =
 -- whole difference between a demo that looks like someone playing and one
 -- that looks like someone walking into things. Firing by clock sends the
 -- shots down whichever lane the claw is crossing at the time, so the enemy it
--- is walking toward arrives untouched and bursts on top of it — which is
+-- is walking toward arrives untouched and bursts on top of it, which is
 -- exactly what it looked like.
 --
 -- There was also a slow cadence here, put in when the attract well kept going
@@ -1951,8 +1951,8 @@ polyline pts x y size w ink =
 -- THE PICTURE FILLS WHAT IT IS GIVEN.
 --
 -- The scale used to be `min w h / 2.5`, which is the right answer for a circle
--- and the wrong one for anything else. Half the webs are OPEN — a fan, a line,
--- a bowl — and their rim is wider than it is tall, so on a phone held
+-- and the wrong one for anything else. Half the webs are OPEN: a fan, a line,
+-- a bowl, and their rim is wider than it is tall, so on a phone held
 -- sideways the game drew itself into a third of the screen and left the rest
 -- black. You could not tell which lane a thing was in because the whole thing
 -- was a postage stamp.
@@ -1964,14 +1964,14 @@ polyline pts x y size w ink =
 --
 -- The box it fits into is what is left after the readouts and the controls,
 -- not the glass. In landscape the touch band is a quarter of the height, and
--- centring on the screen put the near rim — the part you play on — underneath
+-- centring on the screen put the near rim, the part you play on, underneath
 -- your own thumbs.
 camera : Model -> Cam
 camera m =
     let
         -- The real box the drawing occupies, as min/max and not as a radius.
-        -- Half the shapes are not centred on the origin — a fan has its rim
-        -- along the bottom and its far end up at the vanishing point — so a
+        -- Half the shapes are not centred on the origin: a fan has its rim
+        -- along the bottom and its far end up at the vanishing point, so a
         -- fit measured as `max |y|` reserves room on a side that has nothing
         -- on it and draws the shape small AND low.
         --
@@ -1979,7 +1979,7 @@ camera m =
         -- vanishing point the lean can reach. The lean is a third of the way
         -- back from a lane's middle, so those are known in advance, and using
         -- the whole set rather than the CURRENT one is what keeps the fit
-        -- fixed for the level — measuring the live lean would rescale the
+        -- fixed for the level: measuring the live lean would rescale the
         -- picture as you walked, which is a zoom, and this camera does not
         -- zoom.
         grow = \p b ->
@@ -2038,7 +2038,7 @@ camera m =
 
 -- How much of the game is left showing on the title. The demo is a rehearsal
 -- happening behind the logo, and at full strength it was indistinguishable
--- from the real thing — you look up and think you are already playing. Dimmed
+-- from the real thing: you look up and think you are already playing. Dimmed
 -- it stays legible as a game without ever being mistaken for yours.
 attractDim : Int
 attractDim = 46
@@ -2051,7 +2051,7 @@ view m =
 
         -- The whole game, as one layer. It has to be one layer rather than a
         -- fade per shape, because `Canvas.Alpha` on a group composites the
-        -- group ONCE — fading each shape instead would let every line show
+        -- group ONCE: fading each shape instead would let every line show
         -- through every line it crosses, and a wireframe crossed with itself
         -- at half strength is a mess.
         play =
@@ -2128,8 +2128,8 @@ skyFade = 300
 
 
 -- Where each star sits on the plane of the rim, as an offset from the
--- vanishing point. Computed ONCE — a top-level value in Mar is evaluated when
--- the program loads — so none of this trigonometry runs during a frame.
+-- vanishing point. Computed ONCE: a top-level value in Mar is evaluated when
+-- the program loads, so none of this trigonometry runs during a frame.
 --
 -- The two strides are what spread the field. 97 and 256 are coprime, so the
 -- angles walk the whole turn without landing twice; so do 613 and 1900 for the
@@ -2161,7 +2161,7 @@ skyShapes m cam =
                 -- part of what advances it.
                 --
                 -- It used to be measured from the rim, which made the sky a
-                -- fixed slab sitting in the well — and the dive between levels
+                -- fixed slab sitting in the well, and the dive between levels
                 -- takes the camera `zFar + camD` forward, past the whole slab.
                 -- Halfway down, every star was behind the eye, and the ones
                 -- being born were born behind it too, so the sky emptied and
@@ -2183,7 +2183,7 @@ skyShapes m cam =
 
                 -- The far end sits at a sixth of the scale, so an opacity
                 -- taken straight off the perspective factor leaves a distant
-                -- star at nothing — and the distant ones ARE the effect, being
+                -- star at nothing, and the distant ones ARE the effect, being
                 -- the ones close to the vanishing point that the field appears
                 -- to pour out of. So the ramp starts well clear of zero and
                 -- only widens from there.
@@ -2203,7 +2203,7 @@ skyShapes m cam =
 
 -- The web: the far outline, the lane walls, then the near rim on top.
 -- Drawing the far end first and brightening as it comes forward is the whole
--- of the depth cueing — no fog, no shading, just three weights of one colour.
+-- of the depth cueing: no fog, no shading, just three weights of one colour.
 -- Blend two inks, `k` per cent of the way from the first to the second.
 mixInk : { r : Int, g : Int, b : Int } -> { r : Int, g : Int, b : Int } -> Int -> { r : Int, g : Int, b : Int }
 mixInk from to k =
@@ -2219,7 +2219,7 @@ mixInk from to k =
 -- follows. Two earlier attempts got that half right and still fell flat, and
 -- both failed the same way: they treated the web as ONE thing. Draining every
 -- line to grey together, or backing the eye out so the whole picture shrank,
--- says "the game stopped" — a switch being thrown, over in an instant, with
+-- says "the game stopped": a switch being thrown, over in an instant, with
 -- nothing to watch and nothing that belongs to the run that just ended.
 --
 -- A wave says something. The far side of the well goes dark first and the
@@ -2305,7 +2305,7 @@ webShapes m cam =
 
         -- A wall with something behind it is drawn brighter, and brighter the
         -- nearer that something is. This is the cheapest possible answer to
-        -- the only question the game asks — WHICH lane is it coming up — and
+        -- the only question the game asks, WHICH lane is it coming up, and
         -- it puts the answer on the lane instead of on a readout. Walls are
         -- lane BOUNDARIES, so boundary i belongs to lane i and to the lane
         -- before it, and both count.
@@ -2348,8 +2348,8 @@ webShapes m cam =
 
         -- Opacity alone was too polite for the job, and thickness alone is a
         -- blunt way to say it. So the wall takes on the COLOUR of what is
-        -- behind it — the lane wears what is in it, which also tells you
-        -- WHICH creature without you having to find it first — and gets
+        -- behind it: the lane wears what is in it, which also tells you
+        -- WHICH creature without you having to find it first, and gets
         -- heavier only in the last moment, when the thing is right on top of
         -- the rim and heavy is the correct amount of shouting.
         wall = \i p q ->
@@ -2362,7 +2362,7 @@ webShapes m cam =
             else
                 -- A TINT, not a repaint: two fifths of the way to the
                 -- creature's colour at the very most, and the wall never goes
-                -- fully opaque. The web has to stay the web — if a lit lane
+                -- fully opaque. The web has to stay the web, if a lit lane
                 -- reads as a different object then the shape you are meant to
                 -- be learning comes apart every time something climbs it.
                 seg p q
@@ -2386,7 +2386,7 @@ webShapes m cam =
 
 -- How solid a thing at depth z is: barely there at the far end, solid at your
 -- feet. It is the cheapest depth cue there is and it does something size
--- alone cannot — with two enemies in the same lane, size tells you they are
+-- alone cannot: with two enemies in the same lane, size tells you they are
 -- at different depths but not by how much, while opacity reads as "this one
 -- is the problem" at a glance.
 --
@@ -2395,7 +2395,7 @@ webShapes m cam =
 --
 -- The fade lives entirely in the BACK HALF: anything nearer than `fadeFrom`
 -- is fully solid. Ramping all the way to the rim looked reasonable and was
--- backwards — the perspective curve is nearly flat far away and steep close
+-- backwards: the perspective curve is nearly flat far away and steep close
 -- up, so a fade anchored at the rim barely moved across the whole far half
 -- and then did all its work in the last stretch, where the thing is already
 -- big and obvious. The distinction worth drawing is between two SMALL shapes
@@ -2436,7 +2436,7 @@ foeShapes m cam =
                 -- In WELL units, through both factors, like everything else.
                 -- Held in screen pixels it was one size on every screen, so
                 -- the bigger the well got the smaller the enemy read against
-                -- it — which is most of why one was hard to place in a lane.
+                -- it, which is most of why one was hard to place in a lane.
                 r = max 2 (foeR * depthK cam f.z // one * cam.scale // one)
                 w = max 1 (r // 5)
                 ink = foeInk f.kind
@@ -2506,7 +2506,7 @@ shotShapes m cam =
 -- How FAR into the well it reaches is measured against the lane's WIDTH, not
 -- against a depth in well units. That distinction is the whole of it. A fixed
 -- depth makes the claw a fraction of the lane's LENGTH on screen, and lane
--- length swings wildly between shapes — short on a sixteen-lane ring, very
+-- length swings wildly between shapes: short on a sixteen-lane ring, very
 -- long on an open bowl whose far end is a small arc a long way off. The claw
 -- came out compact on one web and stretched into a tall spindly thing on the
 -- next, on a shape that had not changed. Measured against width it is about
@@ -2541,7 +2541,7 @@ clawShapes m cam =
             -- wins, which is the proportion that looked right all along; on
             -- an open bowl the lane runs a long way to a small far arc and
             -- the run term explodes, so the width term takes over. Getting
-            -- this wrong in either direction is loud — too deep and the claw
+            -- this wrong in either direction is loud: too deep and the claw
             -- is a wedge of pie, too shallow and you cannot see which lane
             -- you are in.
             depth = min (run * 26 // 100) (width * 60 // 100)
@@ -2575,7 +2575,7 @@ sparkShapes m cam =
                 k = depthK cam s.z
 
                 -- The burst grows in WELL units and then goes through BOTH
-                -- factors the web goes through — perspective and `cam.scale`.
+                -- factors the web goes through: perspective and `cam.scale`.
                 -- It used to skip the scale, which made it a size in screen
                 -- pixels: correct at one window size and wrong at every other.
                 -- The well is drawn off the short side of the screen, so on a
@@ -2595,8 +2595,8 @@ sparkShapes m cam =
 -- The touch controls, drawn only on a device with no pointer, from the very
 -- rectangles `padKeys` tests against. A pad lights while a finger is on it,
 -- because a control with no feedback is indistinguishable from a broken one.
--- The stick and the fire button. Neither is a box you have to hit — the zones
--- they answer for are much larger than the marks that stand for them — so
+-- The stick and the fire button. Neither is a box you have to hit: the zones
+-- they answer for are much larger than the marks that stand for them, so
 -- they are drawn small and dim on purpose. What you are looking at is the
 -- well; these are the reminder of where your thumbs go, not the controls.
 padShapes : Model -> List Shape
@@ -2639,7 +2639,7 @@ hud m =
     else
         -- All three on the top line. The lives used to sit in the bottom-left
         -- corner, which on a phone is under the stick and under the thumb
-        -- holding it — the one number you check when things are going badly,
+        -- holding it: the one number you check when things are going badly,
         -- in the one place you cannot see.
         [ Canvas.text 16 28 18 Canvas.Left (rgb 210 220 255) (String.fromInt m.score)
         , Canvas.text 16 50 15 Canvas.Left (rgb 255 240 90)
@@ -2752,7 +2752,7 @@ titleShapes m cam =
 
 -- THE LEVEL-CLEAR DIVE.
 --
--- The warp runs `zFar + camD` at `warpSpeed`, which is 92 frames — a second
+-- The warp runs `zFar + camD` at `warpSpeed`, which is 92 frames: a second
 -- and a half. It used to get 300 milliseconds of sound: a beep that had
 -- finished while you were still falling, and then silence for the rest of the
 -- best-looking move in the game.
@@ -2762,11 +2762,11 @@ titleShapes m cam =
 -- rush that keeps steepening, wind past the mouth of it, a figure climbing
 -- out over the top, and a low note landing at the bottom.
 --
--- Modifiers belong to a VOICE — `sequence` and `chord` are structure and
--- nothing else — so the volume and the shaping go on each tone rather than on
+-- Modifiers belong to a VOICE: `sequence` and `chord` are structure and
+-- nothing else, so the volume and the shaping go on each tone rather than on
 -- the list holding them.
 -- TURNED DOWN, AND THE REASON IS THAT VOICES SUM. Each of the four here was
--- set at a level that sounds right on its own — 24, 12, 26, 30 — and a chord
+-- set at a level that sounds right on its own, 24, 12, 26, 30, and a chord
 -- plays them at once, so what arrives is closer to their total than to any one
 -- of them, and the level change came out shouting next to a kill at 22. Every
 -- voice came down by about the same fraction, which keeps the balance between
@@ -2788,7 +2788,7 @@ clearCue =
                     (Sound.holdPitch 240
                         (Sound.sweep 1500 (Sound.tone Sound.Sawtooth 140 1500)))))
 
-        , -- Wind past the mouth of the well. Quiet on purpose — it is the
+        , -- Wind past the mouth of the well. Quiet on purpose: it is the
           -- texture that makes the sweep sound like travel and not like a
           -- test tone.
           Sound.volume 8
@@ -2850,8 +2850,8 @@ cue c =
             -- fires, so it is the sound you hear most and the one that had to
             -- stop asking for attention. Three things were making it nag:
             --
-            --   * it swept UP, 880 to 1400. A rise reads as an alert — it is
-            --     what a warning does — and a discharge should be leaving you,
+            --   * it swept UP, 880 to 1400. A rise reads as an alert: it is
+            --     what a warning does, and a discharge should be leaving you,
             --     not arriving. Down is the whole difference.
             --   * a square at that pitch is all odd harmonics, which is the
             --     buzz. Triangle says the same thing without the fizz, and a

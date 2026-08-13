@@ -4,7 +4,7 @@ import (
 	"fmt"
 )
 
-// VView is a tree of view nodes — the runtime representation of a `View Msg`
+// VView is a tree of view nodes: the runtime representation of a `View Msg`
 // expression.
 //
 // Views are pure descriptions; the renderer (web or iOS) reads them and
@@ -37,7 +37,7 @@ func (v VView) Display() string {
 	return fmt.Sprintf("<view:%s>", v.Tag)
 }
 
-// viewBuiltins exposes the view DSL — SwiftUI-style declarative
+// viewBuiltins exposes the view DSL: SwiftUI-style declarative
 // vocabulary (UI.navigationStack, UI.form, UI.section, UI.textField,
 // ...). Containers emit VView nodes that the renderers (web JS, iOS
 // Swift) translate to native widgets.
@@ -164,7 +164,7 @@ func viewBuiltins() map[string]Value {
 		// Date-only field. The value is a `Maybe Time`: Nothing renders
 		// today (the device's local date), Just t renders that day. The
 		// renderer shows a native date input and resolves the picked day
-		// back to a Time on change. Held opaquely here — the JS / iOS
+		// back to a Time on change. Held opaquely here: the JS / iOS
 		// renderers unwrap the Maybe. iOS: DatePicker(.date). Web: <input
 		// type="date">.
 		"datePicker": nativeFn(3, func(args []Value) (Value, error) {
@@ -185,7 +185,7 @@ func viewBuiltins() map[string]Value {
 		// <canvas> sized to its own box and reports taps / resizes back
 		// through the onTap / onResize attrs. The Shape / Color builders are
 		// pure data ctors; the Transform / Align ctors live in builtins.go.
-		// CanvasMode constructors — global (bare `Pixelated` / `Crisp`),
+		// CanvasMode constructors: global (bare `Pixelated` / `Crisp`),
 		// nullary, like Pointer's Coarse / Fine. The renderers read the mode
 		// off the canvas node to choose the backing resolution.
 		"Pixelated": VCtor{Tag: "Pixelated"},
@@ -229,7 +229,7 @@ func viewBuiltins() map[string]Value {
 
 		// Modifier attrs. Each produces a VAttr that the appropriate
 		// container reads from its attrs list. The renderer is the
-		// authoritative consumer — these are just labeled name/value
+		// authoritative consumer: these are just labeled name/value
 		// pairs at runtime.
 
 		"navigationTitle": stringAttrCtor("navigationTitle", "UI.navigationTitle"),
@@ -256,7 +256,7 @@ func viewBuiltins() map[string]Value {
 
 		// uiText : List Attr -> String -> View msg
 		// Plain text leaf. The attrs list carries the universal layout
-		// attrs (width / height) — `text [width fill] "..."` is the
+		// attrs (width / height): `text [width fill] "..."` is the
 		// equal-columns idiom. No text-specific attrs exist yet.
 		"uiText": nativeFn(2, func(args []Value) (Value, error) {
 			attrs, err := collectAttrs(args[0], "UI.text")
@@ -302,7 +302,7 @@ func viewBuiltins() map[string]Value {
 		// uiKeyed : String -> View msg -> KeyedView msg
 		// Wraps a regular View in a stable identity (the String key)
 		// so it can be a child of UI.keyedList. At runtime the
-		// "KeyedView" distinction is erased — the value is a VView
+		// "KeyedView" distinction is erased: the value is a VView
 		// with an internal `key` attr appended. The compiler-only
 		// type guarantee ensures keyedList children always carry
 		// the key the reconciler needs to match rows across
@@ -334,7 +334,7 @@ func viewBuiltins() map[string]Value {
 		// keyboard reorder.
 		//
 		// Both pieces are bundled into one attr so the type system
-		// guarantees they're always declared together — eliminates
+		// guarantees they're always declared together: eliminates
 		// the "edit mode set but no handler" silent bug.
 		"uiOnMove": nativeFn(2, func(args []Value) (Value, error) {
 			editing, ok := args[0].(VBool)
@@ -362,7 +362,7 @@ func viewBuiltins() map[string]Value {
 		// without the other.
 		//
 		// Host is KeyedList because per-row delete needs stable
-		// identity to animate the disappearance of the right row —
+		// identity to animate the disappearance of the right row:
 		// which is exactly what keyedList guarantees via its
 		// `KeyedView` children.
 		"uiOnDelete": nativeFn(2, func(args []Value) (Value, error) {
@@ -384,7 +384,7 @@ func viewBuiltins() map[string]Value {
 		"uiSubtitle": textLeaf("subtitle", "UI.subtitle"),
 
 		// uiErrorText : String -> View msg
-		// Error message — semantically distinct from `text` so the
+		// Error message: semantically distinct from `text` so the
 		// renderer can style it with destructive intent (red + semi-
 		// bold). The "errorText" tag is read by the JS renderer (CSS
 		// class `.mar-error-text`) and the iOS renderer
@@ -458,7 +458,7 @@ func viewBuiltins() map[string]Value {
 			return makeAttr("inlineLink", s), nil
 		}),
 
-		// uiChars / uiLines — sizing units. Each wraps an Int into an
+		// uiChars / uiLines: sizing units. Each wraps an Int into an
 		// opaque-from-user-code "Width" / "Height" value (VRecord with
 		// __unit marker so the renderer knows what the number means).
 		// chars → horizontal characters, lines → vertical lines.
@@ -477,12 +477,12 @@ func viewBuiltins() map[string]Value {
 			return lengthValue("lines", n.V), nil
 		}),
 
-		// uiFill — the axis-polymorphic "take the available space"
+		// uiFill: the axis-polymorphic "take the available space"
 		// sizing value. Same __unit-tagged record shape as chars/lines
 		// so the renderers dispatch on one field; amount is unused.
 		"uiFill": lengthValue("fill", 0),
 
-		// uiWidth / uiHeight — attribute builders. They take a Size
+		// uiWidth / uiHeight: attribute builders. They take a Size
 		// value (built via uiChars / uiLines / uiFill) and wrap it as
 		// an Attr. The renderer reads the unit + amount and applies
 		// the appropriate styling (max-width / flex-grow in CSS,
@@ -494,7 +494,7 @@ func viewBuiltins() map[string]Value {
 			return makeAttr("height", args[0]), nil
 		}),
 
-		// uiAlign — cross-axis alignment attr for stacks. The value is
+		// uiAlign: cross-axis alignment attr for stacks. The value is
 		// one of the five alignment constants below; renderers map it
 		// onto align-items (web) / the stack's alignment parameter
 		// (SwiftUI). Wrong-axis values (top in a vstack) are ignored.
@@ -507,7 +507,7 @@ func viewBuiltins() map[string]Value {
 		"uiTop":      VString{V: "top"},
 		"uiBottom":   VString{V: "bottom"},
 
-		// uiPx — pixel sizing unit for images. Same shape as uiChars/
+		// uiPx: pixel sizing unit for images. Same shape as uiChars/
 		// uiLines (a __unit-tagged length value), but tagged "px".
 		"uiPx": nativeFn(1, func(args []Value) (Value, error) {
 			n, ok := args[0].(VInt)
@@ -516,7 +516,7 @@ func viewBuiltins() map[string]Value {
 			}
 			return lengthValue("px", n.V), nil
 		}),
-		// uiSize — fixed width + height for an image. Packs both Pixels
+		// uiSize: fixed width + height for an image. Packs both Pixels
 		// values into the attr payload; the renderer reads w/h.
 		"uiSize": nativeFn(2, func(args []Value) (Value, error) {
 			return makeAttr("size", VRecord{
@@ -524,7 +524,7 @@ func viewBuiltins() map[string]Value {
 				Order:  []string{"w", "h"},
 			}), nil
 		}),
-		// uiFit / uiCover — content-mode flags for images (CSS
+		// uiFit / uiCover: content-mode flags for images (CSS
 		// object-fit contain / cover). "cover" and not "fill": the
 		// word fill is the universal sizing value (`width fill`).
 		"uiFit":   flagAttr("contentModeFit"),
@@ -538,7 +538,7 @@ func viewBuiltins() map[string]Value {
 		// Renderers (iOS NavigationLink, web `<a class="mar-navigation-link">`)
 		// wrap the child in a platform-native tappable area. The
 		// leading attrs list lets callers pass `disabled` to make a
-		// link inert (greyed out, click swallowed) — same shape
+		// link inert (greyed out, click swallowed): same shape
 		// every other interactive primitive uses.
 		"uiNavigationLink": nativeFn(4, func(args []Value) (Value, error) {
 			attrs, err := collectAttrs(args[0], "UI.navigationLink")
@@ -562,12 +562,12 @@ func viewBuiltins() map[string]Value {
 		}),
 
 		// uiEmpty : View msg
-		// No-op placeholder — renders to nothing. Useful in
+		// No-op placeholder: renders to nothing. Useful in
 		// conditional view fragments (`if cond then x else empty`).
 		"uiEmpty": VView{Tag: "empty"},
 
 		// uiSpacer : View msg
-		// Mirror of SwiftUI's `Spacer()` — expands to fill the
+		// Mirror of SwiftUI's `Spacer()`: expands to fill the
 		// available space along the containing stack's main axis.
 		// Used to push siblings apart (e.g. label left, button
 		// right inside an hstack).
@@ -581,7 +581,7 @@ func viewBuiltins() map[string]Value {
 		// attr and dispatch `msg(newValue)` on flip. The leading
 		// attrs list lets callers pass `disabled` (and future
 		// modifiers) the same way they do for textField / button /
-		// picker — uniform API across every interactive primitive.
+		// picker: uniform API across every interactive primitive.
 		"uiToggle": nativeFn(4, func(args []Value) (Value, error) {
 			attrs, err := collectAttrs(args[0], "UI.toggle")
 			if err != nil {
@@ -610,10 +610,10 @@ func viewBuiltins() map[string]Value {
 		// Model. Mirrors SwiftUI's `.sheet(isPresented:)`. The framework
 		// renderer reads the three config fields off the view's Attrs:
 		//
-		//   open      — bool flag; renderer overlays/hides accordingly
-		//   onDismiss — Msg dispatched when user dismisses (backdrop click,
+		//   open      - bool flag; renderer overlays/hides accordingly
+		//   onDismiss: Msg dispatched when user dismisses (backdrop click,
 		//               Escape key, swipe-down gesture, browser back)
-		//   outlet    — required identifier; used by the web renderer for
+		//   outlet    - required identifier; used by the web renderer for
 		//               history-state tracking so the browser back button
 		//               closes the sheet, and by the iOS Swift renderer as
 		//               a routing tag
@@ -675,7 +675,7 @@ func viewBuiltins() map[string]Value {
 		// it into a SwiftUI .confirmationDialog (iOS) or a
 		// position:fixed alert overlay (web). When the parent's
 		// `case` returns `UI.empty` instead, the dialog isn't
-		// mounted at all — so `isPresented` is implicit in whether
+		// mounted at all, so `isPresented` is implicit in whether
 		// the view ever appears in the tree.
 		"uiConfirm": nativeFn(1, func(args []Value) (Value, error) {
 			rec, ok := args[0].(VRecord)
@@ -750,7 +750,7 @@ func containerCtor(tag string) func([]Value) (Value, error) {
 }
 
 // shapeData builds a native that wraps its positional args as a Canvas
-// data value (a Shape or a Color) — VCtor{Tag, Args}. The web / iOS canvas
+// data value (a Shape or a Color): VCtor{Tag, Args}. The web / iOS canvas
 // renderers read the tag + args to draw. Args are copied so a later
 // mutation of the caller's slice can't alter the value.
 func shapeData(tag string) func([]Value) (Value, error) {
@@ -778,7 +778,7 @@ func collectAttrs(v Value, label string) ([]VAttr, error) {
 	return out, nil
 }
 
-// flagAttr returns a constant Attr (no payload) — for input-kind
+// flagAttr returns a constant Attr (no payload): for input-kind
 // flags (email / numeric / oneTimeCode / etc.).
 func flagAttr(name string) Value {
 	return makeAttr(name, VUnit{})
@@ -815,7 +815,7 @@ func viewAttrCtor(attrName, label string) Value {
 
 // textLeaf builds a 1-arg native that emits a VView with the
 // supplied tag and the input String in Text. Used by uiText /
-// uiTitle / uiSubtitle — three primitives that share the same
+// uiTitle / uiSubtitle: three primitives that share the same
 // "wrap a string as a view leaf" shape.
 func textLeaf(viewTag, label string) Value {
 	return nativeFn(1, func(args []Value) (Value, error) {
@@ -837,7 +837,7 @@ func makeAttr(name string, value Value) VRecord {
 	}
 }
 
-// lengthValue wraps an Int with a "unit" tag — the runtime representation
+// lengthValue wraps an Int with a "unit" tag: the runtime representation
 // of the typecheck's opaque Width / Height types. The renderer reads the
 // __unit field to know whether the amount is chars or lines (and could,
 // in the future, accept additional units without changing the API).

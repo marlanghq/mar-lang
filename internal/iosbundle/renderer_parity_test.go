@@ -18,7 +18,7 @@ import (
 //
 // Source of truth: every `MarView(tag: "X")` constructed anywhere in
 // the Swift sources. MarRenderer.swift must handle each tag with a
-// `case "X"` — except tags a parent renderer consumes directly rather
+// `case "X"`: except tags a parent renderer consumes directly rather
 // than through the top-level switch (listed in consumedByParent).
 func TestIOSRendererCoversEmittedViewTags(t *testing.T) {
 	dir := filepath.Join("template", "Sources")
@@ -39,7 +39,7 @@ func TestIOSRendererCoversEmittedViewTags(t *testing.T) {
 	}
 
 	// Tags consumed by a parent renderer, with no top-level case:
-	//   span — folded into the paragraph case's AttributedString.
+	//   span: folded into the paragraph case's AttributedString.
 	consumedByParent := map[string]bool{"span": true}
 
 	var missing []string
@@ -98,7 +98,7 @@ func emittedViewTags(dir string) (map[string]bool, error) {
 // rendererCaseTags returns every quoted tag on a `case ...:` line in
 // MarRenderer.swift. Line-based so combined cases
 // (`case "uiSection", "uiKeyedList":`) contribute every tag. Extra
-// entries from the input-kind / inline-attr switches are harmless —
+// entries from the input-kind / inline-attr switches are harmless:
 // the test only checks that emitted tags are a subset of handled ones.
 func rendererCaseTags(path string) (map[string]bool, error) {
 	data, err := os.ReadFile(path)

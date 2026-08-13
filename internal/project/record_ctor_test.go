@@ -10,7 +10,7 @@ import (
 
 // A record type alias doubles as a positional constructor (Elm-style). The
 // loader desugars every such use into a record-building lambda before eval,
-// so the constructor builds the fields in declaration order — including when
+// so the constructor builds the fields in declaration order: including when
 // partially applied or passed bare to a higher-order function (the
 // `Random.map2 Shapes g g` shape). This drives the desugar end to end:
 // parse -> desugar -> eval, then reads back the resulting records.

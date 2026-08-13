@@ -1,8 +1,8 @@
-// Admin HTTP handlers — the parallel of auth.go's /_auth/* endpoints,
+// Admin HTTP handlers: the parallel of auth.go's /_auth/* endpoints,
 // for the framework's built-in admin panel served at /_mar/admin.
 //
 // Routes mounted by mountAdminHandlers (full list documented inline
-// at that function — auth, static assets, services, page shell).
+// at that function: auth, static assets, services, page shell).
 //
 // All endpoints are rate-limited per-IP (separate buckets from
 // /_auth/* so an attacker pounding user-auth doesn't block admin
@@ -47,28 +47,28 @@ var adminIPLimiter = auth.NewLimiter(20, time.Hour)
 // Called from ServeLive once the admin schema is ready. Routes:
 //
 //	/_mar/admin/auth/{request-code, verify-code, logout}
-//	   — passwordless email-code flow (the Mar panel's login posts here)
+//	  : passwordless email-code flow (the Mar panel's login posts here)
 //
 //	/_mar/admin/api/mar/{server-info, db-stats, recent-requests,
 //	                     entities, entity-rows, backups}
-//	   — introspection in the frontend Mar wire format, consumed by the
+//	  : introspection in the frontend Mar wire format, consumed by the
 //	     panel's Mar.Admin.* effects.
 //
-//	/_mar/admin/api/database-backup/<id>   — backup download (raw bytes)
+//	/_mar/admin/api/database-backup/<id>   - backup download (raw bytes)
 //
-//	/_mar/admin/program.json   — the compiled Mar panel program
-//	/_mar/admin[/...]          — the panel's HTML shell; client routes
+//	/_mar/admin/program.json   - the compiled Mar panel program
+//	/_mar/admin[/...]          - the panel's HTML shell; client routes
 //	     (/login, /table/*) load on direct nav / reload.
 func mountAdminHandlers(mux *http.ServeMux) {
 	// All /_mar/admin/auth/* and /_mar/admin/api/* endpoints sit
 	// behind the gateway rate limiter (per-IP, mar.json["rateLimit"]).
 	// /_mar/admin/auth/request-code additionally has adminIPLimiter
-	// (20/h) running inside the handler — see comment on that limiter.
+	// (20/h) running inside the handler: see comment on that limiter.
 	mux.HandleFunc("/_mar/admin/auth/request-code", rateLimit(handleAdminRequestCode))
 	mux.HandleFunc("/_mar/admin/auth/verify-code", rateLimit(handleAdminVerifyCode))
 	mux.HandleFunc("/_mar/admin/auth/logout", rateLimit(handleAdminLogout))
 
-	// /_mar/admin/api/mar/* — introspection serialized in the frontend Mar
+	// /_mar/admin/api/mar/*: introspection serialized in the frontend Mar
 	// wire format (runtime.EncodeValueJSON ↔ jsToMar, so a typed Dict
 	// survives the round-trip), consumed by the panel's Mar.Admin.* effects.
 	// Gated by the admin session cookie, same as every /api/ route.
@@ -79,7 +79,7 @@ func mountAdminHandlers(mux *http.ServeMux) {
 	mux.HandleFunc("/_mar/admin/api/mar/entity-rows", rateLimit(handleAdminMarEntityRows))
 	mux.HandleFunc("/_mar/admin/api/mar/backups", rateLimit(handleAdminMarBackups))
 
-	// The Mar-native admin panel — the default at /_mar/admin (login +
+	// The Mar-native admin panel: the default at /_mar/admin (login +
 	// dashboard + per-table browser, all in one Mar program compiled at boot).
 	// Subtree so its client routes (/login, /table/*) load on direct nav /
 	// reload; the exact program.json route wins over the subtree.
@@ -94,7 +94,7 @@ func mountAdminHandlers(mux *http.ServeMux) {
 // /_mar/admin/api/* handler that needs to know who's logged in.
 //
 // Reads the mar_admin_session cookie, looks up the row in
-// _mar_admin_sessions (DB-per-request — no in-memory cache), returns
+// _mar_admin_sessions (DB-per-request: no in-memory cache), returns
 // the admin's email on hit.
 //
 // Errors are distinguished by the caller:
@@ -121,14 +121,14 @@ func requireAdminSession(r *http.Request) (string, error) {
 	}
 	db, err := adminDB()
 	if err != nil {
-		// Real DB error — caller should 503, not 401.
+		// Real DB error: caller should 503, not 401.
 		return "", fmt.Errorf("admin session: %w", err)
 	}
 	email, err := admin.LookupSession(db, secret, c.Value, time.Now())
 	if err != nil {
 		// LookupSession already returns ErrNoSession for missing /
 		// expired rows; any other error is a real DB error. Pass
-		// both up unchanged — caller decides 401 vs 503 by checking
+		// both up unchanged: caller decides 401 vs 503 by checking
 		// errors.Is(err, admin.ErrNoSession).
 		return "", err
 	}
@@ -195,7 +195,7 @@ func handleAdminRequestCode(w http.ResponseWriter, r *http.Request) {
 		writeAuthError(w, http.StatusBadRequest, "missing_email")
 		return
 	}
-	// Validate email shape — same reasoning as /_auth/request-code.
+	// Validate email shape: same reasoning as /_auth/request-code.
 	// Even though IsAdmin gates the actual send/issue downstream,
 	// rejecting garbage upfront keeps the codepath clean.
 	if !project.IsValidEmail(email) {
@@ -225,7 +225,7 @@ func handleAdminRequestCode(w http.ResponseWriter, r *http.Request) {
 
 	// Send. auth.Send routes through MailSink.Stdout when the SMTP
 	// host is empty, so dev-mode (no SMTP configured) just prints
-	// the code to the terminal — same path the user-auth dev flow
+	// the code to the terminal: same path the user-auth dev flow
 	// already uses. In prod, it goes via the SMTP from mar.json.
 	smtpCfg := SMTP()
 	from := smtpCfg.Username // sane fallback if mail.from isn't plumbed
@@ -354,7 +354,7 @@ func handleAdminLogout(w http.ResponseWriter, r *http.Request) {
 
 // adminDB opens the project's SQLite handle for admin endpoints.
 // Same DB the user-auth uses (one mar.db per project), but bypasses
-// auth.Migrate — admin schema was already created at boot, and we
+// auth.Migrate: admin schema was already created at boot, and we
 // don't want a user-auth schema problem to lock out the admin panel.
 func adminDB() (*sql.DB, error) {
 	return runtime.OpenDB()
@@ -377,7 +377,7 @@ func minDelay(started time.Time, floorMs int) {
 // user-auth uses; if both are configured, they share the From.
 //
 // The actual lookup is a thin pass-through to the manifest because
-// jsserve doesn't keep a separate "mail.from" cache — but to avoid
+// jsserve doesn't keep a separate "mail.from" cache, but to avoid
 // re-reading mar.json per request, we plumb it via SetAdminMailFrom
 // at boot.
 func mailFrom() string {

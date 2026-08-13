@@ -24,7 +24,7 @@ struct DiscoveredServer: Identifiable, Equatable, Hashable, Sendable {
     let host: String
     let port: Int
 
-    /// Stable id for SwiftUI ForEach. host:port is enough — same
+    /// Stable id for SwiftUI ForEach. host:port is enough, same
     /// physical service on the LAN always resolves to the same URL.
     var id: String { "\(host):\(port)" }
     var url: URL? { URL(string: "http://\(host):\(port)") }
@@ -93,7 +93,7 @@ final class Discovery {
                 self?.merge(resolved)
             }
             // Even before resolution, surface the name with empty
-            // host/port — callers that show "discovered servers"
+            // host/port: callers that show "discovered servers"
             // can distinguish "found, resolving" from "fully ready".
             found.append(DiscoveredServer(name: name, host: "", port: 0))
         }
@@ -117,7 +117,7 @@ final class Discovery {
     /// Resolve a Bonjour endpoint to host:port by opening a transient
     /// NWConnection and reading the path's remote endpoint once the
     /// connection reaches `.ready`. We cancel the connection
-    /// immediately after — we only need the resolved address.
+    /// immediately after: we only need the resolved address.
     ///
     /// Concurrency: the resolution latch (`done`) is wrapped in a
     /// small actor so the state callback (queue: .main) and the
@@ -151,7 +151,7 @@ final class Discovery {
             }
             conn.start(queue: .main)
 
-            // Safety net — bail if resolution takes too long.
+            // Safety net: bail if resolution takes too long.
             Task {
                 try? await Task.sleep(nanoseconds: 5_000_000_000)
                 await latch.fire(nil)

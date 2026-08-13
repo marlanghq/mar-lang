@@ -13,18 +13,18 @@ import (
 // Kind selects which scaffold to generate. Each kind ships a
 // different file set under <path>/:
 //
-//   - KindFullstack — Main + Shared + Backend + Frontend with a
+//   - KindFullstack: Main + Shared + Backend + Frontend with a
 //     persisted entity, two services, and a two-page frontend.
-//   - KindFullstackAuth — same layout as KindFullstack but with
+//   - KindFullstackAuth: same layout as KindFullstack but with
 //     passwordless email-code auth wired through Auth.config and
 //     Auth.protect; the frontend is a single page that walks the
 //     user through sign-in before showing per-user entries.
-//   - KindFrontend — single Main.mar with two pages, no backend.
-//   - KindBackend — single Main.mar with an entity and two services
+//   - KindFrontend: single Main.mar with two pages, no backend.
+//   - KindBackend: single Main.mar with an entity and two services
 //     exposed via App.backend (no UI).
-//   - KindMinimum — single Main.mar with an empty page wired through
-//     App.fullstack. The smallest possible mar app — no UI, no model
-//     state, no services — meant as a blank slate to build on.
+//   - KindMinimum: single Main.mar with an empty page wired through
+//     App.fullstack. The smallest possible mar app: no UI, no model
+//     state, no services: meant as a blank slate to build on.
 type Kind string
 
 const (
@@ -67,7 +67,7 @@ func Init(path string, kind Kind) error {
 		return fmt.Errorf("%s already exists", path)
 	}
 	// Use just the directory name (not the full path) for the manifest's
-	// "name" field — that's what humans want to see when they edit it.
+	// "name" field: that's what humans want to see when they edit it.
 	name := filepath.Base(path)
 
 	var files map[string]string

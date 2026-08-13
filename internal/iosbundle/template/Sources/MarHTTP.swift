@@ -1,4 +1,4 @@
-// Async HTTP for the runtime — fire-and-dispatch semantics. Mirrors
+// Async HTTP for the runtime: fire-and-dispatch semantics. Mirrors
 // the JS pattern in runtime.js where `fetch().then(toMsg → dispatch)`
 // is the universal shape for Service.call / Http.get / Http.post.
 //
@@ -19,7 +19,7 @@ enum MarHTTP {
     static let bearerTokenHeader = "X-Mar-Auth-Token"
 
     /// Attach the stored bearer to `req` if Keychain has one. No-op
-    /// when there's no stored token — that's the pre-login state, the
+    /// when there's no stored token: that's the pre-login state, the
     /// request goes out anonymous, and the server returns 401 if the
     /// route required auth. Called from every request site so the
     /// runtime never forgets a credential.
@@ -31,7 +31,7 @@ enum MarHTTP {
 
     /// Wipe the local credential. Called on Auth.logout and any time
     /// the server tells us the session is invalid (401 on a Service
-    /// call, /_auth/me returning null). Idempotent — Keychain delete
+    /// call, /_auth/me returning null). Idempotent: Keychain delete
     /// of a missing key is a no-op.
     @MainActor
     static func clearStoredToken() {
@@ -50,7 +50,7 @@ enum MarHTTP {
         send(method: method, url: u, body: body, toMsg: toMsg)
     }
 
-    /// Service.call variant — `method` is the contract's HTTP verb and
+    /// Service.call variant: `method` is the contract's HTTP verb and
     /// `path` is the request URL (already built by buildServiceRequest:
     /// typed path params substituted in, the rest in the `q` query param
     /// for GET / DELETE). `path` is relative to the discovered /
@@ -102,7 +102,7 @@ enum MarHTTP {
             let status = (response as? HTTPURLResponse)?.statusCode ?? 0
             if status == 401 {
                 Task { @MainActor in
-                    // Token's no good — wipe it so the sign-in screen
+                    // Token's no good: wipe it so the sign-in screen
                     // doesn't keep re-trying the same dead credential
                     // and so the next cold start lands on sign-in
                     // cleanly instead of bouncing through a 401.
@@ -110,7 +110,7 @@ enum MarHTTP {
                     if AppContext.shared.handleAuthExpired() {
                         return
                     }
-                    // No signInPath configured — fall through and
+                    // No signInPath configured: fall through and
                     // surface Err Unauthorized so the app at least
                     // sees something.
                     let r = makeServiceResult(data: data, response: response, error: error)
@@ -141,7 +141,7 @@ enum MarHTTP {
     /// Sessions are credentialed via `Authorization: Bearer …` from
     /// the Keychain-backed token. URLSession.shared also still
     /// persists a Set-Cookie if the server happens to issue one, but
-    /// the Bearer is the authoritative credential — server-side
+    /// the Bearer is the authoritative credential: server-side
     /// `extractSessionToken` returns the header value first, the
     /// cookie only as a fallback. That keeps the model uniform with
     /// future Android/Windows runtimes where cookie storage is
@@ -170,7 +170,7 @@ enum MarHTTP {
                 // `X-Mar-Auth-Token` on success; we copy it to
                 // Keychain so subsequent requests carry the Bearer.
                 // The header is absent on other auth endpoints
-                // (request-code, logout) — `headerToken` is nil
+                // (request-code, logout): `headerToken` is nil
                 // there and we skip the save.
                 if let http = response as? HTTPURLResponse,
                    (200..<300).contains(http.statusCode),
@@ -212,9 +212,9 @@ enum MarHTTP {
     /// GET /_auth/me as an async function (no dispatcher dependency).
     /// Used by the gating layer (LoadedShell) to bootstrap auth before
     /// any page is mounted. Returns:
-    ///   .ctor("Just", [user]) — logged in
-    ///   .ctor("Nothing", [])  — not logged in
-    ///   nil                   — network error (caller decides how to surface)
+    ///   .ctor("Just", [user]): logged in
+    ///   .ctor("Nothing", [])  - not logged in
+    ///   nil                   - network error (caller decides how to surface)
     static func fetchAuthMe() async -> MarValue? {
         guard let url = await MainActor.run(body: { MarDispatcher.shared.resolve(path: "/_auth/me") })
         else { return nil }
@@ -305,7 +305,7 @@ enum MarHTTP {
     /// consistently shape error bodies as `{"error": "snake_case_code", ...}`.
     /// When that shape is present, return just the code so user code
     /// can `case` on it cleanly. Otherwise fall back to the raw body
-    /// or — if even the body is empty — to "HTTP <status>".
+    /// or, if even the body is empty, to "HTTP <status>".
     ///
     /// Mirrors the JS runtime's `decodeServerError`. Without this,
     /// a 429 from the gateway limiter would surface in a Result.Err
@@ -367,7 +367,7 @@ enum MarHTTP {
             let msg = try Eval.apply(toMsg, resultValue)
             MarDispatcher.shared.dispatch(msg)
         } catch {
-            // toMsg failed to apply — surface it as a console
+            // toMsg failed to apply: surface it as a console
             // diagnostic. There's nowhere good to dispatch this since
             // the failure is in the message-construction itself.
             print("[mar] toMsg failed: \(error.localizedDescription)")

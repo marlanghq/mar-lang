@@ -70,7 +70,7 @@ update _ msg model =
             )
 
         Saved (Ok (Shared.ProfileSaved _)) ->
-            -- Setup complete — push to home with a replace so the
+            -- Setup complete: push to home with a replace so the
             -- back button doesn't return here.
             ( { model | submitting = False }
             , Nav.replaceTo Frontend.Routes.home {}

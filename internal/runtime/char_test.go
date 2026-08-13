@@ -56,7 +56,7 @@ func TestEvalCharModule(t *testing.T) {
 }
 
 func TestEvalStringCharBridges(t *testing.T) {
-	// String.toList iterates code points — 🇧🇷 → 2 chars (the regional
+	// String.toList iterates code points: 🇧🇷 → 2 chars (the regional
 	// indicator scalars), not 1. Documents the code-point model
 	// explicitly.
 	if got := runValue(t, `List.length (String.toList "abc")`); got != "3" {

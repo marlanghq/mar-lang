@@ -15,7 +15,7 @@ import UI exposing
     )
 
 
--- What the app has to say, and — just as prominently — what it does
+-- What the app has to say, and, just as prominently, what it does
 -- not have enough days to say yet.
 --
 -- Three blocks, in this order:
@@ -122,8 +122,8 @@ update _ msg model =
 --
 -- Mood is a bar per day in the calendar's colours; energy is a dot
 -- above it. Two encodings rather than two lines, because they carry
--- different questions — mood is the thing being explained, energy is
--- the thing that tells you which kind of bad day it was — and because
+-- different questions: mood is the thing being explained, energy is
+-- the thing that tells you which kind of bad day it was, and because
 -- a bar chart of five named levels cannot suggest a precision the
 -- scale does not have.
 
@@ -202,7 +202,7 @@ isLevel reading =
         Shared.Waiting _ _  -> False
 
 
--- "the same day" or "the next morning" — which one won is part of the
+-- "the same day" or "the next morning", which one won is part of the
 -- finding, not a footnote. Sleep and alcohol land the morning after,
 -- and an app that only ever crosses a factor with the same day quietly
 -- never finds either.

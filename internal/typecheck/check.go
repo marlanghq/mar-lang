@@ -18,7 +18,7 @@ type CheckResult struct {
 
 	// ExprTypes maps every expression node the inferencer visited to
 	// its post-substitution type. Populated when CheckModuleWith
-	// enables Subst.EnableExprTracking — used by the shape lint
+	// enables Subst.EnableExprTracking: used by the shape lint
 	// (shape_lint.go) to validate non-literal record values that the
 	// polymorphic framework signatures don't constrain.
 	ExprTypes map[ast.Expr]Type
@@ -51,7 +51,7 @@ type CustomType struct {
 	// constructors exist at runtime ("Canvas" → Canvas.Translate, "Keyboard"
 	// → Keyboard.KeyW). It is the single source the ctor-registry generator
 	// (internal/ctorgen) reads to emit the JS + Swift registrations, so a
-	// builtin union is registered everywhere or nowhere — never half. Empty
+	// builtin union is registered everywhere or nowhere, never half. Empty
 	// means "not part of the generated registry": user-declared types, the
 	// core types with native representations (Bool, Maybe, Result), and the
 	// unions whose constructors are deliberately GLOBAL bare names (Order,
@@ -134,7 +134,7 @@ func CheckModuleWith(
 	// Imported types arrive keyed CANONICALLY (`Shared.User`). Each is
 	// registered under that key and ALSO bound to its bare tail, because
 	// writing `User` after a plain `import Shared` is the established idiom
-	// — 40 sites across the examples do it. Restricting the bare form to
+	//: 40 sites across the examples do it. Restricting the bare form to
 	// `exposing` lists is a separate tightening this change does not make.
 	for k, v := range importedAliases {
 		tEnv.aliases[k] = v
@@ -144,7 +144,7 @@ func CheckModuleWith(
 		tEnv.customs[k] = v
 		tEnv.bindBare(baseName(k), k)
 		// Imported customs also need to be visible at the value-env
-		// level for exhaustiveness checking to find them — under the
+		// level for exhaustiveness checking to find them: under the
 		// canonical key, which is what a TCon now carries.
 		valueEnv.RegisterCustom(k, v)
 	}
@@ -157,7 +157,7 @@ func CheckModuleWith(
 	// `exposing (..)` binds EVERYTHING the module exports: every
 	// `M.name` already registered in the env (values, ctors, and for
 	// builtin modules like UI the whole vocabulary) comes in bare.
-	// Type names need no extra handling — imported aliases/customs
+	// Type names need no extra handling: imported aliases/customs
 	// are already visible unqualified (see the loops above).
 	for _, imp := range mod.Imports {
 		if len(imp.Exposing.Items) == 0 && !imp.Exposing.All {
@@ -176,7 +176,7 @@ func CheckModuleWith(
 			}
 			// Type names: naming a type in an `exposing` list binds its bare
 			// form. The loops above already bound every imported type's bare
-			// tail, so this is only about being explicit — the lookup is by
+			// tail, so this is only about being explicit: the lookup is by
 			// the canonical key either way.
 			if alias, ok := importedAliases[qual]; ok {
 				tEnv.aliases[qual] = alias
@@ -226,7 +226,7 @@ func CheckModuleWith(
 			// thread it into the body conversion AND record the
 			// per-position IDs on the alias for later substitution.
 			// `convertTypeExpr` would have built this internally and
-			// thrown the mapping away — by doing it here we keep
+			// thrown the mapping away: by doing it here we keep
 			// both halves.
 			paramIDs := make([]int, len(n.Params))
 			scope := map[string]int{}
@@ -341,7 +341,7 @@ func CheckModuleWith(
 			tEnv.customs[ctKey] = ct
 			res.CustomTypes[n.Name] = ct
 			// Make the custom-type registration visible at the value-env
-			// level too — exhaustiveness checking in inferCase reads it by
+			// level too: exhaustiveness checking in inferCase reads it by
 			// the TCon's name, which is now the canonical one.
 			valueEnv.RegisterCustom(ctKey, ct)
 		}
@@ -415,12 +415,12 @@ func CheckModuleWith(
 		// literal at compile time, derive the params row from the
 		// `{name:Type}` segments, and unify against the annotation's
 		// row. The runtime keeps the value as a String (no AST rewrite
-		// needed) — page builders + linkTo / Nav.pushTo re-parse it
+		// needed): page builders + linkTo / Nav.pushTo re-parse it
 		// when they need the segments.
 		//
 		// Only applies when an annotation is present. Without one we
 		// can't know the expected type, so a bare String literal stays
-		// String — the user must declare `notesDetail : Path { id : Int }`.
+		// String, the user must declare `notesDetail : Path { id : Int }`.
 		if annotBody, has := annotationBodies[v.Name]; has {
 			if str, ok := body.(*ast.EString); ok {
 				if pathRow, isPath := pathRowOfAnnot(s.Apply(annotBody)); isPath {
@@ -507,7 +507,7 @@ func CheckModuleWith(
 
 	// Elaboration: an integer literal whose `number` variable resolved to
 	// Decimal becomes a Decimal at runtime. This is where the compiler
-	// stops keeping what it learned to itself — types are erased at the
+	// stops keeping what it learned to itself: types are erased at the
 	// runtime boundary, so a decision the checker made has to be written
 	// back into the tree to survive. Doing it on the node means the
 	// serializer carries it to the JS and Swift runtimes for free.
@@ -529,13 +529,13 @@ func CheckModuleWith(
 //   - a reference to List.sum / List.product instantiated at Decimal, which
 //     picks the implementation whose empty-list zero is a Decimal.
 //
-// Anything still a variable — a literal in a genuinely polymorphic position,
-// or one nobody constrained — is left alone: it stays `number` in the type and
+// Anything still a variable: a literal in a genuinely polymorphic position,
+// or one nobody constrained, is left alone: it stays `number` in the type and
 // Int in the value, which is the behavior that existed before this pass.
 //
 // Exported because the module checker is not the only caller: the REPL runs
 // Infer directly, and a node it typed as Decimal has to be elaborated before
-// Eval sees it, or the type-checker and the runtime disagree — a disagreement
+// Eval sees it, or the type-checker and the runtime disagree: a disagreement
 // that shows up as `+: expected Int` on `1 + 1.50`.
 func Elaborate(exprTypes map[ast.Expr]Type) {
 	for e, t := range exprTypes {
@@ -583,18 +583,18 @@ func decimalImplFor(name string, t Type) string {
 // --- Type name environment for resolving type expressions ---
 
 // A type is identified by `Module.Name`, and the bare name is an explicit
-// alias for it — the same shape the VALUE namespace has always had (ADR 0027).
+// alias for it: the same shape the VALUE namespace has always had (ADR 0027).
 //
 // `aliases` and `customs` are keyed CANONICALLY: `Frontend.Global.Model`, not
 // `Model`. Builtins have no user module and keep their bare key (`Device`), or
 // their own dotted one when they already carry a qualifier (`Service.Error`).
 //
 // `bare` is the only way an unqualified name resolves, and it is built per
-// module from that module's own declarations plus its `exposing` imports —
+// module from that module's own declarations plus its `exposing` imports:
 // never from a shared pool. When two candidates claim one bare name the entry
 // keeps BOTH: having an ambiguity in scope is fine, referencing it is not, and
 // the error at the use site can name them. That distinction is what makes this
-// change non-breaking — see the ADR for the measurement.
+// change non-breaking: see the ADR for the measurement.
 type typeNameEnv struct {
 	aliases map[string]TypeAlias
 	customs map[string]CustomType
@@ -634,7 +634,7 @@ func (e *typeNameEnv) bindBare(bare, canonical string) {
 // idiom gives each page a `Model` and a `Msg`, and a page that reads shared
 // state imports a module that has them too. Treating those as rival candidates
 // would make `Msg` ambiguous inside the page that declared it, which is absurd
-// — the nearest binding is obviously the one meant. Elm rejects the clash
+// : the nearest binding is obviously the one meant. Elm rejects the clash
 // instead, but Elm pages do not import each other's modules the way
 // Page.withShared makes normal (ADR 0026).
 func (e *typeNameEnv) declareBare(bare, canonical string) {
@@ -653,7 +653,7 @@ func (e *typeNameEnv) known(canonical string) bool {
 // resolveTypeName maps a written type name to its canonical key.
 //
 // Qualified (`A.T`): resolves to `A.T` or fails. It never falls back to the
-// bare name, which is the whole defect this closes — the qualifier used to be
+// bare name, which is the whole defect this closes: the qualifier used to be
 // discarded, so `A.T` could land on B's `T`, and a typo'd `A.Tpyo` became an
 // opaque type instead of an error.
 //
@@ -753,7 +753,7 @@ func humanList(xs []string) string {
 // starts with. Currently just `Device` (docs/proposals/device.md) → the closed
 // record `Device.watch` delivers, so an app can annotate `dev : Device` in its
 // model without re-declaring the seven fields. Seeded as a type name only (not
-// a positional constructor — apps receive the record from the runtime, they
+// a positional constructor: apps receive the record from the runtime, they
 // never build one). A user's own `type alias Device`, should they write one,
 // simply overwrites this entry: harmless shadowing, no duplicate error.
 func builtinTypeAliases() map[string]TypeAlias {
@@ -857,7 +857,7 @@ func convertTypeExprWithIDs(te ast.TypeExpr, tEnv *typeNameEnv, paramIDs map[str
 				return nil, fmt.Errorf("type alias %s expects %d arguments, got %d", t.Name, len(alias.Params), len(args))
 			}
 			if len(alias.ParamIDs) == 0 {
-				// Non-parametric alias — nothing to substitute,
+				// Non-parametric alias: nothing to substitute,
 				// just return the body as-is.
 				return alias.Body, nil
 			}
@@ -882,7 +882,7 @@ func convertTypeExprWithIDs(te ast.TypeExpr, tEnv *typeNameEnv, paramIDs map[str
 		}
 		// Opaque nominal type. `canonical` when the scope knows the name
 		// (a local type whose body has not been built yet), the written
-		// name otherwise — builtin nominals like View / Page / Sub.
+		// name otherwise: builtin nominals like View / Page / Sub.
 		if found {
 			return TCon{Name: canonical, Args: args}, nil
 		}

@@ -11,7 +11,7 @@ import (
 
 // promptInitKind asks the operator which scaffold to generate. Three
 // choices: fullstack (default), frontend-only, backend-only. Always
-// prompts — `mar init` is a developer command, not a CI command, so
+// prompts: `mar init` is a developer command, not a CI command, so
 // there's no non-interactive caller to accommodate. Bare Enter (or
 // an unrecognised input) keeps the default.
 //

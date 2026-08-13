@@ -156,8 +156,8 @@ func TestEnumField_DecodeAcceptsBytes(t *testing.T) {
 
 func TestEnumField_DecodeUnknownTagStillReturnsCtor(t *testing.T) {
 	// Defensive: a row whose enum column holds a value outside the
-	// accepted set — e.g. someone manually edited the DB or the
-	// CHECK constraint hasn't been applied yet — should still
+	// accepted set: e.g. someone manually edited the DB or the
+	// CHECK constraint hasn't been applied yet, should still
 	// surface as a VCtor so callers can detect it via pattern-
 	// matching, not silently coerce to a string.
 	f := enumField()

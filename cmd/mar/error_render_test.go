@@ -12,7 +12,7 @@ import (
 )
 
 // captureStderr runs fn and returns whatever it wrote to os.Stderr.
-// Colors are forced OFF so the output is plain text — the tests below
+// Colors are forced OFF so the output is plain text: the tests below
 // pin message structure, not ANSI codes.
 func captureStderr(t *testing.T, fn func()) string {
 	t.Helper()
@@ -64,7 +64,7 @@ func TestPrintError_HintedError_SplitsSummaryAndHint(t *testing.T) {
 	}
 }
 
-// Same split for runtime.BlockedMigrationError — the established
+// Same split for runtime.BlockedMigrationError: the established
 // structured-error type used by the migrator. printError unwraps both
 // types via errorParts and renders identically.
 func TestPrintError_BlockedMigrationError_SplitsSummaryAndHint(t *testing.T) {
@@ -88,7 +88,7 @@ func TestPrintError_BlockedMigrationError_SplitsSummaryAndHint(t *testing.T) {
 	}
 }
 
-// Plain error path — printError falls back to diag.Format and writes
+// Plain error path: printError falls back to diag.Format and writes
 // to stderr. With a prefix, fprintError wraps it.
 func TestPrintError_PlainError_UsesPrefix(t *testing.T) {
 	err := errors.New("stat /tmp/x: no such file or directory")
@@ -99,7 +99,7 @@ func TestPrintError_PlainError_UsesPrefix(t *testing.T) {
 	}
 }
 
-// Without a prefix, plain errors print raw via diag.Format — the
+// Without a prefix, plain errors print raw via diag.Format: the
 // positioned-error renderer adds its own colored "Type error:" /
 // "Parse error:" prefix for SourceError, so wrapping in fprintError
 // would double-prefix.
@@ -151,7 +151,7 @@ func TestNewHintedError_ArgOrder(t *testing.T) {
 
 // hintedError.Error() bundles Summary + Hint so callers that just
 // stringify (logs, tests, the SSE channel before we strip / split)
-// see the full message — same contract as
+// see the full message: same contract as
 // runtime.BlockedMigrationError.Error().
 func TestHintedError_ErrorMethodBundles(t *testing.T) {
 	he := &hintedError{Summary: "boom", Hint: "do X"}

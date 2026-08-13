@@ -16,7 +16,7 @@ import (
 // is reachable from frontend code must be `def(...)`-ed in
 // runtime.js. Catches the class of bug where the typecheck and Go
 // runtime know about a builtin but the browser bundle hasn't been
-// updated — surfaces as "Error: unbound name: X" in the user's
+// updated, surfaces as "Error: unbound name: X" in the user's
 // browser at runtime.
 //
 // When this test fails: implement each missing builtin in
@@ -75,7 +75,7 @@ func readJSBuiltinNames() (map[string]bool, error) {
 // "never runs on the client" is not "never evaluated on the client".
 // Top-level values evaluate eagerly, so a module that DECLARES an
 // entity has to evaluate `Entity.define`, `Entity.text` and friends
-// wherever it is loaded — including in the page bundle when the entity
+// wherever it is loaded: including in the page bundle when the entity
 // shares a module with frontend code. That is why runtime.js already
 // carried stubs for eight of the nine column types: each was added by
 // hand the day someone tripped over it, with nothing pinning the set.
@@ -86,7 +86,7 @@ func readJSBuiltinNames() (map[string]bool, error) {
 // bundler ships only the declarations a page reaches (ADR 0019), so a schema
 // never arrives in the browser and never needs to evaluate there. The stubs
 // were what kept a bundling mistake quiet; without them, one surfaces as an
-// unbound name — and PickFrontMods refuses the build before that anyway.
+// unbound name, and PickFrontMods refuses the build before that anyway.
 //
 // So the invariant flipped: Entity.* and Repo.* must NOT be defined in the
 // client runtime. Re-adding one would be re-adding the silence.

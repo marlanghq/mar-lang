@@ -28,7 +28,7 @@ func NewSubst() *Subst {
 
 // EnableExprTracking turns on per-expression type recording for this
 // substitution. Must be called BEFORE Infer is invoked so the very
-// first inferred node lands in the map. Idempotent — calling twice
+// first inferred node lands in the map. Idempotent: calling twice
 // keeps the existing map (and any types it already holds).
 func (s *Subst) EnableExprTracking() {
 	if s.exprTypes == nil {
@@ -44,7 +44,7 @@ func (s *Subst) EnableExprTracking() {
 // MOMENT it ran (often containing fresh type variables), and later
 // unifications refine those variables in `s.bindings`. ExtractExprTypes
 // applies the final bindings to each recorded type so the consumer
-// sees concrete shapes — String, Int, { email : String, … } — not
+// sees concrete shapes, String, Int, { email : String, … }, not
 // dangling t37 placeholders.
 func (s *Subst) ExtractExprTypes() map[ast.Expr]Type {
 	if s.exprTypes == nil {

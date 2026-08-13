@@ -7,7 +7,7 @@
 // saved next to the live DB as <name>.bak-<timestamp> so the swap is
 // reversible.
 //
-// Design notes captured in the now-deleted BACKLOG entry ("Admin —
+// Design notes captured in the now-deleted BACKLOG entry ("Admin:
 // Database restore CLI"). Key choices, summarized:
 //
 //   - No --force flag. Schema mismatch is a hard stop with no override.
@@ -23,7 +23,7 @@
 //   - Server detection via flock on the live DB. The runtime acquires
 //     the same lock at startup (see runtime.HoldDBLock); if we can't
 //     get it, a server is running and the operator must stop it.
-//     Platform-neutral — no mentions of fly, systemd, supervisor.
+//     Platform-neutral: no mentions of fly, systemd, supervisor.
 
 package main
 
@@ -100,7 +100,7 @@ type restoreOpts struct {
 	now        func() time.Time
 }
 
-// doRestore is the pure flow — separated from runRuntimeRestore so
+// doRestore is the pure flow: separated from runRuntimeRestore so
 // tests can drive it with in-memory readers/writers and a frozen
 // clock without going through os.Args / os.Stdin.
 func doRestore(o restoreOpts) int {
@@ -131,7 +131,7 @@ func doRestore(o restoreOpts) int {
 	fmt.Fprintf(o.stdout, "  Created: %s\n", meta.CreatedAtRFC3339)
 	fmt.Fprintln(o.stdout)
 
-	// 3. The live DB must exist — restore swaps in place, it doesn't
+	// 3. The live DB must exist: restore swaps in place, it doesn't
 	// bootstrap from scratch. Fresh installs should `tar -xzf` the
 	// bundle directly.
 	liveInfo, err := os.Stat(livePath)
@@ -172,7 +172,7 @@ func doRestore(o restoreOpts) int {
 	// 5. Compute the live schema fingerprint and compare. Opened
 	// with `immutable=1` so SQLite skips its own internal locking
 	// (which would otherwise conflict with our advisory flock on
-	// the same file). Safe because we hold the lock — nothing is
+	// the same file). Safe because we hold the lock: nothing is
 	// going to write to this file while we read it.
 	liveFingerprint, err := fingerprintSQLiteFile(livePath)
 	if err != nil {
@@ -353,7 +353,7 @@ func extractBundleDB(bundlePath, outPath string) error {
 
 // fingerprintSQLiteFile opens the SQLite file at path and returns
 // its admin.SchemaFingerprint. Uses `immutable=1` so SQLite skips
-// its own internal byte-range locking — that locking would conflict
+// its own internal byte-range locking: that locking would conflict
 // with the POSIX flock the caller holds on the same fd path. Safe
 // because we always call this while holding the flock, so no other
 // process can write to the file during the read.

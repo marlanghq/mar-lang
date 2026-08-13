@@ -11,7 +11,7 @@ import (
 // maxBuiltinExpansion bounds how many elements (or output bytes) a single
 // stdlib call may materialize. List.range / List.repeat / String.repeat take
 // a caller-controlled count, so without a cap a request can ask for a
-// multi-gigabyte result and exhaust memory — and List.range could spin
+// multi-gigabyte result and exhaust memory, and List.range could spin
 // forever on Int overflow (i++ past MaxInt64 wraps negative and never passes
 // `to`). See docs/security-audit-2026-07-15.md #2. The eval-level step budget
 // is the deeper defense; this is the cheap, targeted guard.
@@ -109,7 +109,7 @@ func stdlib() map[string]Value {
 			}
 			// Reject a huge span up front, overflow-safe: to-from goes
 			// negative exactly when the true span exceeds MaxInt64 (that
-			// wrap is also the old infinite-loop bug — i++ past MaxInt64
+			// wrap is also the old infinite-loop bug: i++ past MaxInt64
 			// would never pass `to`). Either way, bail before allocating.
 			if span := to.V - from.V; span < 0 || span >= maxBuiltinExpansion {
 				return nil, fmt.Errorf("List.range: too many elements (limit %d)", maxBuiltinExpansion)
@@ -247,7 +247,7 @@ func stdlib() map[string]Value {
 			out = append(out[:to], append([]Value{elt}, out[to:]...)...)
 			return VList{Elements: out}, nil
 		}),
-		// listMember : a -> List a -> Bool — structural equality.
+		// listMember : a -> List a -> Bool, structural equality.
 		"listMember": nativeFn(2, func(args []Value) (Value, error) {
 			needle := args[0]
 			l, ok := args[1].(VList)
@@ -261,7 +261,7 @@ func stdlib() map[string]Value {
 			}
 			return VBool{V: false}, nil
 		}),
-		// listAny : (a -> Bool) -> List a -> Bool — short-circuit.
+		// listAny : (a -> Bool) -> List a -> Bool, short-circuit.
 		"listAny": nativeFn(2, func(args []Value) (Value, error) {
 			fn := args[0]
 			l, ok := args[1].(VList)
@@ -283,7 +283,7 @@ func stdlib() map[string]Value {
 			}
 			return VBool{V: false}, nil
 		}),
-		// listAll : (a -> Bool) -> List a -> Bool — short-circuit.
+		// listAll : (a -> Bool) -> List a -> Bool, short-circuit.
 		"listAll": nativeFn(2, func(args []Value) (Value, error) {
 			fn := args[0]
 			l, ok := args[1].(VList)
@@ -305,7 +305,7 @@ func stdlib() map[string]Value {
 			}
 			return VBool{V: true}, nil
 		}),
-		// listFoldr : (a -> b -> b) -> b -> List a -> b — fold from
+		// listFoldr : (a -> b -> b) -> b -> List a -> b, fold from
 		// the right. Same shape as foldl but the accumulator is the
 		// SECOND argument to the combine fn (matches Elm).
 		"listFoldr": nativeFn(3, func(args []Value) (Value, error) {
@@ -368,7 +368,7 @@ func stdlib() map[string]Value {
 			}
 			return VList{Elements: out}, nil
 		}),
-		// listIntersperse : a -> List a -> List a — insert separator
+		// listIntersperse : a -> List a -> List a, insert separator
 		// between each pair of elements. Empty/single-element lists
 		// stay unchanged.
 		"listIntersperse": nativeFn(2, func(args []Value) (Value, error) {
@@ -391,7 +391,7 @@ func stdlib() map[string]Value {
 			return VList{Elements: out}, nil
 		}),
 		// listPartition : (a -> Bool) -> List a -> (List a, List a)
-		// First tuple element holds matches, second holds rejects —
+		// First tuple element holds matches, second holds rejects:
 		// matches Elm semantics.
 		"listPartition": nativeFn(2, func(args []Value) (Value, error) {
 			fn := args[0]
@@ -462,7 +462,7 @@ func stdlib() map[string]Value {
 			}
 			return VList{Elements: out}, nil
 		}),
-		// listMaximum / listMinimum : List a -> Maybe a — uses the
+		// listMaximum / listMinimum : List a -> Maybe a, uses the
 		// shared compareValues, so works for List Int / List Float /
 		// List String. Other element types yield Nothing rather
 		// than a hard error.
@@ -506,10 +506,10 @@ func stdlib() map[string]Value {
 			}
 			return VCtor{Tag: "Just", Args: []Value{best}}, nil
 		}),
-		// listProduct : List number -> number — mirrors listSum's shape.
+		// listProduct : List number -> number, mirrors listSum's shape.
 		"listProduct":        nativeFn(1, numericFold("listProduct", decMul, mulInts, VInt{V: 1})),
 		"listProductDecimal": nativeFn(1, numericFold("listProduct", decMul, mulInts, decimalOne())),
-		// listSort : List a -> List a — comparable elements via the
+		// listSort : List a -> List a, comparable elements via the
 		// shared compareValues. Mirrors Elm: stable sort.
 		"listSort": nativeFn(1, func(args []Value) (Value, error) {
 			l, ok := args[0].(VList)
@@ -534,7 +534,7 @@ func stdlib() map[string]Value {
 			}
 			return VList{Elements: out}, nil
 		}),
-		// listSortBy : (a -> b) -> List a -> List a — sort by a
+		// listSortBy : (a -> b) -> List a -> List a, sort by a
 		// derived key. The key extractor runs once per element
 		// (cached) so a 30-elem list runs the fn 30 times, not
 		// O(n log n) times.
@@ -794,7 +794,7 @@ func stdlib() map[string]Value {
 			}
 			return VCtor{Tag: "Err", Args: []Value{err}}, nil
 		}),
-		// resultToMaybe : Result err a -> Maybe a — Ok x → Just x;
+		// resultToMaybe : Result err a -> Maybe a, Ok x → Just x;
 		// Err _ → Nothing (matches Elm; the error info is discarded).
 		"resultToMaybe": nativeFn(1, func(args []Value) (Value, error) {
 			c, ok := args[0].(VCtor)
@@ -873,7 +873,7 @@ func stdlib() map[string]Value {
 			}
 			return VCtor{Tag: "Just", Args: []Value{v}}, nil
 		}),
-		// maybeFilter : (a -> Bool) -> Maybe a -> Maybe a — keeps
+		// maybeFilter : (a -> Bool) -> Maybe a -> Maybe a, keeps
 		// Just only when the predicate passes; otherwise Nothing.
 		"maybeFilter": nativeFn(2, func(args []Value) (Value, error) {
 			fn := args[0]
@@ -898,13 +898,13 @@ func stdlib() map[string]Value {
 			return VCtor{Tag: "Nothing"}, nil
 		}),
 
-		// always : a -> b -> a — Elm's Basics.always. Returns its first
+		// always : a -> b -> a, Elm's Basics.always. Returns its first
 		// argument and ignores the second (a constant function).
 		"always": nativeFn(2, func(args []Value) (Value, error) {
 			return args[0], nil
 		}),
 
-		// not : Bool -> Bool — Elm's Basics.not. Mar has no prefix
+		// not : Bool -> Bool, Elm's Basics.not. Mar has no prefix
 		// operator, so boolean negation is an ordinary function.
 		"not": nativeFn(1, func(args []Value) (Value, error) {
 			b, ok := args[0].(VBool)
@@ -969,7 +969,7 @@ func stdlib() map[string]Value {
 			}
 			return nil, fmt.Errorf("abs expects a number (Int or Decimal)")
 		}),
-		// modBy d n — floor modulo, result takes the divisor's sign, so
+		// modBy d n: floor modulo, result takes the divisor's sign, so
 		// `modBy 8 (-1) == 7`. Total: divisor 0 yields 0, matching how
 		// `//` refuses to trap.
 		"modBy": nativeFn(2, func(args []Value) (Value, error) {
@@ -986,7 +986,7 @@ func stdlib() map[string]Value {
 			}
 			return VInt{V: r}, nil
 		}),
-		// remainderBy d n — truncated remainder, result takes the
+		// remainderBy d n: truncated remainder, result takes the
 		// dividend's sign, so `remainderBy 8 (-1) == -1` and it stays in
 		// step with `//`.
 		"remainderBy": nativeFn(2, func(args []Value) (Value, error) {
@@ -1000,7 +1000,7 @@ func stdlib() map[string]Value {
 			return VInt{V: n % d}, nil
 		}),
 
-		// Tuple — minimal ops on 2-element tuples. Mar tuples are
+		// Tuple: minimal ops on 2-element tuples. Mar tuples are
 		// VTuple values; these helpers normalize the most common
 		// access / construction patterns.
 		"tupleFirst": nativeFn(1, func(args []Value) (Value, error) {
@@ -1017,7 +1017,7 @@ func stdlib() map[string]Value {
 			}
 			return t.Members[1], nil
 		}),
-		// tuplePair : a -> b -> (a, b) — sugar for `(a, b)` literal.
+		// tuplePair : a -> b -> (a, b), sugar for `(a, b)` literal.
 		"tuplePair": nativeFn(2, func(args []Value) (Value, error) {
 			return VTuple{Members: []Value{args[0], args[1]}}, nil
 		}),
@@ -1111,7 +1111,7 @@ func stdlib() map[string]Value {
 			}
 			return VBool{V: strings.HasSuffix(s.V, suf.V)}, nil
 		}),
-		// stringToInt : String -> Maybe Int — Nothing on parse failure.
+		// stringToInt : String -> Maybe Int, Nothing on parse failure.
 		// strconv.ParseInt(_, 10, 64) accepts a leading sign and rejects
 		// empty / non-digit / overflow.
 		"stringToInt": nativeFn(1, func(args []Value) (Value, error) {
@@ -1179,7 +1179,7 @@ func stdlib() map[string]Value {
 			return VString{V: padString(s.V, int(w.V), string(pad.V), false)}, nil
 		}),
 		// stringIndexes : String needle -> String s -> List Int
-		// Byte offsets of every occurrence (overlap NOT respected —
+		// Byte offsets of every occurrence (overlap NOT respected:
 		// Elm's behavior too; KMP scan advances past each hit).
 		"stringIndexes": nativeFn(2, func(args []Value) (Value, error) {
 			needle, ok1 := args[0].(VString)
@@ -1225,8 +1225,8 @@ func padString(s string, width int, pad string, left bool) string {
 }
 
 // numericFold builds the body of List.sum / List.product, which are one name
-// over two element types. A non-empty list carries its own answer — every
-// element has the same type, so the first one decides — and that is why the
+// over two element types. A non-empty list carries its own answer: every
+// element has the same type, so the first one decides, and that is why the
 // runtime is not merely obeying the checker here: it stays right even if a
 // call site was never elaborated.
 //
@@ -1284,7 +1284,7 @@ func decimalZero() VDecimal { return VDecimal{Coef: big.NewInt(0), Scale: 0} }
 func decimalOne() VDecimal  { return VDecimal{Coef: big.NewInt(1), Scale: 0} }
 
 // twoInts unpacks the (divisor, dividend) pair modBy / remainderBy take. The
-// order matches Elm's — divisor first — so `modBy 8` partially applies to the
+// order matches Elm's, divisor first, so `modBy 8` partially applies to the
 // wrapping function a game actually wants.
 func twoInts(who string, args []Value) (d, n int64, err error) {
 	dv, ok1 := args[0].(VInt)

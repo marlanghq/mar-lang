@@ -28,7 +28,7 @@ func authTestServer(t *testing.T) (server *httptest.Server, cleanup func()) {
 	tmp := t.TempDir()
 	dbPath := filepath.Join(tmp, "test.db")
 	runtime.SetDBPath(dbPath)
-	// No SMTP, stdout sink explicitly allowed — the `mar dev` shape.
+	// No SMTP, stdout sink explicitly allowed: the `mar dev` shape.
 	// The flag is required: a zero-value SMTPConfig now refuses to
 	// deliver rather than printing a code (audit finding #6).
 	SetAuthRuntime("test-secret", auth.SMTPConfig{AllowStdoutSink: true})
@@ -141,7 +141,7 @@ func postJSON(t *testing.T, client *http.Client, url string, body any) (*http.Re
 	return resp, respBody
 }
 
-// TestRequestCode_RejectsInvalidEmailShape — malformed emails are
+// TestRequestCode_RejectsInvalidEmailShape: malformed emails are
 // rejected upfront (400 + "invalid_email") before they can hit
 // EnsureUser and pollute the users table with garbage rows. Same
 // shape check used at compile time for admins / mail.from.
@@ -172,7 +172,7 @@ func TestRequestCode_RejectsInvalidEmailShape(t *testing.T) {
 	}
 }
 
-// TestVerify_CookieSecureFromXForwardedProto — cookies set during
+// TestVerify_CookieSecureFromXForwardedProto: cookies set during
 // verify-code respect X-Forwarded-Proto: https so they get the
 // Secure flag even when this process is behind a TLS-terminating
 // proxy (Fly, Cloudflare, nginx). Without this, r.TLS is always
@@ -193,7 +193,7 @@ func TestVerify_CookieSecureFromXForwardedProto(t *testing.T) {
 	})
 	code = extractSinkCode(t, out)
 
-	// Verify with X-Forwarded-Proto: https — Secure flag should be true.
+	// Verify with X-Forwarded-Proto: https, Secure flag should be true.
 	req, _ := http.NewRequest(http.MethodPost,
 		server.URL+"/_auth/verify-code",
 		bytes.NewReader(mustJSON(map[string]string{
@@ -234,7 +234,7 @@ func TestRequestCodeAlwaysOK(t *testing.T) {
 	client := server.Client()
 
 	// Both an existing-ish email and a brand new one yield the same
-	// response — anti-enumeration guarantee.
+	// response: anti-enumeration guarantee.
 	for _, email := range []string{"alice@example.com", "stranger@nowhere.test"} {
 		out := captureStdout(t, func() {
 			resp, body := postJSON(t, client, server.URL+"/_auth/request-code",
@@ -442,7 +442,7 @@ func newJar(t *testing.T) http.CookieJar {
 
 // ---- Bearer-token transport (native runtimes) -----------------------
 //
-// Native runtimes (iOS, eventually Android/Windows) don't use cookies —
+// Native runtimes (iOS, eventually Android/Windows) don't use cookies:
 // they read the session token from the X-Mar-Auth-Token response header
 // on verify-code, stash it in platform secure storage (Keychain etc.),
 // and attach `Authorization: Bearer …` on every subsequent request.
@@ -486,12 +486,12 @@ func TestVerifyCodeEmitsBearerTokenHeader(t *testing.T) {
 
 // TestWhoamiWithBearerAuthSucceeds: a cookieless request that carries
 // Authorization: Bearer <token> is authenticated as the cookie request
-// would have been. Mirrors the iOS app's request shape — no cookie jar,
+// would have been. Mirrors the iOS app's request shape: no cookie jar,
 // just a header.
 func TestWhoamiWithBearerAuthSucceeds(t *testing.T) {
 	server, cleanup := authTestServer(t)
 	defer cleanup()
-	client := server.Client() // NO cookie jar — native shape.
+	client := server.Client() // NO cookie jar: native shape.
 
 	out := captureStdout(t, func() {
 		_, _ = postJSON(t, client, server.URL+"/_auth/request-code",
@@ -509,7 +509,7 @@ func TestWhoamiWithBearerAuthSucceeds(t *testing.T) {
 		t.Fatalf("missing bearer token header")
 	}
 
-	// GET /whoami with no cookie + Authorization header — the only
+	// GET /whoami with no cookie + Authorization header: the only
 	// transport an iOS app needs.
 	req, err := http.NewRequest(http.MethodGet, server.URL+"/_auth/whoami", nil)
 	if err != nil {

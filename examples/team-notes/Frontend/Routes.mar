@@ -24,7 +24,7 @@ signIn = "/sign-in"
 
 
 -- Dynamic route: `{id:Int}` means the matcher rejects /notes/abc
--- (non-numeric) before the page mounts — caller falls through to
+-- (non-numeric) before the page mounts: caller falls through to
 -- the next matcher, which usually means "page not found" in this
 -- single-app setup.
 noteDetail : Path { id : Int }

@@ -6,7 +6,7 @@ import "testing"
 // Pretty is not just for humans: it is what the LSP shows on hover and what the
 // /reference generator publishes as each stdlib signature. A constrained
 // variable rendered as a bare letter would advertise `List.sum : List a -> a`,
-// a type the compiler rejects — so this is a correctness test for the docs,
+// a type the compiler rejects, so this is a correctness test for the docs,
 // not a formatting preference.
 func TestPrettyPrintsConstraints(t *testing.T) {
 	num := TVar{ID: 1, Constraint: KindNumber}
@@ -25,7 +25,7 @@ func TestPrettyPrintsConstraints(t *testing.T) {
 		{"unconstrained stays a letter", TArrow{From: free, To: free}, "a -> a"},
 		{"constrained inside a container", TArrow{From: TList(num), To: num}, "List number -> number"},
 		// Two INDEPENDENT number vars are two different choices, so they must
-		// not both read `number` — Elm's numbering keeps them apart.
+		// not both read `number`: Elm's numbering keeps them apart.
 		{"independent vars get numbered", TArrow{From: num, To: TArrow{From: TVar{ID: 9, Constraint: KindNumber}, To: TBool}}, "number -> number2 -> Bool"},
 		// Mixed: the letter counter and the constraint counter are separate,
 		// so a free var beside a constrained one still starts at `a`.

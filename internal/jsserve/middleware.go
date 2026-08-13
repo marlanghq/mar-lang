@@ -4,7 +4,7 @@ package jsserve
 // per-IP rate limiter that fronts the request-handling routes
 // (/api/*, /services/*, /_mar/admin/api/*, /_auth/*). Tighter per-route
 // limiters in auth.go / admin.go (e.g. emailLimiter, adminIPLimiter)
-// run *inside* their handlers and apply on top of this gateway —
+// run *inside* their handlers and apply on top of this gateway:
 // this one is the cheap, broad first line of defense, sized by the
 // operator via mar.json["rateLimit"].
 
@@ -22,7 +22,7 @@ import (
 
 // requestLimiter holds the process-wide gateway limiter. Populated
 // once at startup by SetRateLimit (called from the CLI after reading
-// mar.json); nil means "no rate limiting" — only used by tests that
+// mar.json); nil means "no rate limiting": only used by tests that
 // haven't installed a limiter. In production the CLI always installs
 // one because the manifest always resolves to a default policy.
 var (
@@ -32,7 +32,7 @@ var (
 
 // SetRateLimit installs the process-wide gateway limiter. Called
 // once at boot from the CLI (cmd/mar) after reading mar.json, before
-// ServeLive opens the listener. Passing nil disables rate limiting —
+// ServeLive opens the listener. Passing nil disables rate limiting:
 // useful for tests, never for production.
 //
 // Safe to call concurrently with in-flight requests, though in

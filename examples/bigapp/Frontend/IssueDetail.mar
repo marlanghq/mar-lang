@@ -11,13 +11,13 @@ import UI exposing
     )
 
 
--- Issue detail — the single most-touched page in the app. Loads
+-- Issue detail: the single most-touched page in the app. Loads
 -- four things in parallel: the issue itself (with denormalized
 -- author + assignee), the comment thread, the project's labels
 -- (for attach), and the labels already attached to this issue.
 --
 -- The page handles status transitions inline (button row at the
--- top), edits inline (no "Edit" mode toggle — the title/body are
+-- top), edits inline (no "Edit" mode toggle: the title/body are
 -- always editable for a member of the team), and lets anyone in
 -- the team add a comment.
 

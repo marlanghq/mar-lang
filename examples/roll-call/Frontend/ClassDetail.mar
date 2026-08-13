@@ -19,7 +19,7 @@ import UI exposing ( navigationStack, navigationTitle, topBarTrailing
 -- the class id.
 --
 -- On entry it fires three calls at once: the class row (for the
--- title), the roster, and — after reading the clock — today's marks
+-- title), the roster, and, after reading the clock, today's marks
 -- for the summary line. The clock read is a Cmd (Time.now) because
 -- "today" is only knowable at runtime.
 
@@ -300,7 +300,7 @@ errorSection model =
 -- The attendance entry point + a live one-line summary of today.
 --
 -- A button, not a navigationLink: taking attendance opens as a sheet, and a
--- row with a chevron promises the opposite — that it pushes a screen you
+-- row with a chevron promises the opposite: that it pushes a screen you
 -- come back from. The affordance has to match what actually happens.
 --
 -- The whole section is hidden while the roster is empty. There is nobody to

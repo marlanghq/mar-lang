@@ -47,7 +47,7 @@ func TestPatchAdmins_AddToEmpty(t *testing.T) {
 	}
 }
 
-// TestPatchAdmins_AppendPreservesOrder — adding to an existing list
+// TestPatchAdmins_AppendPreservesOrder: adding to an existing list
 // appends; doesn't sort. The user may have intentional ordering.
 func TestPatchAdmins_AppendPreservesOrder(t *testing.T) {
 	raw := []byte(`{
@@ -83,7 +83,7 @@ func TestPatchAdmins_AppendPreservesOrder(t *testing.T) {
 	}
 }
 
-// TestPatchAdmins_NoChangeWhenIdempotent — running add for an email
+// TestPatchAdmins_NoChangeWhenIdempotent: running add for an email
 // that's already present must report changed=false (so the CLI can
 // avoid touching the file timestamp).
 func TestPatchAdmins_NoChangeWhenIdempotent(t *testing.T) {
@@ -105,7 +105,7 @@ func TestPatchAdmins_NoChangeWhenIdempotent(t *testing.T) {
 	}
 }
 
-// TestPatchAdmins_RemoveAll — removing the last entry leaves
+// TestPatchAdmins_RemoveAll: removing the last entry leaves
 // `admins: []`. Subsequent runs are no-ops.
 func TestPatchAdmins_RemoveAll(t *testing.T) {
 	raw := []byte(`{
@@ -132,7 +132,7 @@ func TestPatchAdmins_RemoveAll(t *testing.T) {
 	}
 }
 
-// TestPatchAdmins_PreservesOtherFields — other top-level keys must
+// TestPatchAdmins_PreservesOtherFields: other top-level keys must
 // survive the round-trip. Important because users will have `auth`,
 // `mail`, `database`, `server` blocks that we don't want to clobber.
 func TestPatchAdmins_PreservesOtherFields(t *testing.T) {
@@ -163,7 +163,7 @@ func TestPatchAdmins_PreservesOtherFields(t *testing.T) {
 	}
 }
 
-// TestRunAdminAddRoundTrip — end-to-end: `mar admin add` from a temp
+// TestRunAdminAddRoundTrip, end-to-end: `mar admin add` from a temp
 // project dir actually creates the right file. Uses chdir, since the
 // CLI assumes cwd = project root (same convention as `mar build`).
 func TestRunAdminAddRoundTrip(t *testing.T) {
@@ -200,7 +200,7 @@ func TestRunAdminAddRoundTrip(t *testing.T) {
 	}
 }
 
-// TestRunAdminAddRejectsBadEmail — gibberish is rejected before any
+// TestRunAdminAddRejectsBadEmail: gibberish is rejected before any
 // write happens.
 func TestRunAdminAddRejectsBadEmail(t *testing.T) {
 	dir := t.TempDir()
@@ -225,7 +225,7 @@ func TestRunAdminAddRejectsBadEmail(t *testing.T) {
 	}
 }
 
-// TestLoadAdminsFromManifest — canonicalization (lowercase, trim,
+// TestLoadAdminsFromManifest: canonicalization (lowercase, trim,
 // dedupe) and sort. Important because boot sync relies on this.
 func TestLoadAdminsFromManifest(t *testing.T) {
 	cases := []struct {

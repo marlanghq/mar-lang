@@ -61,10 +61,10 @@ func AndThen(first VEffect, f func(Value) VEffect) VEffect {
 //
 // User-facing API (resolved through the qualified-alias mapping):
 //
-//	Effect.succeed : a -> Effect e a
-//	Effect.fail    : e -> Effect e a
-//	Effect.map     : (a -> b) -> Effect e a -> Effect e b
-//	Effect.andThen : (a -> Effect e b) -> Effect e a -> Effect e b
+//	Task.succeed : a -> Task a
+//	Task.fail    : e -> Task a
+//	Task.map     : (a -> b) -> Task a -> Task b
+//	Task.andThen : (a -> Task b) -> Task a -> Task b
 //
 // The flat keys (effectSucceed, etc.) are the internal binding names;
 // qualified module syntax (`Effect.succeed`) resolves to them via the
@@ -111,7 +111,7 @@ func effectBuiltins() map[string]Value {
 			}), nil
 		}),
 
-		// Effect.forEach : (a -> Effect e ()) -> List a -> Effect e ()
+		// Task.forEach : (a -> Task ()) -> List a -> Task ()
 		"effectForEach": nativeFn(2, func(args []Value) (Value, error) {
 			fn := args[0]
 			list, ok := args[1].(VList)
@@ -139,7 +139,7 @@ func effectBuiltins() map[string]Value {
 			}, nil
 		}),
 
-		// Cmd.none : Cmd msg — succeeds with unit (the do-nothing command).
+		// Cmd.none : Cmd msg, succeeds with unit (the do-nothing command).
 		"effectNone": VEffect{
 			Tag: "none",
 			Run: func() (Value, error) { return VUnit{}, nil },
@@ -168,11 +168,11 @@ func effectBuiltins() map[string]Value {
 			}, nil
 		}),
 
-		// Effect.batch : List (Effect e msg) -> Effect e msg
+		// Cmd.batch : List (Cmd msg) -> Cmd msg
 		// Fire-and-forget fan-out: runs every child effect; each child
 		// delivers through its own toMsg (frontend) or performs its
 		// side effects (backend). Produces unit as its own value, the
-		// same dynamic shape Effect.none uses for an `Effect e a`.
+		// same dynamic shape Cmd.none uses for a `Task a`.
 		"effectBatch": nativeFn(1, func(args []Value) (Value, error) {
 			list, ok := args[0].(VList)
 			if !ok {
@@ -195,7 +195,7 @@ func effectBuiltins() map[string]Value {
 			}, nil
 		}),
 
-		// Effect.sequence : List (Effect e a) -> Effect e (List a)
+		// Task.sequence : List (Task a) -> Task (List a)
 		"effectSequence": nativeFn(1, func(args []Value) (Value, error) {
 			list, ok := args[0].(VList)
 			if !ok {

@@ -6,7 +6,7 @@
 // Before this existed, each runtime hand-registered its own copy of the set
 // (and the JS runtime skipped Keyboard/Gamepad/Auth entirely, leaning on an
 // eval-time fallback), so a constructor could exist in one runtime and not
-// another with no test noticing — proven by deleting Canvas.Multiply from the
+// another with no test noticing: proven by deleting Canvas.Multiply from the
 // Swift bundle and watching the whole suite stay green (2026-07-15). Now the
 // generator emits the registrations as LITERAL source (visible to the
 // regex-based drift tests) into:
@@ -41,7 +41,7 @@ type Entry struct {
 
 // Entries returns every constructor of every builtin union whose Module is
 // set, in a deterministic order (unions sorted by name, constructors in
-// declaration order). It panics on a duplicate qualified name — two unions
+// declaration order). It panics on a duplicate qualified name: two unions
 // under the same module must not share a constructor name.
 func Entries() []Entry {
 	customs := typecheck.BaseCustomTypes()
@@ -75,7 +75,7 @@ func Entries() []Entry {
 // JS region markers in internal/jsserve/runtime.js. The generator replaces
 // everything between them; the lines themselves stay.
 const (
-	JSBegin = "    // BEGIN GENERATED BUILTIN CTORS (go generate ./internal/ctorgen) — DO NOT EDIT"
+	JSBegin = "    // BEGIN GENERATED BUILTIN CTORS (go generate ./internal/ctorgen), DO NOT EDIT"
 	JSEnd   = "    // END GENERATED BUILTIN CTORS"
 )
 
@@ -126,7 +126,7 @@ func SwiftFile() string {
 //
 // The Go runtime was the last one still hand-registering this set, which is
 // exactly the state the package comment describes as the reason this generator
-// exists — and it had the same consequence. `Keyboard.*` and `Gamepad.*` were
+// exists, and it had the same consequence. `Keyboard.*` and `Gamepad.*` were
 // registered in the JS and Swift runtimes and nowhere in Go, so a shared module
 // holding something as ordinary as
 //

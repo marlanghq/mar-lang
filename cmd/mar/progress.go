@@ -7,10 +7,10 @@
 //
 // Two flavors share the same animation:
 //
-//   progressStep    — fn returns nothing. Used at the top of
+//   progressStep    - fn returns nothing. Used at the top of
 //                     deploys for auth/status probes where the
 //                     fn's own failure path calls os.Exit.
-//   progressStepErr — fn returns an error. Renders a red ✗ on
+//   progressStepErr: fn returns an error. Renders a red ✗ on
 //                     failure (operator sees which step failed),
 //                     green ✓ on success. Caller handles the
 //                     returned error.
@@ -65,7 +65,7 @@ func clearLine() {
 // TTY: animates frames in-place, then wipes and redraws as
 // "  ✓ <label>" once fn returns. One line total per step. We
 // deliberately omit the "[mar deploy]" prefix used elsewhere
-// in the banner — these steps fire in quick succession near the
+// in the banner: these steps fire in quick succession near the
 // banner and the prefix adds noise without information.
 //
 // Non-TTY: prints "  <label>…" line up-front, then "  ✓ <label>"
@@ -82,7 +82,7 @@ func progressStep(label string, fn func()) {
 // in red so the operator sees which step failed; the caller is
 // then responsible for printing the error detail beneath.
 //
-// fn must NOT write to stdout while running — concurrent writes
+// fn must NOT write to stdout while running: concurrent writes
 // would interleave with the spinner frames. Callers that wrap
 // `exec.Command` should use `.Output()` or `.CombinedOutput()` to
 // capture the child's output rather than piping it through.
@@ -91,7 +91,7 @@ func progressStepErr(label string, fn func() error) error {
 	// stdout. The clio coordinator tracks trailing-blank state on
 	// stderr so the next stderr block (banner, error, hint) can
 	// decide whether to add its own leading blank. Since our line
-	// is NOT a blank, clear the flag — without this, a prior
+	// is NOT a blank, clear the flag: without this, a prior
 	// `fprintInfo`-style banner that DID end with a blank leaves
 	// the flag set, and a subsequent `fprintError` after our step
 	// fails skips its leading blank and stacks directly under our
@@ -147,7 +147,7 @@ func progressStepErr(label string, fn func() error) error {
 // withStdoutSilenced runs fn with os.Stdout redirected to the
 // platform's null device (/dev/null on Unix, NUL on Windows).
 // Anything fn or its callees write to stdout is discarded.
-// stderr is untouched — real errors still surface.
+// stderr is untouched: real errors still surface.
 //
 // Used to wrap calls inside progressStepErr where the wrapped
 // function emits informational stdout output that would collide
@@ -162,7 +162,7 @@ func progressStepErr(label string, fn func() error) error {
 // fn" is the correct behavior here.
 //
 // Falls back to running fn with the real stdout if the null
-// device can't be opened (very rare — would mean the OS is
+// device can't be opened (very rare, would mean the OS is
 // misconfigured). The output collides but the deploy still
 // completes; better than aborting over a cosmetic concern.
 func withStdoutSilenced(fn func() error) error {

@@ -13,7 +13,7 @@ import UI exposing
 
 -- Sign-in flow with visible error feedback.
 --
--- The model splits into a `step` (what the user is doing right now —
+-- The model splits into a `step` (what the user is doing right now:
 -- entering email, waiting on the network, entering code) and a
 -- separate `error` field. Errors stay visible until the user tries
 -- again, instead of the form silently flashing back to the previous
@@ -97,7 +97,7 @@ update msg model =
             )
 
         CodeVerified (Ok (Auth.SignedIn _)) ->
-            -- Verified — Mar's auth runtime stores the session and the
+            -- Verified: Mar's auth runtime stores the session and the
             -- next render will route the user to the configured
             -- post-signin destination. We don't need to navigate here
             -- explicitly; just clear local state.

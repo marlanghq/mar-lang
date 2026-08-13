@@ -221,7 +221,7 @@ toInt c =
 // with the param-TVars left UNsubstituted: `Box Int` resolved to
 // `{ value : t7 }` for some fresh TVar, not `{ value : Int }`. Most
 // uses hid the bug because inference would unify the stray TVar with
-// the surrounding context — but using the same alias at two different
+// the surrounding context, but using the same alias at two different
 // types (TestCheckAliasUsedAtTwoTypes) exposed it instantly.
 
 func TestCheckAliasNonParametric(t *testing.T) {
@@ -251,7 +251,7 @@ boxed = { value = 42 }
 		t.Fatal(err)
 	}
 	got := res.ValueTypes["boxed"].String()
-	// The alias resolves to its body with `a` substituted by Int —
+	// The alias resolves to its body with `a` substituted by Int:
 	// the printed type should mention Int (not a stray tN tvar).
 	if !strings.Contains(got, "value : Int") {
 		t.Fatalf("boxed: want a record with `value : Int`, got %s", got)
@@ -262,7 +262,7 @@ func TestCheckAliasUsedAtTwoTypes(t *testing.T) {
 	// The smoking-gun case for the old bug: with substitution stubbed,
 	// both uses shared the same body TVar. The first annotation would
 	// pin that TVar to Int, then the SECOND annotation forced the
-	// same TVar to also equal String — type checking failed with a
+	// same TVar to also equal String: type checking failed with a
 	// spurious mismatch on a program that should compile cleanly.
 	src := `module M exposing (..)
 type alias Wrapper a = a
@@ -286,7 +286,7 @@ asString = "x"
 func TestCheckAliasTwoParams(t *testing.T) {
 	// Multi-param aliases route each param to its own positional
 	// argument. `Pair Int String` must resolve to `(Int, String)`,
-	// not `(Int, Int)` or `(String, String)` — easy to flip if the
+	// not `(Int, Int)` or `(String, String)`: easy to flip if the
 	// ParamIDs slice isn't index-aligned with Params.
 	src := `module M exposing (..)
 type alias Pair a b = (a, b)
@@ -385,7 +385,7 @@ byLen = List.sortBy String.length ["aaa", "b", "cc"]
 }
 
 func TestCheckListSortWithOrder(t *testing.T) {
-	// Comparator returns Order (LT / EQ / GT) — not Int. Mar refuses
+	// Comparator returns Order (LT / EQ / GT), not Int. Mar refuses
 	// to overload integer values as comparison results.
 	src := `module M exposing (..)
 desc = \a b -> if a > b then LT else if a < b then GT else EQ
@@ -492,7 +492,7 @@ both = Set.union s (Set.singleton 4)
 // These tests prove the Comparable Kind on Dict / Set keys is
 // enforced at compile time. Each "rejected" case used to compile
 // silently and explode at runtime with "comparison: unsupported
-// types" — now it dies at typecheck with a clear message naming the
+// types": now it dies at typecheck with a clear message naming the
 // offending shape and the allowed types.
 
 func TestCheckDictRecordKeyRejected(t *testing.T) {
@@ -509,7 +509,7 @@ broken = Dict.fromList [({ name = "bob" }, 1), ({ name = "alice" }, 2)]
 }
 
 func TestCheckDictBoolKeyRejected(t *testing.T) {
-	// Bool isn't comparable — there's no useful total order over
+	// Bool isn't comparable: there's no useful total order over
 	// True/False that Mar's compareValues recognizes, so the runtime
 	// would blow up; typecheck catches it here instead.
 	src := `module M exposing (..)
@@ -613,7 +613,7 @@ broken = True < False
 
 func TestCheckOrderingRejectsList(t *testing.T) {
 	// List of comparable elements is NOT itself comparable in the
-	// strict semantics — runtime's compareValues doesn't recurse.
+	// strict semantics: runtime's compareValues doesn't recurse.
 	src := `module M exposing (..)
 broken = [1, 2] < [1, 3]
 `
@@ -640,7 +640,7 @@ broken = (1, 2) < (3, 4)
 }
 
 func TestCheckEqualityStaysPolymorphic(t *testing.T) {
-	// `==` and `/=` are structural — they work on records, tuples,
+	// `==` and `/=` are structural: they work on records, tuples,
 	// lists, custom types. Sanity check that we didn't accidentally
 	// constrain them too.
 	src := `module M exposing (..)
@@ -680,7 +680,7 @@ broken = sizeOf (Dict.fromList [({ x = 1 }, "v")])
 // `{ field1, field2 }` as a pattern binds each named field as a local.
 // Partial-match semantics: the matched record may have extra fields the
 // pattern doesn't list. Works in `case` branches, `let` bindings, and
-// function arguments. No renaming syntax (Elm-style — punning only).
+// function arguments. No renaming syntax (Elm-style: punning only).
 
 func TestRecordPatternInCase(t *testing.T) {
 	src := `module M exposing (..)
@@ -754,7 +754,7 @@ firstField = \r -> case r of { x } -> x
 
 func TestRecordPatternPartialMatchIgnoresExtraFields(t *testing.T) {
 	// The pattern `{ name }` should match a record that has extra
-	// fields beyond `name` — Elm-style partial match via row poly.
+	// fields beyond `name`: Elm-style partial match via row poly.
 	src := `module M exposing (..)
 person = { name = "Alice", age = 30, city = "Boston" }
 just_name =
@@ -827,7 +827,7 @@ result =
 
 // `import UI exposing (..)` must bring the whole UI vocabulary into the
 // bare namespace. This used to parse without error and then silently
-// bind NOTHING, so the first bare name died with "unknown identifier" —
+// bind NOTHING, so the first bare name died with "unknown identifier":
 // the worst kind of failure. Pins the wildcard against the builtin UI
 // module (user modules go through the same ExportsOf path).
 func TestImportExposingAllBindsModuleExports(t *testing.T) {

@@ -9,7 +9,7 @@ import Backend.Projects
 import Shared exposing (Role(..))
 
 
--- MentionInbox — read side of the @-mentions feature. Joins raw
+-- MentionInbox: read side of the @-mentions feature. Joins raw
 -- mention rows with the comment, the user who wrote it, and the
 -- issue/project the comment lives under, then serves the result to
 -- the Inbox page. Split into its own module so the entity + the

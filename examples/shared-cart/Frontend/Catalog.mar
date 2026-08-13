@@ -14,7 +14,7 @@ import Frontend.Routes
 
 -- The catalog. Reads the shared cart to show what's already in it, writes to
 -- the shared cart when you add something, and keeps its OWN filter text in a
--- page model — which is exactly the contrast worth seeing.
+-- page model, which is exactly the contrast worth seeing.
 --
 -- Type something in the filter, then:
 --
@@ -106,7 +106,7 @@ cartSummary global =
         n -> String.fromInt n ++ " in cart  " ++ Frontend.Products.format (Frontend.Global.total global)
 
 
--- Page.withShared wraps the ordinary Page.create — there is no
+-- Page.withShared wraps the ordinary Page.create: there is no
 -- Page.createWithShared, and the six page flavors stay six. The builder is
 -- re-applied whenever the shared model changes, so `view global` always sees
 -- the live cart, not a copy taken when this page mounted.

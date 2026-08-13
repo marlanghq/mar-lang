@@ -1,8 +1,8 @@
-// Gamepad + Keyboard + Device — the native mirror of the web-first input and
+// Gamepad + Keyboard + Device: the native mirror of the web-first input and
 // capability subsystems (internal/jsserve/runtime.js: subSources.keyboardWatch/
 // gamepadWatch/deviceWatch, plus the Device.* builtins). All three are STATE
 // mirrors: a subscribe delivers the whole current snapshot as a record, then a
-// fresh record on every change — the runtime owns the bookkeeping.
+// fresh record on every change: the runtime owns the bookkeeping.
 //
 // On the web these are window-level global listeners. On iOS the clean,
 // view-free analogs are:
@@ -15,7 +15,7 @@
 // `__Sub` items the runtime consumes. Constructors (Gamepad.<Button>,
 // Keyboard.<Key>, Coarse/Fine) and the Device record match the other runtimes.
 //
-// Compile-checked, not run, in the build environment — behavior is verified on
+// Compile-checked, not run, in the build environment: behavior is verified on
 // device.
 
 import Foundation
@@ -32,7 +32,7 @@ final class GamepadHub {
     static let shared = GamepadHub()
 
     // One listener per active Gamepad.watch sub. On any state change every
-    // listener is notified and reads currentRecord() — the whole-pad snapshot.
+    // listener is notified and reads currentRecord(): the whole-pad snapshot.
     private var listeners: [Int: () -> Void] = [:]
     private var token = 0
     private var wired = false
@@ -278,10 +278,10 @@ enum MarInput {
     static func register(_ env: Env) {
         // The Keyboard.Key and Gamepad.Button constructors come from the
         // generated registry (MarBuiltinCtors.swift), which is derived from
-        // the same typecheck lists the exhaustiveness checker uses — this
+        // the same typecheck lists the exhaustiveness checker uses: this
         // file used to hold its own copy of the ~100 key codes, and the two
         // copies could drift with nothing failing.
-        // Pointer constructors — global, like Order / Method.
+        // Pointer constructors: global, like Order / Method.
         env.define("Coarse", .ctor(tag: "Coarse", args: [], origin: nil))
         env.define("Fine",   .ctor(tag: "Fine", args: [], origin: nil))
 
@@ -292,7 +292,7 @@ enum MarInput {
         env.defineFn("gamepadWatch",  "Gamepad.watch",  1) { a in sub("__SubGamepad", a[0]) }
         env.defineFn("deviceWatch",   "Device.watch",   1) { a in sub("__SubDevice", a[0]) }
 
-        // Device.touchOnly / canHover — pure readings off a Device record.
+        // Device.touchOnly / canHover: pure readings off a Device record.
         func boolField(_ v: MarValue, _ k: String) -> Bool { if case .record(let f, _) = v, case .bool(let b)? = f[k] { return b }; return false }
         env.defineFn("deviceTouchOnly", "Device.touchOnly", 1) { a in
             let coarse: Bool = { if case .record(let f, _) = a[0], case .ctor(let t, _, _)? = f["pointer"] { return t == "Coarse" }; return false }()

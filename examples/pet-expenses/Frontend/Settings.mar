@@ -10,8 +10,8 @@ import UI exposing
 
 
 -- Account hub, pushed from the home screen. This is where the rare,
--- account-level actions live — sign out and (irreversible) account
--- deletion — so they stay out of the everyday pet/expense flow but
+-- account-level actions live: sign out and (irreversible) account
+-- deletion, so they stay out of the everyday pet/expense flow but
 -- remain easy to find. Account deletion is required by App Store
 -- guideline 5.1.1(v) and goes through a destructive confirm.
 

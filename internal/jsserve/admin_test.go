@@ -53,7 +53,7 @@ func adminTestServer(t *testing.T, seedAdmins []string) (*httptest.Server, func(
 	return server, cleanup
 }
 
-// TestAdminRequestCode_AlwaysOK_NoEnumeration — both an admin and a
+// TestAdminRequestCode_AlwaysOK_NoEnumeration: both an admin and a
 // stranger get the same 200 OK. The admin's code reaches stdout;
 // the stranger's silently no-ops.
 func TestAdminRequestCode_AlwaysOK_NoEnumeration(t *testing.T) {
@@ -81,9 +81,9 @@ func TestAdminRequestCode_AlwaysOK_NoEnumeration(t *testing.T) {
 	}
 }
 
-// TestAdminRequestCode_RejectsMissingEmail — the basic shape error.
+// TestAdminRequestCode_RejectsMissingEmail: the basic shape error.
 // 400 (not 200), so a probe with empty email gets a different
-// status, but that's a CLI/contract error, not enumeration —
+// status, but that's a CLI/contract error, not enumeration:
 // hostile clients won't bother.
 func TestAdminRequestCode_RejectsMissingEmail(t *testing.T) {
 	server, cleanup := adminTestServer(t, []string{"admin@x.com"})
@@ -95,7 +95,7 @@ func TestAdminRequestCode_RejectsMissingEmail(t *testing.T) {
 	}
 }
 
-// TestAdminVerifyCode_HappyPath_SetsCookie — full request → verify
+// TestAdminVerifyCode_HappyPath_SetsCookie: full request → verify
 // flow. Captures the code from stdout, posts it back, expects 200
 // + Set-Cookie: mar_admin_session=...
 func TestAdminVerifyCode_HappyPath_SetsCookie(t *testing.T) {
@@ -136,7 +136,7 @@ func TestAdminVerifyCode_HappyPath_SetsCookie(t *testing.T) {
 	}
 }
 
-// TestAdminVerifyCode_WrongCodeIs401 — bad code returns 401 with
+// TestAdminVerifyCode_WrongCodeIs401: bad code returns 401 with
 // generic "invalid_code" (no leak about which part was wrong).
 func TestAdminVerifyCode_WrongCodeIs401(t *testing.T) {
 	server, cleanup := adminTestServer(t, []string{"admin@x.com"})
@@ -157,7 +157,7 @@ func TestAdminVerifyCode_WrongCodeIs401(t *testing.T) {
 	}
 }
 
-// TestAdminLogout_ClearsCookie — logout returns 200 + Set-Cookie
+// TestAdminLogout_ClearsCookie: logout returns 200 + Set-Cookie
 // with Max-Age=-1 (clearing it client-side).
 func TestAdminLogout_ClearsCookie(t *testing.T) {
 	server, cleanup := adminTestServer(t, []string{"admin@x.com"})
@@ -177,7 +177,7 @@ func TestAdminLogout_ClearsCookie(t *testing.T) {
 	}
 }
 
-// TestAdminLogout_RevokesSession — log in, log out, the session
+// TestAdminLogout_RevokesSession: log in, log out, the session
 // must be deleted from the DB so a stale cookie can't be used.
 func TestAdminLogout_RevokesSession(t *testing.T) {
 	server, cleanup := adminTestServer(t, []string{"admin@x.com"})

@@ -5,7 +5,7 @@ import "fmt"
 // BaseEnv returns the initial runtime environment with all built-ins bound.
 func BaseEnv() *Env {
 	env := NewEnv()
-	// Generated from the typecheck union tables — see internal/ctorgen. It
+	// Generated from the typecheck union tables: see internal/ctorgen. It
 	// goes in first so a hand-written binding below still wins if one ever
 	// needs to; the generator is the source of truth for the SET.
 	for name, v := range builtinCtors() {
@@ -86,7 +86,7 @@ func BaseEnv() *Env {
 
 // QualifiedAliasNames returns the set of `Module.name` qualified
 // stdlib bindings the runtime knows about. Exposed for drift tests
-// that compare this set against typecheck.BaseQualifiedSymbols —
+// that compare this set against typecheck.BaseQualifiedSymbols:
 // without coverage here, a builtin can typecheck but fail at runtime
 // with "unbound qualified name: Foo.bar".
 func QualifiedAliasNames() map[string]bool {
@@ -441,7 +441,7 @@ func qualifiedAliasMapping() map[string]string {
 		"UI.confirm":         "uiConfirm",
 		"UI.empty":           "uiEmpty",
 		"UI.centered":        "uiCentered",
-		// Canvas (v0.0.7) — the 2D draw-list module. Functions bind bare via
+		// Canvas (v0.0.7): the 2D draw-list module. Functions bind bare via
 		// `import Canvas exposing (...)`; the Transform / Align ctors are
 		// qualified (registered below). Mirrors typecheck's qualifiedAliases.
 		"Canvas.canvas":        "canvas",
@@ -531,13 +531,13 @@ func builtins() map[string]Value {
 			return VCtor{Tag: "Err", Args: []Value{args[0]}}, nil
 		}),
 
-		// Order constructors — nullary, like Nothing. Mirrors Elm's
+		// Order constructors: nullary, like Nothing. Mirrors Elm's
 		// Order type for List.sortWith comparators.
 		"LT": VCtor{Tag: "LT"},
 		"EQ": VCtor{Tag: "EQ"},
 		"GT": VCtor{Tag: "GT"},
 
-		// Method constructors — the HTTP verbs, nullary. The first
+		// Method constructors: the HTTP verbs, nullary. The first
 		// argument to Service.declare; stored on the contract so the
 		// server mounts and the client calls on the right verb.
 		"GET":    VCtor{Tag: "GET"},
@@ -546,7 +546,7 @@ func builtins() map[string]Value {
 		"PATCH":  VCtor{Tag: "PATCH"},
 		"DELETE": VCtor{Tag: "DELETE"},
 
-		// Service.Error constructors — the transport failure a Service.call
+		// Service.Error constructors: the transport failure a Service.call
 		// delivers in its Err. The frontend builds these (JS/Swift HTTP
 		// clients); the Go runtime registers them so the values exist and
 		// Service.errorToString can fold them to a string.
@@ -557,7 +557,7 @@ func builtins() map[string]Value {
 			return VCtor{Tag: "ServerError", Args: []Value{args[0]}}, nil
 		}),
 
-		// Auth outcome constructors — qualified-only, like Service.Error.
+		// Auth outcome constructors: qualified-only, like Service.Error.
 		// The JS/Swift HTTP clients build these at the auth boundary; the
 		// Go runtime registers them so the values exist everywhere.
 		"Auth.CodeSent":        VCtor{Tag: "CodeSent"},
@@ -569,7 +569,7 @@ func builtins() map[string]Value {
 			return VCtor{Tag: "SignedIn", Args: []Value{args[0]}}, nil
 		}),
 
-		// Canvas Transform / Align constructors — qualified-only (used as
+		// Canvas Transform / Align constructors: qualified-only (used as
 		// `Canvas.Translate`, `Canvas.Center`, ...). The runtime tag is the
 		// bare ctor name, matching how the renderers read draw-list nodes.
 		"Canvas.Translate": nativeFn(2, func(args []Value) (Value, error) {
@@ -596,7 +596,7 @@ func builtins() map[string]Value {
 		"Canvas.Center":   VCtor{Tag: "Center"},
 		"Canvas.Right":    VCtor{Tag: "Right"},
 
-		// Decimal.Rounding constructors — qualified-only
+		// Decimal.Rounding constructors: qualified-only
 		// (`Decimal.HalfEven`), consumed by the Decimal resolvers.
 		"Decimal.HalfEven": VCtor{Tag: "HalfEven"},
 		"Decimal.HalfUp":   VCtor{Tag: "HalfUp"},
@@ -716,7 +716,7 @@ func mulOp(args []Value) (Value, error) {
 	return nil, fmt.Errorf("*: unsupported")
 }
 
-// intDivOp — `//`, truncating integer division wearing its loss in
+// intDivOp: `//`, truncating integer division wearing its loss in
 // its spelling (Elm's `//`).
 func intDivOp(args []Value) (Value, error) {
 	a, ok := args[0].(VInt)
@@ -729,8 +729,8 @@ func intDivOp(args []Value) (Value, error) {
 	}
 	// Integer division is total: dividing by zero yields 0. This
 	// matches the web (runtime.js) and iOS runtimes (both return 0)
-	// and Elm's `//`. Erroring here would diverge by platform — the
-	// server would 500 while the client returns 0 — and there is no
+	// and Elm's `//`. Erroring here would diverge by platform: the
+	// server would 500 while the client returns 0, and there is no
 	// error channel in pure client-side eval.
 	if b.V == 0 {
 		return VInt{V: 0}, nil
@@ -738,7 +738,7 @@ func intDivOp(args []Value) (Value, error) {
 	return VInt{V: a.V / b.V}, nil
 }
 
-// divOp — `/`, Decimal-only. Produces a QUESTION, not a number: the
+// divOp, `/`, Decimal-only. Produces a QUESTION, not a number: the
 // inert exact quotient, resolved only by Decimal.rounded /
 // withRemainder, which is where the precision gets written.
 func divOp(args []Value) (Value, error) {
@@ -816,7 +816,7 @@ func equalValues(a, b Value) bool {
 	case VAngle:
 		// Constructed values are always wrapped into 0..3599, so equality
 		// on the representation IS equality of the rotation. An Angle sits
-		// in models — a heading, a turret facing — and models go through
+		// in models, a heading, a turret facing, and models go through
 		// time travel, App.shared and (in lendas) a rules engine replayed
 		// on both sides, so this arm is load-bearing rather than decorative.
 		bv, ok := b.(VAngle)
@@ -888,7 +888,7 @@ func equalValues(a, b Value) bool {
 		return true
 	case VDict:
 		// Pairs are kept sorted by key, so equal dicts are equal
-		// pairwise in order — no set-difference walk needed. These two
+		// pairwise in order: no set-difference walk needed. These two
 		// arms were missing HERE ONLY: the JS and Swift runtimes have
 		// always compared dicts and sets structurally, so the same
 		// program answered True in the browser and on iOS and False on
@@ -920,7 +920,7 @@ func equalValues(a, b Value) bool {
 		return true
 	}
 	// Reached only by VFn (functions have no equality) and VDivision
-	// (an unresolved quotient is opaque by design — see VDivision).
+	// (an unresolved quotient is opaque by design: see VDivision).
 	// Everything else in value.go has an arm above; if you add a value
 	// kind, add it here too, or `==` will quietly answer False for it.
 	return false

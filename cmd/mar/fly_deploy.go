@@ -1,4 +1,4 @@
-// New deploy flow — drives everything from mar.json's deploy.fly
+// New deploy flow: drives everything from mar.json's deploy.fly
 // block, generates the Dockerfile + fly.toml ephemerally in /tmp,
 // and runs `fly deploy` from there. The operator never sees or
 // edits a Dockerfile.
@@ -14,7 +14,7 @@
 //  6. Generate Dockerfile + fly.toml in the same tmp dir
 //  7. Run `fly deploy` from the tmp dir
 //  8. Health-check the resulting <app>.fly.dev
-//  9. Cleanup tmp on success — keep + print path on failure for
+//  9. Cleanup tmp on success: keep + print path on failure for
 //     post-mortem
 //
 // Currently invoked via `mar deploy --new` so the old flow stays
@@ -102,7 +102,7 @@ func runFlyDeploy(path string, noOpen bool) int {
 	}
 	// `fly auth whoami` is a silent ~1-2s network call when the
 	// operator is logged in. Without a status line, the CLI looks
-	// like it hung right after the banner — same problem
+	// like it hung right after the banner: same problem
 	// waitForAppHealthy solves at the end of the deploy. Reuse the
 	// same TTY-aware progress pattern (in-place \r\033[K redraw on
 	// success; one-shot lines on non-TTY).
@@ -125,7 +125,7 @@ func runFlyDeploy(path string, noOpen bool) int {
 	if !appExists {
 		// Frontend-only first-deploy warning. Only shown on the
 		// first deploy of THIS app (proxy: app doesn't exist on
-		// Fly yet) — subsequent deploys assume the operator has
+		// Fly yet): subsequent deploys assume the operator has
 		// already weighed the trade-off.
 		if flyTopo == flyTopologyFrontend && interactive {
 			printFrontendOnlyWarning()
@@ -165,7 +165,7 @@ func runFlyDeploy(path string, noOpen bool) int {
 		}
 	}
 
-	// === 7. Secrets sync — push every env:VAR in mar.json that's not
+	// === 7. Secrets sync, push every env:VAR in mar.json that's not
 	// already set on the app. Prompts for missing values when
 	// interactive; refuses to proceed silently in CI. ===
 	manifestEnvRefs, _ := discoverManifestEnvRefs(filepath.Join(projectDir, "mar.json"))
@@ -281,7 +281,7 @@ func printDeployFlyError(err error) {
 		//   - red     : the "Error:" prefix
 		//
 		// The JSON snippet is hand-colored token-by-token (no JSON
-		// lexer) — fine because the snippet is hard-coded right here
+		// lexer): fine because the snippet is hard-coded right here
 		// and won't grow keys at runtime.
 
 		// Pre-compute the regions block BEFORE printing anything.
@@ -357,7 +357,7 @@ func printDeployFlyError(err error) {
 		// no extra Fprintln needed here.
 		fmt.Fprint(os.Stderr, regionsBlock)
 	case "invalid-region":
-		// Same structure as missing-region — the operator picked a
+		// Same structure as missing-region: the operator picked a
 		// code that doesn\'t exist on Fly. Pre-compute the regions
 		// block so the live-fetch fallback (when bundled\'s "no" is
 		// rechecked against live) doesn\'t pause mid-print.
@@ -421,7 +421,7 @@ func formatMemoryHelp() string {
 	return b.String()
 }
 
-// bundledFlyRegion mirrors a single Fly region — code + display name.
+// bundledFlyRegion mirrors a single Fly region: code + display name.
 // Kept tiny + JSON-tag-free since this is internal to the CLI's error
 // rendering, not part of any wire format.
 type bundledFlyRegion struct {
@@ -430,11 +430,11 @@ type bundledFlyRegion struct {
 	continent string
 }
 
-// bundledFlyRegions is the offline fallback list — used when
+// bundledFlyRegions is the offline fallback list: used when
 // `fly platform regions --json` is unavailable (CLI not installed,
 // network down, fly.io API hiccup). Updated periodically by maintenance
 // when the live list drifts; the runtime never validates against this
-// list because Fly is the source of truth — we only use it for the
+// list because Fly is the source of truth: we only use it for the
 // "what are my options?" hint inside error messages.
 var bundledFlyRegions = []bundledFlyRegion{
 	{code: "jnb", name: "Johannesburg", continent: "Africa"},
@@ -460,7 +460,7 @@ var bundledFlyRegions = []bundledFlyRegion{
 // formatRegionsBlock returns the multi-line "Valid regions:" block
 // rendered for inclusion in error messages. Tries `fly platform
 // regions --json` first; on any failure (CLI missing, network, parse
-// error) falls back to bundledFlyRegions silently — the operator
+// error) falls back to bundledFlyRegions silently: the operator
 // shouldn\'t see a degraded experience just because we wanted live
 // data. Output is identical in shape regardless of source.
 func formatRegionsBlock() string {
@@ -473,21 +473,21 @@ func formatRegionsBlock() string {
 
 // isKnownFlyRegion reports whether `code` is a real Fly region.
 // Fast-path: check bundledFlyRegions (~18 entries, instant). Slow-
-// path: if the bundle says no, try the live list — covers cases
+// path: if the bundle says no, try the live list, covers cases
 // where Fly adds new regions we haven\'t catalogued. The bundled
 // "yes" answer is authoritative (Fly never *removes* regions
 // quickly enough to outrun a release cycle); only the bundled "no"
 // triggers the live fetch.
 //
 // When live is unavailable (CLI missing, network), the bundled "no"
-// stands — bias toward catching typos like "gr"/"grub" early.
+// stands: bias toward catching typos like "gr"/"grub" early.
 func isKnownFlyRegion(code string) bool {
 	for _, r := range bundledFlyRegions {
 		if r.code == code {
 			return true
 		}
 	}
-	// Not in our bundled set — maybe Fly added a region we haven\'t
+	// Not in our bundled set: maybe Fly added a region we haven\'t
 	// catalogued. Consult the live list as the source of truth.
 	live := cachedLiveFlyRegions()
 	if live == nil {
@@ -506,7 +506,7 @@ func isKnownFlyRegion(code string) bool {
 // (which fires on every `mar fly *` invocation when the region is
 // non-bundled) and formatRegionsBlock (which fires on the error
 // rendering path). Without the cache, an invalid-region scenario
-// would shell out to `fly platform regions --json` twice — once
+// would shell out to `fly platform regions --json` twice: once
 // for the validation, once for the error block.
 var (
 	cachedLiveFlyRegionsOnce sync.Once
@@ -521,7 +521,7 @@ func cachedLiveFlyRegions() []bundledFlyRegion {
 }
 
 // fetchLiveFlyRegions shells out to `fly platform regions --json`
-// and parses the result. Returns nil on any failure — caller falls
+// and parses the result. Returns nil on any failure: caller falls
 // back to the bundled list. Best-effort: this is a UX nicety, not a
 // correctness gate.
 func fetchLiveFlyRegions() []bundledFlyRegion {
@@ -563,7 +563,7 @@ func fetchLiveFlyRegions() []bundledFlyRegion {
 //	"Singapore, Singapore"           → "Singapore"
 //
 // Everything after the first comma is dropped. Codes remain
-// authoritative — the city is for human recognition only.
+// authoritative: the city is for human recognition only.
 func shortenRegionName(name string) string {
 	if idx := strings.Index(name, ","); idx >= 0 {
 		return strings.TrimSpace(name[:idx])
@@ -574,10 +574,10 @@ func shortenRegionName(name string) string {
 // continentForRegion infers the continent for a region from its
 // display name. Used only when ingesting the live list (the bundled
 // list carries continent labels statically). Falls back to "Other"
-// for entries that don\'t match any known suffix — keeps the renderer
+// for entries that don\'t match any known suffix: keeps the renderer
 // from blowing up on a region in a continent we haven\'t seen yet.
 func continentForRegion(code, name string) string {
-	// Use the bundled list as a hint when codes are familiar — same
+	// Use the bundled list as a hint when codes are familiar: same
 	// continent as before, even if the live `name` is slightly
 	// different (Fly occasionally tweaks city labels).
 	for _, b := range bundledFlyRegions {
@@ -624,7 +624,7 @@ func continentForRegion(code, name string) string {
 // renderRegionTable lays out the two-column "by continent" table.
 // Left column: bigger continents (North America + Europe). Right
 // column: smaller (Asia Pacific + Africa + South America + Other).
-// Layout is mostly static — we just slot the live data into the
+// Layout is mostly static: we just slot the live data into the
 // continent buckets and align with fixed column widths.
 func renderRegionTable(regions []bundledFlyRegion) string {
 	groups := make(map[string][]bundledFlyRegion)
@@ -646,7 +646,7 @@ func renderRegionTable(regions []bundledFlyRegion) string {
 	// Stitch the two columns side by side. Pad the left column to a
 	// fixed width so the right column starts at a stable position.
 	// Each entry is {coloredText, visibleWidth} so the padding math
-	// uses visible widths (ANSI escapes don\'t take screen space) —
+	// uses visible widths (ANSI escapes don\'t take screen space):
 	// without this, the right column would shift left by ~22 chars
 	// per colored region row.
 	const leftWidth = 29 // 2 spaces indent + 4 (code) + 2 + ~21 (name)
@@ -682,7 +682,7 @@ func renderRegionTable(regions []bundledFlyRegion) string {
 }
 
 // columnLine pairs the rendered (colored) cell text with its visible
-// width — the column stitcher needs both because ANSI escape sequences
+// width: the column stitcher needs both because ANSI escape sequences
 // in `text` don't contribute to screen position. Empty cells use the
 // zero value: text="" width=0, which pads cleanly to leftWidth.
 type columnLine struct {
@@ -720,7 +720,7 @@ func renderColumn(sections []string, groups map[string][]bundledFlyRegion) []col
 	return lines
 }
 
-// sortRegionsByCode is a tiny in-place sort by `code` — Mar\'s
+// sortRegionsByCode is a tiny in-place sort by `code`: Mar\'s
 // CLI has its own sort elsewhere but importing sort here just for
 // this is fine.
 func sortRegionsByCode(rs []bundledFlyRegion) {
@@ -772,8 +772,8 @@ func flyAppExistsOnAccount(appName string) bool {
 // BEFORE any Fly resource is created. main has already run (Topology), so
 // runtime.CurrentAuth etc. are populated and ValidateProductionConfig can
 // tell whether the app needs mail config. Frontend deploys carry no
-// server-side config, so they skip it. Failing here — rather than at the
-// build step, after the app + volume + secrets are already provisioned —
+// server-side config, so they skip it. Failing here: rather than at the
+// build step, after the app + volume + secrets are already provisioned:
 // keeps a misconfigured project from leaving orphaned Fly resources.
 func flyPreDeployValidate(projectDir string, topo flyTopology) error {
 	if topo == flyTopologyFrontend {
@@ -783,7 +783,7 @@ func flyPreDeployValidate(projectDir string, topo flyTopology) error {
 }
 
 // createFlyApp runs `fly apps create <name>`. Region is intentionally
-// NOT passed here — `fly apps create` doesn\'t accept a --region
+// NOT passed here: `fly apps create` doesn\'t accept a --region
 // flag (the app itself isn\'t pinned to a region; only its machines
 // are). The region we picked surfaces via the generated fly.toml's
 // `primary_region` field, which `fly deploy` reads when placing the
@@ -853,7 +853,7 @@ func manifestSessionSecretVar(m *project.Manifest) string {
 
 // isInteractive reports whether the operator is at a real terminal
 // (no CI=true, stdin is a tty). Used to gate prompts: in CI we never
-// prompt — missing config aborts the deploy with a clear error so
+// prompt: missing config aborts the deploy with a clear error so
 // the pipeline fails loud instead of hanging on stdin.
 //
 // Mirrors shouldOpenBrowser's logic but for prompts. Both look at

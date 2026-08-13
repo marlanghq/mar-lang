@@ -18,7 +18,7 @@ import (
 	"mar/internal/runtime"
 )
 
-// Auth runtime config — populated by the CLI before ServeLive runs.
+// Auth runtime config: populated by the CLI before ServeLive runs.
 // Holds the bits that come from mar.json (session secret + SMTP creds);
 // the user-supplied registration (entity, signup hook, etc.) lives in
 // runtime.CurrentAuth().
@@ -54,7 +54,7 @@ func SetAuthRuntime(secret string, smtp auth.SMTPConfig) {
 }
 
 // AuthSecret returns the configured session secret. The empty string
-// means auth isn't operational — `Auth.config` was used in mar code but
+// means auth isn't operational: `Auth.config` was used in mar code but
 // the CLI didn't plumb a secret. Handlers refuse to function in that
 // state.
 func AuthSecret() string {
@@ -80,9 +80,9 @@ func SMTP() auth.SMTPConfig {
 //
 // Two surfaces can send:
 //
-//   - user auth  — mounted when the program called Auth.config and a
+//   - user auth  - mounted when the program called Auth.config and a
 //     session secret is plumbed;
-//   - admin panel — mounted on any project with a session secret and a
+//   - admin panel: mounted on any project with a session secret and a
 //     database, with NO Auth.config required. This is the one the audit
 //     found: an admin-only project has no Auth.config, so it slipped
 //     past the user-auth checks entirely.
@@ -129,7 +129,7 @@ func guardMailSink() error {
 // When SMTP IS configured, the check is unconditional: connection
 // failure, auth failure, or any other SMTP-level error fails the boot
 // before the HTTP listener opens. Caller (ServeLive) surfaces the
-// error to the operator and exits the process — fly / systemd /
+// error to the operator and exits the process: fly / systemd /
 // whatever supervises sees an unhealthy machine and refuses to mark
 // the deploy as live.
 //
@@ -155,7 +155,7 @@ func mountAuthHandlers(mux *http.ServeMux) {
 	// All /_auth/* endpoints sit behind the gateway rate limiter
 	// (per-IP, configured via mar.json["rateLimit"]). request-code and
 	// verify-code also have tighter per-endpoint limiters inside the
-	// handler (emailLimiter, ipLimiter) — the gateway one is the
+	// handler (emailLimiter, ipLimiter): the gateway one is the
 	// cheap, broad first cut; the inner ones are the strict, auth-
 	// specific second cut. Both layers apply.
 	mux.HandleFunc("/_auth/request-code", rateLimit(handleRequestCode))
@@ -168,7 +168,7 @@ func mountAuthHandlers(mux *http.ServeMux) {
 // startAuthSweeper kicks off the background goroutine that calls
 // auth.SweepExpired on every `sweepInterval`. Idempotent (sync.Once);
 // no-op if the DB isn't reachable, since auth wouldn't work either
-// in that state — failing loudly here would just duplicate the error
+// in that state: failing loudly here would just duplicate the error
 // the first request would surface.
 //
 // Returned stop function from auth.StartSweeper is intentionally
@@ -229,7 +229,7 @@ func writeAuthError(w http.ResponseWriter, status int, code string) {
 // trusted proxy (isTrustedProxy); otherwise a caller could spoof the
 // header and rotate their own key, defeating every per-IP limiter. When
 // honored, the list is walked right-to-left to the first non-trusted
-// hop — the real client even if a malicious upstream prepended a forged
+// hop: the real client even if a malicious upstream prepended a forged
 // entry at the head.
 func clientIP(r *http.Request) string {
 	peer := hostOnly(r.RemoteAddr)
@@ -259,7 +259,7 @@ func clientIP(r *http.Request) string {
 
 // isHTTPS reports whether the original client connected over TLS.
 // Looks at both r.TLS (direct HTTPS to this process) and the
-// X-Forwarded-Proto header (TLS terminated by a proxy — the
+// X-Forwarded-Proto header (TLS terminated by a proxy: the
 // standard prod topology on Fly.io, Cloudflare, nginx, …). Without
 // the header check, `Secure` cookie flag would always be false in
 // production because the proxy→app hop is plain HTTP.
@@ -267,7 +267,7 @@ func clientIP(r *http.Request) string {
 // Used to set the `Secure` flag on auth + admin cookies. Returning
 // false errs on the unsafe side (cookie still sent over HTTP), but
 // the bigger picture is that any prod deploy MUST front the app
-// with HTTPS — this helper just makes the flag reflect that.
+// with HTTPS: this helper just makes the flag reflect that.
 func isHTTPS(r *http.Request) bool {
 	if r.TLS != nil {
 		return true
@@ -340,7 +340,7 @@ func handleRequestCode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_ = db
-	// Ensure user exists — if not, run the signup hook to create one.
+	// Ensure user exists, if not, run the signup hook to create one.
 	// Log the underlying error server-side so operators can diagnose
 	// it; the client only ever sees the stable code. Without this
 	// split, a Go-level error string (DB driver message, etc.) would
@@ -369,7 +369,7 @@ func handleRequestCode(w http.ResponseWriter, r *http.Request) {
 	emailBody := auth.DefaultBody(code, ttlMin)
 	// User-supplied `email.body : String -> Int -> String` overrides
 	// the default. Errors during user-fn evaluation surface in the
-	// server log but don't block sending — fall back to the default
+	// server log but don't block sending: fall back to the default
 	// so a malformed template doesn't lock users out.
 	if cfg.EmailBody != nil {
 		if custom, err := runtime.ApplyEmailBody(cfg.EmailBody, code, ttlMin); err != nil {
@@ -379,7 +379,7 @@ func handleRequestCode(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	// From address: mar.json's `mail.from` is the single source of
-	// truth — the address registered with the SMTP provider
+	// truth: the address registered with the SMTP provider
 	// (Resend, SendGrid, SES, …). mailFrom() returns the manifest
 	// value at boot. An empty string in dev (no mail block) is
 	// fine because the stdout sink doesn't actually transmit
@@ -395,7 +395,7 @@ func handleRequestCode(w http.ResponseWriter, r *http.Request) {
 		Subject: cfg.EmailSubject,
 		Body:    emailBody,
 	}); err != nil {
-		// Same pattern as the signup hook above — log full SMTP /
+		// Same pattern as the signup hook above: log full SMTP /
 		// provider error for ops, surface only a stable code so the
 		// user's UI doesn't end up showing "EOF" or "535 auth
 		// failed" or whatever the upstream returned.
@@ -484,7 +484,7 @@ func handleVerifyCode(w http.ResponseWriter, r *http.Request) {
 		writeAuthError(w, http.StatusUnauthorized, "invalid_code")
 		return
 	}
-	// Code matched — consume it atomically. If a concurrent request with the
+	// Code matched: consume it atomically. If a concurrent request with the
 	// same valid code already deleted this row, RowsAffected == 0 and we
 	// reject here, so one code can never mint two sessions.
 	// See docs/security-audit-2026-07-15.md #4.
@@ -531,7 +531,7 @@ func handleVerifyCode(w http.ResponseWriter, r *http.Request) {
 	// browsers honor it. But iOS URLSession's HTTPCookieStorage
 	// has a long-standing quirk where Set-Cookie headers carrying
 	// only Max-Age (no Expires) are treated as session cookies
-	// and dropped at app exit — meaning the native iOS app would
+	// and dropped at app exit: meaning the native iOS app would
 	// ask the user to log in again on every cold start. Emitting
 	// Expires alongside Max-Age makes URLSession persist the
 	// cookie to ~/Library/Cookies/Cookies.binarycookies as
@@ -550,7 +550,7 @@ func handleVerifyCode(w http.ResponseWriter, r *http.Request) {
 	// Native clients (iOS/Android/etc.) read the token from this
 	// header and stash it in platform secure storage to attach as
 	// `Authorization: Bearer <tok>` on subsequent requests. Web
-	// clients ignore the header — they got the same value as an
+	// clients ignore the header: they got the same value as an
 	// HttpOnly cookie above, which their browser handles automatically.
 	w.Header().Set(bearerTokenHeader, tok)
 	// Return the user record.
@@ -588,7 +588,7 @@ func handleLogout(w http.ResponseWriter, r *http.Request) {
 // handleWhoami: GET /_auth/whoami
 //
 // Returns the current user as JSON, or null if there's no valid session.
-// Mirrors the unix `whoami` command's shape — the frontend session-probe
+// Mirrors the unix `whoami` command's shape: the frontend session-probe
 // endpoint the client hits to learn who (if anyone) is logged in.
 func handleWhoami(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
@@ -625,13 +625,13 @@ func handleWhoami(w http.ResponseWriter, r *http.Request) {
 }
 
 // extractSessionToken returns the raw session token from a request,
-// trying both transports — `Authorization: Bearer <token>` first, then
-// the session cookie — and returns "" if neither is present.
+// trying both transports, `Authorization: Bearer <token>` first, then
+// the session cookie, and returns "" if neither is present.
 //
 // Two transports because Mar has two kinds of clients:
 //
 //   - Web (browser): HttpOnly cookie. JS code can't read or attach it,
-//     which is the whole point — XSS can't exfiltrate a session.
+//     which is the whole point: XSS can't exfiltrate a session.
 //   - Native runtimes (iOS/macOS/Android/Windows): Authorization header.
 //     The native app stores the token in the platform's secure storage
 //     (Keychain on Apple, EncryptedSharedPreferences on Android, etc.)
@@ -642,7 +642,7 @@ func handleWhoami(w http.ResponseWriter, r *http.Request) {
 //
 // Bearer wins over cookie if both are present. In practice the same
 // client never sends both (web has no token to bear; native disables
-// cookies on its HTTP client) — but if a misbehaving proxy were to
+// cookies on its HTTP client), but if a misbehaving proxy were to
 // inject a stale cookie alongside a fresh Authorization header, the
 // header is the source of truth.
 func extractSessionToken(r *http.Request) string {
@@ -669,7 +669,7 @@ func extractSessionToken(r *http.Request) string {
 // runtimes read it and stash the value in platform secure storage.
 //
 // Header (rather than wrapping the response body in `{user, token}`)
-// because it keeps the wire shape of the user record stable — Mar code
+// because it keeps the wire shape of the user record stable: Mar code
 // receives `Result String User` regardless of platform, and the
 // runtime layer hides the credential ferrying.
 const bearerTokenHeader = "X-Mar-Auth-Token"

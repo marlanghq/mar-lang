@@ -14,7 +14,7 @@ type PathSegment struct {
 	IsParam bool
 	Lit     string // when !IsParam
 	Name    string // when IsParam
-	Type    string // when IsParam: "String", "Int" — see ValidPathTypes
+	Type    string // when IsParam: "String", "Int", see ValidPathTypes
 }
 
 // ValidPathTypes is the closed set of BUILT-IN types accepted in
@@ -31,8 +31,8 @@ var ValidPathTypes = map[string]bool{
 // can decode `/users/admin` into VCtor("Admin"), and BuildURL can
 // emit `/users/admin` from VCtor("Admin").
 //
-// Populated by the project loader (project.loadIntoEnv) — and by
-// the test-only LoadModule path — when a CustomTypeDecl with all
+// Populated by the project loader (project.loadIntoEnv), and by
+// the test-only LoadModule path, when a CustomTypeDecl with all
 // zero-arg ctors is encountered. Lookups are case-sensitive on the
 // type name
 // (matches Mar's PascalCase convention) but URL ↔ ctor mapping
@@ -40,12 +40,12 @@ var ValidPathTypes = map[string]bool{
 //
 // Concurrency: writes happen during module load (single-threaded);
 // reads happen during request handling (potentially concurrent).
-// The map is read-only after load, so no locking — but if hot-reload
+// The map is read-only after load, so no locking, but if hot-reload
 // ever swaps modules at runtime we'd need to wrap with a sync.RWMutex.
 var EnumTypes = map[string][]string{}
 
 // RegisterEnumType records a custom type's ctors so path patterns
-// can reference it. Only zero-arg ctors are registered — types with
+// can reference it. Only zero-arg ctors are registered: types with
 // payload aren't valid in paths and the typechecker already rejects
 // them, so this is a defensive filter.
 func RegisterEnumType(typeName string, ctorNames []string, ctorArities map[string]int) {
@@ -58,7 +58,7 @@ func RegisterEnumType(typeName string, ctorNames []string, ctorArities map[strin
 }
 
 // ResetEnumTypes clears the registry. Called by the dev-server's
-// compile() on every hot reload — without this, types renamed or
+// compile() on every hot reload: without this, types renamed or
 // removed between reloads keep ghost entries in the map. Companion
 // to ResetRegisteredEntities + ResetMigrationCache.
 func ResetEnumTypes() {
@@ -81,9 +81,9 @@ func (p VPath) Display() string {
 
 // ParsePathPattern splits a URL pattern into segments and validates
 // `{name:Type}` syntax. Errors out on:
-//   - bare ":id" (the old syntax — must be `{id:Type}` now)
+//   - bare ":id" (the old syntax, must be `{id:Type}` now)
 //   - unclosed braces
-//   - missing type (`{id}` — type is mandatory)
+//   - missing type (`{id}`: type is mandatory)
 //   - unknown type (must be in ValidPathTypes)
 //   - duplicate param names within the same path
 //
@@ -99,7 +99,7 @@ func ParsePathPattern(src string) (VPath, error) {
 			continue
 		}
 		if strings.HasPrefix(p, ":") {
-			// Old syntax — error with a helpful message pointing at
+			// Old syntax: error with a helpful message pointing at
 			// the new one. The runtime won't accept this, so we
 			// surface it loudly rather than silently treating it
 			// as a literal segment.
@@ -123,7 +123,7 @@ func ParsePathPattern(src string) (VPath, error) {
 			// at parse time on cold paths (the registry might be
 			// empty during early bootstrap), so the decoder/encoder
 			// re-check at use time. A truly unknown type produces
-			// a runtime decode failure (matcher returns nil) — the
+			// a runtime decode failure (matcher returns nil): the
 			// typechecker should have caught it earlier anyway.
 			if !ValidPathTypes[ty] {
 				if _, isEnum := EnumTypes[ty]; !isEnum {
@@ -148,7 +148,7 @@ func ParsePathPattern(src string) (VPath, error) {
 
 // MatchURL tries to align `urlPath` against the path pattern. On
 // success returns a VRecord with one field per param (typed via the
-// per-param decoder). On failure returns nil — the caller should
+// per-param decoder). On failure returns nil: the caller should
 // move on to the next page.
 func (p VPath) MatchURL(urlPath string) Value {
 	parts := splitURLPath(urlPath)
@@ -217,7 +217,7 @@ func splitURLPath(p string) []string {
 }
 
 // decodePathSegment runs the type-specific decoder. Failure means the
-// URL doesn't match this pattern — the matcher tries the next one.
+// URL doesn't match this pattern: the matcher tries the next one.
 func decodePathSegment(raw, ty string) (Value, bool) {
 	switch ty {
 	case "String":
@@ -245,7 +245,7 @@ func decodePathSegment(raw, ty string) (Value, bool) {
 	return nil, false
 }
 
-// encodePathSegment is the reverse — it stringifies a typed param for
+// encodePathSegment is the reverse: it stringifies a typed param for
 // linkTo / Nav.pushTo. Type mismatches (passing a String where Int is
 // expected, etc.) surface as user-facing errors.
 func encodePathSegment(v Value, ty string) (string, error) {
@@ -283,7 +283,7 @@ func encodePathSegment(v Value, ty string) (string, error) {
 }
 
 // buildPathURL is the shared back-end for linkTo / Nav.pushTo /
-// Nav.replaceTo. Takes the typed Path (a VString at runtime — the
+// Nav.replaceTo. Takes the typed Path (a VString at runtime: the
 // typechecker enforces the Path-shaped surface contract) and the
 // params record, and returns the rendered URL.
 //

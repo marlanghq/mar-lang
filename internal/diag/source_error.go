@@ -2,7 +2,7 @@
 //
 // The compiler's error types (lexer.Error, parser.Error, typecheck.InferError)
 // each carry a position (line, column). At the boundary where errors meet
-// the user — the CLI today, an LSP server later — we want to render those
+// the user, the CLI today, an LSP server later, we want to render those
 // positions as a code snippet with a caret pointing at the bad token,
 // Rust-style.
 //
@@ -131,7 +131,7 @@ func kindOf(err error) string {
 }
 
 // bodyOf returns the "what went wrong" half of a positioned error
-// (without the kind prefix or the position — those get rendered
+// (without the kind prefix or the position: those get rendered
 // separately by formatContext).
 func bodyOf(err error) string {
 	switch e := err.(type) {
@@ -164,7 +164,7 @@ func formatContext(filename, source string, line, col, endLine, endCol int, hasE
 	c := colors()
 	lines := strings.Split(source, "\n")
 	if line < 1 || line > len(lines) {
-		// Out-of-range line — drop the snippet but keep the styled
+		// Out-of-range line: drop the snippet but keep the styled
 		// prefix + path so the block still reads as a mar error.
 		return fmt.Sprintf("\n%s %s\n  --> %s:%d:%d\n",
 			c.boldRed(kind+":"),
@@ -174,7 +174,7 @@ func formatContext(filename, source string, line, col, endLine, endCol int, hasE
 		)
 	}
 	var sb strings.Builder
-	// Leading blank — separates the block from preceding stderr output
+	// Leading blank: separates the block from preceding stderr output
 	// (boot logs, file-watcher noise on recompile, etc.).
 	sb.WriteString("\n")
 	sb.WriteString(c.boldRed(kind + ":"))
@@ -258,7 +258,7 @@ func colors() colorSet {
 			colorsVal = colorSet{boldRed: id, boldMagenta: id, dim: id}
 			return
 		}
-		// Same ANSI codes as cmd/mar/color.go — keep them in sync so
+		// Same ANSI codes as cmd/mar/color.go: keep them in sync so
 		// the snippet renders the same shade as `Error:` / `Hint:`
 		// blocks from fprintError/fprintHint.
 		colorsVal = colorSet{
@@ -278,7 +278,7 @@ func wrapANSI(prefix string) func(string) string {
 
 // stderrTTY reports whether stderr is an interactive terminal AND the
 // user hasn't opted out via NO_COLOR. Errors print to stderr, so the
-// decision is on stderr (not stdout — those can have different
+// decision is on stderr (not stdout: those can have different
 // redirections, e.g. `mar dev > out.log` leaves stderr a TTY).
 func stderrTTY() bool {
 	if os.Getenv("NO_COLOR") != "" {

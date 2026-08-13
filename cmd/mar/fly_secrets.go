@@ -8,8 +8,8 @@
 //   - The Fly app holds the actual values, set via `fly secrets set`.
 //   - These commands keep the two in sync, never asking the operator
 //     to run raw `fly` themselves. Multi-provider future (Render,
-//     Railway, AWS) extends this same surface — `mar render secrets
-//     {set,list,unset}` — without users learning provider CLIs.
+//     Railway, AWS) extends this same surface: `mar render secrets
+//     {set,list,unset}`: without users learning provider CLIs.
 //
 // Bulk pushing is handled automatically by `mar deploy` (it
 // prompts for any env: refs missing on the Fly app, then pushes
@@ -18,18 +18,18 @@
 //
 // The three subcommands:
 //
-//   set    — single-target update. `mar fly secrets set NAME=value`
+//   set    - single-target update. `mar fly secrets set NAME=value`
 //            or `mar fly secrets set NAME` (prompts with hidden echo).
 //            Warns when NAME isn't declared in mar.json, but doesn't
-//            block — covers the legit "I want a secret available at
+//            block: covers the legit "I want a secret available at
 //            runtime even though no env: ref reads it" case.
 //
-//   list   — read-only inspection. Shows what's set on Fly, cross-
+//   list   - read-only inspection. Shows what's set on Fly, cross-
 //            referenced against mar.json so the operator can see
 //            (a) which declared refs are missing and (b) which Fly
 //            secrets are orphaned (no mar.json ref pointing at them).
 //
-//   unset  — remove a secret from Fly. Confirms first; warns if the
+//   unset  - remove a secret from Fly. Confirms first; warns if the
 //            secret is still declared in mar.json (likely a mistake).
 
 package main
@@ -81,7 +81,7 @@ func pathArg(args []string) string {
 }
 
 // flySecretsUsage returns the help text for `mar fly secrets`.
-// Same palette as flyUsage — see that function's comment.
+// Same palette as flyUsage: see that function's comment.
 func flySecretsUsage() string {
 	bin := colorGreen("mar")
 	name := func(s string) string { return colorBold(s) }
@@ -115,7 +115,7 @@ func flySecretsUsage() string {
 //   - `set NAME=value` → push directly, no prompt
 //   - `set NAME` → prompt with hidden-echo, then push
 //
-// In either form, we warn if NAME isn't declared in mar.json — the
+// In either form, we warn if NAME isn't declared in mar.json: the
 // secret will be set on Fly but no app code will read it, which is
 // usually a typo. We don't BLOCK because a legitimate use case exists
 // (e.g. setting a value the runtime reads via some other mechanism).
@@ -163,7 +163,7 @@ func runFlySecretsSet(args []string) int {
 		return 1
 	}
 
-	// Cross-check with mar.json — warn (don't block) when NAME is not
+	// Cross-check with mar.json: warn (don't block) when NAME is not
 	// declared as an env: ref. Typos in env var names are a common
 	// source of "I set it but the app still says missing" confusion.
 	declared, _ := discoverManifestEnvRefs(filepath.Join(projectDir, "mar.json"))
@@ -197,13 +197,13 @@ func runFlySecretsSet(args []string) int {
 // runFlySecretsList shows what's set on the Fly app, cross-referenced
 // against mar.json. Two columns matter most:
 //
-//   - "declared?" — is this name in mar.json as env:NAME? If no, it's
+//   - "declared?", is this name in mar.json as env:NAME? If no, it's
 //     orphaned (set on Fly but no app code reads it; either intentional
 //     extra config or leftover from an older app version).
-//   - "missing?" — are any mar.json env: refs NOT set on Fly? These
+//   - "missing?", are any mar.json env: refs NOT set on Fly? These
 //     would block deploy via the pre-flight check.
 //
-// Values are never shown — fly doesn't return them via `secrets list`
+// Values are never shown: fly doesn't return them via `secrets list`
 // (good hygiene), and we wouldn't print them even if it did.
 func runFlySecretsList(path string) int {
 	appName, projectDir, _, err := resolveFlyApp(path)
@@ -235,7 +235,7 @@ func runFlySecretsList(path string) int {
 		setOnFly[s.Name] = s
 	}
 
-	// Union of all names — declared OR set on Fly.
+	// Union of all names: declared OR set on Fly.
 	allNames := map[string]struct{}{}
 	for _, n := range declared {
 		allNames[n] = struct{}{}
@@ -297,7 +297,7 @@ func runFlySecretsList(path string) int {
 }
 
 // runFlySecretsUnset removes a secret from Fly. Confirms first, and
-// warns extra hard if the secret is still declared in mar.json — that
+// warns extra hard if the secret is still declared in mar.json: that
 // means the next deploy will fail pre-flight, and the runtime would
 // fail at boot anyway.
 func runFlySecretsUnset(args []string) int {

@@ -10,7 +10,7 @@ import (
 // reserved /_mar/ namespace. Real /_mar/ assets (runtime.js, program.json,
 // manifest, icons, admin panel) each register their own mux handler and never
 // reach serveStaticOrShell; anything under /_mar/ that DOES reach it is a
-// framework path that doesn't exist for this app — e.g. /_mar/admin on a
+// framework path that doesn't exist for this app: e.g. /_mar/admin on a
 // frontend-only app, where the admin panel isn't mounted. It must 404, not
 // leak the HTML shell. (lp is nil here: the reserved-path branch returns
 // before renderShell is reached.)

@@ -2,13 +2,13 @@ package jsserve
 
 import "testing"
 
-// TestRequestLog_SkipsFrameworkInternalPaths — the panel polling itself
+// TestRequestLog_SkipsFrameworkInternalPaths: the panel polling itself
 // shouldn't crowd out the user's actual app traffic in the recent-
 // requests view. /_mar/admin/* and /_mar/reload don't get recorded;
 // everything else does.
 //
-// (The introspection endpoints these used to feed — /api/server-info,
-// /api/db-stats, … — were the hand-written SPA's; the Mar-native panel
+// (The introspection endpoints these used to feed, /api/server-info,
+// /api/db-stats, …, were the hand-written SPA's; the Mar-native panel
 // reads /_mar/admin/api/mar/* instead. Both live under /_mar/admin/ so
 // the prefix classifier covers them either way.)
 func TestRequestLog_SkipsFrameworkInternalPaths(t *testing.T) {

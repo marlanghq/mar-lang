@@ -4,7 +4,7 @@ import "math"
 
 // Sound (docs/proposals/sound.md) is chip-audio. Builders assemble an opaque
 // Sound value; Sound.play turns it into a Cmd, Sound.loop / Sound.voice into
-// a Sub. The real synthesis (WebAudio) lives in the JS runtime — these Go
+// a Sub. The real synthesis (WebAudio) lives in the JS runtime: these Go
 // builtins are inert, present only so top-level Sound constants force without
 // crashing during server-side eval and the builtin vocabulary stays uniform
 // across runtimes (the drift parity tests).
@@ -18,7 +18,7 @@ func soundBuiltins() map[string]Value {
 		return VEffect{Tag: tag, Run: func() (Value, error) { return VUnit{}, nil }}
 	}
 	m := map[string]Value{
-		// Sound.Wave constructors — real values (used as Sound.tone's first arg,
+		// Sound.Wave constructors: real values (used as Sound.tone's first arg,
 		// so top-level Sound constants force them). The frontend synth reads the tag.
 		"Sound.Square":   VCtor{Tag: "Square"},
 		"Sound.Triangle": VCtor{Tag: "Triangle"},

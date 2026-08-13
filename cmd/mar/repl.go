@@ -78,7 +78,7 @@ func runRepl() int {
 			name := strings.TrimSpace(line[:eq])
 			body := strings.TrimSpace(line[eq+1:])
 			if isLowerIdent(name) {
-				// Reject rebinding — mar values are immutable, including
+				// Reject rebinding: mar values are immutable, including
 				// in the REPL. The session would otherwise silently
 				// behave as mutation (closures would see new value).
 				if userBindings[name] {

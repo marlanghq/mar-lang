@@ -10,7 +10,7 @@ module Backend.Profiles exposing
 import Shared exposing (Outcome(..))
 
 
--- Profiles — a player's game identity (nick) plus their denormalized
+-- Profiles: a player's game identity (nick) plus their denormalized
 -- overall record. One row per user, created the first time they pick
 -- a nick (the Nickname gate). The W/L/D counters are bumped exactly
 -- once per duel, when it transitions to `done` (see applyOutcome,
@@ -214,7 +214,7 @@ listPlayersImpl _ user =
 
 
 -- Rename the caller. Same rules as onboarding (via Shared.nickProblem),
--- plus the case-insensitive taken check — skipped when the nick is
+-- plus the case-insensitive taken check: skipped when the nick is
 -- unchanged so re-casing your OWN nick ("ana" → "Ana") is allowed. The
 -- DB `uniques` index on `nick` is the backstop against a race.
 updateNickImpl : { nick : String } -> Shared.User -> Task Shared.NickResult

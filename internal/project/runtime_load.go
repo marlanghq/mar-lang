@@ -17,10 +17,10 @@ package project
 //     ~100 KB of type-signature data + the related crypto/fips140
 //     init data to every `mar build` artifact. Removing the
 //     transitive reach from the runtime stub lets Go's linker DCE
-//     drop it entirely — measurably smaller stubs.
+//     drop it entirely: measurably smaller stubs.
 //
 // The dev / build paths (mar dev, mar build) still go through
-// LoadIntoEnvWithModulesAndHook, which DOES type-check — they care
+// LoadIntoEnvWithModulesAndHook, which DOES type-check: they care
 // about surfacing type errors before runtime.
 
 import (
@@ -36,12 +36,12 @@ import (
 // LoadIntoEnvForRuntime parses `entry` plus its transitive imports
 // (BFS), topologically sorts them, then evaluates each into a fresh
 // runtime.Env. `installBuiltins` is called after BaseEnv is created
-// and before any module is evaluated — used by `App.fullstack` /
+// and before any module is evaluated: used by `App.fullstack` /
 // `App.frontend` / `App.backend` to install their capture
 // callbacks before user code runs.
 //
 // Type-checks on the way in. That is not about catching type errors
-// — the build pipeline already did — but about ELABORATION: the
+// , the build pipeline already did, but about ELABORATION: the
 // checker writes decisions onto the tree that the evaluator cannot
 // re-derive, so a tree that skipped it is quietly wrong rather than
 // rejected. See ADR 0017.
@@ -55,8 +55,8 @@ func LoadIntoEnvForRuntime(
 	}
 	// Type-check before evaluating, and not for the type errors: checking is
 	// what ELABORATES the tree. A parse-only load hands the evaluator a tree
-	// with the checker's decisions missing — which literals became Decimals,
-	// which references named an implementation — and those do not fail
+	// with the checker's decisions missing, which literals became Decimals,
+	// which references named an implementation, and those do not fail
 	// loudly. `1 + 1.50` passes `mar check`, runs under `mar dev`, and dies
 	// here with `+: expected Int`. See ADR 0017.
 	byName := indexModules(mods)
@@ -84,7 +84,7 @@ func LoadIntoEnvForRuntime(
 // parseAndOrder is the parse-only kernel shared by every runtime
 // loader. Walks imports breadth-first from `entry`, parses each
 // file, then topologically sorts so each module is evaluated after
-// every module it depends on. No typecheck calls — that's the
+// every module it depends on. No typecheck calls: that's the
 // whole point of the runtime-vs-build split documented above.
 func parseAndOrder(entry string) ([]*ast.Module, error) {
 	entryAbs, err := filepath.Abs(entry)

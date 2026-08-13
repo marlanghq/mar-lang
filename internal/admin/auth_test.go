@@ -7,7 +7,7 @@ import (
 
 const testSecret = "test-secret-32-bytes-long-padding-padding"
 
-// TestIsAdmin_PresentAndAbsent — the gate-membership probe used by
+// TestIsAdmin_PresentAndAbsent: the gate-membership probe used by
 // RequestCode to decide whether to send (vs silently no-op).
 func TestIsAdmin_PresentAndAbsent(t *testing.T) {
 	db := openTestDB(t)
@@ -22,7 +22,7 @@ func TestIsAdmin_PresentAndAbsent(t *testing.T) {
 	}
 }
 
-// TestIssueAndVerifyCode_HappyPath — issue + verify with the same
+// TestIssueAndVerifyCode_HappyPath: issue + verify with the same
 // plaintext returns OK and burns the row.
 func TestIssueAndVerifyCode_HappyPath(t *testing.T) {
 	db := openTestDB(t)
@@ -49,7 +49,7 @@ func TestIssueAndVerifyCode_HappyPath(t *testing.T) {
 	}
 }
 
-// TestVerifyCode_WrongCode — bad code returns Invalid + bumps
+// TestVerifyCode_WrongCode: bad code returns Invalid + bumps
 // attempts. Doesn't burn the row (so the right code can still be
 // tried).
 func TestVerifyCode_WrongCode(t *testing.T) {
@@ -71,7 +71,7 @@ func TestVerifyCode_WrongCode(t *testing.T) {
 	}
 }
 
-// TestVerifyCode_TooManyAttempts — after MaxCodeAttempts wrong
+// TestVerifyCode_TooManyAttempts: after MaxCodeAttempts wrong
 // guesses the row is deleted, and subsequent verifies return Invalid
 // (no separate "locked" status leaking the lock signal).
 func TestVerifyCode_TooManyAttempts(t *testing.T) {
@@ -85,7 +85,7 @@ func TestVerifyCode_TooManyAttempts(t *testing.T) {
 			t.Fatalf("attempt %d: got %v, want VerifyInvalid", i, res)
 		}
 	}
-	// Final attempt — crosses the threshold.
+	// Final attempt: crosses the threshold.
 	res, _ := VerifyCode(db, testSecret, "admin@x.com", "000000", now)
 	if res != VerifyTooManyAttempts {
 		t.Errorf("got %v, want VerifyTooManyAttempts", res)
@@ -97,7 +97,7 @@ func TestVerifyCode_TooManyAttempts(t *testing.T) {
 	}
 }
 
-// TestVerifyCode_Expired — once the clock is past expiresAt, the
+// TestVerifyCode_Expired: once the clock is past expiresAt, the
 // lookup returns no row → Invalid (the row itself is left alone, a
 // future sweeper would clean up).
 func TestVerifyCode_Expired(t *testing.T) {
@@ -112,7 +112,7 @@ func TestVerifyCode_Expired(t *testing.T) {
 	}
 }
 
-// TestSession_CreateAndLookup — happy path: create, look up,
+// TestSession_CreateAndLookup, happy path: create, look up,
 // retrieve email.
 func TestSession_CreateAndLookup(t *testing.T) {
 	db := openTestDB(t)
@@ -142,7 +142,7 @@ func TestSession_CreateAndLookup(t *testing.T) {
 	}
 }
 
-// TestSession_ExpiredIsCleanedUp — looking up an expired session
+// TestSession_ExpiredIsCleanedUp: looking up an expired session
 // returns ErrNoSession AND deletes the row, so subsequent lookups
 // don't even find it.
 func TestSession_ExpiredIsCleanedUp(t *testing.T) {
@@ -163,7 +163,7 @@ func TestSession_ExpiredIsCleanedUp(t *testing.T) {
 	}
 }
 
-// TestSession_DeleteRevokes — DeleteSession is what /logout calls.
+// TestSession_DeleteRevokes: DeleteSession is what /logout calls.
 // Lookup of the same token after delete returns ErrNoSession.
 func TestSession_DeleteRevokes(t *testing.T) {
 	db := openTestDB(t)
@@ -180,7 +180,7 @@ func TestSession_DeleteRevokes(t *testing.T) {
 	}
 }
 
-// TestSession_DeleteIsIdempotent — logging out twice (or with a
+// TestSession_DeleteIsIdempotent: logging out twice (or with a
 // stale cookie) is a no-op.
 func TestSession_DeleteIsIdempotent(t *testing.T) {
 	db := openTestDB(t)
@@ -189,7 +189,7 @@ func TestSession_DeleteIsIdempotent(t *testing.T) {
 	}
 }
 
-// TestSyncRevokesSessions_AfterAdminRemoval — the §4.1a guarantee:
+// TestSyncRevokesSessions_AfterAdminRemoval, the §4.1a guarantee:
 // removing an admin from the desired list deletes their sessions.
 // LookupSession then returns ErrNoSession on the next request.
 func TestSyncRevokesSessions_AfterAdminRemoval(t *testing.T) {
@@ -198,7 +198,7 @@ func TestSyncRevokesSessions_AfterAdminRemoval(t *testing.T) {
 	now := time.UnixMilli(1_000_000)
 	tok, _ := CreateSession(db, testSecret, "admin@x.com", now)
 
-	// Remove from desired list — sync should wipe the session.
+	// Remove from desired list: sync should wipe the session.
 	_, removed, err := SyncAdmins(db, []string{}, 2000)
 	if err != nil {
 		t.Fatal(err)

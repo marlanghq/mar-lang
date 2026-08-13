@@ -1,4 +1,4 @@
-// Schema migrator — see docs/migrations.md for the full spec.
+// Schema migrator: see docs/migrations.md for the full spec.
 //
 // The migrator runs on every server boot (and every `mar dev`
 // hot-reload), takes the list of registered entities, and brings the
@@ -43,7 +43,7 @@ import (
 //
 // The Error() method falls back to the bundled `Summary\n\nHint`
 // shape so callers that just stringify the error still get a
-// readable message — useful for tests, logging, and the SSE
+// readable message: useful for tests, logging, and the SSE
 // compile-error channel.
 type BlockedMigrationError struct {
 	Summary string // one-line headline (e.g. "migration blocked for entity tasks: ...")
@@ -66,11 +66,11 @@ const (
 	StepAddColumn
 	StepRecreateEmpty // drop+recreate when nullability changed and table is empty
 	StepNoteOrphanTable
-	StepBlocked // unsafe — has a non-nil Error
+	StepBlocked // unsafe, has a non-nil Error
 	// StepCreateUniqueIndex: a `CREATE UNIQUE INDEX IF NOT EXISTS`
 	// for a unique constraint declared via `Entity.unique`. Emitted
 	// after the table itself is present (so column references in the
-	// index resolve). Idempotent — re-running the migrator against a
+	// index resolve). Idempotent: re-running the migrator against a
 	// DB that already has the index is a no-op.
 	StepCreateUniqueIndex
 )
@@ -90,7 +90,7 @@ type MigrationStep struct {
 	SQL string
 
 	// Description is a one-line human summary used in plan/status output
-	// and in the audit table's `migration_kind` column. Stable —
+	// and in the audit table's `migration_kind` column. Stable:
 	// downstream code grepping the audit log can rely on the format.
 	Description string
 
@@ -130,7 +130,7 @@ type Migrator struct {
 }
 
 // NewMigrator builds a migrator over the given entities. Order matters
-// only for deterministic output — actual execution is independent
+// only for deterministic output: actual execution is independent
 // per-table.
 func NewMigrator(db *sql.DB, entities []VEntity) *Migrator {
 	return &Migrator{db: db, entities: ensureAuthIdentityUnique(entities)}
@@ -141,7 +141,7 @@ func NewMigrator(db *sql.DB, entities []VEntity) *Migrator {
 // declare `Entity.unique [...]` on it. Two concurrent request-code calls
 // for a new email would otherwise create two user rows (EnsureUser does a
 // non-atomic lookup-then-insert). The unique index closes that race in the
-// DB — the second insert fails instead of duplicating.
+// DB: the second insert fails instead of duplicating.
 // See docs/security-audit-2026-07-15.md #11.
 func ensureAuthIdentityUnique(entities []VEntity) []VEntity {
 	a := CurrentAuth()
@@ -172,8 +172,8 @@ func ensureAuthIdentityUnique(entities []VEntity) []VEntity {
 // HTTP listener accepts traffic. Plus on each hot-reload.
 //
 // Returns silently when:
-//   - no DB is configured (dbPath empty) — the project doesn't use Repo;
-//   - no entities are registered — same situation, just from the
+//   - no DB is configured (dbPath empty): the project doesn't use Repo;
+//   - no entities are registered: same situation, just from the
 //     other side of the lookup;
 //   - everything is up-to-date (no changes to apply).
 //
@@ -187,7 +187,7 @@ func RunBootMigrations() error {
 		return nil
 	}
 	if currentDBPath() == "" {
-		// No DB configured but entities exist — that's a user bug.
+		// No DB configured but entities exist: that's a user bug.
 		// Surface it loud rather than letting Repo.* fail later
 		// with the cryptic "no database configured" message.
 		return fmt.Errorf(
@@ -217,7 +217,7 @@ func RunBootMigrations() error {
 //     no colors or blanks, so tooling can match them.
 //
 //   - TTY (interactive `mar dev`): the house style from
-//     docs/cli-style.md §1/§3 — a leading blank to separate from prior
+//     docs/cli-style.md §1/§3: a leading blank to separate from prior
 //     output, a bold "Migrations" header with a dim summary, and dim,
 //     indented detail lines.
 func printRunSummary(s RunSummary) {
@@ -238,7 +238,7 @@ func printRunSummary(s RunSummary) {
 	dim := migrateWrapANSI("\x1b[38;5;245m")
 	bold := migrateWrapANSI("\x1b[1m")
 
-	// Leading blank — separates the block from preceding boot output,
+	// Leading blank: separates the block from preceding boot output,
 	// skipped if the previous block already ended with one.
 	if clio.WantLeadingBlank() {
 		fmt.Fprintln(os.Stderr)
@@ -256,7 +256,7 @@ func printRunSummary(s RunSummary) {
 	for _, note := range s.Notes {
 		fmt.Fprintf(os.Stderr, "  %s\n", dim(note))
 	}
-	// Tight ending — let the next block (the dev banner) emit its own
+	// Tight ending: let the next block (the dev banner) emit its own
 	// leading blank rather than us trailing one here.
 	clio.ClearTrailingBlank()
 }
@@ -289,7 +289,7 @@ func migrateWrapANSI(prefix string) func(string) string {
 // steps so the caller can format the boot-time log line.
 //
 // Wraps the diff loop in a SQLite-busy retry: 3 attempts at 100ms /
-// 500ms / 2s. The retry only triggers on the initial lock attempt —
+// 500ms / 2s. The retry only triggers on the initial lock attempt:
 // once we're past the audit-table bootstrap, individual ALTER
 // statements that hit BUSY would already be unusual and surface
 // directly as errors.
@@ -516,7 +516,7 @@ func (m *Migrator) planEntity(ent VEntity) ([]MigrationStep, error) {
 		return steps, nil
 	}
 
-	// Existing table — read live schema and diff column-by-column.
+	// Existing table: read live schema and diff column-by-column.
 	live, err := m.readTableInfo(ent.Table)
 	if err != nil {
 		return nil, err
@@ -539,22 +539,22 @@ func (m *Migrator) planEntity(ent VEntity) ([]MigrationStep, error) {
 			steps = append(steps, step)
 			continue
 		}
-		// Column present — assert compatible.
+		// Column present: assert compatible.
 		if blocked := assertCompatibleColumn(ent, f, row, hasRows, liveByName); blocked != nil {
 			if blocked.Kind == StepRecreateEmpty {
 				steps = append(steps, *blocked)
 				continue
 			}
 			steps = append(steps, *blocked)
-			return steps, nil // stop on first hard block — clear error path
+			return steps, nil // stop on first hard block: clear error path
 		}
 	}
 
-	// Unique indexes — emit unconditionally as IF NOT EXISTS. The
+	// Unique indexes: emit unconditionally as IF NOT EXISTS. The
 	// migrator doesn't track per-index drift: an index that already
 	// matches is a no-op; an index that doesn't exist yet gets
 	// created. A removed Entity.unique leaves the old index in the
-	// DB (orphan) — documented as a v1 limitation; we'd add an
+	// DB (orphan): documented as a v1 limitation; we'd add an
 	// "index drift" step later if it becomes a real problem.
 	steps = append(steps, planUniqueIndexes(ent)...)
 	return steps, nil
@@ -586,14 +586,14 @@ func planUniqueIndexes(ent VEntity) []MigrationStep {
 // uniqueIndexName builds the deterministic name we use for a
 // declared unique index. Format: `<table>_uq_<col1>_<col2>...`.
 // Stable across boots so `CREATE UNIQUE INDEX IF NOT EXISTS` is
-// idempotent — a re-run sees the same name and no-ops.
+// idempotent: a re-run sees the same name and no-ops.
 func uniqueIndexName(table string, cols []string) string {
 	return table + "_uq_" + strings.Join(cols, "_")
 }
 
 // buildCreateUniqueIndexSQL emits the `CREATE UNIQUE INDEX IF NOT
 // EXISTS` statement. Both the index name and the column references
-// go through quoteIdent — column names are mar identifiers (alnum)
+// go through quoteIdent: column names are mar identifiers (alnum)
 // but quoting costs nothing and survives any future relaxation of
 // the allowed character set.
 func buildCreateUniqueIndexSQL(table, name string, cols []string) string {
@@ -617,7 +617,7 @@ func buildCreateUniqueIndexSQL(table, name string, cols []string) string {
 //     constant DEFAULT, but what the existing rows should say is a
 //     decision only the operator can make (entity columns carry no
 //     default), so we stop and hand them the one-line ALTER to run.
-//   - Serial column (auto-incrementing PK) — SQLite doesn't support
+//   - Serial column (auto-incrementing PK): SQLite doesn't support
 //     adding AUTOINCREMENT via ALTER TABLE.
 //
 // liveByName is the live schema, used to tell which columns carry over
@@ -660,7 +660,7 @@ func planAddColumn(ent VEntity, f EntityField, hasRows bool, liveByName map[stri
 				// them cyan in the prose AND finds the same tokens
 				// in the SQL block to highlight there too. Don't
 				// rephrase without checking colorizeHint stays in
-				// sync — bare `tasks` / `position` in either spot
+				// sync: bare `tasks` / `position` in either spot
 				// is what makes the two halves visually match, and
 				// `<value>` verbatim is what makes the placeholder
 				// stand out yellow.
@@ -773,7 +773,7 @@ func buildRebuildSQL(ent VEntity, liveByName map[string]tableInfoRow, expr map[s
 // The Empty + Nullability-Change special case returns a
 // StepRecreateEmpty: when the table has zero rows AND a nullability
 // constraint flipped (add/remove NOT NULL), we drop and rebuild from
-// scratch since no rows are at risk. The dev-time UX matters here —
+// scratch since no rows are at risk. The dev-time UX matters here:
 // most projects edit entity fields before any production data
 // exists, and a hard "incompatible change" error would feel hostile.
 func assertCompatibleColumn(ent VEntity, f EntityField, live tableInfoRow, hasRows bool, liveByName map[string]tableInfoRow) *MigrationStep {
@@ -983,7 +983,7 @@ func columnDefSQL(f EntityField) string {
 // buildCreateTableSQLNew emits a plain `CREATE TABLE` (no IF NOT
 // EXISTS) for the migrator. The migrator only emits CREATE for
 // tables it has just confirmed don't exist, so the guard would be
-// noise — and worse, would mask a real bug if drift were to make
+// noise, and worse, would mask a real bug if drift were to make
 // the table already exist. entity.go has an IF-NOT-EXISTS variant
 // used elsewhere for one-shot static-table bootstrapping.
 func buildCreateTableSQLNew(e VEntity) string {
@@ -1007,7 +1007,7 @@ func buildRecreateEmptySQL(e VEntity) string {
 }
 
 // sqlTypeForDDL returns the storage type to write into the CREATE /
-// ALTER statement. TIMESTAMP and DECIMAL are conceptual — both stored
+// ALTER statement. TIMESTAMP and DECIMAL are conceptual: both stored
 // as INTEGER (Unix ms / scaled coefficient) so SQLite can compare and
 // sort numerically.
 func sqlTypeForDDL(marType string) string {

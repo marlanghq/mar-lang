@@ -9,7 +9,7 @@ import Backend.Attendance
 
 
 -- Account-level operations. Today there's one: irreversible account
--- deletion (App Store guideline 5.1.1(v) — an app that creates
+-- deletion (App Store guideline 5.1.1(v): an app that creates
 -- accounts must let the user delete theirs from inside it).
 --
 -- Auth.protect injects `user` as the caller, so a request can only

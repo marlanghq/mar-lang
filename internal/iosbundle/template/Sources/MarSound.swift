@@ -1,14 +1,14 @@
-// Sound (docs/proposals/sound.md) — chip-audio synthesis for iOS, the native
+// Sound (docs/proposals/sound.md): chip-audio synthesis for iOS, the native
 // mirror of the WebAudio synth in internal/jsserve/runtime.js. The .mar builders
 // (Sound.tone / volume / sweep / hold / duty / vibrato / arp / lowCut / highCut /
-// chord / sequence / rest) assemble an opaque Sound VALUE — a `__Snd` ctor carrying
+// chord / sequence / rest) assemble an opaque Sound VALUE: a `__Snd` ctor carrying
 // a list of voice records with the SAME field set as the JS `{ wave, freq, ms,
 // endFreq, holdMs, volume, delayMs, duty, vibDepth, vibRate, arp, lowCut,
 // highCut }`. Sound.play is a Cmd; loop /
 // ambient / once are Subs the page runtime starts/stops. The synth itself is an
 // AVAudioEngine source node that sums the active voices sample by sample.
 //
-// Behavior parity (envelope shape, exact timbre) is tuned on device — this file
+// Behavior parity (envelope shape, exact timbre) is tuned on device: this file
 // is compile-checked, not run, in the build environment.
 
 import Foundation
@@ -29,8 +29,8 @@ private struct Voice {
     var vibDepth: Double    // vibrato depth in cents (0 = none)
     var vibRate: Double     // vibrato rate in Hz
     var arp: [Double]       // extra pitches to step through (empty = none)
-    var lowCut: Double      // Sound.lowCut  — trim below this Hz (0 = none)
-    var highCut: Double     // Sound.highCut — trim above this Hz (0 = none)
+    var lowCut: Double      // Sound.lowCut  - trim below this Hz (0 = none)
+    var highCut: Double     // Sound.highCut: trim above this Hz (0 = none)
     // The envelope, in ms (Sound.attack / Sound.release). Carried by the voice so
     // every playback path shapes it the same way; 0 means "unasked", which the
     // renderer floors at the shortest ramp that is not a click.
@@ -38,7 +38,7 @@ private struct Voice {
     var release: Double
 }
 
-/// The floor below which a gain change is a step discontinuity — a click. Not a
+/// The floor below which a gain change is a step discontinuity: a click. Not a
 /// house style: the only number the engine imposes, and it is physics. Every
 /// shape past it is taste and lives in the app (ADR-0006).
 private let soundMinRampMs: Double = 5
@@ -65,8 +65,8 @@ private final class LiveVoice {
 }
 
 /// One voice of a held source (Sound.voice / Sound.glide): a node held
-/// indefinitely — no duration,
-/// no envelope re-trigger — whose pitch and level are SMOOTHED parameters
+/// indefinitely: no duration,
+/// no envelope re-trigger, whose pitch and level are SMOOTHED parameters
 /// gliding toward retunable targets. This is the native analog of the web
 /// bed (soundBedStart/soundBedSet in runtime.js): the sub keeps returning
 /// the same bed with a new freq/volume each frame (an engine note tracking
@@ -84,8 +84,8 @@ private final class BedVoice {
     var ampK: Double               // varies: fade-in / swell / fade-out
     var fadingOut = false
     var dead = false               // set by the render thread once faded out
-    var lowCut: Double = 0         // Sound.lowCut  — trim below this Hz
-    var highCut: Double = 0        // Sound.highCut — trim above this Hz
+    var lowCut: Double = 0         // Sound.lowCut  - trim below this Hz
+    var highCut: Double = 0        // Sound.highCut: trim above this Hz
     var lpState: Double = 0
     var hpState: Double = 0
     // Sound.vibrato on a HELD voice: the LFO has no stop time, it breathes for as
@@ -117,7 +117,7 @@ final class MarSound: @unchecked Sendable {
     private var source: AVAudioSourceNode?
     private var started = false
 
-    // Shared with the realtime render thread — guarded by `lock`.
+    // Shared with the realtime render thread: guarded by `lock`.
     private let lock = NSLock()
     private var voices: [LiveVoice] = []
     private var beds: [BedVoice] = []        // Sound.voice / Sound.glide held voices
@@ -130,7 +130,7 @@ final class MarSound: @unchecked Sendable {
     //
     // One number, two meanings, and the split is Sound.voice vs Sound.glide
     // (ADR-0024). A bed's level is supposed to lag: a crowd that tracks each event
-    // is heard as a rhythm, not as a background. A VOICE's level is not — a
+    // is heard as a rhythm, not as a background. A VOICE's level is not: a
     // polyphonic instrument scales its voices by how many are sounding, and that
     // has to land while the chord is still held. At 1.1s it took about three
     // seconds to arrive, so the notes already down kept their old level and the
@@ -146,7 +146,7 @@ final class MarSound: @unchecked Sendable {
     /// The soft ceiling on the master mix. The bus sums voices LINEARLY and
     /// nothing downstream was catching the result: an app that sounds several
     /// things at once could ask for more than full scale, and the output was hard
-    /// clipped — heard as a chord that is not just louder but broken.
+    /// clipped: heard as a chord that is not just louder but broken.
     ///
     /// Stateless on purpose, not a compressor: a compressor would duck the WHOLE
     /// mix whenever one sound got loud, a behaviour no app can see coming. This is
@@ -295,14 +295,14 @@ final class MarSound: @unchecked Sendable {
             // Sample-and-hold at the note's pitch: draw a new random value only
             // when the phase completes a cycle, and hold it in between. Low keys
             // hold each step for a long time (rumble), high keys churn through
-            // them (hiss) — so noise finally answers the key you pressed. It used
+            // them (hiss), so noise finally answers the key you pressed. It used
             // to redraw EVERY sample, which is full-band white noise: identical on
             // every key, and the reason NOI felt like a dead switch. The web side
             // reaches the same place from the other end, by resampling its noise
             // clip; both track the note, neither is sample-identical to the other
             // (true of this synth's noise all along).
             // freq 0 means "no pitch asked for", which is how every game in the
-            // repo writes noise today (all 88 calls) — back when noise ignored
+            // repo writes noise today (all 88 calls): back when noise ignored
             // the number entirely. Those keep the old full-band white noise, a
             // fresh value every sample. Without this the shared `max(1, freq)`
             // floor would hold ONE value for a whole second and turn every
@@ -429,13 +429,13 @@ final class MarSound: @unchecked Sendable {
         lock.unlock()
     }
 
-    /// The span (ms) of a Sound = max(delayMs + ms) across its voices — the
+    /// The span (ms) of a Sound = max(delayMs + ms) across its voices: the
     /// natural loop period.
     private static func spanMs(_ snd: MarValue) -> Double {
         voicesOf(snd).reduce(0) { max($0, $1.delayMs + $1.ms) }
     }
 
-    /// A stable content key for a Sound — the sub reconciler uses it so a
+    /// A stable content key for a Sound: the sub reconciler uses it so a
     /// changed loop/ambient/once swaps rather than restarting on every render
     /// (mirrors soundFullKey in the JS runtime).
     static func contentKey(_ snd: MarValue) -> String {
@@ -444,7 +444,7 @@ final class MarSound: @unchecked Sendable {
         }.joined(separator: ";")
     }
 
-    /// The identity of a HELD source — one node kept alive by a Sub, as opposed
+    /// The identity of a HELD source: one node kept alive by a Sub, as opposed
     /// to a note scheduled and forgotten (mirrors heldKey in the JS runtime).
     /// Whatever is left OUT becomes a live parameter: handing the sound back
     /// with only that part changed glides the running node (glideTo) instead of
@@ -498,7 +498,7 @@ final class MarSound: @unchecked Sendable {
         return h
     }
 
-    /// ambient: a steady bed — each voice becomes ONE held BedVoice (no
+    /// ambient: a steady bed, each voice becomes ONE held BedVoice (no
     /// duration, no envelope re-trigger; re-arming the sound on a timer
     /// audibly repeated the attack, which is what made the engine drone
     /// sound like a stuck loop). Fades in on start; glideTo glides
@@ -527,11 +527,11 @@ final class MarSound: @unchecked Sendable {
     }
 
     /// Retune a LIVE bed to a new Sound without restarting it: pitch and
-    /// volume glide to the new targets (soundBedSet parity — the racer's
+    /// volume glide to the new targets (soundBedSet parity: the racer's
     /// engine returns the same bed at a new freq every frame and the note
     /// slides, the "vrum" rising with speed). Small deltas are skipped,
     /// like the web, so a steady bed isn't re-targeted 60x a second.
-    /// `promptLevel` is true for Sound.voice and false for Sound.glide — see
+    /// `promptLevel` is true for Sound.voice and false for Sound.glide: see
     /// voiceLevelK / bedSwellK above. It is the only thing that differs.
     func glideTo(_ h: Handle, _ snd: MarValue, promptLevel: Bool) {
         let vs = MarSound.voicesOf(snd).filter { $0.wave != "Rest" }
@@ -602,7 +602,7 @@ final class MarSound: @unchecked Sendable {
 
     static func register(_ env: Env) {
         // The Sound.Wave constructors (Square/Triangle/Sawtooth/Noise) come
-        // from the generated registry — see MarBuiltinCtors.swift.
+        // from the generated registry: see MarBuiltinCtors.swift.
 
         // --- builders: assemble the opaque Sound value ---
         func mkVoice(wave: String, freq: Int, ms: Int) -> MarValue {

@@ -17,7 +17,7 @@ import UI exposing
 -- Timing is the server's job. The on-screen countdown is cosmetic: at
 -- zero we auto-submit chosen = -1, but whatever the server measured
 -- against its own servedAt stamp is what counts. The same runner
--- serves both roles — the challenger (duel is Draft) and, after they
+-- serves both roles: the challenger (duel is Draft) and, after they
 -- accept, the opponent (duel is Accepted).
 
 

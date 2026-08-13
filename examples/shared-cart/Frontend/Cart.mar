@@ -12,7 +12,7 @@ import Frontend.Products
 import Frontend.Routes
 
 
--- The cart. This page has NO model of its own — everything it shows lives in
+-- The cart. This page has NO model of its own: everything it shows lives in
 -- the store, and everything it does is a message to the store.
 --
 -- `Model` is Unit and `update` is a no-op, which is what a page that is a

@@ -9,7 +9,7 @@ import (
 // TestGeneratedTablesAreCurrent is the lock on the whole scheme: it regenerates
 // all three outputs in memory and fails if a committed copy disagrees. Without
 // it, editing the table and regenerating two of the three runtimes would be a
-// silent divergence of exactly the kind the module exists to prevent — a game
+// silent divergence of exactly the kind the module exists to prevent: a game
 // that aims one degree differently on the phone than in the browser, with a
 // green suite.
 func TestGeneratedTablesAreCurrent(t *testing.T) {
@@ -64,7 +64,7 @@ func TestSinQuarterIsTheSpec(t *testing.T) {
 		if i > 0 && v < table[i-1] {
 			t.Fatalf("sinQuarter is not monotonic at %d: %d after %d", i, v, table[i-1])
 		}
-		// Each entry is within half a unit of the real sine — the check that
+		// Each entry is within half a unit of the real sine: the check that
 		// the rounding is a rounding and not, say, a truncation.
 		exact := math.Sin(float64(i)/10*math.Pi/180) * Scale
 		if math.Abs(exact-float64(v)) > 0.5 {

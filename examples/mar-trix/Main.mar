@@ -1,7 +1,7 @@
 module Main exposing (main)
 
 
--- Mar-Trix — a falling-block puzzle.
+-- Mar-Trix: a falling-block puzzle.
 --
 -- The playfield in this genre has a proper name: the matrix. That is the term
 -- the guideline uses and the one competitive players say out loud, and it sits
@@ -14,7 +14,7 @@ module Main exposing (main)
 -- reset budget, delayed auto-shift, wall kicks, combo and back-to-back. Take
 -- any one of those out and the game still runs and stops being fun.
 --
--- Everything is integer arithmetic — Mar has no floats — including the
+-- Everything is integer arithmetic, Mar has no floats, including the
 -- gravity accumulator, which counts frames rather than seconds. That is not a
 -- workaround: it means a given piece sequence lands identically on the web and
 -- on iOS, frame for frame.
@@ -209,14 +209,14 @@ type alias Model =
     , flashAt   : Int
 
     -- The banner is NOT the flash. The row collapse is over in fourteen
-    -- frames — right for the animation, far too short to read a word in — and
+    -- frames, right for the animation, far too short to read a word in, and
     -- driving the banner off `flashRows` meant it vanished with the rows. So
     -- it carries its own count and its own clock.
     , banner   : Int
     , bannerAt : Int
 
     -- The best score this SESSION. Nothing is stored anywhere, so a reload
-    -- starts it over — which is the honest behaviour for a game with no
+    -- starts it over, which is the honest behaviour for a game with no
     -- account and no server, and better than a "record" that quietly is not
     -- one.
     , best : Int
@@ -354,7 +354,7 @@ newRun m =
 -- ------------------------------------------------------------------- the bag
 --
 -- A 7-bag: every seven pieces contains each kind exactly once, shuffled. This
--- is the single rule that makes the game feel fair — pure random gives real
+-- is the single rule that makes the game feel fair: pure random gives real
 -- droughts, and a player who waited eleven pieces for a line piece blames the
 -- game, correctly.
 
@@ -485,7 +485,7 @@ spawnAt kind =
 
 
 -- Takes the head of the queue onto the matrix. A piece that cannot fit where it
--- spawns is the end of the run — the honest definition of topping out, and the
+-- spawns is the end of the run: the honest definition of topping out, and the
 -- only place the game ends.
 spawn : Model -> Model
 spawn m =
@@ -515,7 +515,7 @@ spawn m =
 
 
 -- Wall kicks. The full standard table is five offsets per rotation pair and
--- forty lines of data; this shortlist covers the moves players actually feel —
+-- forty lines of data; this shortlist covers the moves players actually feel:
 -- nudging off a wall, off a neighbour, and the floor kick that makes a piece
 -- rotate out of a well instead of refusing.
 kicks : List Cell
@@ -564,7 +564,7 @@ tryShift dx m =
 
 
 -- Lock delay with a reset budget. Moving a piece that is already resting
--- restarts the countdown, so you can slide it into place — but only eight
+-- restarts the countdown, so you can slide it into place, but only eight
 -- times. The guideline value is fifteen, which combined with a half-second
 -- delay is seven and a half seconds of floor time per piece: enough that a
 -- player never feels time pressure at all.
@@ -637,7 +637,7 @@ swapHold m =
 -- Scoring follows the shape of the modern rules, in whole points: a clear is
 -- worth more the more rows go at once, a back-to-back four-row clear is worth
 -- half again, and a combo pays per consecutive clear. All of it is integer
--- arithmetic, so the score is exact — there is no float to drift.
+-- arithmetic, so the score is exact: there is no float to drift.
 clearScore : Int -> Int -> Int -> Bool -> Int
 clearScore n level combo btb =
     let
@@ -724,7 +724,7 @@ lockPiece m =
 
 
 -- How many frames a piece takes to fall one row. The curve is roughly
--- geometric — each level is about four fifths of the last — rather than the
+-- geometric, each level is about four fifths of the last, rather than the
 -- straight line a first draft always uses. A straight line spends its whole
 -- length in the middle: every level feels like the one before, and the game
 -- is either sleepy for twenty levels or brutal from level three. Geometric
@@ -733,7 +733,7 @@ lockPiece m =
 --
 -- The RATE is the second knob and they must be tuned one at a time. Steepening
 -- the curve and halving the lines-per-level at once made level 4 arrive in
--- fifteen lines at a speed the old curve did not reach until thirty — three
+-- fifteen lines at a speed the old curve did not reach until thirty: three
 -- times the pressure at the same point in a run, from two changes that each
 -- looked reasonable. Eight lines a level puts level 4 back where it was and
 -- leaves the cliff around level 9, which is sixty-four lines away.
@@ -783,7 +783,7 @@ held key m =
 --
 -- The layout is the console one, because that is the one a player already has
 -- in their hands: the d-pad steers and soft-drops, UP hard-drops, the face
--- buttons rotate, and the shoulders hold. Nothing here is a new action — each
+-- buttons rotate, and the shoulders hold. Nothing here is a new action: each
 -- line names a key this game already understands, which is why the whole pad
 -- costs one function and no new rules.
 --
@@ -834,7 +834,7 @@ step msg m =
     case msg of
         Resized w h ->
             -- A canvas that is not on screen reports zero, and a zero here is
-            -- not a small matrix — it is a DIVISOR of zero two functions later.
+            -- not a small matrix: it is a DIVISOR of zero two functions later.
             -- Clamping at the boundary keeps every derived number sane instead
             -- of hunting for the one place that divides.
             { m | w = max 1 w, h = max 1 h }
@@ -874,7 +874,7 @@ step msg m =
 
 -- Edge-triggered keys: rotation, hard drop, hold and the menus fire once on
 -- the press. Movement and soft drop are held, and are handled in the tick with
--- their own repeat timing — mixing the two is what makes a game feel either
+-- their own repeat timing: mixing the two is what makes a game feel either
 -- unresponsive or uncontrollably fast.
 press : Keyboard.Key -> Model -> Model
 press key m =
@@ -1047,7 +1047,7 @@ cue n =
         -- decide how they land.
         --
         -- WAVE. A square's harmonics fall off as 1/n, so a 220 Hz square puts
-        -- real energy at 660, 1100, 1540, 2200 — straight through the band the
+        -- real energy at 660, 1100, 1540, 2200: straight through the band the
         -- ear is most sensitive to. That is what "shrill" is. A triangle falls
         -- off as 1/n²: same pitch, a fraction of the bite. Squares are for
         -- sounds you want to cut through, and move and turn are not those.
@@ -1055,7 +1055,7 @@ cue n =
         -- PITCH. A phone or laptop speaker is a tiny transducer in a tiny box
         -- and it stops moving air below roughly 300–400 Hz. Anything written
         -- down there is not "deep", it is absent. So the lock sits at 340 and
-        -- FALLS, which is what gives it weight — the drop is the gesture, not
+        -- FALLS, which is what gives it weight: the drop is the gesture, not
         -- the depth.
         1 -> Sound.volume 15 (Sound.tone Sound.Triangle 300 26)
         2 -> Sound.volume 18 (Sound.tone Sound.Triangle 400 30)
@@ -1084,7 +1084,7 @@ cue n =
         -- was wrong on the lock: it is broadband, so it dumps energy across
         -- the whole 2–6 kHz band the ear is sharpest in, and ninety
         -- milliseconds of that on every hard drop is the harshest thing in
-        -- the game. An impact is a PITCH falling fast — the speed of the drop
+        -- the game. An impact is a PITCH falling fast: the speed of the drop
         -- is what reads as force, not the hiss.
         _ -> Sound.volume 26 (Sound.sweep (-140) (Sound.tone Sound.Triangle 380 60))
 
@@ -1122,7 +1122,7 @@ type alias Layout =
 -- spare is where the panel belongs.
 --
 -- In portrait the spare is the band above the matrix, and the strip drawn
--- there takes the FULL canvas width rather than the matrix width — the
+-- there takes the FULL canvas width rather than the matrix width: the
 -- leftover margin either side of a ten-column matrix is dead space, and hold,
 -- previews and score were being crowded into the narrow part while it sat
 -- empty.
@@ -1152,7 +1152,7 @@ layout m =
             --
             -- `sideMin` is what a four-cell preview needs to be legible. It is
             -- deliberately taken out of the width BEFORE the cell is sized, so
-            -- the columns can never be squeezed to nothing by a wide window —
+            -- the columns can never be squeezed to nothing by a wide window:
             -- and on a phone it costs nothing, because the cell is bound by
             -- height anyway.
             sideMin = 46
@@ -1223,7 +1223,7 @@ layout m =
 -- parked over the piece you are aiming.
 --
 -- Two actions stay on buttons, and only two: hold and hard drop. They are the
--- ones that COMMIT — the drop especially, which ends the piece where it
+-- ones that COMMIT: the drop especially, which ends the piece where it
 -- stands. Hanging a hard drop off a downward flick is the classic mistake of
 -- the genre on touch, because a flick is a soft drop with a speed threshold,
 -- and a speed threshold on a finger is a coin toss. So: continuous, frequent
@@ -1239,7 +1239,7 @@ layout m =
 
 -- A finger that lands on the matrix anchors itself, and from then on the
 -- piece is asked to be wherever the thumb has travelled to. A finger that
--- lifts having barely moved was never a drag — it was a tap, and a tap turns
+-- lifts having barely moved was never a drag: it was a tap, and a tap turns
 -- the piece.
 gesture : Layout -> List Pointer -> Model -> Model
 gesture lay free m =
@@ -1428,7 +1428,7 @@ pieceTiles p lay =
 -- filled ghost competes with the real piece for attention, and the whole point
 -- is that you read the landing spot without looking away from what you hold.
 --
--- It is also deliberately quiet — a thin line at about half opacity. The ghost
+-- It is also deliberately quiet: a thin line at about half opacity. The ghost
 -- answers a question you ask once per piece ("where does this land"), and the
 -- moment it is loud enough to read without looking, it is loud enough to be
 -- mistaken for a piece already on the stack.
@@ -1515,7 +1515,7 @@ slamShapes m lay =
 -- The rotation tables put each kind wherever it happens to sit inside its 4x4
 -- box: the O one column in, the I a whole row down, the others two or three
 -- wide starting at zero. Drawing those offsets raw makes a row of previews
--- look shaken loose — every piece at a different height, and the gaps between
+-- look shaken loose: every piece at a different height, and the gaps between
 -- them uneven because a 2-wide O leaves the same pitch as a 4-wide I. So the
 -- piece is measured first and placed on its own middle, which is the only
 -- thing four different shapes have in common.
@@ -1565,7 +1565,7 @@ wallInk kind =
 -- The wall behind the game is a dead matrix: one flat cell every two, hue
 -- picked by position, all of it barely above the background. A few hundred
 -- rectangles buy a texture that no flat fill can, and it is the right texture
--- — the game is played against a dim, empty copy of the thing it is named
+--: the game is played against a dim, empty copy of the thing it is named
 -- after.
 backdropShapes : Model -> Layout -> List Shape
 backdropShapes m lay =
@@ -1677,7 +1677,7 @@ frameShapes m lay =
 -- Landscape opens into TWO columns, one either side of the matrix: hold on
 -- the left, previews and score on the right. One narrow column beside the
 -- matrix left two thirds of a phone held sideways completely empty while the
--- cards inside it were too cramped to breathe — the width was there the whole
+-- cards inside it were too cramped to breathe: the width was there the whole
 -- time, it was just all on one side of everything.
 panelShapes : Model -> Layout -> List Shape
 panelShapes m lay =
@@ -1746,7 +1746,7 @@ panelShapes m lay =
 -- part of the game on a phone. Three previews laid out sideways read as a row
 -- of unrelated little shapes rather than a queue, hold sat next to them
 -- looking like a fourth, and all of it competed with the score for one line
--- of width — while the margins either side of a ten-column matrix, which are
+-- of width, while the margins either side of a ten-column matrix, which are
 -- always there because the matrix runs out of height first, stayed empty the
 -- whole time.
 --
@@ -1916,7 +1916,7 @@ titleShapes m lay =
 
         -- The wordmark is eight glyphs, and at this weight eight glyphs run
         -- about 4.7 times the point size wide. On a desktop the cell decides;
-        -- on a phone the SCREEN decides, or MAR-TRIX runs off both edges —
+        -- on a phone the SCREEN decides, or MAR-TRIX runs off both edges:
         -- which is exactly what a size derived only from the cell did.
         wordSize = min (cell * 3) ((m.w - cell) * 10 // 47)
 
@@ -1982,8 +1982,8 @@ overShapes m lay =
         detailSize = max 10 (cardW // 20)
         promptSize = max 11 (cardW // 17)
     in
-    -- The matrix stays visible under the scrim — the shape of the stack that
-    -- ended the run is the most interesting thing on the screen — and the card
+    -- The matrix stays visible under the scrim: the shape of the stack that
+    -- ended the run is the most interesting thing on the screen, and the card
     -- is translucent for the same reason, so the stack reads THROUGH the
     -- numbers instead of being boxed out by them. 88% still leaves the text
     -- far clear of the scrimmed tiles behind it.

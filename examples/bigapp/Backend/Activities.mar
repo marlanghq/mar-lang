@@ -20,7 +20,7 @@ import Shared exposing
     )
 
 
--- Activities — denormalized audit log. Every writeful handler in
+-- Activities: denormalized audit log. Every writeful handler in
 -- the rest of the backend calls one of the `emitX` helpers below as
 -- a side effect of its primary write, so the activity feed page can
 -- render a coherent timeline without re-scanning every domain table.
@@ -33,7 +33,7 @@ import Shared exposing
 -- `Backend.ActivityFeed` as a separate module.
 --
 -- The verb + subject columns are Entity.enum so SQLite's CHECK
--- constraint validates the closed set at the DB layer too — a write
+-- constraint validates the closed set at the DB layer too: a write
 -- with an unknown verb (e.g. from a legacy migration that referenced
 -- a removed ctor) fails fast instead of corrupting the audit trail.
 activities : Entity Shared.Activity
@@ -80,10 +80,10 @@ activities =
 -- timestamping + Repo.create; the typed wrappers just shape the
 -- right ctor and extra string.
 --
--- Returns `Effect ()` so callers can fold it into their
+-- Returns `Task ()` so callers can fold it into their
 -- existing Effect pipeline via Task.map / Task.andThen without
 -- ceremony. Errors in the audit write should NOT roll back the
--- primary write — callers can ignore the result with
+-- primary write: callers can ignore the result with
 -- `|> Effect.recover (\_ -> Task.succeed ())` if they want to be
 -- extra defensive.
 

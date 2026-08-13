@@ -9,16 +9,16 @@ import (
 // This package is the one place that can see both a checked type and a runtime
 // value, so it is where the declared request type is reduced to the shape the
 // dispatcher checks incoming JSON against. The runtime cannot do it (it does
-// not import the typechecker — ADR 0016) and the typechecker will not (it does
+// not import the typechecker: ADR 0016) and the typechecker will not (it does
 // not know what a service dispatcher is).
 //
 // This only works because EVERY load path type-checks, including the deployed
-// one — see ADR 0017. Deriving it here while some path skipped checking would
+// one: see ADR 0017. Deriving it here while some path skipped checking would
 // give a guard that exists under `mar dev` and vanishes on deploy, which is
 // worse than no guard at all.
 //
-// The reduction is deliberately lossy. It answers one question — "could this
-// decoded JSON have come from a value of the declared type?" — and anything it
+// The reduction is deliberately lossy. It answers one question: "could this
+// decoded JSON have come from a value of the declared type?", and anything it
 // cannot answer becomes WireAny rather than a guess, because a wrong 422 on a
 // valid request is worse than the 500 this replaces.
 
@@ -59,7 +59,7 @@ func wireShapeOf(t typecheck.Type, depth int) runtime.WireShape {
 	case typecheck.TRecord:
 		// An OPEN record ({ r | x : Int }) constrains the fields it names and
 		// nothing else, which is what checking a named field at a time already
-		// does — so it needs no special case.
+		// does, so it needs no special case.
 		fields := make([]runtime.WireField, 0, len(n.Order))
 		for _, name := range n.Order {
 			fields = append(fields, runtime.WireField{

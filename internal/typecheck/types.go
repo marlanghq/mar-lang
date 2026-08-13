@@ -2,12 +2,12 @@
 //
 // Public surface:
 //
-//   - Type, TVar, TCon, TArrow, TRecord, TForall — the type AST.
-//   - Subst — substitution (variable -> Type bindings).
-//   - Unify — unification with occurs check.
-//   - TypeEnv — environment of bound names.
-//   - Infer — type inference for an expression.
-//   - Check — top-level driver: type-checks a whole module.
+//   - Type, TVar, TCon, TArrow, TRecord, TForall: the type AST.
+//   - Subst: substitution (variable -> Type bindings).
+//   - Unify: unification with occurs check.
+//   - TypeEnv: environment of bound names.
+//   - Infer: type inference for an expression.
+//   - Check, top-level driver: type-checks a whole module.
 //
 // See infer.go for the algorithm (Damas-Hindley-Milner / Algorithm W).
 package typecheck
@@ -32,31 +32,31 @@ type Type interface {
 // We currently model only `Comparable`, which is what Dict/Set keys
 // need.
 //
-// This is NOT type classes — there's no dictionary passing, no
+// This is NOT type classes: there's no dictionary passing, no
 // dispatching, no user-defined constraints. Just a closed enum the
 // unifier consults when binding a TVar to a concrete type.
 type Kind int8
 
 const (
-	// KindAny — unconstrained type variable, unifies with anything.
+	// KindAny: unconstrained type variable, unifies with anything.
 	// The zero value, so `TVar{ID: x}` literals without an explicit
 	// Constraint default to the unconstrained case.
 	KindAny Kind = 0
 
-	// KindComparable — restricted to Int / Float / String / Char.
+	// KindComparable: restricted to Int / Float / String / Char.
 	// Used by Dict.* and Set.* schemes so a user attempting to key
 	// a Dict on a Record or custom type gets a type error at the
 	// call site, not a runtime "comparison: unsupported types".
 	KindComparable Kind = 1
 
-	// KindAppendable — restricted to String / List. Used by `++` so
+	// KindAppendable: restricted to String / List. Used by `++` so
 	// `1 ++ 2` (or `True ++ False`) is a type error at the call site,
 	// matching Elm's `appendable` constrained variable. Elm folds
 	// comparable+appendable into `compappend`; we keep the two kinds
 	// disjoint and reject the overlap (see mergeKinds).
 	KindAppendable Kind = 2
 
-	// KindNumber — restricted to Int / Decimal. Used by `+ - *` and
+	// KindNumber: restricted to Int / Decimal. Used by `+ - *` and
 	// negation, mirroring Elm's `number` constrained variable with
 	// Decimal in Float's chair. Both operands unify to ONE member;
 	// mixing Int and Decimal stays a type error (convert explicitly
@@ -83,7 +83,7 @@ func (k Kind) String() string {
 // Variables are immutable values; the binding (if any) lives in a Subst.
 // Use Subst.Resolve / Subst.Apply to chase bindings.
 //
-// Constraint defaults to KindAny — that's the zero value — so a
+// Constraint defaults to KindAny, that's the zero value, so a
 // `TVar{ID: 7}` literal without an explicit Constraint is unconstrained.
 // The `Constraint` field sits on top of HM unification: when bindVar is
 // asked to bind a Comparable var to a concrete type, it rejects
@@ -262,7 +262,7 @@ func resetVarIDsForTesting() {
 // type. Mirrors the runtime's compareValues / cmpValues / compareMar.
 // Currently: Int / Float / String / Char.
 //
-// A free TVar is NOT comparable on its own — the caller (bindVar)
+// A free TVar is NOT comparable on its own: the caller (bindVar)
 // handles that case separately by promoting the constraint onto the
 // var rather than calling this helper.
 func IsComparableType(t Type) bool {
@@ -277,7 +277,7 @@ func IsComparableType(t Type) bool {
 	return false
 }
 
-// IsNumberType reports whether t is a built-in numeric type — the
+// IsNumberType reports whether t is a built-in numeric type: the
 // members of the `number` constraint `+ - *` and negation accept.
 // Decimal.Division is deliberately NOT here: an unresolved division
 // has no numeric value until a resolver names its precision.
@@ -293,13 +293,13 @@ func IsNumberType(t Type) bool {
 	return false
 }
 
-// IsAppendableType reports whether t is a built-in appendable type —
+// IsAppendableType reports whether t is a built-in appendable type:
 // the types `++` accepts. Mirrors Elm's `appendable`: String and List.
 // The runtime's append handles exactly these two (string concat and
 // list concat), so anything else was a latent runtime error before the
 // constraint turned it into a compile error.
 //
-// A free TVar is NOT appendable on its own — bindVar propagates the
+// A free TVar is NOT appendable on its own: bindVar propagates the
 // constraint onto the var instead of calling this helper, same as
 // Comparable.
 func IsAppendableType(t Type) bool {
@@ -325,7 +325,7 @@ var (
 	TChar     = TCon{Name: "Char"}
 	TDuration = TCon{Name: "Duration"}
 	TTime     = TCon{Name: "Time"}
-	// TAngle — a rotation. The third quantity in the language that carries a
+	// TAngle: a rotation. The third quantity in the language that carries a
 	// unit and therefore has a type (ADR 0029, after Duration and
 	// Width/Height): the constructor names the unit (Math.degrees,
 	// Math.deciDegrees, Math.turns) and that is the only place a bare Int
@@ -333,48 +333,48 @@ var (
 	// degrees-versus-deci-degrees mix-up that would rotate a game 10× too
 	// slowly is a compile error rather than bad game feel.
 	//
-	// Internally a whole number of deci-degrees in 0..3599 — normative
+	// Internally a whole number of deci-degrees in 0..3599: normative
 	// (it fixes the resolution) but not observable: no accessor returns it.
 	TAngle = TCon{Name: "Angle"}
-	// TOrder — three-way comparison result. Inhabited by LT, EQ, GT
+	// TOrder: three-way comparison result. Inhabited by LT, EQ, GT
 	// (constructors registered in typecheck.builtinCustomTypes and
 	// the value envs of all three runtimes). Used by List.sortWith
 	// and any user-defined comparator: "-1 means less" was a lie
-	// we refused to keep telling ourselves — the comparator returns
+	// we refused to keep telling ourselves: the comparator returns
 	// an Order, period.
 	TOrder = TCon{Name: "Order"}
-	// TMethod — the HTTP verb a Service is declared with. Inhabited by
+	// TMethod: the HTTP verb a Service is declared with. Inhabited by
 	// GET, POST, PUT, PATCH, DELETE (constructors registered in
 	// builtinCustomTypes and the value envs of all three runtimes). The
 	// first argument to Service.declare: it fixes the verb a service
 	// answers on, and the compiler holds GET handlers to read-only.
 	TMethod = TCon{Name: "Method"}
-	// TKeyboardKey — a physical keyboard key (Keyboard.watch delivers the held
+	// TKeyboardKey: a physical keyboard key (Keyboard.watch delivers the held
 	// set as { down : List Key }). A union whose constructors mirror `event.code`
 	// values of a typical US keyboard (Keyboard.KeyW, Keyboard.ArrowUp,
 	// Keyboard.Space, ...), registered in builtinCustomTypes + baseBindings
 	// from the shared list in keyboard.go. Physical (layout-independent), so
 	// WASD works on any layout; the character typed is a separate concern.
 	TKeyboardKey = TCon{Name: "Keyboard.Key"}
-	// TGamepadButton — a game-controller button (Gamepad.watch delivers the held
+	// TGamepadButton: a game-controller button (Gamepad.watch delivers the held
 	// set in the pad record). A union whose constructors mirror the W3C gamepad
 	// (Gamepad.A, Gamepad.Up, Gamepad.Start, ...), registered from the shared
 	// list in gamepad.go. Web-first like Canvas / Keyboard.
 	TGamepadButton = TCon{Name: "Gamepad.Button"}
-	// TSound — an opaque chip-audio value assembled by Sound.tone/chord/sequence
+	// TSound: an opaque chip-audio value assembled by Sound.tone/chord/sequence
 	// and consumed by Sound.play (a Cmd) / Sound.loop / Sound.voice (Subs). Data
 	// only; the JS runtime synthesises it via WebAudio. Frontend-first, iOS deferred.
 	TSound = TCon{Name: "Sound"}
-	// TSoundWave — a Sound.Wave constructor (Square/Triangle/Sawtooth/Noise), the
+	// TSoundWave: a Sound.Wave constructor (Square/Triangle/Sawtooth/Noise), the
 	// argument to Sound.tone. A union, registered from the list in sound.go.
 	TSoundWave = TCon{Name: "Sound.Wave"}
-	// TServiceError — the failure a Service.call delivers to the frontend,
+	// TServiceError: the failure a Service.call delivers to the frontend,
 	// in the Err of its Result. A union (Offline / Unauthorized /
 	// ServerError String) so transport failure is a value you case on, the
 	// Elm way, instead of a stringly-typed match. Constructors registered
 	// in builtinCustomTypes and the value envs of all three runtimes.
 	TServiceError = TCon{Name: "Service.Error"}
-	// TAuthRequestOutcome — the domain outcome of Auth.requestCode. Each
+	// TAuthRequestOutcome: the domain outcome of Auth.requestCode. Each
 	// endpoint gets its OWN outcome union (never a shared auth catch-all):
 	// the email screen branches on these three and nothing else.
 	TAuthRequestOutcome = TCon{Name: "Auth.RequestOutcome"}
@@ -386,43 +386,43 @@ var (
 	TShape     = TCon{Name: "Shape"}
 	TTransform = TCon{Name: "Transform"}
 	TAlign     = TCon{Name: "Align"}
-	// TBlend — how a group's pixels combine with what is already on the
+	// TBlend: how a group's pixels combine with what is already on the
 	// canvas (docs/proposals/canvas-blend.md). Normal is the default and what
 	// every group did before this existed; Add sums light (explosions, glow),
 	// Multiply darkens (shadows, scene tints), Screen lightens without
 	// clipping, Erase punches holes. Rides in a group's Transform list via
-	// `Canvas.Blend`, qualified-only like Align — `Add` and `Normal` are far
+	// `Canvas.Blend`, qualified-only like Align: `Add` and `Normal` are far
 	// too ordinary to reserve as bare global names.
 	TBlend = TCon{Name: "Blend"}
-	// TDecimal — the exact base-10 number (docs/proposals/decimal.md):
+	// TDecimal, the exact base-10 number (docs/proposals/decimal.md):
 	// bounded coefficient (34 significant digits) plus a per-value
 	// scale. Sits next to Int in the `number` constraint; `+ - *` are
 	// exact and closed, division goes through TDivision.
 	TDecimal = TCon{Name: "Decimal"}
-	// TDivision — the inert exact quotient `/` produces. Opaque on
+	// TDivision: the inert exact quotient `/` produces. Opaque on
 	// purpose: no codec, no arithmetic, not Comparable. Only the three
 	// resolvers (Decimal.rounded / exact / withRemainder) turn it into
 	// a value, which is where the rounding decision gets written.
 	TDivision = TCon{Name: "Decimal.Division"}
-	// TRounding — the rounding-mode union the resolvers take
+	// TRounding: the rounding-mode union the resolvers take
 	// (Decimal.HalfEven and friends; qualified-only constructors).
 	TRounding = TCon{Name: "Decimal.Rounding"}
-	// TCanvasMode — how a canvas renders, chosen explicitly per canvas (no
+	// TCanvasMode: how a canvas renders, chosen explicitly per canvas (no
 	// silent default). Pixelated = 1 CSS px buffer + nearest-neighbour upscale,
 	// the cheap fill that holds 60 fps for games repainting every frame (see
 	// docs/adrs/0001). Crisp = devicePixelRatio buffer, sharp text and shapes
 	// on retina, for turn-based / text-heavy canvases that don't repaint hot.
-	// Global (bare) constructors like Pointer — the two names are distinctive.
+	// Global (bare) constructors like Pointer: the two names are distinctive.
 	TCanvasMode = TCon{Name: "CanvasMode"}
-	// TPointer — the precision of the PRIMARY input, delivered inside a Device
+	// TPointer: the precision of the PRIMARY input, delivered inside a Device
 	// record (Device.watch). A union (Coarse = a finger / TV remote, Fine =
 	// mouse / trackpad / stylus), registered in builtinCustomTypes + baseBindings
 	// like Order / Method. Read from `(pointer: coarse)` / `(pointer: fine)` CSS
-	// media queries in the JS runtime — a capability, never a user-agent guess.
+	// media queries in the JS runtime: a capability, never a user-agent guess.
 	TPointer = TCon{Name: "Pointer"}
 )
 
-// TDeviceRecord returns the closed record `Device.watch` delivers — the live,
+// TDeviceRecord returns the closed record `Device.watch` delivers: the live,
 // truthful answer to "what is this app running on?" (docs/proposals/device.md).
 // Returned by a function (not a package var) so the field map is never shared
 // or mutated. `supports*` is a hardware capability, `prefers*` an OS-reported
@@ -444,7 +444,7 @@ func TDeviceRecord() TRecord {
 	}
 }
 
-// TKeyboardStateRecord is "{ down : List Keyboard.Key }" — the held-key mirror
+// TKeyboardStateRecord is "{ down : List Keyboard.Key }", the held-key mirror
 // delivered by Keyboard.watch. A fresh, closed record; the runtime fills it.
 func TKeyboardStateRecord() TRecord {
 	return TRecord{
@@ -472,7 +472,7 @@ func TGamepadStateRecord() TRecord {
 	}
 }
 
-// TCanvasPointerRecord is "{ id : Int, x : Int, y : Int }" — one active pointer
+// TCanvasPointerRecord is "{ id : Int, x : Int, y : Int }", one active pointer
 // (finger / pressed mouse) in canvas CSS-pixel coordinates. Canvas.watchPointers
 // delivers a List of these: the full set of pointers currently down.
 func TCanvasPointerRecord() TRecord {
@@ -483,7 +483,7 @@ func TCanvasPointerRecord() TRecord {
 	}
 }
 
-// TAuthVerifyOutcome returns "Auth.VerifyOutcome user" — the domain outcome
+// TAuthVerifyOutcome returns "Auth.VerifyOutcome user": the domain outcome
 // of Auth.verifyCode, parameterized on the app's own user record (the
 // framework cannot name it; Auth.config's entity decides it).
 func TAuthVerifyOutcome(user Type) TCon {
@@ -507,7 +507,7 @@ func TResult(e, a Type) TCon {
 
 // TDict returns "Dict k v". The typechecker enforces at call sites
 // that `k` resolves to a comparable type (Int / Float / String /
-// Char) — see isComparableType in env.go.
+// Char): see isComparableType in env.go.
 func TDict(k, v Type) TCon {
 	return TCon{Name: "Dict", Args: []Type{k, v}}
 }
@@ -517,16 +517,16 @@ func TSet(k Type) TCon {
 	return TCon{Name: "Set", Args: []Type{k}}
 }
 
-// TTask returns "Task a" — the backend value-monad ("await"). A service
+// TTask returns "Task a": the backend value-monad ("await"). A service
 // handler runs a Task and the produced `a` becomes the response; Task.andThen
 // threads the produced value (do A, then with A's result do B). Backend-only.
 // Failure is a value (a String via Task.fail, surfaced to the client as a
-// Service.Error), never a type index — so one type parameter, no error index.
+// Service.Error), never a type index, so one type parameter, no error index.
 func TTask(a Type) TCon {
 	return TCon{Name: "Task", Args: []Type{a}}
 }
 
-// TCmd returns "Cmd msg" — the frontend message-monoid (Mar's Cmd). What
+// TCmd returns "Cmd msg": the frontend message-monoid (Mar's Cmd). What
 // `init` / `update` return: the runtime performs it and delivers a `msg` back
 // into the MVU loop. Frontend-only. Composed with Cmd.batch / Cmd.none; it has
 // no andThen (dependent client async chains through messages, not a value).
@@ -534,10 +534,10 @@ func TCmd(a Type) TCon {
 	return TCon{Name: "Cmd", Args: []Type{a}}
 }
 
-// TSub returns "Sub msg" — the frontend subscription type (Mar's Sub). What a
+// TSub returns "Sub msg": the frontend subscription type (Mar's Sub). What a
 // page's `subscriptions : Model -> Sub Msg` returns: a declarative description
 // of what the runtime should listen to (timers, later a frame loop), reconciled
-// against the model after every update — a source is started when newly
+// against the model after every update: a source is started when newly
 // returned and torn down when no longer returned. Frontend-only; identity is
 // structural (the data args, never the tagger). Composed with Sub.batch /
 // Sub.none, and bridged from no Task (it is its own algebra, like Elm's Sub).
@@ -545,7 +545,7 @@ func TSub(a Type) TCon {
 	return TCon{Name: "Sub", Args: []Type{a}}
 }
 
-// TGenerator returns "Generator a" — Elm's Random.Generator: a recipe for a
+// TGenerator returns "Generator a", Elm's Random.Generator: a recipe for a
 // random `a`. Built purely with the Random.* combinators and run by
 // Random.generate, which threads the runtime RNG and delivers the value as a
 // Msg (a Cmd). Frontend-managed randomness; the seed is the runtime's.
@@ -553,24 +553,24 @@ func TGenerator(a Type) TCon {
 	return TCon{Name: "Random.Generator", Args: []Type{a}}
 }
 
-// TSeed returns the nullary "Random.Seed" — an opaque PRNG state. It is made by
+// TSeed returns the nullary "Random.Seed": an opaque PRNG state. It is made by
 // Random.initialSeed / Random.seed and threaded by Random.step. The runtime
 // holds the state in its native 64-bit word (uint64 / BigInt / UInt64) and the
 // PCG algorithm is bit-identical across runtimes, so a stepped Seed yields the
-// same value everywhere — unlike a Generator run by Random.generate, whose
+// same value everywhere: unlike a Generator run by Random.generate, whose
 // value comes from the ambient RNG and is not cross-runtime reproducible.
 func TSeed() TCon {
 	return TCon{Name: "Random.Seed"}
 }
 
-// TEntity returns the parameterized "Entity a" type — an entity describing
+// TEntity returns the parameterized "Entity a" type: an entity describing
 // a SQL table whose row shape is `a`. The row type drives Repo decode and
 // the type of values returned by query operations.
 func TEntity(row Type) TCon {
 	return TCon{Name: "Entity", Args: []Type{row}}
 }
 
-// TService returns the parameterized "Service req resp" type — a typed RPC
+// TService returns the parameterized "Service req resp" type: a typed RPC
 // contract that the frontend can call (Service.call) and the backend
 // implements (the function inside the constructor). Req/Resp drive
 // JSON encode/decode at the wire boundary and type-check the call site.
@@ -578,7 +578,7 @@ func TService(req, resp Type) TCon {
 	return TCon{Name: "Service", Args: []Type{req, resp}}
 }
 
-// TExposedService is the type-erased form of a Service — opaque, no
+// TExposedService is the type-erased form of a Service: opaque, no
 // parameters, so a List of services with different Req/Resp can be
 // homogeneous in mar's HM. Produced by Service.expose, consumed by
 // App.fullstack / App.backend's `services` field.
@@ -586,7 +586,7 @@ func TExposedService() TCon {
 	return TCon{Name: "ExposedService"}
 }
 
-// TAuth returns the parameterized "Auth user" type — the opaque value
+// TAuth returns the parameterized "Auth user" type: the opaque value
 // returned by Auth.config that captures the framework's auth wiring.
 // Carrying the user row type lets Auth.protected handlers receive a
 // typed User without the user code restating it.
@@ -594,20 +594,20 @@ func TAuth(user Type) TCon {
 	return TCon{Name: "Auth", Args: []Type{user}}
 }
 
-// TColumn returns the "Column t" type — a single column declaration
+// TColumn returns the "Column t" type: a single column declaration
 // produced by Entity.serial / .int / .text / .bool / .dateTime. The
 // parameter is the value type stored in the column.
 func TColumn(t Type) TCon {
 	return TCon{Name: "Column", Args: []Type{t}}
 }
 
-// TConstraint returns the opaque "Constraint" type — values like
+// TConstraint returns the opaque "Constraint" type: values like
 // Entity.notNull / Entity.optional that modify a Column declaration.
 func TConstraint() TCon {
 	return TCon{Name: "Constraint"}
 }
 
-// TView returns "View msg" — the type of MVU views parameterized by the
+// TView returns "View msg": the type of MVU views parameterized by the
 // type of messages they can produce when interacted with. Plain leaves
 // like View.text "..." inhabit `forall msg. View msg`; buttons and forms
 // pin msg to the user's Msg type.
@@ -615,11 +615,11 @@ func TView(msg Type) TCon {
 	return TCon{Name: "View", Args: []Type{msg}}
 }
 
-// TKeyedView returns "KeyedView msg" — a View tagged with a stable
+// TKeyedView returns "KeyedView msg": a View tagged with a stable
 // identity (a String key). Constructed via `UI.keyed key view`, accepted
 // only as a child of `UI.keyedList`. The dedicated wrapper type makes it
 // impossible to feed a regular `View` into `keyedList` (where the
-// reconciler needs identity to match rows across reorders / deletes) —
+// reconciler needs identity to match rows across reorders / deletes):
 // the misuse becomes a compile error instead of a silent runtime bug
 // that swaps the wrong row's content.
 //
@@ -629,18 +629,18 @@ func TKeyedView(msg Type) TCon {
 	return TCon{Name: "KeyedView", Args: []Type{msg}}
 }
 
-// TAttr returns the parameterized "Attr h" type — attributes carry a
+// TAttr returns the parameterized "Attr h" type: attributes carry a
 // phantom "host" type indicating which primitive they apply to.
 //
-//   - Attr Input     — textField / textArea / picker
-//   - Attr Section   — section (header/footer)
-//   - Attr KeyedList — keyedList (header/footer/onMove/onDelete)
-//   - Attr NavStack  — navigationStack (title/trailing/leading)
-//   - Attr Button    — button
-//   - Attr Link      — navigationLink
-//   - Attr Toggle    — toggle
-//   - Attr Stack     — hstack / vstack
-//   - Attr List      — list (container of sections/keyedLists)
+//   - Attr Input     - textField / textArea / picker
+//   - Attr Section   - section (header/footer)
+//   - Attr KeyedList: keyedList (header/footer/onMove/onDelete)
+//   - Attr NavStack  - navigationStack (title/trailing/leading)
+//   - Attr Button    - button
+//   - Attr Link      - navigationLink
+//   - Attr Toggle    - toggle
+//   - Attr Stack     - hstack / vstack
+//   - Attr List      - list (container of sections/keyedLists)
 //
 // Universal attrs (e.g. `disabled`) declare `forall a. Attr a`, so they
 // unify with whatever host the surrounding list expects. Specific
@@ -648,14 +648,14 @@ func TKeyedView(msg Type) TCon {
 // returns `Attr Input`) to a `section` (which wants `Attr Section`)
 // is a type error caught at compile time.
 //
-// Categories are opaque marker types — they exist only at the type
+// Categories are opaque marker types: they exist only at the type
 // level and are never inhabited; the runtime ignores them.
 func TAttr(host Type) Type {
 	return TCon{Name: "Attr", Args: []Type{host}}
 }
 
 // TAttrInputHost and the sibling host markers below are nullary TCons
-// used only as the phantom parameter to TAttr — one per Attr category.
+// used only as the phantom parameter to TAttr: one per Attr category.
 func TAttrInputHost() Type     { return TCon{Name: "Input"} }
 func TAttrSectionHost() Type   { return TCon{Name: "Section"} }
 func TAttrNavStackHost() Type  { return TCon{Name: "NavStack"} }
@@ -670,12 +670,12 @@ func TAttrImageHost() Type     { return TCon{Name: "Image"} }
 // TAttrInlineHost is the host marker for inline-text attrs (bold,
 // italic, strikethrough, code, link). Used by `span [attrs] "..."`
 // inside `paragraph` to style or link individual text runs. Inline
-// attrs DON'T unify with other categories — `bold` in a block-level
+// attrs DON'T unify with other categories: `bold` in a block-level
 // `text [...]` list is rejected at compile time.
 func TAttrInlineHost() Type { return TCon{Name: "Inline"} }
 
 // TAttrTextHost is the host marker for the block-level text leaf,
-// `text [attrs] "..."`. No text-specific attrs exist yet — the list
+// `text [attrs] "..."`. No text-specific attrs exist yet: the list
 // exists for the universal layout attrs (width / height), which are
 // polymorphic in their host and so fit here like anywhere else.
 func TAttrTextHost() Type { return TCon{Name: "Text"} }
@@ -684,7 +684,7 @@ func TAttrTextHost() Type { return TCon{Name: "Text"} }
 // valid only on the `canvas` draw-surface (v0.0.7).
 func TAttrCanvasHost() Type { return TCon{Name: "Canvas"} }
 
-// TInline returns the `Inline msg` type — a run of text inside a
+// TInline returns the `Inline msg` type: a run of text inside a
 // paragraph. Distinct from `View msg` so `paragraph` can refuse
 // block-level content (sections, buttons, lists), and the rest of
 // the UI vocabulary can refuse loose `Inline` atoms outside a
@@ -695,16 +695,16 @@ func TInline(msg Type) TCon {
 	return TCon{Name: "Inline", Args: []Type{msg}}
 }
 
-// TSize — the opaque sizing-value type, phantom-parameterized by axis:
+// TSize, the opaque sizing-value type, phantom-parameterized by axis:
 // `chars : Int -> Size Width`, `lines : Int -> Size Height`, and
-// `fill : Size axis` (polymorphic — fits either). The phantom keeps
+// `fill : Size axis` (polymorphic, fits either). The phantom keeps
 // `width (lines 5)` / `height (chars 5)` compile errors while letting
 // the single `fill` constant serve both attrs. TWidth / THeight are
 // the two concrete instantiations, kept as named helpers because
 // that's how every scheme reads ("width takes a TWidth()").
 func TSize(axis Type) TCon { return TCon{Name: "Size", Args: []Type{axis}} }
 
-// TWidthAxis / THeightAxis — the phantom axis markers. Never inhabited;
+// TWidthAxis / THeightAxis: the phantom axis markers. Never inhabited;
 // they exist so Size Width and Size Height are distinct types.
 func TWidthAxis() TCon  { return TCon{Name: "Width"} }
 func THeightAxis() TCon { return TCon{Name: "Height"} }
@@ -712,18 +712,18 @@ func THeightAxis() TCon { return TCon{Name: "Height"} }
 func TWidth() TCon  { return TSize(TWidthAxis()) }
 func THeight() TCon { return TSize(THeightAxis()) }
 
-// TAlignment — cross-axis alignment for stack children. Values:
+// TAlignment, cross-axis alignment for stack children. Values:
 // leading / center / trailing (vstack's horizontal cross axis) and
 // top / center / bottom (hstack's vertical cross axis). One type for
-// both axes — `center` is shared, and renderers ignore a wrong-axis
+// both axes: `center` is shared, and renderers ignore a wrong-axis
 // value (top in a vstack) rather than the type system splitting the
 // Stack host in two for it. Alignment is pure *position*: it places
 // hugging children in the leftover cross-axis space. "Fill" is not an
-// alignment — that's sizing, spelled `width fill` / `height fill` on
+// alignment: that's sizing, spelled `width fill` / `height fill` on
 // the child.
 func TAlignment() TCon { return TCon{Name: "Alignment"} }
 
-// TPixels — opaque pixel sizing unit for media. `px : Int -> Pixels`.
+// TPixels, opaque pixel sizing unit for media. `px : Int -> Pixels`.
 // Deliberately distinct from Width / Height (the char/line units for
 // inputs) so pixel sizing stays scoped to images: `width (px 8)` on a
 // text field and `size (chars 8) ...` on an image are both rejected at
@@ -731,14 +731,14 @@ func TAlignment() TCon { return TCon{Name: "Alignment"} }
 // giving images the one place raw dimensions genuinely matter.
 func TPixels() TCon { return TCon{Name: "Pixels"} }
 
-// TPage returns the opaque "Page" type — a single MVU screen bound to a
+// TPage returns the opaque "Page" type: a single MVU screen bound to a
 // URL path. Both single-screen and multi-screen apps are expressed as a
 // list of pages; single = list of one with path "/".
 func TPage() TCon {
 	return TCon{Name: "Page"}
 }
 
-// TShared returns the parameterized "App.Shared model msg" type — the
+// TShared returns the parameterized "App.Shared model msg" type: the
 // capability value that ties one app-wide client model to the messages that
 // change it. Built by App.shared, read by Page.withShared, written by
 // Cmd.toShared. Carrying both parameters is what makes the three agree at
@@ -753,18 +753,18 @@ func TShared(model, msg Type) TCon {
 	return TCon{Name: "App.Shared", Args: []Type{model, msg}}
 }
 
-// TAdminSession returns the opaque "AdminSession" type — the capability
+// TAdminSession returns the opaque "AdminSession" type: the capability
 // token the framework threads into a Page.adminProtected page's
 // init/update/view. It has no user-facing constructor: only the admin
 // page provides it. Because the Mar.Admin.* functions require an
 // AdminSession as their first argument, they can only be called from
-// inside an admin page — a normal page has no AdminSession in scope, so
+// inside an admin page: a normal page has no AdminSession in scope, so
 // referencing Mar.Admin.* there is a compile error.
 func TAdminSession() TCon {
 	return TCon{Name: "AdminSession"}
 }
 
-// TPath returns the parameterized "Path r" type — a URL pattern with
+// TPath returns the parameterized "Path r" type: a URL pattern with
 // typed `:param` segments. Each Path value carries the row of params
 // it captures from the URL: `Path { id : Int }` corresponds to the
 // pattern `"/notes/{id:Int}"`. Constructed by coercion from a String
@@ -773,7 +773,7 @@ func TAdminSession() TCon {
 // (URL → params record) and at call sites by `linkTo` / `Nav.pushTo`
 // (params record → URL).
 //
-// Empty params (`Path {}`) means a static path like "/" or "/about" —
+// Empty params (`Path {}`) means a static path like "/" or "/about":
 // not common in practice (usually you'd use Page.create for those),
 // but the type stays uniform so utility functions can be polymorphic
 // over `Path r`.

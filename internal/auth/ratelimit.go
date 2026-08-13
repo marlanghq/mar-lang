@@ -6,7 +6,7 @@ import (
 )
 
 // Limiter is a small in-memory sliding-window rate limiter keyed by
-// arbitrary string (email, IP, etc.). It's process-local — restarting
+// arbitrary string (email, IP, etc.). It's process-local: restarting
 // the server resets the counters; that's fine for v1 because the per-
 // code attempts counter (in the DB) covers the persistent abuse case.
 //
@@ -17,7 +17,7 @@ import (
 //
 // Eviction: a background goroutine started by NewLimiter sweeps the
 // map every `window/2` and drops keys whose newest hit is older than
-// the window — past that point, no information is preserved and the
+// the window: past that point, no information is preserved and the
 // next request from the key would get a fresh bucket anyway. Without
 // the sweep, the map grows monotonically with unique
 // emails/IPs over the process lifetime.
@@ -79,7 +79,7 @@ func (l *Limiter) Allow(key string) (bool, time.Duration) {
 }
 
 // evictionLoop runs until Stop(). On each tick it drops keys whose
-// newest hit is older than the window — by then there\'s no in-window
+// newest hit is older than the window: by then there\'s no in-window
 // data left to preserve and a fresh entry would be created on the
 // next request to the same key anyway. Ticker interval is window/2,
 // long enough to make sweeps cheap, short enough that stale keys
@@ -111,7 +111,7 @@ func (l *Limiter) evict(now time.Time) {
 	for key, hits := range l.hits {
 		// All hits stale (or empty slice) → no information to keep.
 		// `hits` is appended-to in Allow, so the last entry is the
-		// most recent — checking just that one is enough.
+		// most recent: checking just that one is enough.
 		if len(hits) == 0 || !hits[len(hits)-1].After(cutoff) {
 			delete(l.hits, key)
 		}

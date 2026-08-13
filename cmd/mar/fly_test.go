@@ -11,7 +11,7 @@ import (
 // TestDiscoverManifestEnvRefs covers the small regex-based scanner
 // that finds env:VAR references in mar.json. The scanner drives
 // secrets prompting + the pre-flight "missing on Fly" check inside
-// `mar deploy` (Fly path) — missing a ref means the secret never
+// `mar deploy` (Fly path): missing a ref means the secret never
 // reaches fly.
 func TestDiscoverManifestEnvRefs(t *testing.T) {
 	cases := []struct {
@@ -147,7 +147,7 @@ func TestFlyVolumeName(t *testing.T) {
 	}
 }
 
-// TestPluralizeSecrets — tiny helper, but the message it backs gets
+// TestPluralizeSecrets: tiny helper, but the message it backs gets
 // surfaced at deploy-time when secrets are missing; the test pins the
 // singular/plural distinction so a future tweak doesn\'t say
 // "1 secrets missing" or "3 secret missing".
@@ -160,7 +160,7 @@ func TestPluralizeSecrets(t *testing.T) {
 	}
 }
 
-// TestGenerateDockerfile_Frontend — frontend topology should emit
+// TestGenerateDockerfile_Frontend: frontend topology should emit
 // the Caddy-on-Alpine Dockerfile that serves dist/ as static files.
 // No COPY of a Go binary; no debian; no ca-certificates apt step.
 func TestGenerateDockerfile_Frontend(t *testing.T) {
@@ -173,9 +173,9 @@ func TestGenerateDockerfile_Frontend(t *testing.T) {
 	}
 }
 
-// TestGenerateDockerfile_Backend — backend / fullstack should emit
+// TestGenerateDockerfile_Backend: backend / fullstack should emit
 // the debian + binary shape, with the COPY using the project\'s
-// binary name (NOT the Fly app slug — those are deliberately
+// binary name (NOT the Fly app slug: those are deliberately
 // decoupled).
 func TestGenerateDockerfile_Backend(t *testing.T) {
 	out := generateDockerfile(flyTopologyFullstack, "notes-auth", 3000)
@@ -190,7 +190,7 @@ func TestGenerateDockerfile_Backend(t *testing.T) {
 	}
 }
 
-// contains is a one-line wrapper around strings.Contains — keeps the
+// contains is a one-line wrapper around strings.Contains: keeps the
 // test bodies legible without an extra import line at the top.
 func contains(s, sub string) bool {
 	for i := 0; i+len(sub) <= len(s); i++ {

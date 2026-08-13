@@ -1,7 +1,7 @@
 module Main exposing (main)
 
 
--- PULSE RUNNER — a brutal one-button rhythm runner in the tradition of the
+-- PULSE RUNNER: a brutal one-button rhythm runner in the tradition of the
 -- early-2010s "impossible" auto-runners: you are a small orange square racing
 -- right at constant speed over spikes, blocks and pits, and every obstacle
 -- sits on the beat grid of the soundtrack. Jump on the beat and you live.
@@ -9,22 +9,22 @@ module Main exposing (main)
 --
 -- MUSIC SYNC, the whole trick: game-rate Time.every ticks ride
 -- requestAnimationFrame (vsync-locked, ~16.7 ms at 60 Hz), so 30 ticks are
--- ~500 ms — one beat at 120 BPM. The square moves 2 px/tick, so one beat is
+-- ~500 ms: one beat at 120 BPM. The square moves 2 px/tick, so one beat is
 -- exactly 60 px and one sixteenth note is 15 px. Level data is in SIXTEENTHS
 -- on that grid, and every obstacle is placed FROM THE BEAT YOU JUMP ON: a
 -- single spike for jump-beat B sits at 4B+2 (so the takeoff window is
 -- centered on the kick), a pit at 4B+1, a block's mount at 4B+3, doubles at
--- 4B+1 (jump a hair early — the four hard moments). An offline bot
+-- 4B+1 (jump a hair early: the four hard moments). An offline bot
 -- restricted to jumping ONLY on beat ticks completes the whole level: hop on
 -- the kick and you live.
 --
 -- The WHOLE soundtrack is world-driven: the game loop fires the groove one
 -- beat at a time (grooveBeat, keyed by the beat you just crossed) and the
 -- lead as one-shot cues at the exact jump positions. Nothing rides a free
--- tape — if the tab is hidden and rAF stops, the music stops WITH the game
+-- tape, if the tab is hidden and rAF stops, the music stops WITH the game
 -- and resumes in phase, and the arrangement grows with the level section.
 -- Checkpoints sit exactly on loop boundaries (every 32 beats), and spawns
--- re-seed the beat cue — so after any death you are back on beat.
+-- re-seed the beat cue, so after any death you are back on beat.
 --
 -- Modes: HARDCORE (death sends you back to the very start) and CHECKPOINTS
 -- (death sends you back to the last flag you crossed).
@@ -49,7 +49,7 @@ gameW : Int
 gameW = 400                -- 2:1 stage: fills an 18:9 phone edge-to-edge, same
                            -- on every device (fixed camera; more track shown,
                            -- but the same amount on all screens so difficulty
-                           -- is device-independent — you still jump on the beat)
+                           -- is device-independent: you still jump on the beat)
 
 
 gameH : Int
@@ -64,12 +64,12 @@ fps = 60
 -- Ticks ride requestAnimationFrame (vsync-locked, ~16.7 ms at 60 Hz), so
 -- 30 ticks = ~500 ms = one beat at 120 BPM. The square moves 2 px/tick, so a
 -- beat is 60 px and a sixteenth note is 15 px. The jump impulse is tuned so
--- a full hop lasts ~29 ticks: one hop = one beat — holding jump makes the
+-- a full hop lasts ~29 ticks: one hop = one beat, holding jump makes the
 -- square hop on the kick.
 
 
 spd : Int
-spd = 2                   -- px per tick, constant — this game never slows down
+spd = 2                   -- px per tick, constant: this game never slows down
 
 
 fp : Int
@@ -101,7 +101,7 @@ beatPx = 60               -- one beat, in px (4 sixteenths)
 
 
 loopPx : Int
-loopPx = 1920             -- one music loop = 32 beats — checkpoints live here
+loopPx = 1920             -- one music loop = 32 beats: checkpoints live here
 
 
 finishX : Int
@@ -139,9 +139,9 @@ type Mode
 
 -- Level pieces, positioned in SIXTEENTHS (u) on the music grid.
 --   Spk u lift : a spike; lift 0 = on the ground, 1 = on top of a 1-block
---   Blk u w h  : a block, w sixteenths wide, h blocks (15 px) tall — land on
+--   Blk u w h  : a block, w sixteenths wide, h blocks (15 px) tall, land on
 --                top of it; hit its side and you die
---   Gap u w    : a pit in the ground, w sixteenths wide — fall in and you die
+--   Gap u w    : a pit in the ground, w sixteenths wide, fall in and you die
 type Ob
     = Spk Int Int
     | Blk Int Int Int
@@ -172,16 +172,16 @@ type alias Model =
     , hardcore : Bool        -- chosen on the title screen
     , sel : Int              -- title selection: 0 = hardcore, 1 = checkpoints
     , tick : Int             -- global animation clock (title blink etc.)
-    , runT : Int             -- ticks since (re)spawn — also the music phase
+    , runT : Int             -- ticks since (re)spawn: also the music phase
     , px : Int               -- player world x (left edge)
     , pyBot : Int            -- player bottom y, fixed-point (x16)
     , vy : Int               -- vertical speed, fixed-point
     , grounded : Bool
-    , airT : Int             -- ticks since takeoff — drives the mid-air spin
+    , airT : Int             -- ticks since takeoff: drives the mid-air spin
     , jumpHeld : Bool        -- jump input held: touch sets it directly, keyboard
                              -- + gamepad derive it via syncHeld (see below)
-    , keysDown : List Keyboard.Key   -- raw held set — keyboard mirror
-    , padDown : List Gamepad.Button  -- raw held set — gamepad mirror
+    , keysDown : List Keyboard.Key   -- raw held set: keyboard mirror
+    , padDown : List Gamepad.Button  -- raw held set: gamepad mirror
     , lastCp : Int           -- last checkpoint index crossed (0 = start)
     , attempts : Int
     , deathT : Int           -- ticks since death (drives the shatter burst)
@@ -198,10 +198,10 @@ type alias Model =
 -- The difficulty ramps with the music: loop 1 teaches hopping on the kick;
 -- loop 2 adds platforms and pits; loop 3 runs 4-beat chains; loop 4 mixes
 -- everything; loop 5 packs the same tricks tighter (double-hop block rides,
--- back-to-back chains); loop 6 is the gauntlet — doubles into pits and a
--- FIVE-beat chain. Checkpoint flags sit at beats 32/64/96/128/160 — loop
+-- back-to-back chains); loop 6 is the gauntlet: doubles into pits and a
+-- FIVE-beat chain. Checkpoint flags sit at beats 32/64/96/128/160: loop
 -- boundaries, which is what keeps respawns on beat. The whole thing is
--- completable jumping ONLY on beats — proven offline by sim.mjs in this
+-- completable jumping ONLY on beats: proven offline by sim.mjs in this
 -- directory (`node sim.mjs`; re-run it whenever obs or the physics
 -- constants change). When in doubt, trust the kick.
 
@@ -266,7 +266,7 @@ obs =
     , Gap 745 2                        -- 186
     , Spk 754 0, Spk 758 0, Spk 762 0  -- 188-190 closing chain
 
-      -- loop 7: the crossing — back-to-back pits and a SIX-chain
+      -- loop 7: the crossing, back-to-back pits and a SIX-chain
     , Spk 777 0, Spk 778 0             -- 194 double
     , Gap 785 2                        -- 196
     , Gap 793 2                        -- 198: second pit one breath later
@@ -277,7 +277,7 @@ obs =
     , Spk 877 0, Spk 878 0             -- 219 double
     , Spk 886 0, Spk 890 0, Spk 894 0  -- 221-223 closing chain
 
-      -- loop 8: the high road — a LONG ride with three hops
+      -- loop 8: the high road, a LONG ride with three hops
     , Spk 906 0                        -- 226
     , Spk 913 0, Spk 914 0             -- 228 double
     , Gap 921 2                        -- 230
@@ -288,7 +288,7 @@ obs =
     , Spk 1009 0, Spk 1010 0           -- 252 double
     , Spk 1018 0                       -- 254
 
-      -- loop 9: the storm home — SEVEN-chain, pit sandwich, final sprint
+      -- loop 9: the storm home, SEVEN-chain, pit sandwich, final sprint
     , Spk 1033 0, Spk 1034 0           -- 258 double
     , Spk 1042 0, Spk 1046 0, Spk 1050 0, Spk 1054 0, Spk 1058 0, Spk 1062 0, Spk 1066 0   -- 260-266 SEVEN-chain
     , Gap 1077 2                       -- 269
@@ -317,7 +317,7 @@ type alias Seg =
 
 
 -- spike KILL boxes are inset from the drawn triangle (4 px each side, 5 px
--- off the tip) so grazing a corner feels fair — same trick the original used
+-- off the tip) so grazing a corner feels fair: same trick the original used
 spikeBoxes : List Box
 spikeBoxes =
     List.concat
@@ -454,7 +454,7 @@ update msg model =
         KeysChanged st ->
             -- the jump is a HELD flag (syncHeld mirrors the keyboard + gamepad
             -- sets, so the physics fires ONE hop per landing while a key is
-            -- down — "hold to keep hopping"). Mute, title selection and the
+            -- down: "hold to keep hopping"). Mute, title selection and the
             -- win/continue advance fire on the PRESS-EDGE: keys newly in the
             -- set, so each fires exactly once per real press. A key leaving the
             -- set just re-derives jumpHeld, so the old KeyUp clear is automatic.
@@ -488,7 +488,7 @@ syncHeld m =
 -- keyboard press-edge (one key newly down). M toggles mute in any mode; on the
 -- title Space/Enter starts and the nav keys move the selection; on the win
 -- screen Space/Enter returns to the title. In Run the jump is HELD (syncHeld),
--- so a press is a no-op here — this is exactly the old KeyDown, once per press.
+-- so a press is a no-op here: this is exactly the old KeyDown, once per press.
 applyKeyPress : Keyboard.Key -> (Model, Cmd Msg) -> (Model, Cmd Msg)
 applyKeyPress key acc =
     let
@@ -524,7 +524,7 @@ applyKeyPress key acc =
 
 -- gamepad press-edge (one button newly down). A/Start start (title) or continue
 -- (win); Up/Down move the selection. A's jump is HELD via syncHeld, so there is
--- no edge action in Run — exactly the old PadDown, once per press.
+-- no edge action in Run: exactly the old PadDown, once per press.
 applyPadPress : Gamepad.Button -> (Model, Cmd Msg) -> (Model, Cmd Msg)
 applyPadPress btn acc =
     let
@@ -592,7 +592,7 @@ startRun m =
 
 -- back on the grid: spawn points are loop boundaries, so you respawn on
 -- beat. Ticks only fire beats they CROSS, and no tick crosses the spawn
--- point itself — so seed the spawn beat's groove cue here by hand.
+-- point itself, so seed the spawn beat's groove cue here by hand.
 spawn : Model -> Model
 spawn m =
     let
@@ -644,7 +644,7 @@ stepRun m =
         gotCp = m.hardcore == False && cpNow > m.lastCp
 
         -- the world plays the WHOLE soundtrack. Melody: fire the lead cues
-        -- whose position we crossed this very tick — sync with the jump
+        -- whose position we crossed this very tick: sync with the jump
         -- moment by construction. Groove: fire one beat of drums/bass every
         -- beat line we cross, keyed by the world beat, so the arrangement
         -- tracks the level section and stops/resumes with the game itself.
@@ -780,7 +780,7 @@ inMuteZone model x y =
 
 -- ===== the soundtrack: the WORLD plays EVERYTHING =====
 -- No free-running tape. The game loop fires the groove ONE BEAT at a time
--- (a CueBeat when the player crosses each beat line — grooveBeat below
+-- (a CueBeat when the player crosses each beat line: grooveBeat below
 -- builds that beat's kick/snare/hat/bass/arp cells), and the HIGH LEAD as
 -- one-shot cues at the exact jump positions. Both therefore track the
 -- player's movement BY CONSTRUCTION: hide the tab and rAF stops the game,
@@ -793,7 +793,7 @@ inMuteZone model x y =
 -- below is exactly 250 ms so a beat is two cells.
 
 
--- --- the kit (recipes proven in the soundboard example — no Atari booms) ---
+-- --- the kit (recipes proven in the soundboard example: no Atari booms) ---
 
 
 drKick : Sound
@@ -996,7 +996,7 @@ grooveBeat b =
 
 
 -- melody contour: climbs the A-minor pentatonic and comes back down, one
--- step per jump — chains become runs, lone jumps get a single accent
+-- step per jump: chains become runs, lone jumps get a single accent
 leadPitch : Int -> Int
 leadPitch i =
     let
@@ -1012,7 +1012,7 @@ leadPitch i =
     else Sound.c 5
 
 
--- jump beats per 32-beat segment, LOCAL to the segment (world beat - 32k) —
+-- jump beats per 32-beat segment, LOCAL to the segment (world beat - 32k):
 -- these mirror the level data above; if `obs` changes, change these too
 -- (and re-run the offline sim!)
 jumps1 : List Int
@@ -1056,7 +1056,7 @@ type alias LeadEv =
 
 
 -- world positions where the game loop fires the melody: one note ON each
--- jump beat. The last two segments sing an octave up — the finale lift.
+-- jump beat. The last two segments sing an octave up: the finale lift.
 -- All positions are even, and the player moves 2 px/tick from even spawns,
 -- so stepRun crosses each one exactly.
 leadEvents : List LeadEv
@@ -1199,7 +1199,7 @@ bezel = rgb 6 6 10
 
 
 -- background per 32-beat segment: the hue changes exactly at the checkpoint
--- lines (beats 32/64/96/128/160) — and at the same world positions in
+-- lines (beats 32/64/96/128/160), and at the same world positions in
 -- hardcore, where the checkpoints would be. The last two run hot.
 bgColor : Model -> Color
 bgColor m =
@@ -1397,7 +1397,7 @@ playerShapes m cx =
         in
         let
             -- pw is odd, so anchor everything on the top-left corner (-pw/2)
-            -- and derive the far edges from it — pw/2-2 would land the
+            -- and derive the far edges from it: pw/2-2 would land the
             -- bottom/right borders 2 px inside the body
             o = 0 - pw // 2
             f = o + pw - 2
@@ -1412,7 +1412,7 @@ playerShapes m cx =
         ]
 
 
--- the square breaks into eight fragments that fly apart under gravity —
+-- the square breaks into eight fragments that fly apart under gravity:
 -- the object itself shatters, nothing else on screen moves
 shatterShapes : Model -> Int -> List Shape
 shatterShapes m cx =
@@ -1564,7 +1564,7 @@ muteIcon m =
         ]
 
 
--- ===== pixel font (3x5 glyphs drawn as rects — same table as the other Mar
+-- ===== pixel font (3x5 glyphs drawn as rects: same table as the other Mar
 -- canvas games) =====
 
 

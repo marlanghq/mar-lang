@@ -23,7 +23,7 @@ func errorf(pos ast.Pos, format string, args ...any) *EvalError {
 	return &EvalError{Pos: pos, Message: fmt.Sprintf(format, args...)}
 }
 
-// internalErrorf reports a state the TYPE CHECKER already rules out — an `if`
+// internalErrorf reports a state the TYPE CHECKER already rules out: an `if`
 // whose condition is not a Bool, a field read on something that is not a
 // record, applying a value that is not a function.
 //
@@ -31,7 +31,7 @@ func errorf(pos ast.Pos, format string, args ...any) *EvalError {
 // reporting them the same way as "no such file" sends the reader looking for a
 // bug in their own code that is not there. Reaching one means the checker let
 // something through, or an elaboration mark the evaluator depends on went
-// missing (ADR 0016, ADR 0017) — a compiler bug, and the message says so.
+// missing (ADR 0016, ADR 0017): a compiler bug, and the message says so.
 //
 // Keeping them as errors rather than panics is deliberate: the server's
 // request boundary turns an error into a 500 for one request, while a panic in
@@ -57,7 +57,7 @@ func evalAt(e ast.Expr, env *Env, depth int) (Value, error) {
 	switch n := e.(type) {
 	case *ast.EInt:
 		// AsDecimal is the typechecker's elaboration: this literal sat in a
-		// Decimal context, so it IS a Decimal. Scale 0 — an integer literal
+		// Decimal context, so it IS a Decimal. Scale 0: an integer literal
 		// has no fractional digits, and `+` takes the larger scale, so
 		// `1 + 1.50` lands on 2.50 without a rule of its own.
 		if n.AsDecimal {
@@ -151,7 +151,7 @@ func evalAt(e ast.Expr, env *Env, depth int) (Value, error) {
 			}
 			args := []Value{left, right}
 			// `|>` and `<|` APPLY an operand, so the depth has to ride along
-			// here exactly as it does in applyAt — otherwise recursion written
+			// here exactly as it does in applyAt: otherwise recursion written
 			// with a pipe would slip past the guard.
 			for i := range args {
 				if af, isF := args[i].(VFn); isF {
@@ -354,7 +354,7 @@ func Apply(fn Value, arg Value) (Value, error) {
 	return apply(fn, arg)
 }
 
-// apply is the entry point for callers outside the evaluator — chiefly the
+// apply is the entry point for callers outside the evaluator: chiefly the
 // builtins that invoke a user function (List.map, Dict.foldl, Random.andThen).
 // It resumes the depth the function value was stamped with rather than starting
 // over at zero: without that, recursion routed through a higher-order builtin
@@ -396,7 +396,7 @@ func applyAt(fn Value, arg Value, depth int) (Value, error) {
 		// about to call. `List.foldl (\_ _ -> loop n) 0 [1]` recurses forever
 		// through Go frames; stamping the lambda is what lets the guard see it.
 		// Indexed rather than ranged, to avoid copying each interface value.
-		// Measured as a wash against `range` — kept for the smaller loop body.
+		// Measured as a wash against `range`: kept for the smaller loop body.
 		for i := range applied {
 			if af, isFn := applied[i].(VFn); isFn {
 				af.Depth = depth + 1
@@ -509,13 +509,13 @@ func matchInto(pat ast.Pattern, v Value, bindings map[string]Value) bool {
 		rest := VList{Elements: lv.Elements[1:]}
 		return matchInto(p.Tail, rest, bindings)
 	case *ast.PRecord:
-		// `{ f1, f2, ... }` — bind each listed field's value into the
+		// `{ f1, f2, ... }`: bind each listed field's value into the
 		// local scope. Partial-match semantics: the value record may
 		// have additional fields beyond those listed; we just ignore
 		// them. The typechecker has already verified that every
 		// listed field exists on the value's static type, so a
 		// missing field here means the runtime value is shaped
-		// differently than typecheck thought — which would itself be
+		// differently than typecheck thought, which would itself be
 		// a typechecker bug. We treat that as "doesn't match" rather
 		// than panic.
 		rv, ok := v.(VRecord)
@@ -541,7 +541,7 @@ func bindPattern(pat ast.Pattern, v Value, env *Env) *Env {
 	if !ok {
 		// Shouldn't happen for irrefutable patterns. The type checker
 		// rejects refutable patterns in `let`, so reaching here means
-		// the bound value has the wrong shape — leave env unchanged
+		// the bound value has the wrong shape: leave env unchanged
 		// rather than crash.
 		return env
 	}
@@ -554,7 +554,7 @@ func bindPattern(pat ast.Pattern, v Value, env *Env) *Env {
 // reloading the page, which is the one place that advice applies.
 //
 // The typechecker makes this unreachable for records built from this program's
-// types, so reaching it means a record arrived from outside them — decoded wire
+// types, so reaching it means a record arrived from outside them: decoded wire
 // data, or a model a dev server preserved across a reload.
 //
 // Field order is the record's own where it has one; a record built by decoding

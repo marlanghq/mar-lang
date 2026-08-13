@@ -87,7 +87,7 @@ type alias Night =
 
 
 -- Midnight of the day a Time falls on. A date crosses the wire as a full
--- timestamp, so this is what turns "some moment on the 3rd" into "the 3rd" —
+-- timestamp, so this is what turns "some moment on the 3rd" into "the 3rd":
 -- without it a morning entry and an evening entry are two different days.
 -- Both halves need the same answer, which is why it lives here: the server
 -- keys its unique index on it, the screen groups the log by it.

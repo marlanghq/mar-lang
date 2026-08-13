@@ -26,8 +26,8 @@ import UI exposing ( navigationStack, navigationTitle, topBarLeading, topBarTrai
 -- the top-right stays free for the everyday actions (Edit / New).
 --
 -- Sheet chrome convention (both sheets here): the actions live in a
--- header row — Cancel on the left, the title centered, the confirming
--- action on the right — which is how Apple lays out a form sheet. The
+-- header row: Cancel on the left, the title centered, the confirming
+-- action on the right, which is how Apple lays out a form sheet. The
 -- two `width fill` side columns balance each other so the title stays
 -- optically centered whatever the button widths are.
 
@@ -380,7 +380,7 @@ accountSheet user model =
         ]
 
 
--- Two totals folded out of the class summaries the page already has —
+-- Two totals folded out of the class summaries the page already has:
 -- no extra round-trip just to fill the panel.
 rosterRows : Model -> List (View Msg)
 rosterRows model =

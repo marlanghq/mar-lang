@@ -12,7 +12,7 @@ import (
 
 // flyPreDeployValidate gates `mar deploy` (Fly path): a server (backend/fullstack)
 // app whose mar.json is missing the production config its Auth.config needs
-// must be rejected as a pre-flight — before any Fly resource is created —
+// must be rejected as a pre-flight, before any Fly resource is created:
 // so a misconfigured project never leaves an orphaned app/volume/secrets.
 // Frontend deploys carry no server-side config, so validation is skipped.
 //

@@ -6,7 +6,7 @@ import (
 )
 
 // Int used to mean three different things. Go wrapped around, Swift trapped,
-// and JavaScript — where Int is a double — quietly stopped being able to tell
+// and JavaScript, where Int is a double, quietly stopped being able to tell
 // 9007199254740993 from 9007199254740992. None of the three announced it, and
 // the conformance corpus missed it because the gate covers which FUNCTIONS are
 // exercised, not which VALUES.
@@ -22,7 +22,7 @@ func TestArithmeticRefusesToLeaveTheRange(t *testing.T) {
 		{"addition", func() (Value, error) { return addOp([]Value{VInt{V: MaxSafeInt}, VInt{V: 1}}) }},
 		{"subtraction", func() (Value, error) { return subOp([]Value{VInt{V: MinSafeInt}, VInt{V: 1}}) }},
 		// The product of two in-range operands reaches 2^106, which wraps an
-		// int64 — so a range check on the result alone would read the wrapped
+		// int64, so a range check on the result alone would read the wrapped
 		// value as perfectly fine.
 		{"multiplication", func() (Value, error) {
 			return mulOp([]Value{VInt{V: 3037000500}, VInt{V: 3037000500}})
@@ -74,7 +74,7 @@ func TestStringToIntIsNothingOutsideTheRange(t *testing.T) {
 }
 
 // The database is 64 bits wide and Mar is 53, so a row can hold a number the
-// language cannot represent — from data written before the bound existed, a
+// language cannot represent: from data written before the bound existed, a
 // restore from another tool, or an external 64-bit id. That is our own storage
 // disagreeing with the language, so it raises.
 func TestDatabaseIntegerOutOfRangeIsRefused(t *testing.T) {
@@ -94,7 +94,7 @@ func TestDatabaseIntegerOutOfRangeIsRefused(t *testing.T) {
 // A body is someone else's input, so an out-of-range integer is a malformed
 // request rather than a broken program. The check lives in the decoder and the
 // service dispatcher already answers 422 for any decode failure, so this
-// verifies the decoder refuses at all — the status is covered by the service
+// verifies the decoder refuses at all: the status is covered by the service
 // tests.
 func TestWireIntegerOutOfRangeIsRefused(t *testing.T) {
 	if _, err := decodeJSON(`{"n":9007199254740991}`); err != nil {

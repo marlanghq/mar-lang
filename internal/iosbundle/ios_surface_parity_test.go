@@ -17,7 +17,7 @@ import (
 //
 // Until this existed the answer was a report: I ran 33 examples through both
 // runtimes once, compared the screens, and 82 of 83 matched. That number was
-// true and unreproducible — half the harness lived in a scratch directory. So
+// true and unreproducible: half the harness lived in a scratch directory. So
 // this is the durable half: two fixtures that exercise the primitives, run on
 // both runtimes every time the suite runs.
 //
@@ -43,7 +43,7 @@ func TestSurfaceParity(t *testing.T) {
 		source string
 		// wantShapes says a draw list must be present. Without it, a canvas
 		// that stopped reaching the painter on BOTH platforms would still
-		// compare equal — the exact failure this test exists to end.
+		// compare equal: the exact failure this test exists to end.
 		wantShapes bool
 	}{
 		{name: "Widgets", source: parity.UISource},
@@ -85,7 +85,7 @@ func TestSurfaceParity(t *testing.T) {
 
 // parseWebSurface reads the WEBTEXT / WEBSHAPES lines the surface driver
 // prints; parseIOSSurface reads the TEXT / SHAPES lines routeSmoke prints.
-// Two readers because the two halves label their output differently — the
+// Two readers because the two halves label their output differently: the
 // content they carry is what has to match.
 func parseWebSurface(out string) map[string]string {
 	found := map[string]string{}
@@ -113,7 +113,7 @@ func parseIOSSurface(out string) map[string]string {
 			continue
 		}
 		for _, key := range []string{"SHAPES+1", "SHAPES", "TEXT+1", "TEXT"} {
-			// "TEXT /path words…" — the route sits between the label and the
+			// "TEXT /path words…": the route sits between the label and the
 			// content, and the fixtures are single-page, so it is dropped.
 			if after, ok := strings.CutPrefix(rest, key+" "); ok {
 				_, content, _ := strings.Cut(after, " ")

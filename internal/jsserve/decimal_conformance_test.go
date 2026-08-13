@@ -176,7 +176,7 @@ process.stdout.write(String(globalThis.__marEvalValue(program, 'Conform.results'
 		filepath.Join(dir, "runtime.js"), filepath.Join(dir, "program.json"))
 	var stderr strings.Builder
 	cmd.Stderr = &stderr
-	// Stdout only — node prints unrelated warnings (localStorage
+	// Stdout only: node prints unrelated warnings (localStorage
 	// availability) on stderr even on success.
 	out, err := cmd.Output()
 	if err != nil {

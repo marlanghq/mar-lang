@@ -14,7 +14,7 @@ import Frontend.Products
 --
 -- Deliberately NOT called `Shared`: fullstack apps use a module by that name
 -- for the frontend/backend wire contract, and the framework never looks this
--- module up by name anyway — `def` below is what ties it in.
+-- module up by name anyway: `def` below is what ties it in.
 
 
 type alias Line =
@@ -66,8 +66,8 @@ subscriptions _ =
     Sub.none
 
 
--- THE def. Every use site — Page.withShared in three pages, Cmd.toShared in
--- three more — names this one binding, which is what makes them agree on
+-- THE def. Every use site: Page.withShared in three pages, Cmd.toShared in
+-- three more: names this one binding, which is what makes them agree on
 -- Model and Msg without any of them saying so.
 --
 -- Declared last on purpose: top-level values evaluate in file order, and this

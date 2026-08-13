@@ -1,4 +1,4 @@
-// `mar fly database` — operations against the production database.
+// `mar fly database`: operations against the production database.
 //
 // Three verbs:
 //
@@ -14,7 +14,7 @@
 //       Pull a snapshot from the catalog to ./backups/<id>.tar.gz
 //       locally. Useful for cold storage / local archive.
 //
-// Restore lives in the admin panel UI (/_mar/admin) — it requires
+// Restore lives in the admin panel UI (/_mar/admin): it requires
 // a server-side schema match check + machine restart, which is
 // hard to express tersely in CLI output. The CLI complement is
 // kept narrow on purpose.
@@ -34,7 +34,7 @@ import (
 )
 
 // flyDatabaseUsage returns the help text for `mar fly database`.
-// Same palette as flyUsage — see that function's comment.
+// Same palette as flyUsage: see that function's comment.
 func flyDatabaseUsage() string {
 	bin := colorGreen("mar")
 	name := func(s string) string { return colorBold(s) }
@@ -96,7 +96,7 @@ const flyRemoteCatalogDir = "/data/backups"
 
 // runFlyDatabaseBackup forces a snapshot on the running machine.
 // The snapshot lands in the production catalog (alongside auto-
-// backups) — no local download. Use `backup download <id>` if you
+// backups): no local download. Use `backup download <id>` if you
 // want a local copy.
 func runFlyDatabaseBackup(path string) int {
 	appName, _, _, err := resolveFlyApp(path)
@@ -117,7 +117,7 @@ func runFlyDatabaseBackup(path string) int {
 		return 1
 	}
 
-	// Compute the ID locally — the SSH subshell doesn't have a
+	// Compute the ID locally: the SSH subshell doesn't have a
 	// reliably-portable way to format UTC.
 	id := time.Now().UTC().Format("2006-01-02-150405")
 	remotePath := flyRemoteCatalogDir + "/" + id + ".tar.gz"
@@ -314,7 +314,7 @@ type bundleMetadata struct {
 }
 
 // readBundleMetadata extracts metadata.json from a downloaded
-// tarball. Uses the system tar binary — present on macOS / Linux
+// tarball. Uses the system tar binary: present on macOS / Linux
 // without extra deps. Best-effort; failures are non-fatal.
 func readBundleMetadata(path string) (*bundleMetadata, error) {
 	out, err := exec.Command("tar", "-xzOf", path, "metadata.json").Output()

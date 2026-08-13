@@ -1,4 +1,4 @@
-// Backup catalog — the directory of automatic + ad-hoc snapshots
+// Backup catalog: the directory of automatic + ad-hoc snapshots
 // kept alongside the live database on the same volume. In Fly
 // production, catalog lives at `<dir-of-mar.db>/backups/`; the Fly
 // volume snapshot covers it automatically.
@@ -35,7 +35,7 @@ func CatalogDir(dbPath string) string {
 
 // CatalogEntry is one file in the catalog. Surfaced via the admin
 // panel API. SchemaFingerprint and other metadata live INSIDE the
-// tarball — Entry just describes what's on disk for listing.
+// tarball: Entry just describes what's on disk for listing.
 type CatalogEntry struct {
 	ID        string // filename without .tar.gz extension, e.g. "2026-05-08-143022"
 	Path      string // absolute path to the tarball
@@ -64,7 +64,7 @@ func CatalogPath(catalogDir, id string) string {
 // path traversal: every place that takes an `id` from the network
 // must check this before joining into a filesystem path. Without it,
 // `..%2F..%2Fetc%2Fpasswd` would round-trip through filepath.Join
-// and only be blocked by the os.Stat that follows — fine but brittle.
+// and only be blocked by the os.Stat that follows: fine but brittle.
 //
 // time.Parse with the catalog layout is the canonical check: it
 // rejects any string that isn't exactly the right shape, including
@@ -97,7 +97,7 @@ func ListCatalog(catalogDir string) ([]CatalogEntry, error) {
 		id := strings.TrimSuffix(name, ".tar.gz")
 		t, err := time.Parse(catalogIDLayout, id)
 		if err != nil {
-			continue // foreign file in the catalog — skip silently
+			continue // foreign file in the catalog: skip silently
 		}
 		info, err := e.Info()
 		if err != nil {
@@ -110,7 +110,7 @@ func ListCatalog(catalogDir string) ([]CatalogEntry, error) {
 			CreatedAt: t.UTC(),
 		})
 	}
-	// Newest first — the panel's UI lists most recent at top.
+	// Newest first: the panel's UI lists most recent at top.
 	sort.Slice(out, func(i, j int) bool {
 		return out[i].CreatedAt.After(out[j].CreatedAt)
 	})
@@ -118,7 +118,7 @@ func ListCatalog(catalogDir string) ([]CatalogEntry, error) {
 }
 
 // PruneCatalog deletes the oldest entries until at most `keep`
-// remain. Returns the IDs removed. Idempotent — passing keep >= len
+// remain. Returns the IDs removed. Idempotent: passing keep >= len
 // is a no-op.
 //
 // Called by the scheduler after each successful new backup.

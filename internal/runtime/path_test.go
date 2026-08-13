@@ -66,7 +66,7 @@ func TestPathMatchURL_typedDecoders(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Successful match — Int gets decoded.
+	// Successful match: Int gets decoded.
 	v := p.MatchURL("/notes/42")
 	rec, ok := v.(VRecord)
 	if !ok {
@@ -75,11 +75,11 @@ func TestPathMatchURL_typedDecoders(t *testing.T) {
 	if got := rec.Fields["id"]; got != (VInt{V: 42}) {
 		t.Errorf("expected id=VInt{42}, got %v", got)
 	}
-	// Type mismatch — non-numeric string against {id:Int} → miss.
+	// Type mismatch, non-numeric string against {id:Int} → miss.
 	if v := p.MatchURL("/notes/abc"); v != nil {
 		t.Errorf("expected nil for /notes/abc, got %v", v)
 	}
-	// Length mismatch — extra segment.
+	// Length mismatch: extra segment.
 	if v := p.MatchURL("/notes/42/edit"); v != nil {
 		t.Errorf("expected nil for length mismatch, got %v", v)
 	}
@@ -156,7 +156,7 @@ func TestPathEnumType_roundTrip(t *testing.T) {
 		t.Errorf("expected Admin, got %v", rec.Fields["role"])
 	}
 
-	// Decode: case-insensitive — `/users/MEMBER` should also match.
+	// Decode: case-insensitive, `/users/MEMBER` should also match.
 	if got := p.MatchURL("/users/MEMBER"); got == nil {
 		t.Error("expected case-insensitive match")
 	}
@@ -180,7 +180,7 @@ func TestPathEnumType_roundTrip(t *testing.T) {
 }
 
 func TestPathEnumType_rejectsPayloadCtor(t *testing.T) {
-	// RegisterEnumType filters out non-zero-arg ctors silently —
+	// RegisterEnumType filters out non-zero-arg ctors silently:
 	// nothing gets registered.
 	delete(EnumTypes, "Maybe")
 	RegisterEnumType("Maybe", []string{"Nothing", "Just"}, map[string]int{"Nothing": 0, "Just": 1})

@@ -1,4 +1,4 @@
-// GET read-only check — a sound, project-wide pass that holds every
+// GET read-only check: a sound, project-wide pass that holds every
 // service declared with the GET verb to a read-only handler.
 //
 // A GET endpoint is, by HTTP contract, safe: it must not change data.
@@ -20,7 +20,7 @@
 // name is treated as writing if ANY top-level function of that name can
 // write. That can in theory over-report on a cross-module name collision
 // (a false positive), but it can never miss a real write (no false
-// negative) — exactly the bias a safety check should have.
+// negative): exactly the bias a safety check should have.
 
 package typecheck
 

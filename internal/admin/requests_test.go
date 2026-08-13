@@ -2,7 +2,7 @@ package admin
 
 import "testing"
 
-// TestRequestLogger_OrdersNewestFirst — small buffer, fewer entries
+// TestRequestLogger_OrdersNewestFirst: small buffer, fewer entries
 // than cap. Snapshot should reverse insertion order.
 func TestRequestLogger_OrdersNewestFirst(t *testing.T) {
 	r := NewRequestLogger(10)
@@ -19,7 +19,7 @@ func TestRequestLogger_OrdersNewestFirst(t *testing.T) {
 	}
 }
 
-// TestRequestLogger_RingOverwritesOldest — fill past cap, the
+// TestRequestLogger_RingOverwritesOldest: fill past cap, the
 // oldest entries vanish, newest stay. Cap=10 is the minimum
 // allowed by the validator; record 12 entries to force one full
 // wrap.
@@ -42,7 +42,7 @@ func TestRequestLogger_RingOverwritesOldest(t *testing.T) {
 	}
 }
 
-// TestRequestLogger_ClampsOutOfRangeSize — defensive clamp so a
+// TestRequestLogger_ClampsOutOfRangeSize: defensive clamp so a
 // programming error elsewhere can't OOM the runtime. Validated by
 // recording cap+1 entries and observing that the buffer wraps at
 // the clamped value, not the requested value.
@@ -67,7 +67,7 @@ func TestRequestLogger_ClampsOutOfRangeSize(t *testing.T) {
 	}
 }
 
-// TestRequestLogger_NilSafe — Record/Snapshot/Len all tolerate a
+// TestRequestLogger_NilSafe: Record/Snapshot/Len all tolerate a
 // nil receiver, since the boot-time wiring may legitimately not
 // install a logger (mar dev with no ServeLive yet).
 func TestRequestLogger_NilSafe(t *testing.T) {

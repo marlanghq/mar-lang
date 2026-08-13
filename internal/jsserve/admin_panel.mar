@@ -70,7 +70,7 @@ row : String -> String -> View msg
 row label value =
     -- The classic label/value look: two equal columns. `width fill` on
     -- each text claims half the row, so the value sits near the
-    -- midpoint — closer to the label, not pinned to the far edge like a
+    -- midpoint: closer to the label, not pinned to the far edge like a
     -- spacer would. `width fill` on the hstack itself makes the row
     -- stretch when it sits inside a flex parent (the navigationLink
     -- table rows); in a plain section row it's inert (block context).
@@ -83,7 +83,7 @@ row label value =
 -- Human-readable byte size. Mar's `/` is integer division, so we scale
 -- the value to tenths to get one decimal place without any float type.
 -- 4096 → "4 KB", 2696 → "2.6 KB", 2632712 → "2.5 MB". (1024-based units;
--- truncates rather than rounds — fine for a size readout.)
+-- truncates rather than rounds: fine for a size readout.)
 humanizeBytes : Int -> String
 humanizeBytes bytes =
     if bytes < 1024 then
@@ -360,7 +360,7 @@ tableLink stat =
     -- Same label/value layout as the section rows (two equal columns via
     -- `row`). The navigationLink is itself a flex row (content + absolute
     -- chevron); `row`'s own `width fill` is what gives the inner hstack
-    -- real width there — without it the hstack hugs and the two texts
+    -- real width there: without it the hstack hugs and the two texts
     -- collapse together, which is the bug this used to have.
     UI.navigationLink [] tablePath { name = stat.name }
         (row stat.name (String.fromInt stat.rowCount ++ " rows"))
@@ -487,7 +487,7 @@ tableUpdate _ _ msg model =
             ( { model | rows = Failed why }, Cmd.none )
 
 
--- One DB row as a grouped card of `column: value` lines (mobile-first — the
+-- One DB row as a grouped card of `column: value` lines (mobile-first, the
 -- LabeledContent / Settings-style record layout).
 rowCard : Dict String String -> View TableMsg
 rowCard dict =

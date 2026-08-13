@@ -1,7 +1,7 @@
 module Frontend.Products exposing (Product, all, find, format)
 
 
--- The catalog, as plain data. No state, no effects — every page reads the
+-- The catalog, as plain data. No state, no effects: every page reads the
 -- same list, so nothing here needs to be shared at runtime.
 
 

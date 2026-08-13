@@ -1,4 +1,4 @@
-// Dict / Set runtime support — Swift port of Go's `internal/runtime/dict.go`
+// Dict / Set runtime support: Swift port of Go's `internal/runtime/dict.go`
 // and the matching JS code in `internal/jsserve/runtime.js`.
 //
 // Two pieces in this file:
@@ -14,7 +14,7 @@
 //
 // The invariant: `.dict(pairs)` keeps `pairs` sorted ascending by key
 // per compareMar; `.set(items)` keeps `items` sorted ascending.
-// "Comparable" means Int / Float / String at runtime — same constraint
+// "Comparable" means Int / Float / String at runtime: same constraint
 // the Go and JS runtimes enforce. The typechecker doesn't model this
 // constraint yet, so a misuse becomes a runtime error.
 
@@ -310,7 +310,7 @@ enum MarDict {
         env.define("dictPartition",  .fn(dictPartition))
         env.define("Dict.partition", .fn(dictPartition))
 
-        // Dict.union — left-biased on collision (matches Elm).
+        // Dict.union: left-biased on collision (matches Elm).
         let dictUnion = MarFn.native(2) { args in
             guard case .dict(let a) = args[0], case .dict(let b) = args[1] else {
                 throw MarRuntimeError.typeMismatch(expected: "Dict, Dict",

@@ -15,10 +15,10 @@ import UI exposing
 
 -- The hall of challenges. Four buckets:
 --
---   Desafios recebidos — someone wants a match; pick a deck and accept
---   Desafios enviados  — waiting on the rival's accept
---   Partidas em andamento — tap to play (canvas page)
---   Encerradas         — finished / refused, with the outcome
+--   Desafios recebidos: someone wants a match; pick a deck and accept
+--   Desafios enviados  - waiting on the rival's accept
+--   Partidas em andamento: tap to play (canvas page)
+--   Encerradas         - finished / refused, with the outcome
 --
 -- The lobby polls every 5s, and Mar re-runs `init` on every navigation
 -- so returning from a match always shows fresh state.

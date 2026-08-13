@@ -13,7 +13,7 @@ import (
 // advertise gzip get the raw response.
 //
 // Why only gzip (and not also brotli): brotli's library is ~530 KB
-// in the linked binary — about 4% of the production runtime stub —
+// in the linked binary, about 4% of the production runtime stub:
 // in exchange for ~15% better compression on JSON/JS payloads. For
 // a JSON API that ships single-digit-MB binaries to Fly machines,
 // the binary-size cost pays for itself in faster deploys, while the
@@ -46,7 +46,7 @@ func withCompression(h http.HandlerFunc) http.HandlerFunc {
 }
 
 // acceptsGzip reports whether the client advertised gzip in
-// `Accept-Encoding`. Quality values (q=...) are ignored — any
+// `Accept-Encoding`. Quality values (q=...) are ignored: any
 // mention of gzip is treated as acceptance, matching how nginx /
 // cloudflare behave by default and keeping the parsing trivial.
 func acceptsGzip(header string) bool {
@@ -55,7 +55,7 @@ func acceptsGzip(header string) bool {
 	}
 	for _, p := range strings.Split(header, ",") {
 		// strings.Cut returns the prefix before ";" (the codec name)
-		// and discards any "q=..." weight — we treat any mention of
+		// and discards any "q=..." weight: we treat any mention of
 		// gzip as acceptance, matching nginx/cloudflare defaults.
 		coding, _, _ := strings.Cut(p, ";")
 		if strings.TrimSpace(coding) == "gzip" {

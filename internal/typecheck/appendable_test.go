@@ -80,7 +80,7 @@ useStr = join "x" "y"
 }
 
 func TestAppendEmptyListsOK(t *testing.T) {
-	// `[] ++ []` keeps the element polymorphic — the appendable var
+	// `[] ++ []` keeps the element polymorphic: the appendable var
 	// binds to `List a`, which satisfies the constraint.
 	got, err := inferExprSrc(t, `[] ++ []`)
 	if err != nil {
@@ -93,7 +93,7 @@ func TestAppendEmptyListsOK(t *testing.T) {
 
 func TestAppendComparableConflictRejected(t *testing.T) {
 	// A value used as BOTH appendable (`++`) and comparable (`<`) has
-	// no representable type — we don't model Elm's `compappend`, so we
+	// no representable type: we don't model Elm's `compappend`, so we
 	// reject it with a clear message rather than silently picking one.
 	src := `module M exposing (..)
 both x = if x < x then x ++ x else x

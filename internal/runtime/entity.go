@@ -17,7 +17,7 @@ import (
 // register itself is simpler and works for both top-level entity
 // bindings and entities created in helpers.
 //
-// Order is insertion order — useful for reproducible CREATE TABLE
+// Order is insertion order: useful for reproducible CREATE TABLE
 // sequences in tests.
 //
 // Entries are deduplicated by table name: if the same entity is
@@ -35,7 +35,7 @@ var registeredEntities = struct {
 //
 // Returns an error if the table name is already registered in the
 // current evaluation pass. This is the runtime safety net for the
-// "no duplicate entity names" invariant — the compile-time lint
+// "no duplicate entity names" invariant: the compile-time lint
 // catches collisions of string-literal names; this catches
 // everything else (computed names, hot-reload bugs, programmatic
 // re-evaluation). Hot-reload is supposed to call ResetForReload
@@ -99,7 +99,7 @@ type VEntity struct {
 
 	// UniqueIndexes lists the composite (and single-column) UNIQUE
 	// constraints declared via `Entity.unique [cols...]`. Each inner
-	// slice is one constraint — a single index covers all columns in
+	// slice is one constraint: a single index covers all columns in
 	// the slice together. Order inside an index matches the user's
 	// declaration so error messages and index names stay predictable.
 	// The migrator emits one `CREATE UNIQUE INDEX IF NOT EXISTS` per
@@ -140,7 +140,7 @@ func (e VEntity) Display() string {
 
 // VColumn is the runtime value produced by Entity.serial / Entity.int /
 // Entity.text / Entity.bool / Entity.enum. It's an opaque value the user
-// never inspects — Entity.define unpacks it to build the entity's field
+// never inspects: Entity.define unpacks it to build the entity's field
 // metadata.
 type VColumn struct {
 	SQLType       string
@@ -150,7 +150,7 @@ type VColumn struct {
 
 	// DecimalScale is the fixed scale for Entity.decimal columns
 	// (SQLType "DECIMAL"). Values are stored as INTEGER coefficients
-	// at this scale — scale 2 means the column literally stores
+	// at this scale: scale 2 means the column literally stores
 	// cents. Meaningless for other column types.
 	DecimalScale int
 }
@@ -161,7 +161,7 @@ func (c VColumn) Display() string {
 }
 
 // VConstraint is the runtime value produced by Entity.notNull. It's
-// just a flag — additional constraint builders (Entity.optional /
+// just a flag: additional constraint builders (Entity.optional /
 // Entity.foreign) would extend this struct.
 type VConstraint struct {
 	NotNull bool
@@ -182,7 +182,7 @@ func entityBuiltins() map[string]Value {
 	return map[string]Value{
 		"entityDefine": nativeFn(1, entityDefineImpl),
 
-		// Entity.serial is a value (not a function) — it's a fixed column
+		// Entity.serial is a value (not a function): it's a fixed column
 		// shape: integer primary key with AUTOINCREMENT semantics.
 		"entitySerial": VColumn{SQLType: "INTEGER", NotNull: true, Serial: true},
 
@@ -198,7 +198,7 @@ func entityBuiltins() map[string]Value {
 		// raw integers.
 		"entityTimestamp": nativeFn(1, makeColumnConstructor("TIMESTAMP")),
 
-		// Entity.decimal <scale> <constraint> — fixed-scale exact
+		// Entity.decimal <scale> <constraint>: fixed-scale exact
 		// decimal, stored as an INTEGER coefficient at the column's
 		// scale (scale 2 → cents). Writes finer than the scale abort
 		// instead of silently rounding; coarser writes rescale
@@ -233,9 +233,9 @@ func entityBuiltins() map[string]Value {
 // entityDefineImpl is the runtime for Entity.define. The single
 // argument is a record with three fields:
 //
-//   - name    : String          — table name, becomes Table on the entity
-//   - columns : { ...c }        — record of column declarations
-//   - uniques : List (List String) — composite unique constraints
+//   - name    : String          - table name, becomes Table on the entity
+//   - columns : { ...c }        - record of column declarations
+//   - uniques : List (List String), composite unique constraints
 //
 // Every column declaration must be a VColumn (produced by
 // Entity.serial / Entity.int / Entity.text / Entity.bool /
@@ -257,7 +257,7 @@ func entityBuiltins() map[string]Value {
 // computed names and for paths the lint hasn't seen.
 //
 // After construction, RegisterEntity is called. RegisterEntity errors
-// if the table name is already in the registry — that's the "no
+// if the table name is already in the registry: that's the "no
 // duplicate entity declarations within one program evaluation"
 // invariant. Hot-reload calls ResetForReload before re-evaluating, so
 // reloads still work.
@@ -481,7 +481,7 @@ func makeColumnConstructor(sqlType string) func([]Value) (Value, error) {
 }
 
 // findField looks up a column by name on the entity. Returns nil if not
-// found — callers turn that into a friendly error.
+// found: callers turn that into a friendly error.
 func (e VEntity) findField(name string) *EntityField {
 	for i := range e.Fields {
 		if e.Fields[i].Name == name {
@@ -512,7 +512,7 @@ func buildCreateTableSQL(e VEntity) string {
 		if i > 0 {
 			sql += ", "
 		}
-		// TIMESTAMP and DECIMAL are conceptual — both store as
+		// TIMESTAMP and DECIMAL are conceptual: both store as
 		// INTEGER (Unix ms / scaled coefficient) so SQLite can
 		// compare/sort numerically and values round-trip exactly.
 		sqlType := f.SQLType

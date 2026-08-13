@@ -12,14 +12,14 @@ import (
 //
 // That is the whole defect. `{"minutes": "soon"}` against `{ minutes : Int }`
 // builds a VString, the handler adds it to something, and the failure surfaces
-// as `+: expected Int` from inside a builtin — a 500, with a message about
+// as `+: expected Int` from inside a builtin, a 500, with a message about
 // arithmetic, on a request that should have been a 400 naming the field.
 //
 // WireShape is the declared input type, reduced to what checking a decoded
 // value actually needs. The typechecker knows the real type; the runtime must
 // not import the typechecker (types are erased at this boundary, see ADR 0016),
-// so the shape is derived at load time by internal/project — which already sits
-// on both sides — and stamped onto the service, next to its origin name.
+// so the shape is derived at load time by internal/project, which already sits
+// on both sides, and stamped onto the service, next to its origin name.
 type WireShape struct {
 	Kind   WireKind
 	Fields []WireField // Record: declared fields, in declaration order
@@ -189,7 +189,7 @@ func isWireAbsent(v Value) bool {
 }
 
 // wireDescribe names what actually arrived, in the vocabulary of whoever sent
-// the JSON — "a string", not "VString".
+// the JSON: "a string", not "VString".
 func wireDescribe(v Value) string {
 	switch t := v.(type) {
 	case nil:

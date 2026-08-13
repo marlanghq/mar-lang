@@ -10,7 +10,7 @@ import "testing"
 // If Nothing were transparent to null it would collide with VUnit:
 // a service `Int -> ()` returns bare null on the wire, the client
 // would decode it as Nothing, and `Ok ()` patterns would fail at
-// runtime with "no case branch matched" — a crash for code that
+// runtime with "no case branch matched": a crash for code that
 // typechecks cleanly. The tests below pin the round-trip so the
 // two values stay distinguishable.
 
@@ -60,7 +60,7 @@ func TestDecodeTaggedNothing(t *testing.T) {
 }
 
 func TestEncodeJustWrapsUnit(t *testing.T) {
-	// A `Just ()` value — Maybe wrapping the unit value — must stay
+	// A `Just ()` value, Maybe wrapping the unit value, must stay
 	// distinguishable from `Nothing` on the wire. The encoding is
 	// {"__args":[null],"__ctor":"Just"}: the inner null is the unit,
 	// and the __ctor tag prevents collision with bare Nothing. Keys come
@@ -76,7 +76,7 @@ func TestEncodeJustWrapsUnit(t *testing.T) {
 }
 
 func TestUnitNothingRoundTrip(t *testing.T) {
-	// Encode then decode — both Unit and Nothing must survive the
+	// Encode then decode: both Unit and Nothing must survive the
 	// round-trip distinguishably. If encode(Unit) and encode(Nothing)
 	// both produced "null", decode could only ever recover one of
 	// them; this test pins the property that they don't.
@@ -115,7 +115,7 @@ func TestUnitNothingRoundTrip(t *testing.T) {
 
 // TestOkUnitPatternMatches exercises the full pipeline: a service
 // `Int -> ()` returns null, the client wraps it as `Ok ()`, and the
-// user pattern-matches with `Ok ()`. The match must succeed — if
+// user pattern-matches with `Ok ()`. The match must succeed, if
 // null were decoded as Nothing, `Ok ()` would silently fail to match
 // `Ok Nothing` and crash at runtime.
 func TestOkUnitPatternMatches(t *testing.T) {
@@ -130,7 +130,7 @@ func TestOkUnitPatternMatches(t *testing.T) {
 	// Run `case wrapped of Ok () -> True ; _ -> False` via the
 	// runtime evaluator. (Easier to express via runValue but it
 	// doesn't take a pre-built Value, so we test matchPattern
-	// directly — same code path the evaluator uses for case.)
+	// directly: same code path the evaluator uses for case.)
 	src := []struct {
 		name    string
 		pattern string
@@ -153,7 +153,7 @@ func TestOkUnitPatternMatches(t *testing.T) {
 
 	// And the underlying matchInto on the wrapped value
 	// (simulating the over-the-wire path).
-	// Pattern: Ok () — i.e. PCtor("Ok", [PUnit])
+	// Pattern: Ok (), i.e. PCtor("Ok", [PUnit])
 	// (The high-level test above proves the parser produces the
 	//  right shape; this just confirms the matcher handles the
 	//  decoded-from-null value end-to-end.)

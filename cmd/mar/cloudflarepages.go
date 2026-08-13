@@ -1,4 +1,4 @@
-// Cloudflare Pages deploy — the flow behind `mar deploy` for an
+// Cloudflare Pages deploy: the flow behind `mar deploy` for an
 // App.frontend project (static bundle → global CDN). The Fly
 // counterpart (App.fullstack: VM + SQLite + auth) is in fly_deploy.go;
 // `mar deploy` routes to whichever deploy block the project declares
@@ -60,9 +60,9 @@ type cloudflarePagesTarget struct {
 // deploy block is resolved before validation. Returns specific
 // error types the caller can render with structure:
 //
-//   - *project.DeployCloudflarePagesError       — schema validation
-//   - *project.EnvVarNotSetError (wrapped)      — env var missing
-//   - other errors                              — malformed mar.json, IO, etc.
+//   - *project.DeployCloudflarePagesError       - schema validation
+//   - *project.EnvVarNotSetError (wrapped)      - env var missing
+//   - other errors                              - malformed mar.json, IO, etc.
 func resolveCloudflarePagesProject(path string) (*cloudflarePagesTarget, error) {
 	projectDir, m, apiTokenEnvVar, err := loadCloudflarePagesManifest(path)
 	if err != nil {
@@ -87,12 +87,12 @@ func resolveCloudflarePagesProject(path string) (*cloudflarePagesTarget, error) 
 //
 // LoadManifest (not LoadManifestStructure) is the right call for the
 // returned manifest because deploy.cloudflare-pages.apiToken MUST be
-// env:VAR — and validation downstream sees the resolved value.
+// env:VAR, and validation downstream sees the resolved value.
 //
 // Returns apiTokenEnvVar separately: the literal env var name (e.g.
 // "CLOUDFLARE_API_TOKEN") that apiToken was bound to before resolution. We
 // capture this from a parallel LoadManifestStructure pass because
-// the resolving load CLOBBERS the literal — by the time it returns,
+// the resolving load CLOBBERS the literal: by the time it returns,
 // apiToken holds the actual token bytes and the original env:VAR
 // reference is gone. Error messages need the var name to be
 // concrete ("export CLOUDFLARE_API_TOKEN=..." instead of a placeholder).
@@ -109,7 +109,7 @@ func loadCloudflarePagesManifest(path string) (projectDir string, m *project.Man
 
 	// First: structural pass to capture the literal env:VAR
 	// reference for apiToken before resolution overwrites it.
-	// Best-effort — if this fails, the resolving load below will
+	// Best-effort, if this fails, the resolving load below will
 	// surface the real error; we just lose the env var name for
 	// error messages.
 	if structural, _ := project.LoadManifestStructure(projectDir); structural != nil &&
@@ -251,7 +251,7 @@ func printDeployCloudflarePagesError(err error) {
 //
 // `target` carries deploy context (env var names, app/account
 // identifiers) so error hints can be specific instead of generic.
-// Pass nil if the error fires before the target is resolved —
+// Pass nil if the error fires before the target is resolved:
 // the renderer degrades gracefully (omits the contextual bits).
 //
 // Each branch maps a CF error code (defined in
@@ -330,7 +330,7 @@ func printCloudflareAuthError(target *cloudflarePagesTarget) {
 // there's no filesystem on CF".
 //
 // The inverse of the warning printDeployFlyError shows for
-// frontend-only projects deployed to Fly — same idea, different
+// frontend-only projects deployed to Fly: same idea, different
 // direction.
 func requireFrontendTopology(projectDir string) error {
 	topo, err := scaffold.Topology(projectDir)

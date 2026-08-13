@@ -18,7 +18,7 @@ expenses =
             , category = Entity.text Entity.notNull
             -- Fixed-scale money: the column stores an exact Decimal
             -- with two places (SQLite holds it as integer cents).
-            -- Writing a value with more than two places aborts —
+            -- Writing a value with more than two places aborts:
             -- round explicitly before saving.
             , amount   = Entity.decimal 2 Entity.notNull
             , note     = Entity.text Entity.notNull
@@ -61,11 +61,11 @@ addExpenseImpl : { petId : Int, category : String, amount : Decimal, note : Stri
 addExpenseImpl input user =
     -- The row is always stamped with the caller's id. `petId` is taken
     -- as given (a tag); we don't verify pet ownership here to avoid a
-    -- module cycle with Backend.Pets — a forged petId only mislabels
+    -- module cycle with Backend.Pets: a forged petId only mislabels
     -- the caller's OWN expense, never leaks anything.
     -- The column is scale 2, so the write below normalizes first:
     -- "12.5" pads exactly to 12.50, and a finer value rounds to cents
-    -- HERE, visibly — Repo.create would abort on a scale-3 Decimal
+    -- HERE, visibly: Repo.create would abort on a scale-3 Decimal
     -- rather than round it silently.
     if input.amount <= 0 then
         Task.succeed Shared.AmountNotPositive
@@ -124,7 +124,7 @@ deleteExpenseImpl input user =
 
 
 -- Re-tag a pet's expenses to "all pets". Backend.Pets calls this when a
--- pet is deleted: the money was still spent, so the expense stays — it
+-- pet is deleted: the money was still spent, so the expense stays, it
 -- just loses its specific pet tag rather than being destroyed.
 reassignPetToAll : Int -> Shared.User -> Task ()
 reassignPetToAll petId user =

@@ -6,7 +6,7 @@ module Shared exposing (..)
 --
 -- Domain note: an expense usually applies to ALL your pets (a bag of
 -- food, a box of litter), not one in particular. So an expense is NOT
--- owned by a pet — it optionally *tags* one. `petId = allPetsId` (0)
+-- owned by a pet: it optionally *tags* one. `petId = allPetsId` (0)
 -- means "all pets" (the common case); a real pet id means the expense
 -- was just for that one (a vet visit). Pet ids are serial and start at
 -- 1, so 0 is a safe sentinel.
@@ -105,7 +105,7 @@ addPet = Service.declare POST "/pets"
 
 
 -- Deleting a pet does NOT delete its expenses (you still spent that
--- money) — the backend re-tags them to "all pets" first.
+-- money): the backend re-tags them to "all pets" first.
 deletePet : Service { id : Int } ()
 deletePet = Service.declare DELETE "/pets/{id:Int}"
 
@@ -132,7 +132,7 @@ categories =
     [ "Food", "Litter", "Vet", "Grooming", "Toys", "Medication", "Insurance", "Other" ]
 
 
--- Money is a Decimal stored at scale 2 (Entity.decimal 2 — literally
+-- Money is a Decimal stored at scale 2 (Entity.decimal 2: literally
 -- cents in SQLite). `+` on Decimals is exact, so totals never drift;
 -- Decimal.toScale pads sums back to two places for display ($12.50,
 -- never $12.5).
@@ -181,7 +181,7 @@ monthName m =
     Maybe.withDefault "—" (List.head (List.drop (m - 1) monthNames))
 
 
--- "May 5, 2026" — for an expense row.
+-- "May 5, 2026": for an expense row.
 formatDate : Time -> String
 formatDate t =
     monthName (Time.month t)
@@ -191,7 +191,7 @@ formatDate t =
         ++ String.fromInt (Time.year t)
 
 
--- "May 2026" — for a month's report header.
+-- "May 2026": for a month's report header.
 formatMonth : Time -> String
 formatMonth t =
     monthName (Time.month t) ++ " " ++ String.fromInt (Time.year t)

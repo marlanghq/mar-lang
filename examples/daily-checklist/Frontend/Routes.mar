@@ -28,6 +28,6 @@ signIn = "/sign-in"
 -- pushes to this URL carrying the email as a typed path segment.
 -- That way the back button (auto-inserted by the navigation stack)
 -- returns the user to /sign-in with the email field empty so they
--- can retry — no extra state plumbing required.
+-- can retry: no extra state plumbing required.
 verifyCode : Path { email : String }
 verifyCode = "/sign-in/verify/{email:String}"

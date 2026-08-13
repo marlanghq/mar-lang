@@ -1,8 +1,8 @@
-// DB advisory lock — stub for non-POSIX platforms (Windows).
+// DB advisory lock: stub for non-POSIX platforms (Windows).
 //
 // flock isn't available; we open the file and return the handle
 // without locking. The restore CLI's "is the server using this DB?"
-// check is therefore weaker on these platforms — the operator must
+// check is therefore weaker on these platforms: the operator must
 // ensure the server is stopped before running restore-db. The CLI's
 // confirmation prompt already says "the server must not be running",
 // so the contract is communicated; we just can't enforce it.

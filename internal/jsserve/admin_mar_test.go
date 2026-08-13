@@ -90,7 +90,7 @@ func TestMarListEntitiesAndRows(t *testing.T) {
 		t.Errorf("row cells: got %v, want id=1 body=hello", got)
 	}
 
-	// The entity name is whitelisted against the live schema — an unknown
+	// The entity name is whitelisted against the live schema: an unknown
 	// table can't pivot arbitrary SQL.
 	if _, err := marListEntityRows("no_such_table"); err == nil {
 		t.Error("listEntityRows should reject an unknown entity")
@@ -98,7 +98,7 @@ func TestMarListEntitiesAndRows(t *testing.T) {
 }
 
 // The /_mar/admin/api/mar/* transport serializes bodies with
-// runtime.EncodeValueJSON — the same wire format jsToMar decodes. Pin that
+// runtime.EncodeValueJSON: the same wire format jsToMar decodes. Pin that
 // serverInfo round-trips to valid JSON carrying every field.
 func TestMarServerInfo_WireJSON(t *testing.T) {
 	v, err := marServerInfo()
@@ -121,7 +121,7 @@ func TestMarServerInfo_WireJSON(t *testing.T) {
 }
 
 // Rows are Dicts (dynamic columns), so they MUST encode with the __dict marker
-// — that's the only shape jsToMar rebuilds back into a Mar Dict. A plain JSON
+// : that's the only shape jsToMar rebuilds back into a Mar Dict. A plain JSON
 // object would silently decode as a record and break the panel.
 func TestMarListEntityRows_WireDictMarker(t *testing.T) {
 	_, cleanup := adminTestServer(t, []string{"a@x.com"})
@@ -148,7 +148,7 @@ func TestMarListEntityRows_WireDictMarker(t *testing.T) {
 }
 
 // The embedded Mar admin panel must parse, typecheck (against the real BaseEnv
-// — Page.adminProtected, the Mar.Admin.* toMsg signatures, the UI vocabulary)
+// : Page.adminProtected, the Mar.Admin.* toMsg signatures, the UI vocabulary)
 // and serialize to a mountable program.json. This is the proof that the whole
 // capability is usable from actual Mar code, and it guards the panel source
 // from drifting out of sync with the type schemes.
@@ -167,7 +167,7 @@ func TestAdminMarPanelCompiles(t *testing.T) {
 	// The bundle must be the named Admin.Panel module PLUS a synthetic
 	// nameless module (carrying `__entry`). Nameless is the whole point: the
 	// frontend runtime resolves the program entry from the shared env, and
-	// only a nameless module binds its decls there — a named module's decls
+	// only a nameless module binds its decls there: a named module's decls
 	// land in a private frame the lookup can't see ("entry not found: main").
 	mods, ok := prog["modules"].([]any)
 	if !ok || len(mods) < 2 {

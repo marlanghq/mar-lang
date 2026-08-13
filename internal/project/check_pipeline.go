@@ -12,7 +12,7 @@ import (
 // Every load path has to call this, including the one that runs a built
 // artifact, and not for the type errors: **checking is what elaborates the
 // tree**. The checker writes decisions onto the AST that the runtimes cannot
-// re-derive — which integer literals became Decimals (ADR 0013), which
+// re-derive, which integer literals became Decimals (ADR 0013), which
 // reference resolved to which implementation (ADR 0014), and the request shape
 // a service dispatcher validates against (ADR 0017). A parse-only load is a
 // tree with those decisions missing, which does not fail loudly; it fails

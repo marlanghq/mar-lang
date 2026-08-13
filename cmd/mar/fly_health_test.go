@@ -11,7 +11,7 @@ import (
 
 // TestProbeHealthy_StatusCodes covers the contract: anything < 500
 // counts as "framework is up", anything else (network or 5xx) does not.
-// 4xx is the interesting case — a Page.protected app returns 401 at /,
+// 4xx is the interesting case: a Page.protected app returns 401 at /,
 // and we MUST treat that as healthy (the framework parsed and routed,
 // it just refused to serve the page without a session).
 func TestProbeHealthy_StatusCodes(t *testing.T) {
@@ -154,7 +154,7 @@ func TestColorizeElapsed_Thresholds(t *testing.T) {
 //
 // Uses a tiny timeout (250ms) so the test runs fast. The 2s default
 // poll interval means we'll probably only get a single probe in,
-// which is fine — the point is verifying the timeout fires.
+// which is fine: the point is verifying the timeout fires.
 func TestWaitForAppHealthy_Timeout(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(503)
@@ -168,7 +168,7 @@ func TestWaitForAppHealthy_Timeout(t *testing.T) {
 	if err == nil {
 		t.Fatalf("waitForAppHealthy returned nil, want timeout error")
 	}
-	// Must wait approximately the full timeout — not give up
+	// Must wait approximately the full timeout, not give up
 	// immediately on the first 503.
 	if elapsed < 200*time.Millisecond {
 		t.Errorf("waitForAppHealthy returned after %s, expected ≥ ~250ms", elapsed)

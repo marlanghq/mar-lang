@@ -19,7 +19,7 @@ import (
 // internal/jsserve/nav_lifecycle_test.go runs parity.NavSource through
 // runtime.js and asserts what each step leaves on screen. These run the SAME
 // program through the Swift runtime and assert the SAME strings. Two runtimes,
-// one program, one set of expectations — which is what "no drift between web
+// one program, one set of expectations, which is what "no drift between web
 // and iOS" has to mean if it means anything.
 //
 // It costs an Xcode build and a simulator, so it skips unless the machine has
@@ -71,7 +71,7 @@ var iosNavScripts = []struct {
 			"starting a fresh one.",
 	},
 	{
-		// A presented route opened cold — a shared link, a relaunch — arrives
+		// A presented route opened cold, a shared link, a relaunch, arrives
 		// with the screen it belongs to underneath it. It used to render as a
 		// bare full screen, and Nav.dismiss is a no-op on the first entry, so
 		// its own Done button did nothing.
@@ -113,7 +113,7 @@ func TestNavigationLifecycleOnIOS(t *testing.T) {
 const navBundleID = "dev.marlang.navcheck"
 
 // navHost is a built app with the fixture's program baked in, reused across
-// the scripts. One build, four launches — the build is the expensive part and
+// the scripts. One build, four launches: the build is the expensive part and
 // nothing about it varies per script.
 type navHost struct {
 	appPath  string
@@ -153,7 +153,7 @@ func buildNavHost(t *testing.T) *navHost {
 // simulator, and boots a device.
 //
 // Returns (host, skip, fail). Skip is for a machine that cannot run this at
-// all — no Xcode, no simulator — because a missing toolchain is not a failing
+// all, no Xcode, no simulator, because a missing toolchain is not a failing
 // invariant and turning it into one would make the suite unusable off macOS.
 // Fail is for everything the machine COULD have done and did not.
 func makeNavHost(t *testing.T) (host *navHost, skip string, fail string) {

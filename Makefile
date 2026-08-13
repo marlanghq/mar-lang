@@ -1,7 +1,7 @@
 # Mar build / test commands.
 #
 # Usage:
-#   make                 # build the binary (./mar) — includes embedded stubs
+#   make                 # build the binary (./mar): includes embedded stubs
 #   make stubs           # cross-compile mar-runtime for every supported target
 #   make release         # cross-compile ./mar for every platform (+ .zip archives)
 #   make release-macos   # sign + notarize the macOS binaries into .pkg installers
@@ -36,7 +36,7 @@ STUB_DIR     := internal/appbundle/stubs/binaries
 # Release artifacts: the full ./mar binary cross-compiled for every
 # platform (each embeds the stubs + iOS template), plus .zip archives.
 # The macOS signing/notarization parameters for `release-macos` come in
-# as variables and are never committed — see that target's comment.
+# as variables and are never committed: see that target's comment.
 RELEASE_TARGETS := darwin-arm64 darwin-amd64 linux-amd64 linux-arm64 windows-amd64
 RELEASE_DIR     := dist/releases
 MACOS_INSTALL_PREFIX         ?= /usr/local/bin
@@ -62,7 +62,7 @@ build: stubs ios-template
 # is required only for contributors who run `make build` / `make test`
 # (where the template needs to stay in sync with Sources/ + project.yml).
 # End users who `go install` mar receive the pre-generated .xcodeproj
-# from the source tarball — they never touch xcodegen.
+# from the source tarball: they never touch xcodegen.
 #
 # xcodegen runs in ~1s and produces deterministic output, so `git status`
 # stays clean unless something in the template actually changed.
@@ -199,7 +199,7 @@ vscode:
 	@echo "  code --install-extension vscode-mar/vscode-mar.vsix --force"
 
 # Open the VS Code Marketplace management page in the browser, to upload a
-# .vsix by hand (manual publish — no PAT needed). Build the package first
+# .vsix by hand (manual publish: no PAT needed). Build the package first
 # with `cd vscode-mar && npx @vscode/vsce package`.
 open-vscode-marketplace:
 	@open https://marketplace.visualstudio.com/manage
@@ -211,7 +211,7 @@ open-vscode-marketplace:
 #
 # Requires `elm` 0.19.1 + `node`/`npx` (esbuild is invoked via
 # `npx --yes` so no global install needed). The deps are checked
-# inline — a missing tool yields a single-line error pointing at
+# inline: a missing tool yields a single-line error pointing at
 # the install path.
 website:
 	@command -v elm >/dev/null 2>&1 || { \

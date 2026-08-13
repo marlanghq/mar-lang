@@ -5,7 +5,7 @@ package typecheck
 // `case btn of Gamepad.A -> ...` is exhaustiveness-checked and a typo is a
 // COMPILE error rather than a silent no-op. The JS runtime polls
 // navigator.getGamepads() and builds a Button from the standard button index
-// (see runtime.js) — a controller outside the standard mapping simply won't
+// (see runtime.js): a controller outside the standard mapping simply won't
 // match, falling to the user's `_` branch.
 //
 // Names are the common console labels; the index → name mapping lives in the

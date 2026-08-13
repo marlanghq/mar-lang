@@ -16,13 +16,13 @@ import UI exposing
 --   2. If no session, redirects to the `signInPage` declared in
 --      Auth.config (here Frontend.SignIn.page → "/sign-in").
 --   3. If logged in, threads the User into init/update/view as the
---      first argument — no auth juggling in user code.
+--      first argument: no auth juggling in user code.
 
 
 -- The notes list is a small state machine instead of a bare
 -- `List Note`. Bare list forces `init` to start with `[]`, which
 -- the view then renders as "0 notes" while the fetch is still in
--- flight — misleading UX. The three explicit states make the
+-- flight: misleading UX. The three explicit states make the
 -- loading + error cases visible AND let the typechecker enforce
 -- that the view handles them all.
 type Notes
@@ -66,7 +66,7 @@ update _ msg model =
             ( { model | draft = value }, Cmd.none )
 
         AddClicked ->
-            -- Source of truth for "is the draft empty" — view also
+            -- Source of truth for "is the draft empty": view also
             -- disables the button visually. String.trim handles
             -- whitespace-only.
             if String.trim model.draft == "" then
@@ -76,14 +76,14 @@ update _ msg model =
                 -- until the server confirms. If anything fails
                 -- (network, server bug, session expired and the
                 -- framework redirects to sign-in mid-action), the
-                -- text isn't lost — `preservedScreenModels` keeps
+                -- text isn't lost: `preservedScreenModels` keeps
                 -- the model intact and the user lands back here with
                 -- their input ready to retry.
                 --
                 -- Trade-off: a fast double-click during the round
                 -- trip COULD submit twice. For low-stakes content
                 -- like notes that's acceptable. For cart checkout /
-                -- payment / etc, you'd add a `submitting` flag — but
+                -- payment / etc, you'd add a `submitting` flag, but
                 -- pair that with explicit reset on remount, since
                 -- the framework's model preservation otherwise traps
                 -- the user in "Saving…" forever after the redirect.
@@ -92,7 +92,7 @@ update _ msg model =
                 )
 
         NoteCreated (Ok (Shared.Created _)) ->
-            -- Server confirmed — now safe to clear the draft.
+            -- Server confirmed: now safe to clear the draft.
             ( { model | draft = "" }
             , Service.call Shared.listMine () NotesLoaded
             )
@@ -106,7 +106,7 @@ update _ msg model =
         NoteCreated (Err _) ->
             -- Non-401 failures land here (network, server bug, etc).
             -- Draft is still in the model; user can retry.
-            -- (401 mid-action never reaches this case — the framework
+            -- (401 mid-action never reaches this case: the framework
             -- intercepts and redirects before dispatching the Err.)
             ( model, Cmd.none )
 
@@ -124,7 +124,7 @@ update _ msg model =
 
 
 -- View built from SwiftUI-style primitives. iOS renders this as a
--- real NavigationStack { List { Section { ... } } } — pull-to-refresh,
+-- real NavigationStack { List { Section { ... } } }: pull-to-refresh,
 -- swipe-to-delete, dark mode, safe-area, all native and free.
 -- Web renders semantic <main>/<ul>/<section> with CSS that mimics
 -- the iOS card-list look.
@@ -160,7 +160,7 @@ notesSection notes =
 
         Loaded items ->
             -- List.reverse so the most recent note (highest id, last
-            -- inserted) shows up at the top — common UX expectation
+            -- inserted) shows up at the top: common UX expectation
             -- for note-taking apps.
             section [ header (String.fromInt (List.length items) ++ " notes") ]
                 (List.map renderNote (List.reverse items))

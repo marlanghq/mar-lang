@@ -12,7 +12,7 @@ import Frontend.Pets
 import Frontend.Settings
 
 
--- Pet Expenses — track what you spend on your pets.
+-- Pet Expenses: track what you spend on your pets.
 --
 -- A per-user expense tracker. Most spending (food, litter) covers all
 -- your pets, so the app is built around the EXPENSE feed, not the pets:

@@ -4,11 +4,11 @@ package refgen
 // reference; this one covers the pure-data core. Everything else (the
 // signatures, the page, the search) is generated from the compiler.
 //
-//   categories   — how each module's functions are grouped and ordered, like
+//   categories   - how each module's functions are grouped and ordered, like
 //                  elm/core's @docs sections. Every exported function must
 //                  appear in exactly one group (checked by the coverage test).
-//   descriptions — a two-to-three sentence explanation per function.
-//   examples     — worked `expr == expected` lines. Each is a REAL Mar
+//   descriptions: a two-to-three sentence explanation per function.
+//   examples     - worked `expr == expected` lines. Each is a REAL Mar
 //                  equality expression that examples_test.go compiles and runs,
 //                  requiring True, so a wrong example fails the build. (The
 //                  app-side modules also use a compile-only form, for the
@@ -47,7 +47,7 @@ var categories = map[string][]CatGroup{
 	},
 	// Basics has no module of its own: these are the builtins written bare.
 	// The reference groups them under a name the language does not have, so
-	// they are findable at all — see refgen.BasicsModule.
+	// they are findable at all: see refgen.BasicsModule.
 	"Basics": {
 		{"Logic", []string{"not"}},
 		{"Compare", []string{"max", "min", "clamp"}},
@@ -489,14 +489,14 @@ var blurbs = map[string]string{
 // two ways to put something on a screen, how anything happens at all, your
 // server, then somebody else's.
 //
-// Screens and Games sit together because they are siblings — UI and Canvas are
-// the two ways to draw, not two stages of anything — and Effects follows both
+// Screens and Games sit together because they are siblings: UI and Canvas are
+// the two ways to draw, not two stages of anything, and Effects follows both
 // because it serves both: every update returns a Cmd whether it is a form or a
 // game loop. Games spent one revision between Effects and the backend, which
 // put the server below the games and split the frontend from the backend it
 // talks to.
 //
-// Time and Random live in Data because that is what they are — a value type and
+// Time and Random live in Data because that is what they are: a value type and
 // a description of a value, on the same shelf as Decimal; they were a section
 // of their own for one revision and read as an orphan pair.
 //

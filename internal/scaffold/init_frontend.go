@@ -5,12 +5,12 @@ import "fmt"
 // frontendFiles returns the file set for `mar init` when the
 // operator picks the frontend-only kind. Layout:
 //
-//	Main.mar     — wires App.frontend
-//	Routes.mar   — centralized typed Paths
-//	Home.mar     — Home page (counter)
-//	About.mar    — About page (static info)
+//	Main.mar     - wires App.frontend
+//	Routes.mar   - centralized typed Paths
+//	Home.mar     - Home page (counter)
+//	About.mar    - About page (static info)
 //
-// No Frontend/ subdir since there's no Backend to separate from —
+// No Frontend/ subdir since there's no Backend to separate from:
 // everything in a frontend-only project is frontend.
 func frontendFiles(name string) map[string]string {
 	files := sharedFiles(name)

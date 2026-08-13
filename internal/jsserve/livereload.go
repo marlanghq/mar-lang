@@ -25,7 +25,7 @@ type LiveProgram struct {
 	programHash string // cached sha256 prefix of programJSON; recomputed on Update()
 	title       string
 	entry       string
-	appName     string // mar.json `name` — preferred over title for native clients
+	appName     string // mar.json `name`: preferred over title for native clients
 	hasAPI      bool   // true when there are service routes to dispatch
 	lastError   string // most recent compile error; "" when last compile succeeded
 	devMode     bool   // false = production stub: no SSE, no dev banner, no time-travel panel
@@ -33,7 +33,7 @@ type LiveProgram struct {
 
 // SetAppName records the project's canonical name (from mar.json
 // `name`). Preferred over Title() for surfaces a human consumes
-// directly (mDNS instance name, dev banner) — title follows the
+// directly (mDNS instance name, dev banner): title follows the
 // last loaded module which can be surprising in fullstack projects
 // whose entry chains through Frontend.
 func (lp *LiveProgram) SetAppName(name string) {
@@ -108,7 +108,7 @@ func (lp *LiveProgram) Update(routes []runtime.Value, mods []*ast.Module, entry 
 	}
 	// Cache the program hash so the version-headers middleware (which
 	// runs on every request) doesn't re-sha the bytes. Recomputed only
-	// here, on each Update — i.e. once per compile / live-reload swap.
+	// here, on each Update: i.e. once per compile / live-reload swap.
 	var progHash string
 	if len(progJSON) > 0 {
 		progHash = programETag(progJSON)
@@ -221,7 +221,7 @@ func (h *ReloadHub) unsubscribe(c chan string) {
 }
 
 // Reload tells every client to refetch and remount. Implies the error
-// banner can be hidden — the new program supersedes any prior error.
+// banner can be hidden: the new program supersedes any prior error.
 func (h *ReloadHub) Reload() {
 	h.broadcast(`{"type":"reload"}`)
 }
@@ -244,7 +244,7 @@ func (h *ReloadHub) broadcast(payload string) {
 		select {
 		case c <- payload:
 		default:
-			// Slow client — drop. Next event will catch them up.
+			// Slow client: drop. Next event will catch them up.
 		}
 	}
 }
@@ -305,7 +305,7 @@ func (h *ReloadHub) ServeReload(w http.ResponseWriter, r *http.Request) {
 
 // jsonError builds the SSE payload for a compile error. The message is
 // JSON-escaped so newlines and quotes survive the wire, and any ANSI
-// escape codes from the terminal-flavored formatter are stripped — the
+// escape codes from the terminal-flavored formatter are stripped: the
 // browser overlay renders text, not VT100 sequences, so leaving them
 // in produced garbled output like "[1;31mType error:[0m argument ...".
 func jsonError(msg string) string {
@@ -319,7 +319,7 @@ func jsonError(msg string) string {
 // stripANSI removes ANSI CSI escape sequences (color, cursor moves,
 // SGR resets, etc.) from a string. We see them on the wire because
 // diag.Format renders for a TTY when stderr is interactive, and the
-// dev-mode `mar` process always has a TTY on stderr — even when the
+// dev-mode `mar` process always has a TTY on stderr, even when the
 // SAME string is also being shipped to the browser via SSE, where ANSI
 // is just noise.
 //
@@ -335,7 +335,7 @@ func stripANSI(s string) string {
 
 // bakeAuth controls whether the user app's resolved Auth.config (signInPath)
 // is threaded into the bundle. The user app needs it (Page.protected's expiry
-// redirect); the admin panel must NOT inherit it — it's a separate program
+// redirect); the admin panel must NOT inherit it: it's a separate program
 // with its own (admin) auth, and inheriting the user signInPath makes a 401 on
 // a Mar.Admin.* call try to redirect to the user sign-in.
 func makeProgramJSON(mods []*ast.Module, entry string, devMode bool, bakeAuth bool) ([]byte, error) {
@@ -345,7 +345,7 @@ func makeProgramJSON(mods []*ast.Module, entry string, devMode bool, bakeAuth bo
 	// Send modules separately so the runtime registers each decl
 	// under both its bare name and a qualified `Module.name` form.
 	// Merging them into one module silently overwrote same-named
-	// decls across modules — `Frontend.SignIn.page` and
+	// decls across modules: `Frontend.SignIn.page` and
 	// `Frontend.Home.page` collapsed into one, breaking multi-page
 	// auth-protected apps.
 	serialized := make([]any, 0, len(mods))
@@ -360,7 +360,7 @@ func makeProgramJSON(mods []*ast.Module, entry string, devMode bool, bakeAuth bo
 	// Bake auth metadata that Page.protected needs on the client
 	// (signInPath) directly into the bundle. Main.mar isn't in the
 	// browser bundle (only modules reachable from the page list are),
-	// so the client can't run `auth = Auth.config { ... }` itself —
+	// so the client can't run `auth = Auth.config { ... }` itself:
 	// we hand the resolved values off via this side channel instead.
 	if cfg := runtime.CurrentAuth(); bakeAuth && cfg != nil {
 		auth := map[string]any{}

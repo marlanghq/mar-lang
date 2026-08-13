@@ -37,7 +37,7 @@ func TestClientIP_DefaultTrustsPrivatePeerOnly(t *testing.T) {
 		{"private peer honors XFF", "10.0.0.1:5000", "203.0.113.9", "203.0.113.9"},
 		{"loopback peer honors XFF", "127.0.0.1:5000", "203.0.113.9", "203.0.113.9"},
 		// Public peer: the caller is talking to us directly, so XFF is
-		// attacker-controlled and must be ignored — this is the spoof
+		// attacker-controlled and must be ignored: this is the spoof
 		// the fix closes.
 		{"public peer ignores XFF (spoof)", "8.8.8.8:5000", "1.2.3.4", "8.8.8.8"},
 		// Trusted peer, two public hops: the prepended (leftmost) entry

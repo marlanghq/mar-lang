@@ -54,7 +54,7 @@
       ]
     },
     "chars": {
-      "comment": "Char literal — 'a', '\\n', '\\u{1F600}'. Only matches when there's exactly one char/escape between the apostrophes, so identifiers ending in ' (Elm-style names like `foo'`) don't get mis-highlighted.",
+      "comment": "Char literal, 'a', '\\n', '\\u{1F600}'. Only matches when there's exactly one char/escape between the apostrophes, so identifiers ending in ' (Elm-style names like `foo'`) don't get mis-highlighted.",
       "name": "string.quoted.single.mar",
       "match": "'(\\\\u\\{[0-9a-fA-F]+\\}|\\\\.|[^'\\\\])'",
       "captures": {
@@ -78,7 +78,7 @@
     "types": {
       "patterns": [
         {
-          "comment": "Builtin types. `Decimal` (not Float — Mar has no binary floats) and the Canvas/Sound/Device vocabulary belong here; anything absent still gets the generic capitalized-identifier rule below.",
+          "comment": "Builtin types. `Decimal` (not Float, Mar has no binary floats) and the Canvas/Sound/Device vocabulary belong here; anything absent still gets the generic capitalized-identifier rule below.",
           "name": "support.type.mar",
           "match": "\\b(Int|Decimal|String|Bool|Char|List|Maybe|Result|Dict|Set|Time|Duration|Order|Task|Cmd|Sub|View|KeyedView|Page|Path|Attr|Width|Height|Size|Inline|Canvas|Color|Shape|Transform|Align|Blend|Pointer|Device|Sound|Service|ExposedService|Entity|Column|Constraint|Auth|AdminSession|Method)\\b"
         },
@@ -87,7 +87,7 @@
           "match": "\\b(True|False|Nothing|Ok|Err|Just|LT|EQ|GT)\\b"
         },
         {
-          "comment": "Capitalized identifier — type or constructor",
+          "comment": "Capitalized identifier, type or constructor",
           "name": "entity.name.type.mar",
           "match": "\\b[A-Z][A-Za-z0-9_]*\\b"
         }
@@ -101,7 +101,7 @@
     "numbers": {
       "patterns": [
         {
-          "comment": "Decimal literal — exact base-10, not a float. `/` on two of these yields a Decimal.Division that the caller resolves; `//` is the integer division.",
+          "comment": "Decimal literal, exact base-10, not a float. `/` on two of these yields a Decimal.Division that the caller resolves; `//` is the integer division.",
           "name": "constant.numeric.decimal.mar",
           "match": "\\b\\d+\\.\\d+\\b"
         },
@@ -126,7 +126,7 @@
           }
         },
         {
-          "comment": "Bare globals — in scope everywhere with no import and no module prefix. They have no qualified spelling (`Basics.not` does not compile), so without this rule they read as ordinary local names.",
+          "comment": "Bare globals, in scope everywhere with no import and no module prefix. They have no qualified spelling (`Basics.not` does not compile), so without this rule they read as ordinary local names.",
           "name": "support.function.mar",
           "match": "\\b(always|linkTo|not|max|min|clamp|abs|modBy|remainderBy)\\b"
         },

@@ -1,6 +1,6 @@
 package typecheck
 
-// soundNoteNames — the 12 chromatic note helpers in semitone order (index = the
+// soundNoteNames: the 12 chromatic note helpers in semitone order (index = the
 // semitone above C, so index 0 = C, 4 = E, 9 = A). Each is Sound.<name> : Int ->
 // Int, mapping an octave to an equal-temperament Hz (A4 = 440). `as_` is A# (the
 // trailing underscore avoids the `as` keyword).

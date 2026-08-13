@@ -39,15 +39,15 @@ actor APIClient {
     /// response. `runtime` is the mar version that built the server
     /// (`X-Mar-Runtime`); nil when the server didn't send it, which is
     /// how an older server or a proxy that strips unknown headers
-    /// looks. The caller decides what nil means — see
+    /// looks. The caller decides what nil means: see
     /// AppViewModel.loadAll.
     struct FetchedProgram {
         let data: Data
         let runtime: String?
     }
 
-    /// Raw program.json bytes — passed to MarJSONCodec.decodeProgram
-    /// off-thread on the main actor — plus the server's runtime stamp,
+    /// Raw program.json bytes: passed to MarJSONCodec.decodeProgram
+    /// off-thread on the main actor: plus the server's runtime stamp,
     /// which has to be read HERE because it lives on the response and
     /// the response does not survive the return.
     func fetchProgram() async throws -> FetchedProgram {
@@ -57,7 +57,7 @@ actor APIClient {
     }
 
     /// POST a raw JSON body to `path`, return the raw response body.
-    /// The caller parses or echoes it as a string — services have
+    /// The caller parses or echoes it as a string: services have
     /// arbitrary response shapes so we don't impose a decoder here.
     func postJSON(path: String, body: String) async throws -> String {
         guard let url = URL(string: path, relativeTo: baseURL) else {

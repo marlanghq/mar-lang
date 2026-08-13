@@ -510,7 +510,7 @@ func writeEnvelopeErr(w http.ResponseWriter, errs []cfMessage) {
 // getCFAPIBaseForTest / setCFAPIBaseForTest swap the package-level
 // cfAPIBase const for the duration of a test. Implemented via a
 // var indirection in the production file (see cloudflarepages_api.go
-// — testCFAPIBaseOverride is unset normally, set during tests).
+//: testCFAPIBaseOverride is unset normally, set during tests).
 //
 // We can't actually change a const at runtime, so the production
 // helpers (cfGetUploadJWT etc.) read from a function that returns

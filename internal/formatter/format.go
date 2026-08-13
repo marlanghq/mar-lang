@@ -4,7 +4,7 @@
 // (tabs to spaces, trailing whitespace removed, single trailing
 // newline) without reorganizing structure. A full AST-based pretty
 // printer that re-flows long lines, sorts imports, and aligns type
-// signatures is future work — it'll need comment preservation, which
+// signatures is future work: it'll need comment preservation, which
 // the lexer currently strips as trivia.
 package formatter
 
@@ -13,7 +13,7 @@ import (
 )
 
 // Format takes mar source and returns the formatted version. Safe to
-// run on any input — if something is unparseable, the formatter
+// run on any input, if something is unparseable, the formatter
 // preserves it byte-for-byte (only whitespace is touched).
 func Format(src string) string {
 	// Normalize line endings to \n. Windows / Mac inconsistencies do

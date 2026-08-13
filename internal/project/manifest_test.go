@@ -5,7 +5,7 @@ import "testing"
 // TestResolvedSMTPPort confirms the 587-default and pass-through.
 // The default matters because almost every supported provider
 // (Resend, SendGrid, Mailgun, AWS SES, Postmark, Brevo, Mailjet)
-// uses 587 with STARTTLS — leaving smtpPort blank in mar.json
+// uses 587 with STARTTLS: leaving smtpPort blank in mar.json
 // should Just Work for them.
 func TestResolvedSMTPPort(t *testing.T) {
 	cases := []struct {

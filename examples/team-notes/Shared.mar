@@ -7,7 +7,7 @@ module Shared exposing (..)
 -- Member or Admin inside it. Members can read + create team notes;
 -- admins can additionally edit + delete.
 --
--- Role is a closed sum type — Entity.enum [Member, Admin] in the
+-- Role is a closed sum type: Entity.enum [Member, Admin] in the
 -- users table tells the framework to round-trip the ctor's tag
 -- through a TEXT column with a CHECK constraint. Misspelling
 -- `Auth.requireRole Adimn` becomes a compile error rather than a

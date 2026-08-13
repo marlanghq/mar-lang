@@ -4,7 +4,7 @@ module Backend.Labels exposing (labels, issueLabels, services)
 import Shared exposing (Role(..))
 
 
--- Labels — tags attached to issues for categorization. Each project
+-- Labels: tags attached to issues for categorization. Each project
 -- has its own set ("bug", "feature", "P0") so labels in project A
 -- never bleed into project B's autocomplete.
 labels : Entity Shared.Label
@@ -22,7 +22,7 @@ labels =
         }
 
 
--- Junction table — one row per (issue, label) attachment. Modeled
+-- Junction table: one row per (issue, label) attachment. Modeled
 -- with its own id (rather than a composite PK) so the framework's
 -- Repo.deleteById can target a specific row by serial. Production
 -- code would prefer the (issueId, labelId) composite PK + a

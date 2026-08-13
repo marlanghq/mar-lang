@@ -50,7 +50,7 @@ type restoreFixture struct {
 // newRestoreFixture creates a temp project with a tiny SQLite DB
 // (one table) and produces a backup bundle from it. The live DB is
 // modified (an insert) between fingerprint capture and bundle
-// creation so the bundle contains different bytes — that way "swap
+// creation so the bundle contains different bytes: that way "swap
 // happened" can be checked by hashing the file after.
 func newRestoreFixture(t *testing.T) *restoreFixture {
 	t.Helper()
@@ -67,7 +67,7 @@ func newRestoreFixture(t *testing.T) *restoreFixture {
 
 	livePath := filepath.Join(dir, "bigapp.db")
 
-	// 2. Live DB — a couple of tables so fingerprint is non-empty.
+	// 2. Live DB: a couple of tables so fingerprint is non-empty.
 	mustCreateDB(t, livePath, "live-original-row")
 
 	// 3. Bundle the current live DB.
@@ -154,7 +154,7 @@ func runDoRestore(t *testing.T, projectDir, bundlePath string, dryRun bool, stdi
 	return code, stdout.String(), stderr.String()
 }
 
-// TestRestore_Success — happy path. The bundle's DB ends up at the
+// TestRestore_Success: happy path. The bundle's DB ends up at the
 // live path, the previous file is at .bak-<ts>, exit code 0.
 func TestRestore_Success(t *testing.T) {
 	f := newRestoreFixture(t)
@@ -207,7 +207,7 @@ func TestRestore_Success(t *testing.T) {
 	}
 }
 
-// TestRestore_DryRun — prints the plan, does not touch the live DB,
+// TestRestore_DryRun: prints the plan, does not touch the live DB,
 // exits 0. Also confirms the lock is released afterward (a second
 // dry-run on the same project would otherwise hit ErrDBLocked).
 func TestRestore_DryRun(t *testing.T) {
@@ -239,12 +239,12 @@ func TestRestore_DryRun(t *testing.T) {
 	}
 }
 
-// TestRestore_SchemaMismatch — bundle's schema fingerprint differs
+// TestRestore_SchemaMismatch: bundle's schema fingerprint differs
 // from the live DB → exit 1, no files moved, no override.
 func TestRestore_SchemaMismatch(t *testing.T) {
 	f := newRestoreFixture(t)
 
-	// Add a new table to the live DB — fingerprint diverges.
+	// Add a new table to the live DB: fingerprint diverges.
 	{
 		db, err := sql.Open("sqlite", f.livePath)
 		if err != nil {
@@ -281,7 +281,7 @@ func TestRestore_SchemaMismatch(t *testing.T) {
 	}
 }
 
-// TestRestore_DBLocked — another process (simulated by HoldDBLock)
+// TestRestore_DBLocked: another process (simulated by HoldDBLock)
 // holds the lock → restore aborts with the "server is using this
 // database" message, no files moved.
 func TestRestore_DBLocked(t *testing.T) {
@@ -307,7 +307,7 @@ func TestRestore_DBLocked(t *testing.T) {
 	}
 }
 
-// TestRestore_ConfirmationFail — operator types something other than
+// TestRestore_ConfirmationFail: operator types something other than
 // "restore" → abort, exit 1, no changes.
 func TestRestore_ConfirmationFail(t *testing.T) {
 	f := newRestoreFixture(t)
@@ -325,7 +325,7 @@ func TestRestore_ConfirmationFail(t *testing.T) {
 	}
 }
 
-// TestRestore_NoBundle — bundle path doesn't exist → exit 1 before
+// TestRestore_NoBundle: bundle path doesn't exist → exit 1 before
 // any side effects.
 func TestRestore_NoBundle(t *testing.T) {
 	f := newRestoreFixture(t)
@@ -338,7 +338,7 @@ func TestRestore_NoBundle(t *testing.T) {
 	}
 }
 
-// TestRestore_NoLiveDB — live DB doesn't exist → exit 1 with the
+// TestRestore_NoLiveDB: live DB doesn't exist → exit 1 with the
 // "extract manually" hint.
 func TestRestore_NoLiveDB(t *testing.T) {
 	f := newRestoreFixture(t)
@@ -357,7 +357,7 @@ func TestRestore_NoLiveDB(t *testing.T) {
 	}
 }
 
-// TestRestore_BadBundle — bundle is not a valid tarball → exit 1.
+// TestRestore_BadBundle: bundle is not a valid tarball → exit 1.
 func TestRestore_BadBundle(t *testing.T) {
 	f := newRestoreFixture(t)
 	// Overwrite the bundle with junk.
@@ -377,7 +377,7 @@ func TestRestore_BadBundle(t *testing.T) {
 	}
 }
 
-// TestRestore_UnknownFlag — args parsing rejects garbage flags.
+// TestRestore_UnknownFlag: args parsing rejects garbage flags.
 func TestRestore_UnknownFlag(t *testing.T) {
 	// runRuntimeRestore returns 2 on bad args; we drive it directly
 	// here since args parsing is upstream of doRestore.

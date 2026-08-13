@@ -11,7 +11,7 @@ import (
 // nothing forces them to follow the language. They rotted twice before this
 // test existed: `Float` stayed in the builtin-type list for a release after
 // the type was deleted, and decimal literals were painted
-// `invalid.illegal.float` long after `19.99` became a valid Decimal — the
+// `invalid.illegal.float` long after `19.99` became a valid Decimal: the
 // editor was calling correct code an error.
 //
 // This covers the half that can be checked mechanically: the bare globals,

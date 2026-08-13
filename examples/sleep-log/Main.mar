@@ -8,7 +8,7 @@ import Frontend.VerifyCode
 import Frontend.Log
 
 
--- Sleep Log — one rating per night, and what the last 30 add up to.
+-- Sleep Log: one rating per night, and what the last 30 add up to.
 --
 -- Sign in with a one-time code sent by email, then pick a date (today is
 -- already filled in) and tap how you slept. Tapping a different rating for the

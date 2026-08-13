@@ -22,13 +22,13 @@ import "net/http"
 //     apply the new version.
 //
 // Both headers are stamped eagerly (before next.ServeHTTP) because
-// the inner handler may call Write directly — once bytes go out, the
+// the inner handler may call Write directly: once bytes go out, the
 // header map is frozen.
 //
 // The values come from process-wide state: marVersion from
 // SetAdminBuildInfo (set once at boot), programHash from LiveProgram
 // (recomputed on each Update / live-reload swap). Empty values are
-// omitted — a "dev" build without the version stamp shouldn't be
+// omitted: a "dev" build without the version stamp shouldn't be
 // advertising a misleading "1.0.0" or similar.
 func withVersionHeaders(lp *LiveProgram, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

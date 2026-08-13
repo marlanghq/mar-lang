@@ -20,7 +20,7 @@ import (
 // internal/iosbundle, where its sources live.
 //
 // The corpus, the expectations and the coverage gate are in
-// internal/conformance — see that package for why a shared answer sheet is the
+// internal/conformance: see that package for why a shared answer sheet is the
 // point rather than the runtimes merely agreeing with each other.
 
 func TestStdlibGoJSConformance(t *testing.T) {

@@ -14,7 +14,7 @@ import (
 // TestIOSBuiltinsCoverClientStdlib catches the class of bug where a
 // builtin gets added to typecheck (so user code compiles) and to the
 // Go runtime (so server-side eval works), but never lands in the iOS
-// Swift runtime — leading to "view failed: unbound name: X" at runtime
+// Swift runtime, leading to "view failed: unbound name: X" at runtime
 // on device.
 //
 // Source of truth: every qualified name registered in
@@ -39,9 +39,9 @@ func TestIOSBuiltinsCoverClientStdlib(t *testing.T) {
 	// enter this required set at all; the input mirrors (Keyboard.watch /
 	// Gamepad.watch / Canvas.watchPointers / Canvas.watchSize) ARE qualified
 	// aliases and are defined natively in the Swift bundle, so they're required
-	// and present — nothing to exempt.
+	// and present: nothing to exempt.
 	// The web-first subsystems (Canvas, Sound, Gamepad, Keyboard, Device) used
-	// to be deferred here — implemented in the JS runtime, absent on iOS. They
+	// to be deferred here: implemented in the JS runtime, absent on iOS. They
 	// are now all native: MarCanvas (SwiftUI Canvas draw-list), MarSound
 	// (AVAudioEngine chip synth), MarInput (GameController Gamepad + GCKeyboard
 	// + trait/scene Device), wired through MarPageRuntime's generalized sub
@@ -53,7 +53,7 @@ func TestIOSBuiltinsCoverClientStdlib(t *testing.T) {
 	// but the store behind them: a model keyed by def identity, PageRuntime
 	// resolving its four functions live instead of capturing them at init, and
 	// the sub reconciler carrying a destination per tagger. Stubbing the
-	// builtins to satisfy this test would be worse than the gap — an app would
+	// builtins to satisfy this test would be worse than the gap: an app would
 	// compile for iOS and then quietly lose its cart.
 	iosDeferred := map[string]bool{}
 
@@ -77,14 +77,14 @@ func TestIOSBuiltinsCoverClientStdlib(t *testing.T) {
 // TestIOSCoversQualifiedUnionCtors closes a hole the coverage test above
 // cannot see. That test's source of truth, BaseQualifiedSymbols(), reports
 // only builtins carrying BOTH a bare and a dotted name (the qualifiedAliases
-// mapping). Union constructors are dotted-ONLY — `Canvas.Alpha` is a direct
-// key in baseBindings() — so they never enter the required set, and deleting
+// mapping). Union constructors are dotted-ONLY: `Canvas.Alpha` is a direct
+// key in baseBindings(), so they never enter the required set, and deleting
 // one from the Swift bundle passes every other test in the tree (verified by
 // deleting Canvas.Multiply, 2026-07-15; 146 names were invisible this way).
 //
 // The requirement here is derived from the union tables themselves (every
 // CustomType with a Module), which are also what internal/ctorgen generates
-// MarBuiltinCtors.swift from — so this is the belt to that generator's
+// MarBuiltinCtors.swift from, so this is the belt to that generator's
 // braces: ctorgen's staleness test proves the generated file matches the
 // tables, and this test proves the names actually sit in the Swift bundle
 // (catching, say, a deleted generated file that something still compiles
@@ -123,7 +123,7 @@ func TestIOSCoversQualifiedUnionCtors(t *testing.T) {
 
 // readSwiftBuiltinNames extracts every `env.define("...")` first-arg
 // string literal from the Sources/*.swift files. Only the FIRST
-// argument matters — that's the registry key; the second is the value
+// argument matters: that's the registry key; the second is the value
 // bound to it.
 //
 // Scans every Sources/*.swift file (MarBuiltins.swift, MarDict.swift,
@@ -136,8 +136,8 @@ func readSwiftBuiltinNames() (map[string]bool, error) {
 		return nil, err
 	}
 	// `env.define("name", ...)` binds one key. `env.defineFn("bare",
-	// "dotted", ...)` — the two-key convenience the web-first subsystems
-	// (Sound / Canvas / Gamepad / Keyboard / Device) use — binds BOTH the bare
+	// "dotted", ...)`: the two-key convenience the web-first subsystems
+	// (Sound / Canvas / Gamepad / Keyboard / Device) use: binds BOTH the bare
 	// desugared name and the dotted user-facing name, so capture both string
 	// literals there. The dotted (2nd) arg is the qualified symbol the drift
 	// coverage check looks for.
@@ -163,7 +163,7 @@ func readSwiftBuiltinNames() (map[string]bool, error) {
 	return out, nil
 }
 
-// TestSwiftDeclarationStubsAreComplete — the iOS half of the same hole
+// TestSwiftDeclarationStubsAreComplete: the iOS half of the same hole
 // the web test describes. `Entity.*` is backend-only for CALLING, but a
 // module that declares an entity still has to EVALUATE on the client,
 // so every schema helper needs a stub here too. Both client runtimes
