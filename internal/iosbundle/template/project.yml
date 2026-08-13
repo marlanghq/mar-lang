@@ -156,6 +156,13 @@ targets:
         # The `App.locale` builtin reads this key.
         MarLocale: __MAR_LOCALE__
 
+        # MarHasBackend is "false" only for an App.frontend project with
+        # no `ios.serverUrl`: a game, typically. The app reads it to skip
+        # the over-the-air program fetch in RELEASE, since there is no
+        # server to fetch from. DEBUG still fetches, because that is the
+        # `mar dev` hot-reload path onto the device.
+        MarHasBackend: __MAR_HAS_BACKEND__
+
         # MarRuntimeVersion is the mar version that generated this
         # app: the version of the Swift runtime compiled into the
         # binary. The server stamps the same value on every response

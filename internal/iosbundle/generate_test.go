@@ -121,6 +121,10 @@ func TestGenerateMaterializesXcodeProject(t *testing.T) {
 		// and MarLocale is what the `App.locale` builtin reads.
 		"<key>CFBundleDevelopmentRegion</key>\n\t<string>pt-BR</string>",
 		"<key>MarLocale</key>\n\t<string>pt-BR</string>",
+		// The default Spec leaves HasBackend false, which is the case
+		// worth pinning: a game must ship with the over-the-air fetch
+		// off, or every cold start calls an address with nothing on it.
+		"<key>MarHasBackend</key>\n\t<string>false</string>",
 	} {
 		if !strings.Contains(info, want) {
 			t.Errorf("Info.plist should contain %q", want)
@@ -132,6 +136,7 @@ func TestGenerateMaterializesXcodeProject(t *testing.T) {
 		"__MAR_PROJECT_NAME__",
 		"__MAR_RUNTIME_VERSION__",
 		"__MAR_LOCALE__",
+		"__MAR_HAS_BACKEND__",
 	} {
 		if strings.Contains(info, raw) {
 			t.Errorf("Info.plist contains unsubstituted %s", raw)

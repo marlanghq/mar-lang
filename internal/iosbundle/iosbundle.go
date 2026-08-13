@@ -97,6 +97,17 @@ type Spec struct {
 	// `mar dev` legitimately don't need a production URL.
 	DefaultBaseURL string
 
+	// HasBackend is false only when the program is App.frontend AND
+	// mar.json set no `ios.serverUrl`: an app with nothing to talk to.
+	// It is baked in so the app can skip the over-the-air program
+	// fetch in RELEASE, which for such an app is one request per cold
+	// start to an address that was never going to answer.
+	//
+	// A frontend app that DID set a serverUrl keeps it true: serving a
+	// static Mar app from a Mar server is a real setup, and the fetch
+	// is how it updates without the App Store.
+	HasBackend bool
+
 	// Locale is the app's language from mar.json, a canonical BCP 47
 	// tag. Baked into Info.plist twice, for two different readers:
 	// as CFBundleDevelopmentRegion, which is what iOS itself takes
@@ -173,6 +184,10 @@ func Generate(spec Spec, outDir string) (projectDir string, err error) {
 	if locale == "" {
 		locale = "en"
 	}
+	hasBackend := "true"
+	if !spec.HasBackend {
+		hasBackend = "false"
+	}
 
 	subs := map[string]string{
 		"__MAR_RUNTIME_VERSION__":   marVersion,
@@ -189,6 +204,7 @@ func Generate(spec Spec, outDir string) (projectDir string, err error) {
 		// that happens to be running on the same LAN.
 		"__MAR_PROJECT_NAME__": spec.AppName,
 		"__MAR_LOCALE__":       locale,
+		"__MAR_HAS_BACKEND__":  hasBackend,
 	}
 
 	// One header per Swift file, stamped with the generator version

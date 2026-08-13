@@ -596,6 +596,15 @@ final class AppViewModel {
         return "http://localhost:3000"
     }
 
+    /// The baked Info.plist `MarHasBackend`. False only for an
+    /// App.frontend project that set no `ios.serverUrl`: a game, with
+    /// nothing on the other end of the network. Missing key means an
+    /// older or hand-made bundle, and true keeps that behaving as it
+    /// always did.
+    private static var bundleHasBackend: Bool {
+        (Bundle.main.object(forInfoDictionaryKey: "MarHasBackend") as? String) != "false"
+    }
+
     #if DEBUG
     /// The baked Info.plist `MarAppName`: the raw mar.json `name`,
     /// which is exactly what `mar dev` advertises as its mDNS instance
@@ -653,6 +662,23 @@ final class AppViewModel {
         if !hadProgram {
             state = .loading
         }
+        // Nothing to fetch from, so do not ask. A shipped App.frontend
+        // app with no `ios.serverUrl` was otherwise making one request
+        // per cold start to an address that was never going to answer,
+        // and swallowing the failure by design (see above), which is
+        // exactly the shape of a cost nobody notices.
+        //
+        // DEBUG still fetches: that is how `mar dev` hot-reloads onto
+        // the device, and it is the whole point of the baked localhost
+        // fallback. And `hadProgram` keeps the degenerate case honest:
+        // with no embedded program either, the app has nothing to show,
+        // so it goes through the fetch and reports the real failure
+        // rather than sitting on an empty screen.
+        #if !DEBUG
+        if !Self.bundleHasBackend && hadProgram {
+            return
+        }
+        #endif
         do {
             let fetched = try await api.fetchProgram()
 

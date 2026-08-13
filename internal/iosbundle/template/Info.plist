@@ -26,6 +26,8 @@
 	<string>__MAR_PROJECT_NAME__</string>
 	<key>MarBaseURL</key>
 	<string>__MAR_DEFAULT_BASE_URL__</string>
+	<key>MarHasBackend</key>
+	<string>__MAR_HAS_BACKEND__</string>
 	<key>MarLocale</key>
 	<string>__MAR_LOCALE__</string>
 	<key>MarRuntimeVersion</key>

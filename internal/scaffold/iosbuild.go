@@ -158,6 +158,7 @@ func BuildIOS(entry, distDir, marVersion string) (IOSBuildResult, error) {
 		BuildNumber:      ios.BuildNumber,
 		DefaultBaseURL:   ios.ServerURL,
 		Locale:           manifest.ResolveLocale(),
+		HasBackend:       !frontendOnly || ios.ServerURL != "",
 		MarVersion:       marVersion,
 		EmbeddedProgram:  programJSON,
 	}

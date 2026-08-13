@@ -402,9 +402,24 @@ func printIOSBuildSummary(r scaffold.IOSBuildResult) {
 	// base url gets the " (default)" tag when ios.serverUrl wasn't
 	// set: the warn block above already told the full story, this
 	// is just an unambiguous tag on the value the bundle carries.
+	// The base url line, tagged so the value is never read as a
+	// backend the app does not have.
+	//
+	// Backend / fullstack with nothing set: " (default)", and the Warn
+	// above already told the whole story.
+	//
+	// Frontend-only with nothing set: the address is real but it is
+	// only the `mar dev` hot-reload target during development. The
+	// shipped app never calls it (MarHasBackend is baked false), and
+	// printing it bare reads as a production backend the operator
+	// never configured.
 	baseURLNote := ""
-	if r.MissingServerURL && !r.FrontendOnly {
-		baseURLNote = colorDim(" (default)")
+	if r.MissingServerURL {
+		if r.FrontendOnly {
+			baseURLNote = colorDim(" (dev reload only)")
+		} else {
+			baseURLNote = colorDim(" (default)")
+		}
 	}
 	fmt.Printf("            app:      %s\n", colorCyan(r.AppName))
 	fmt.Printf("            bundle:   %s\n", colorCyan(r.BundleID))
