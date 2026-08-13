@@ -625,9 +625,21 @@ type alias Model =
     , padRX : Int                         -- right analog stick X = look/turn
     , keysDown : List Keyboard.Key        -- held-key mirror (Keyboard.watch)
     , padDown : List Gamepad.Button       -- held-button mirror (Gamepad.watch)
+    -- Touch, owned by POINTER ID rather than re-decided by geometry every
+    -- event. The old shape asked "which pad is this x,y over?" on every move,
+    -- so a thumb that slid off its 84px box lost the stick and fell into the
+    -- look-anywhere branch, fighting the other thumb; and lifting the look
+    -- finger over the move pad cleared the move. A finger now picks its job
+    -- when it lands and keeps it until it leaves.
+    , moveId : Maybe Int                  -- finger driving the move stick
     , padMove : Maybe { dx : Int, dy : Int }
-    , padTurn : Maybe Int
-    , lastDragX : Maybe Int
+    , turnId : Maybe Int                  -- finger driving the turn stick
+    , padTurn : Maybe { dx : Int, dy : Int }
+    , lookId : Maybe Int                  -- finger swiping to look
+    , lookX : Int                         -- where that finger was last frame
+    , turnQ : Int                         -- turning owed, in turnPerPixel units
+    , fireId : Maybe Int                  -- finger holding ATK
+    , ptrIds : List Int                   -- last snapshot, to spot new fingers
     , dev : Maybe Device
     , muted : Bool
     , sfx : List Cue
@@ -638,8 +650,7 @@ type Msg
     = Tick
     | Resized Int Int
     | Tapped Int Int
-    | Dragged Int Int
-    | Released Int Int
+    | Pointers (List { id : Int, x : Int, y : Int })
     | KeysChanged { down : List Keyboard.Key }
     | PadChanged { connected : Bool, leftX : Int, leftY : Int, rightX : Int, rightY : Int, down : List Gamepad.Button }
     | DeviceChanged Device
@@ -822,8 +833,14 @@ initBarrow b model =
         , fireQ = False
         , padA = False
         , padMove = Nothing
+        , moveId = Nothing
         , padTurn = Nothing
-        , lastDragX = Nothing
+        , turnId = Nothing
+        , lookId = Nothing
+        , lookX = 0
+        , turnQ = 0
+        , fireId = Nothing
+        , ptrIds = []
         , sfx = CStart :: model.sfx
     }
 
@@ -897,8 +914,14 @@ initModel =
     , keysDown = []
     , padDown = []
     , padMove = Nothing
+    , moveId = Nothing
     , padTurn = Nothing
-    , lastDragX = Nothing
+    , turnId = Nothing
+    , lookId = Nothing
+    , lookX = 0
+    , turnQ = 0
+    , fireId = Nothing
+    , ptrIds = []
     , dev = Nothing
     , muted = False
     , sfx = []
@@ -1118,19 +1141,18 @@ update msg model =
                 toggleMute model
             else
                 case model.mode of
-                    Play -> ( applyTouch True model x y, Cmd.none )
+                    -- Play is the mirror's job: it is the only channel that
+                    -- can tell one finger from another.
+                    Play -> ( model, Cmd.none )
                     Title -> emit (titleTap model x y)
                     _ ->
                         if canDismiss model then emit (advance model) else ( model, Cmd.none )
 
-        Dragged x y ->
+        Pointers ps ->
             if model.mode == Play then
-                ( applyTouch False model x y, Cmd.none )
+                ( applyPointers model ps, Cmd.none )
             else
-                ( model, Cmd.none )
-
-        Released x y ->
-            ( releaseTouch model x y, Cmd.none )
+                ( { model | moveId = Nothing, padMove = Nothing, turnId = Nothing, padTurn = Nothing, lookId = Nothing, fireId = Nothing, ptrIds = [] }, Cmd.none )
 
         KeysChanged st ->
             -- held movement/fire is mirrored wholesale (syncHeld, gated to
@@ -1477,20 +1499,30 @@ padSpots model =
         gh = gameH * lay.scale // 100
         bezL = lay.ox
         bezB = model.h - lay.oy - gh
+        -- `inset` pulls a stick off the very edge where the layout puts it ON
+        -- the rim. A thumb resting in a corner has to bend backwards to reach
+        -- the pad, and the hand holding the phone is already there.
+        inset = 30
+        -- Portrait is the exception, because its x was never a rim: `w // 4` is
+        -- a quarter of the way in already, so an inset on top of it walks the
+        -- two sticks towards each other, and on a portrait tablet (w // 4 is
+        -- 205pt on an iPad) they end up meeting in the middle of the screen.
+        -- The cap anchors them a thumb from the edge whatever the width is.
+        side = min (model.w // 4) 96
         m =
             if bezL >= 96 then
-                { x = bezL // 2, y = model.h * 2 // 3 }
+                { x = bezL // 2 + inset, y = model.h * 2 // 3 }
             else if bezB >= 96 then
-                { x = model.w // 4, y = lay.oy + gh + bezB // 2 }
+                { x = side, y = lay.oy + gh + bezB // 2 }
             else
-                { x = lay.ox + 76, y = lay.oy + gh - 76 }
+                { x = lay.ox + 76 + inset, y = lay.oy + gh - 76 - 20 }
         t =
             if bezL >= 96 then
-                { x = model.w - bezL // 2, y = model.h * 2 // 3 }
+                { x = model.w - bezL // 2 - inset, y = model.h * 2 // 3 }
             else if bezB >= 96 then
-                { x = model.w * 3 // 4, y = lay.oy + gh + bezB // 2 }
+                { x = model.w - side, y = lay.oy + gh + bezB // 2 }
             else
-                { x = lay.ox + gw - 76, y = lay.oy + gh - 76 }
+                { x = lay.ox + gw - 76 - inset, y = lay.oy + gh - 76 - 20 }
 
         -- ATK + switch: above the turn stick when there is head room (side
         -- bezels, deep portrait bezel), BESIDE it in a short bottom strip
@@ -1509,52 +1541,174 @@ inBox x y cx cy r =
     absI (x - cx) <= r && absI (y - cy) <= r
 
 
--- isPress = a fresh touch-down (Tapped); drags re-aim the sticks but must
--- NOT retrigger the SWITCH button: a button fires once per press
-applyTouch : Bool -> Model -> Int -> Int -> Model
-applyTouch isPress m x y =
-    let
-        p = padSpots m
-    in
-    if inBox x y p.fx (p.fy - 62) 24 then
-        if isPress then cycleWeapon m else m
-    else if inBox x y p.fx p.fy 34 then
-        { m | fireQ = True }
-    else if inBox x y p.mcx p.mcy 84 then
-        { m | padMove = Just { dx = iclamp (0 - 60) 60 (x - p.mcx), dy = iclamp (0 - 60) 60 (y - p.mcy) } }
-    else if inBox x y p.tcx p.tcy 84 then
-        { m | padTurn = Just (iclamp (0 - 60) 60 (x - p.tcx)) }
-    else
-        -- free drag anywhere over the picture turns the view (desktop
-        -- mouse included); 3 px of drag = one 1.5 degree heading step
-        case m.lastDragX of
-            Nothing ->
-                { m | lastDragX = Just x }
+-- Everything analog that turns the view pays into model.turnQ in SIXTEENTHS of
+-- a screen pixel, and 4 whole pixels buy one heading step (1.5 degrees).
+--
+-- The fraction is the point. A heading step is a coarse thing to be the
+-- smallest amount of turning there is: a stick leaning gently owes a fraction
+-- of one per frame, and while the queue counted whole pixels that fraction
+-- truncated to nothing. The turn stick had four speeds (0, 1, 2, 3 steps a
+-- frame) and the first non-zero one arrived 38px into a 60px throw, so the
+-- first two thirds of the travel read as a dead zone: push a little, nothing
+-- happens; push a lot, it lurches. Counting sixteenths lets a small lean spend
+-- one step every several frames, which is what a slow turn is.
+turnPerPixel : Int
+turnPerPixel = 16
 
-            Just x0 ->
-                let
-                    ds = (x - x0) // 3
-                in
-                if ds == 0 then
-                    m
-                else
-                    { m
-                        | heading = modBy 240 (m.heading + ds + 240)
-                        , lastDragX = Just (x0 + ds * 3)
+
+turnPerStep : Int
+turnPerStep = 64
+
+
+-- A screen's worth of queued travel, the guard for frames stopping (a
+-- backgrounded tab) while touches keep arriving.
+turnCap : Int
+turnCap = 480 * turnPerPixel
+
+
+-- What a turn stick pushed all the way over is worth, in HUNDREDTHS of a
+-- heading step per frame. 150 is 1.5 steps a frame, which is deliberately the
+-- speed the arrow keys turn at (aStep alternates 1 and 2), because that is the
+-- speed this game's fighting was tuned against: how long a draugr takes to
+-- come round, how far you can swing before a bolt reaches you.
+--
+-- It used to be 3 steps a frame, twice this, inherited from the gamepad and
+-- never actually felt by anybody: reaching it took 38px of a 60px throw back
+-- when everything below that truncated to standing still. The hundredths are
+-- what let it be 1.5 at all; as a whole-number multiplier the choices were 1
+-- (too slow to spin round) and 2 (still too fast).
+turnTopRate : Int
+turnTopRate = 150
+
+
+-- One snapshot of every finger on the glass (Canvas.watchPointers). A finger
+-- picks its job when it LANDS and keeps it until it leaves.
+--
+-- There are four jobs and each answers to a different idea of a control. The
+-- two round pads are STICKS: the knob follows the thumb and the model holds
+-- where it was left, which is why holding one over keeps you walking or
+-- turning. The rest of the picture is a SWIPE surface, where the heading
+-- follows how far the finger travelled and stops dead when it stops. The
+-- buttons are buttons. Drawing one of these and behaving like another is a lie
+-- the hand notices before the eye does.
+--
+-- The old shape asked "which pad is this x,y over?" on every move event,
+-- because the tap/drag channel carries no pointer id. Three things followed,
+-- and all three are what made the controls feel unreliable rather than merely
+-- stiff: a thumb that slid off its 84px box lost the stick and fell into the
+-- look-anywhere branch, fighting the other thumb; lifting the look finger over
+-- the move pad cleared the move; and the single lastDragX slot was shared by
+-- whichever finger happened to be outside a pad.
+applyPointers : Model -> List { id : Int, x : Int, y : Int } -> Model
+applyPointers m0 ps =
+    let
+        ids = List.map (\p -> p.id) ps
+        stillDown =
+            \mid ->
+                case mid of
+                    Just i -> List.any (\j -> j == i) ids
+                    Nothing -> False
+
+        -- a finger that left the glass drops whatever it was driving
+        m1 =
+            { m0
+                | moveId = if stillDown m0.moveId then m0.moveId else Nothing
+                , padMove = if stillDown m0.moveId then m0.padMove else Nothing
+                , turnId = if stillDown m0.turnId then m0.turnId else Nothing
+                , padTurn = if stillDown m0.turnId then m0.padTurn else Nothing
+                , lookId = if stillDown m0.lookId then m0.lookId else Nothing
+                , fireId = if stillDown m0.fireId then m0.fireId else Nothing
+            }
+    in
+    -- The snapshot is stamped AFTER the fold, and that order is the whole
+    -- mechanism: stepPointer asks "did this finger land just now?" against the
+    -- PREVIOUS list. Writing the current ids first makes every finger look
+    -- already-known, so none of them ever claims a job and nothing moves.
+    List.foldl stepPointer m1 ps
+        |> (\m -> { m | ptrIds = ids })
+
+
+stepPointer : { id : Int, x : Int, y : Int } -> Model -> Model
+stepPointer p m =
+    let
+        pd = padSpots m
+        fresh = List.any (\j -> j == p.id) m.ptrIds == False
+        off =
+            \cx cy ->
+                Just
+                    { dx = iclamp (0 - 60) 60 (p.x - cx)
+                    , dy = iclamp (0 - 60) 60 (p.y - cy)
                     }
-
-
-releaseTouch : Model -> Int -> Int -> Model
-releaseTouch model x y =
-    let
-        p = padSpots model
+        -- Each stick's box is generous, and on a narrow phone two generous
+        -- boxes would overlap: the left one is tested first, so it would own
+        -- ground that belongs to the right one. Half the gap between the
+        -- centres is the widest they can be and still each keep their side.
+        r = min 96 ((pd.tcx - pd.mcx) // 2)
     in
-    if inBox x y p.mcx p.mcy 108 then
-        { model | padMove = Nothing, lastDragX = Nothing }
-    else if inBox x y p.tcx p.tcy 108 || inBox x y p.fx p.fy 40 then
-        { model | padTurn = Nothing, lastDragX = Nothing }
+    if m.moveId == Just p.id then
+        { m | padMove = off pd.mcx pd.mcy }
+
+    else if m.turnId == Just p.id then
+        { m | padTurn = off pd.tcx pd.tcy }
+
+    else if m.lookId == Just p.id then
+        -- LOOK IS A SWIPE, not a stick: the heading follows how far the finger
+        -- MOVED since the last frame, which is what every mobile FPS does and
+        -- what a position-driven stick cannot express. Pointer events arrive
+        -- faster than frames, so the travel is queued and stepMove spends it.
+        { m
+            | turnQ = iclamp (0 - turnCap) turnCap (m.turnQ + (p.x - m.lookX) * turnPerPixel)
+            , lookX = p.x
+        }
+
+    else if m.fireId == Just p.id then
+        { m | fireQ = True }
+
+    else if fresh == False then
+        m
+
+    else if inBox p.x p.y pd.fx (pd.fy - 62) 26 then
+        cycleWeapon m
+
+    else if inBox p.x p.y pd.fx pd.fy 36 then
+        { m | fireId = Just p.id, fireQ = True }
+
+    else if inBox p.x p.y pd.mcx pd.mcy r then
+        { m | moveId = Just p.id, padMove = off pd.mcx pd.mcy }
+
+    else if inBox p.x p.y pd.tcx pd.tcy r then
+        { m | turnId = Just p.id, padTurn = off pd.tcx pd.tcy }
+
     else
-        { model | lastDragX = Nothing, padMove = Nothing, padTurn = Nothing }
+        -- anywhere else is the look surface, including the whole picture
+        { m | lookId = Just p.id, lookX = p.x }
+
+
+-- Touch stick response: a dead zone, so a thumb that never sits perfectly
+-- still does not drive the player; then a curve that is gentle near the middle
+-- and full at the rim, so small corrections are possible at all. Answers
+-- -100..100 for an offset in screen pixels.
+--
+-- The dead zone is an argument because the two sticks are not owed the same
+-- one, and what decides it is what a resting thumb COSTS. On the move stick a
+-- drift walks you into a wall or off an edge with no warning, so it is worth
+-- 14px. On the turn stick a drift only rotates the view, which you can see
+-- happening and correct, so it is worth 8 and the turning starts about as soon
+-- as the thumb does.
+padAxis : Int -> Int -> Int
+padAxis dead v =
+    let
+        a = absI v
+    in
+    if a <= dead then
+        0
+
+    else
+        let
+            t = min 100 ((a - dead) * 100 // 46)
+            c = (t * 30 + t * t * 70 // 100) // 100
+        in
+        if v < 0 then 0 - c else c
 
 
 inMuteZone : Model -> Int -> Int -> Bool
@@ -1590,36 +1744,47 @@ stepMove m =
     let
         d = dirAt m.heading
         tp = Maybe.withDefault { dx = 0, dy = 0 } m.padMove
+        tt = Maybe.withDefault { dx = 0, dy = 0 } m.padTurn
         -- Twin-stick, standard-FPS layout: LEFT stick moves (Y = forward/back,
         -- X = strafe), RIGHT stick turns (X = look). Gamepad.watch feeds padRX.
         stickF = if absI m.padY > 24 then (0 - m.padY) * walkF // 100 else 0
         stickS = if absI m.padX > 24 then m.padX * walkS // 100 else 0
-        stickT = if absI m.padRX > 24 then m.padRX // 30 else 0
         fwd =
             iclamp (0 - walkS) walkF
                 ((if m.kF then walkF else 0)
                     - (if m.kB then walkS else 0)
                     + stickF
-                    + (0 - tp.dy) * walkF // 60)
+                    + padAxis 14 (0 - tp.dy) * walkF // 100)
         strafe =
             iclamp (0 - walkS) walkS
                 ((if m.kSR then walkS else 0)
                     - (if m.kSL then walkS else 0)
                     + stickS
                     -- LEFT stick's horizontal strafes (standard dual-stick)
-                    + tp.dx * walkS // 60)
+                    + padAxis 14 tp.dx * walkS // 100)
         -- arrows turn a bit slower than a flat 2 steps/frame: alternate 1 and
         -- 2 by tick (~1.5 avg). A flat 2 felt too fast.
         aStep = 1 + modBy 2 m.tick
         turn =
-            (if m.kTR then aStep else 0)
-                - (if m.kTL then aStep else 0)
-                + stickT
-                -- RIGHT stick steers the view (look/turn)
-                + (case m.padTurn of
-                    Just off -> off // 20
-                    Nothing -> 0)
-        h2 = modBy 240 (m.heading + iclamp (0 - 4) 4 turn + 240)
+            iclamp (0 - 4) 4
+                ((if m.kTR then aStep else 0)
+                    - (if m.kTL then aStep else 0))
+        -- Both analog turn controls, the RIGHT touch pad and the gamepad's
+        -- right stick, are RATE sticks: held over they keep turning, centred
+        -- they stop. Both pay their rate into the swipe queue rather than
+        -- adding whole heading steps of their own, which is what buys them any
+        -- speed below one step a frame, turnTopRate included.
+        padPay = padAxis 8 tt.dx * turnTopRate * turnPerStep // 10000
+        stickPay = if absI m.padRX > 24 then m.padRX * turnTopRate * turnPerStep // 10000 else 0
+        -- The queue is NOT under the arrow cap, and that is the difference
+        -- between a flick that turns you round and one that turns you 6°. The
+        -- cap is there to stop a HELD arrow key from spinning the view; a
+        -- finger can only travel as far as the glass, so it is already its own
+        -- limit. A swipe across a phone is about 145° whether it takes one
+        -- frame or twenty.
+        queued = m.turnQ + padPay + stickPay
+        swipe = queued // turnPerStep
+        h2 = modBy 240 (m.heading + turn + swipe + 240)
         mvx = (d.x * fwd - d.y * strafe) // k1
         mvy = (d.y * fwd + d.x * strafe) // k1
         -- walls AND bodies block: without the actor check you could walk
@@ -1640,7 +1805,11 @@ stepMove m =
         ny = if free nx (m.py + mvy) then m.py + mvy else m.py
         -- walking into a shut door is the interact: probe half a cell ahead
         probe = cellAt m.grid ((nx + d.x * 480 // k1) // k1) ((ny + d.y * 480 // k1) // k1)
-        m2 = { m | px = nx, py = ny, heading = h2 }
+        -- Drain exactly what was spent, so the sixteenths that did not add up
+        -- to a whole step carry into the next frame. This is what lets a stick
+        -- held gently turn at all: it owes a fraction of a step per frame, and
+        -- the fractions accumulate until they are worth one.
+        m2 = { m | px = nx, py = ny, heading = h2, turnQ = queued - swipe * turnPerStep }
     in
     if fwd > 0 && (probe == 4 || probe == 5) then
         touchDoor m2 ((ny + d.y * 480 // k1) // k1) ((nx + d.x * 480 // k1) // k1)
@@ -2967,7 +3136,9 @@ view model =
                 Dead -> List.concat [ worldShapes model, dieShapes model ]
                 Won -> List.concat [ worldShapes model, wonShapes model ]
     in
-    canvas Pixelated [ watchSize Resized, onTap Tapped, onDrag Dragged, onRelease Released ]
+    -- onTap still carries the MENUS (title, dismiss, mute); the pointer
+    -- mirror carries play, because only it says which finger is which.
+    canvas Pixelated [ watchSize Resized, onTap Tapped, watchPointers Pointers ]
         (List.concat
             [ [ rect 0 0 model.w model.h (rgb 4 4 6)
               , group [ Canvas.Translate lay.ox lay.oy, Canvas.Scale lay.scale lay.scale ]
@@ -4102,7 +4273,11 @@ touchPadShapes m =
             edgeC = rgb 92 96 116
             knobC = rgb 170 176 196
             mo = Maybe.withDefault { dx = 0, dy = 0 } m.padMove
-            to = Maybe.withDefault 0 m.padTurn
+            -- The turn knob shows where the thumb IS, the same as the move
+            -- knob. It used to be drawn from the swipe queue, which stepMove
+            -- empties every frame, so it twitched off centre and sprang back
+            -- however hard you held it.
+            to = Maybe.withDefault { dx = 0, dy = 0 } m.padTurn
         in
         List.concat
             -- Twin round analog sticks (modern mobile-FPS look): LEFT moves
@@ -4115,7 +4290,7 @@ touchPadShapes m =
               ]
             , [ circle p.tcx p.tcy 52 edgeC
               , circle p.tcx p.tcy 49 padC
-              , circle (p.tcx + to * 38 // 60) p.tcy 18 knobC
+              , circle (p.tcx + to.dx * 38 // 60) p.tcy 18 knobC
               ]
               -- ATTACK button (throws / swings the current weapon)
             , [ circle p.fx p.fy 26 (rgb 96 44 80)
