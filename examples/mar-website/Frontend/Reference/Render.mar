@@ -49,6 +49,12 @@ displayName moduleName name =
 -- `Auth.protect` being server-side is news, while `UI.button` being client-side
 -- inside a module the page already called client-side is not.
 --
+-- `both` says nothing at all, and says it 221 times out of 526. It is not a
+-- fact about the function, it is the ABSENCE of a restriction: no side to
+-- avoid, nothing that could stop compiling. So it is the silent default, and
+-- only a real restriction gets a sentence. Documenting the absence reads like
+-- promising a function does not throw.
+--
 -- The value comes from the compiler's side table, the same place the check that
 -- enforces it reads, so this cannot disagree with the compiler the way a
 -- hand-written "frontend only" in a description could.
@@ -63,11 +69,20 @@ sideLine side =
     else if side == "entry point" then
         "Read when the app is built. It says which pages and services exist, and runs on neither side."
 
-    else if side == "both" then
-        "Runs in the app and on the server."
-
     else
         ""
+
+
+-- The sentence as a list, so a caller splices it in and gets NOTHING when there
+-- is nothing to say. Passing "" to `prose` would still build a paragraph, and
+-- an empty paragraph is a blank row with the section's spacing around it.
+sideProse : String -> List (View msg)
+sideProse side =
+    if sideLine side == "" then
+        []
+
+    else
+        [ prose (sideLine side) ]
 
 
 -- The short form, for the one place it has to fit beside a signature: a compact
@@ -160,13 +175,15 @@ detailSections : Entry -> List (View msg)
 detailSections e =
     List.concat
         [ [ section []
-                [ paragraph
-                    [ span [ code, bold ] (displayName e.moduleName e.name)
-                    , span [ code ] (" : " ++ e.signature)
-                    ]
-                , prose e.description
-                , prose (sideLine e.side)
-                ]
+                (List.concat
+                    [ [ paragraph
+                            [ span [ code, bold ] (displayName e.moduleName e.name)
+                            , span [ code ] (" : " ++ e.signature)
+                            ]
+                      , prose e.description
+                      ]
+                    , sideProse e.side
+                    ])
           ]
         , if List.isEmpty e.examples then
             []
@@ -209,9 +226,7 @@ moduleDoc mod =
             (List.concat
                 [ [ section
                         [ footer (String.fromInt (List.length (entriesFor mod)) ++ " functions") ]
-                        [ prose (blurb mod)
-                        , prose (sideLine (sideFor mod))
-                        ]
+                        (List.concat [ [ prose (blurb mod) ], sideProse (sideFor mod) ])
                   ]
                 , List.map sectionView (sectionsFor mod)
                 ])
