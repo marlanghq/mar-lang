@@ -638,7 +638,7 @@ drawSuperButton g hs =
         armed = hs.superArmed && ready
 
         -- Three states, and the label says what the NEXT tap does. It used to
-        -- read FIRE while ready, which promises the press finishes the job —
+        -- read FIRE while ready, which promises the press finishes the job:
         -- it does not, it opens aiming, and the screen then looked unchanged.
         label =
             if armed then "CLICK A TARGET"

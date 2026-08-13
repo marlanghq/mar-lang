@@ -178,6 +178,18 @@ compactBase side tx ty =
     ]
 
 
+-- Mission 1 only. The briefing tells the player to build a refinery and the
+-- objective panel asks for one, so handing them a finished refinery made the
+-- first box green before they clicked anything. They start with the bastion
+-- and the power plant; the refinery costs 900 out of a 2600 opening purse,
+-- which is the first real decision the campaign asks for.
+openingBase : Int -> Int -> Int -> List BldSpawn
+openingBase side tx ty =
+    [ { side = side, kind = Bastion, tx = tx, ty = ty }
+    , { side = side, kind = PowerStation, tx = tx + 4, ty = ty }
+    ]
+
+
 compactSquad : Int -> Int -> Int -> List UnitSpawn
 compactSquad side tx ty =
     [ { side = side, kind = Hauler, x = px (tx + 1), y = px (ty + 6) }
@@ -277,7 +289,7 @@ m1 =
         ]
     , blds =
         List.concat
-            [ compactBase 1 8 41
+            [ openingBase 1 8 41
             , combineBase 2 46 6
             ]
     , units =

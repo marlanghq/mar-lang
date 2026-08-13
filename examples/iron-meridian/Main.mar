@@ -521,9 +521,13 @@ trigM1 model =
         g = model.g
     in
     if g.tick == 150 then
-        { model | g = notify "Your Hauler mines ore on its own. Credits keep climbing." g }
+        -- The player now starts WITHOUT a refinery (Missions.openingBase), so
+        -- the first hint has to point at the thing the first objective asks
+        -- for. Telling them the hauler is already earning would be a lie: it
+        -- has nowhere to unload yet.
+        { model | g = notify "Press B to build and place a Refinery. Your Hauler needs somewhere to unload." g }
     else if g.tick == 540 then
-        { model | g = notify "Press B to build, place a Foundry, then train troops from it." g }
+        { model | g = notify "Now place a Foundry and train troops from it." g }
     else if g.tick == 900 then
         radioLine 0 model
     else if g.tick == 2400 && flagAt g 1 == 0 then
@@ -618,7 +622,7 @@ trigM3 model =
         -- the enemy never had to spend. This once gifted 5440 credits of
         -- shielded Vessari starting two minutes in, before a beginner had a
         -- second barracks. Now the first surge holds off until ~3.5 min and
-        -- there are only TWO of them (three units each) — roughly 2080 credits
+        -- there are only TWO of them (three units each): roughly 2080 credits
         -- of pressure against a player who now opens with 4200.
         surgeDue =
             g.tick >= 6600
@@ -657,7 +661,7 @@ trigM3 model =
         -- a search of the whole map, not an objective. This used to fire
         -- radio line 0 ("Survivors aboard") ten seconds in, announcing a
         -- rescue that had not happened and leaving the box unticked.
-        { model3 | g = alertAt "Erebus survivors pinned here. Get a force through." erebusX erebusY g3 }
+        { model3 | g = alertAt "Our people are pinned here. Get a force through." erebusX erebusY g3 }
 
     else if flagAt g3 10 == 0 && reachedSurvivors g3 then
         -- a Compact force reached the huddle: they join, and "Survivors
@@ -704,7 +708,7 @@ surgeM3 model =
                         :: g2.fxs
             }
                 |> applyAct (AAtkMove ids hq.x hq.y)
-                |> alertAt "Warp surge detected." ex ey
+                |> alertAt "Machines coming through." ex ey
     in
     { model | g = g3 }
 
@@ -809,7 +813,7 @@ purgeM5 model =
                 | strikes = { at = g.tick + 90, x = tx, y = ty, side = 2, kind = 2 } :: g.strikes
                 , fxs = { x = tx, y = ty, t = 0, ttl = 88, kind = FxRing, a = 64, b = 2 } :: g.fxs
             }
-                |> alertAt "Purge beam charging. Spread out." tx ty
+                |> alertAt "Beam charging here. Spread out." tx ty
     in
     radioLine 0 { model | g = g2 }
 
@@ -824,8 +828,13 @@ objectivesOf model =
     in
     case model.mission of
         1 ->
-            [ { text = "Build the field base, the convoy needs a depot", done = countMy g Refinery > 0 || g.tick > 1800 }
-            , { text = "Burn the raider camp, it is cutting the supply line", done = enemyBldCount g == 0 }
+            -- The refinery box used to be ticked before the player touched
+            -- anything, because mission 1 handed them a base that already had
+            -- one, and it had a `|| tick > 1800` escape that ticked it anyway.
+            -- The opening objective now starts undone and is undone by
+            -- building the thing it names.
+            [ { text = "Build a refinery so money starts coming in", done = countMy g Refinery > 0 }
+            , { text = "Destroy the raider camp on the north ridge", done = enemyBldCount g == 0 }
             ]
 
         2 ->
@@ -840,22 +849,22 @@ objectivesOf model =
 
                 holdTicks = flagAt g 1
             in
-            [ { text = "Capture three silos (" ++ String.fromInt held ++ "/3), they pay for the war", done = held >= 3 }
-            , { text = "Hold them (" ++ String.fromInt (holdTicks // 1800) ++ "/6 min) until the grid takes over", done = holdTicks >= 10800 }
-            , { text = "Break the Combine forward base to end the argument", done = enemyBldCount g == 0 }
+            [ { text = "Capture three silos (" ++ String.fromInt held ++ "/3)", done = held >= 3 }
+            , { text = "Hold them for six minutes (" ++ String.fromInt (holdTicks // 1800) ++ "/6)", done = holdTicks >= 10800 }
+            , { text = "Destroy Kesk's forward base", done = enemyBldCount g == 0 }
             ]
 
         3 ->
             -- The survivors are hidden in the fog to the south-east (the
             -- tick-300 ping points the way). Reaching them relieves the
             -- huddle; flag 10 is set the moment that happens.
-            [ { text = "Find the Erebus survivors, far to the south-east", done = flagAt g 10 == 1 }
-            , { text = "Survive the surges coming off the tone", done = g.tick >= 12000 }
-            , { text = "Destroy the nexus that is jamming the post", done = bnot (hasEnemyKindGate g) }
+            [ { text = "Find our people, far to the south-east", done = flagAt g 10 == 1 }
+            , { text = "Survive the waves coming off the tone", done = g.tick >= 12000 }
+            , { text = "Destroy the machine jamming the outpost", done = bnot (hasEnemyKindGate g) }
             ]
 
         4 ->
-            [ { text = "Reach the crawler city before its walls fall", done = flagAt g 1 == 1 }
+            [ { text = "Reach the Scrapper city before its walls fall", done = flagAt g 1 == 1 }
             , { text = "Destroy both Genesis Fonts, they grow the rest", done = fontCount g == 0 }
             ]
 
@@ -865,8 +874,8 @@ objectivesOf model =
             let
                 left = conduitCount g
             in
-            [ { text = "Break the four conduit spires (" ++ String.fromInt (4 - left) ++ "/4), NOT the Engine", done = left == 0 }
-            , { text = "Survive the purge cycles, they telegraph first", done = g.tick >= 9900 }
+            [ { text = "Destroy the four towers (" ++ String.fromInt (4 - left) ++ "/4). Do NOT touch the Engine", done = left == 0 }
+            , { text = "Survive the blasts, they flash before they land", done = g.tick >= 9900 }
             ]
 
         _ ->
@@ -902,7 +911,7 @@ hostileTo1 g sid =
 
 -- The Erebus survivors are side-0 (neutral, stranded) units. "Reaching"
 -- them is literal now: a Compact unit gets within a few tiles of one.
--- The two earlier tries at this were both hacks over the wrong premise —
+-- The two earlier tries at this were both hacks over the wrong premise:
 -- the survivors used to be side-1 units you already owned, so any test on
 -- position was either always-true or unrelated to actually going there.
 reachedSurvivors : Game -> Bool
@@ -927,7 +936,7 @@ rescueSurvivors g =
     { g | units = List.map (\u -> if u.side == 0 then { u | side = 1 } else u) g.units }
 
 
--- Where the survivors are, in pixels — used to ping the map so the player
+-- Where the survivors are, in pixels: used to ping the map so the player
 -- is told WHERE to go instead of having to sweep a 67x62 map for them.
 erebusX : Int
 erebusX = 57 * tileW + tileW // 2
@@ -1122,7 +1131,7 @@ altTap x y model =
                 ( { model | rmbGuard = True }, Cmd.none )
             else if x >= model.w - sideW then
                 -- right-click on a UNITS-tab cell cancels one queued unit of
-                -- that kind (newest first) and refunds it — the escape hatch
+                -- that kind (newest first) and refunds it: the escape hatch
                 -- when training is stalled on supply
                 let
                     m2 = sidebarAltTap x y model
@@ -1196,8 +1205,8 @@ wheel dx dy model =
                 let
                     -- PROPORTIONAL to the delta, not a flat jump per event.
                     -- The old `if dx > 0 then 96` ignored magnitude, so a
-                    -- trackpad — which fires a stream of tiny deltas, dozens a
-                    -- second — turned every one of them into a full 96 px
+                    -- trackpad, which fires a stream of tiny deltas, dozens a
+                    -- second: turned every one of them into a full 96 px
                     -- leap. That is the "too fast": not one step being large,
                     -- but every step being the largest step.
                     --
@@ -1329,7 +1338,7 @@ gridActivate i model =
         case List.head (List.drop i (raceBlds s.race)) of
             Just k ->
                 -- Tapping the cell that is READY or UNDER CONSTRUCTION cancels
-                -- it (C&C style) — the only cancel path that works on touch,
+                -- it (C&C style): the only cancel path that works on touch,
                 -- where there is no right-click and no ESC.
                 if s.sReady == bldCode k then
                     { model | g = applyAct (ACancelBld 1) model.g }
@@ -2394,7 +2403,7 @@ menuShapes model =
 -- A linear multiple mod 1000 is an arithmetic progression, and plotting
 -- one progression (x) against another (y) drops every star onto a small
 -- family of parallel diagonals. That lattice is what "not very
--- scattered" looks like — the sky had structure the eye could read.
+-- scattered" looks like: the sky had structure the eye could read.
 -- Chaining the LCG between the x draw and the y draw decorrelates them.
 --
 -- Homes stay in a fixed 0..999 virtual space so a resize stretches the

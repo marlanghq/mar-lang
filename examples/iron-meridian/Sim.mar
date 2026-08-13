@@ -98,7 +98,7 @@ bldById g id =
 sideOf : Game -> Int -> Side
 sideOf g id =
     -- Kept as a `case` rather than Maybe.withDefault: Mar is strict, and
-    -- this runs per unit per tick — the fallback side would be built on
+    -- this runs per unit per tick: the fallback side would be built on
     -- every hit, not just on the miss.
     case List.head (List.filter (\s -> s.id == id) g.sides) of
         Just s -> s
@@ -703,10 +703,56 @@ spawnTrained sid kind g =
 
                 g4 =
                     orderUnits [ g3.nextId - 1 ]
-                        (OMove b.rally b.rallyY)
+                        (formUpAt sid b.rally b.rallyY g3)
                         g3
             in
             if sid == 1 then cue (CTrained kind) g4 else g4
+
+
+-- ----- forming up at the rally -----
+--
+-- Every trained unit used to be handed the rally point ITSELF, so a batch
+-- came out of the factory standing on one pixel and only drifted apart once
+-- the idle separation pass got round to nudging them, one unit every other
+-- tick. A batch you order by hand looks formed up immediately; a batch the
+-- factory produces looked like a bug.
+--
+-- Each unit now takes the first FREE slot in a small grid around the rally.
+-- Free, not next, so gaps left by units that have already marched off get
+-- filled again instead of the formation walking away from the building.
+rallyGap : Int
+rallyGap = 22
+
+
+rallySpot : Int -> Int -> Int -> { x : Int, y : Int }
+rallySpot rx ry slot =
+    { x = rx + (modBy 5 slot - 2) * rallyGap
+    , y = ry + (slot // 5) * rallyGap
+    }
+
+
+formUpAt : Int -> Int -> Int -> Game -> Duty
+formUpAt sid rx ry g =
+    let
+        free =
+            \spot ->
+                bnot
+                    (List.any
+                        (\u ->
+                            u.side == sid
+                                && abs (upx u - spot.x) < rallyGap
+                                && abs (upy u - spot.y) < rallyGap
+                        )
+                        g.units)
+
+        open = List.filter free (List.map (rallySpot rx ry) (List.range 0 24))
+    in
+    case List.head open of
+        -- 25 slots taken means the rally is genuinely packed; the old
+        -- behaviour (everyone onto the point) is the right fallback, and the
+        -- separation pass sorts out the pile.
+        Nothing -> OMove rx ry
+        Just s -> OMove s.x s.y
 
 
 -- ----- units -----
@@ -984,7 +1030,7 @@ idleStep acc u =
 
 -- workerSeek: an idle worker finds something to do. Reclaimers eat nearby
 -- scrap first; every worker otherwise mines the nearest ore patch. This is
--- what makes the economy start on its own — the player never has to hand-
+-- what makes the economy start on its own: the player never has to hand-
 -- assign the first harvester.
 workerSeek : UStep -> Unit -> UStep
 workerSeek acc u =
@@ -1535,7 +1581,7 @@ nearestOre g px py =
                 )
                 -- no search radius: when the near patches run dry the next
                 -- field may be on another mesa, and a capped search made the
-                -- hauler go idle there — the economy died until the player
+                -- hauler go idle there: the economy died until the player
                 -- noticed and re-tasked it by hand. Maps are small and this
                 -- only runs on transitions (patch dry / cargo dropped).
                 { d = 999999999, i = 0 - 1 }
@@ -2280,7 +2326,7 @@ econOf g s =
 
 
 -- what "destroy every enemy structure" counts: real base structures.
--- Captured Derelict silos don't keep a team in the fight — the HUD
+-- Captured Derelict silos don't keep a team in the fight: the HUD
 -- objective already ignores them, and a bot squatting on one used to
 -- hold the match open forever after its base was razed.
 bCountsForWin : BldKind -> Bool
