@@ -191,7 +191,7 @@ func runMigrateStatus(path string) int {
 // the handle. Returns (nil, nil) when the project doesn't use a DB:
 // a "nothing to do" signal the callers turn into a friendly message.
 func loadProjectAndOpenDB(path string) (*sql.DB, error) {
-	entryFile, projectDir, err := resolveDevEntry(path)
+	entryFile, projectDir, err := resolveProjectEntry(path)
 	if err != nil {
 		return nil, err
 	}

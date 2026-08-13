@@ -154,6 +154,18 @@ func runBuild(args []string) int {
 		outDir = filepath.Join(baseDir, "dist")
 	}
 
+	// Resolve the entry the same way `mar dev`, `mar check` and
+	// `mar migrate` do, and hand the pipelines the FILE. Two things follow
+	// from doing it here: `"entry"` in mar.json is honoured by the build,
+	// and a directory with no project in it fails with the same sentence
+	// and the same hint every other command gives.
+	entryFile, _, entryErr := resolveProjectEntry(entry)
+	if entryErr != nil {
+		printError("mar build", entryErr)
+		return 1
+	}
+	entry = entryFile
+
 	// iOS is its own pipeline: schema-driven scaffold, doesn't run
 	// mar code at build time. Everything else (frontend / backend /
 	// fullstack) goes through scaffold.Build.
@@ -1056,7 +1068,7 @@ func topologyNeedsDB(topo string, topoErr error) bool {
 // stay connected via SSE on /_mar/reload and rebuild their DOM when a
 // reload event fires.
 func runDev(path string, noOpen bool) int {
-	entryFile, projectDir, err := resolveDevEntry(path)
+	entryFile, projectDir, err := resolveProjectEntry(path)
 	if err != nil {
 		printError("mar dev", err)
 		return 1
@@ -1544,13 +1556,22 @@ func watchAndReload(root string, compile func() error, hub *jsserve.ReloadHub, l
 	}
 }
 
-// resolveDevEntry decides which file to load and which dir to read mar.json
+// resolveProjectEntry decides which file to load and which dir to read mar.json
 // from, given a path that can be either a file or directory.
 //
 // Convention: when `path` is a directory, the entry file is `Main.mar`
 // unless mar.json specifies a different `entry`. Most projects don't
 // need to set it: the default is enough.
-func resolveDevEntry(path string) (entryFile string, projectDir string, err error) {
+//
+// Every command that opens a project comes through here, which is the point.
+// It used to be `mar dev`'s alone (hence the old name), and `mar build` had a
+// second copy that knew only about Main.mar. That is not a duplicated helper,
+// it is a fork in what a project IS: a project with `"entry": "App.mar"` ran
+// under `mar dev` and `mar check` and failed to compile under `mar build`,
+// which reported the file it expected rather than the one the manifest named.
+// Sharing the resolver closes that and hands `mar build` the hint the other
+// commands already gave.
+func resolveProjectEntry(path string) (entryFile string, projectDir string, err error) {
 	info, statErr := os.Stat(path)
 	if statErr != nil {
 		return "", "", statErr
