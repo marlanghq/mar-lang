@@ -167,8 +167,17 @@ func runBuild(args []string) int {
 				printManifestSyntaxError(syntaxErr)
 			case errors.As(err, &cfgErr):
 				printIOSConfigError(cfgErr)
-			default:
+			case isSourceError(err):
+				// Parse / typecheck failures in the user's own .mar get
+				// diag's rendering, with line numbers and a snippet.
 				fmt.Fprintln(os.Stderr, diag.Format(err))
+			default:
+				// Everything else (no project here, I/O, manifest) reads
+				// like every other error the CLI prints. This branch used
+				// to send them all through diag.Format, which drops the
+				// red `Error:` prefix and the blank line above it, so the
+				// same failure looked different depending on the target.
+				fprintError("mar build: %v", err)
 			}
 			return 1
 		}

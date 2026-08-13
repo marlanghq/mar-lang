@@ -118,6 +118,13 @@ func BuildIOS(entry, distDir, marVersion string) (IOSBuildResult, error) {
 		return IOSBuildResult{}, err
 	}
 
+	// Before anything about iOS: is this a Mar project at all? Asking the
+	// `ios` block for four fields when there is no project in the directory
+	// answers a question nobody asked, and buries the one that matters.
+	if _, _, entryErr := resolveEntryFile(entry); entryErr != nil {
+		return IOSBuildResult{}, entryErr
+	}
+
 	appName := defaultIOSAppName(projectDir)
 	// Structure-only load (no env:VAR resolution). The iOS build
 	// reads only structural fields from the manifest; going through
@@ -262,19 +269,9 @@ func resolveProjectDir(entry string) (string, error) {
 // program.json AND reports whether the app is frontend-only (App.frontend,
 // no backend) so the caller can decide if ios.serverUrl is relevant.
 func compileIOSProgram(entry string) (program []byte, frontendOnly bool, err error) {
-	// Resolve entry → Main.mar path. Caller passes either a directory
-	// (look for Main.mar inside) or a file path (use directly). Same
-	// shape as scaffold.Build.
-	info, err := os.Stat(entry)
+	mainFile, _, err := resolveEntryFile(entry)
 	if err != nil {
-		return nil, false, fmt.Errorf("%s: %v", entry, err)
-	}
-	mainFile := entry
-	if info.IsDir() {
-		mainFile = filepath.Join(entry, "Main.mar")
-		if _, err := os.Stat(mainFile); err != nil {
-			return nil, false, fmt.Errorf("Main.mar not found in %s", entry)
-		}
+		return nil, false, err
 	}
 
 	// Clear per-load global runtime state before evaluating, mirroring

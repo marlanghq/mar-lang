@@ -212,20 +212,32 @@ func joinMissingForPaste(missing []string) string {
 // reads CurrentAuth to know whether the app needs mail config, so it
 // only runs after main has: Build does so directly; `mar deploy`
 // validates after Topology has run main.
-func loadAndRunForBuild(entry string) (projectDir string, bc *buildCtx, err error) {
+// resolveEntryFile answers "is there a Mar project here, and where is its
+// entry?" for a path that is either the project directory or the entry file
+// itself. One copy, because it is the first question every build path asks and
+// the answer has to be the same sentence whichever target was named: the iOS
+// build used to skip it and complain about a missing `ios` block instead, so
+// running `mar build --target ios` in the wrong directory asked you to
+// configure a project that was not there.
+func resolveEntryFile(entry string) (mainFile, projectDir string, err error) {
 	info, err := os.Stat(entry)
 	if err != nil {
-		return "", nil, fmt.Errorf("%s: %v", entry, err)
+		return "", "", fmt.Errorf("%s: %v", entry, err)
 	}
-	mainFile := entry
-	projectDir = entry
-	if info.IsDir() {
-		mainFile = filepath.Join(entry, "Main.mar")
-		if _, err := os.Stat(mainFile); err != nil {
-			return "", nil, fmt.Errorf("Main.mar not found in %s", entry)
-		}
-	} else {
-		projectDir = filepath.Dir(entry)
+	if !info.IsDir() {
+		return entry, filepath.Dir(entry), nil
+	}
+	mainFile = filepath.Join(entry, "Main.mar")
+	if _, err := os.Stat(mainFile); err != nil {
+		return "", "", fmt.Errorf("Main.mar not found in %s", entry)
+	}
+	return mainFile, entry, nil
+}
+
+func loadAndRunForBuild(entry string) (projectDir string, bc *buildCtx, err error) {
+	mainFile, projectDir, err := resolveEntryFile(entry)
+	if err != nil {
+		return "", nil, err
 	}
 
 	// Clear per-load global runtime state (entity registry, Path enum
