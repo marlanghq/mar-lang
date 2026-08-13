@@ -285,16 +285,33 @@ final class MarSound: @unchecked Sendable {
 
         // Amplitude envelope, from the VOICE (Sound.attack / Sound.release), both
         // clamped to the note's own span so a long release cannot eat the attack.
-        let atk = min(dur / 2, rampSec(v.attack))
+        let atk = max(0.0001, min(dur / 2, rampSec(v.attack)))
         let tail = min(dur - atk, rampSec(v.release))
+
+        // EXPONENTIAL, not linear, on both ends. The web reaches this shape by
+        // asking WebAudio for `exponentialRampToValueAtTime`, which moves by a
+        // constant RATIO per unit time: the way an ear reads a fade, and the
+        // shape every sound in this repo was tuned against. A linear ramp puts
+        // far more energy in the first milliseconds, so the same note started
+        // harder here than in the browser and ended more abruptly.
+        //
+        // The 0.0001 floor is the web's, and not a detail: an exponential ramp
+        // can never reach zero, so both sides run to that value and let the
+        // note end there. `peak` already carries the same 0.0002 floor the web
+        // puts on its own `pk`.
+        //
+        // The held bed (bedSample) was never wrong: its `ampK` smoothing is an
+        // exponential approach already. Only the one-shot voice was linear.
+        let floorAmp = 0.0001
         let amp: Double
         if ts < atk {
-            amp = peak * (ts / atk)
+            amp = floorAmp * pow(peak / floorAmp, ts / atk)
         } else if ts < max(atk, dur - tail) {
             amp = peak
         } else {
-            let rel = (dur - ts) / max(0.0001, tail)
-            amp = peak * max(0, rel)
+            let relStart = max(atk, dur - tail)
+            let span = max(0.0001, dur - relStart)
+            amp = peak * pow(floorAmp / peak, min(1, (ts - relStart) / span))
         }
 
         // Instantaneous frequency: arp steps, else sweep with optional hold.
