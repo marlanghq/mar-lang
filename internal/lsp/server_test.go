@@ -21,7 +21,7 @@ func TestFindProjectRoot(t *testing.T) {
 	//     Frontend/
 	//       Pages/
 	//         Home.mar        ← or this (deeper)
-	mustWriteFile(t, filepath.Join(tmp, "mar.json"), `{"name":"x"}`)
+	mustWriteFile(t, filepath.Join(tmp, "mar.json"), `{"name":"x","locale":"en"}`)
 	mustWriteFile(t, filepath.Join(tmp, "Main.mar"), "module Main")
 	mustWriteFile(t, filepath.Join(tmp, "Backend", "Notes.mar"), "module Backend.Notes")
 	mustWriteFile(t, filepath.Join(tmp, "Frontend", "Pages", "Home.mar"), "module Frontend.Pages.Home")

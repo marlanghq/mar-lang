@@ -1,5 +1,6 @@
 {
   "name": "mar-trix",
+  "locale": "pt-BR",
   "server": {
     "port": 3040
   },

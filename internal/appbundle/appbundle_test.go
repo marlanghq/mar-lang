@@ -95,7 +95,7 @@ func TestSafeBundleEntryName_Accepts(t *testing.T) {
 // Bundle never gets constructed in the first place.
 func TestParsePayload_RejectsZipSlip(t *testing.T) {
 	payload := buildPayloadWithEntries(t, map[string][]byte{
-		"mar.json":              []byte(`{"name":"x"}`),
+		"mar.json":              []byte(`{"name":"x","locale":"en"}`),
 		"src/../../../evil.txt": []byte("owned"),
 	})
 	_, err := parsePayload(payload)
@@ -111,7 +111,7 @@ func TestParsePayload_RejectsZipSlip(t *testing.T) {
 // (entry name starts with /).
 func TestParsePayload_RejectsAbsolutePath(t *testing.T) {
 	payload := buildPayloadWithEntries(t, map[string][]byte{
-		"mar.json":      []byte(`{"name":"x"}`),
+		"mar.json":      []byte(`{"name":"x","locale":"en"}`),
 		"/etc/cron.d/x": []byte("owned"),
 	})
 	_, err := parsePayload(payload)
@@ -125,7 +125,7 @@ func TestParsePayload_RejectsAbsolutePath(t *testing.T) {
 // silently ignored.
 func TestParsePayload_RejectsForeignTopLevel(t *testing.T) {
 	payload := buildPayloadWithEntries(t, map[string][]byte{
-		"mar.json":     []byte(`{"name":"x"}`),
+		"mar.json":     []byte(`{"name":"x","locale":"en"}`),
 		"src/Main.mar": []byte("main = 1"),
 		"README":       []byte("hi"),
 	})
@@ -140,7 +140,7 @@ func TestParsePayload_RejectsForeignTopLevel(t *testing.T) {
 // parsePayload roundtrip used by `mar build` / `mar-runtime`.
 func TestParsePayload_AcceptsLegitimateBundle(t *testing.T) {
 	payload, err := BuildPayload(BuildInput{
-		ManifestJSON: []byte(`{"name":"hello"}`),
+		ManifestJSON: []byte(`{"name":"hello","locale":"en"}`),
 		Sources: map[string][]byte{
 			"Main.mar":            []byte("main = 1"),
 			"Frontend/SignIn.mar": []byte("page = 2"),
@@ -156,7 +156,7 @@ func TestParsePayload_AcceptsLegitimateBundle(t *testing.T) {
 	if len(b.Sources) != 2 {
 		t.Errorf("expected 2 sources, got %d", len(b.Sources))
 	}
-	if string(b.ManifestJSON) != `{"name":"hello"}` {
+	if string(b.ManifestJSON) != `{"name":"hello","locale":"en"}` {
 		t.Errorf("manifest contents wrong: %q", b.ManifestJSON)
 	}
 }
@@ -170,7 +170,7 @@ func TestExtractToDir_DefenseInDepth(t *testing.T) {
 	destDir := t.TempDir()
 	// "..\/canary" would resolve to <parent-of-destDir>/canary.
 	bundle := &Bundle{
-		ManifestJSON: []byte(`{"name":"x"}`),
+		ManifestJSON: []byte(`{"name":"x","locale":"en"}`),
 		Sources: map[string][]byte{
 			"../canary": []byte("written outside destDir"),
 		},
@@ -192,7 +192,7 @@ func TestExtractToDir_DefenseInDepth(t *testing.T) {
 func TestExtractToDir_Legit(t *testing.T) {
 	destDir := t.TempDir()
 	bundle := &Bundle{
-		ManifestJSON: []byte(`{"name":"app"}`),
+		ManifestJSON: []byte(`{"name":"app","locale":"en"}`),
 		Sources: map[string][]byte{
 			"Main.mar":          []byte("main = 1"),
 			"Backend/Notes.mar": []byte("notes = []"),
@@ -222,7 +222,7 @@ func TestExtractToDir_Legit(t *testing.T) {
 func TestLoadReaderAt_FullRoundtrip(t *testing.T) {
 	stub := []byte("stub-bytes-placeholder")
 	payload, err := BuildPayload(BuildInput{
-		ManifestJSON: []byte(`{"name":"rt"}`),
+		ManifestJSON: []byte(`{"name":"rt","locale":"en"}`),
 		Sources:      map[string][]byte{"Main.mar": []byte("main = 1")},
 	})
 	if err != nil {
@@ -236,7 +236,7 @@ func TestLoadReaderAt_FullRoundtrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(b.ManifestJSON) != `{"name":"rt"}` {
+	if string(b.ManifestJSON) != `{"name":"rt","locale":"en"}` {
 		t.Errorf("manifest mismatch after roundtrip: %q", b.ManifestJSON)
 	}
 	if string(b.Sources["Main.mar"]) != "main = 1" {
@@ -252,7 +252,7 @@ func TestLoadReaderAt_FullRoundtrip(t *testing.T) {
 func TestAssets_Roundtrip(t *testing.T) {
 	logo := []byte{0x89, 'P', 'N', 'G', 0x0d, 0x0a}
 	payload, err := BuildPayload(BuildInput{
-		ManifestJSON: []byte(`{"name":"rt"}`),
+		ManifestJSON: []byte(`{"name":"rt","locale":"en"}`),
 		Sources:      map[string][]byte{"Main.mar": []byte("main = 1")},
 		Assets: map[string][]byte{
 			"logo.png":     logo,

@@ -1,5 +1,6 @@
 {
   "name": "roll-call",
+  "locale": "en",
   "server": {
     "port": 3037
   },

@@ -400,7 +400,16 @@ func buildFrontendDist(projectDir, distDir string, bc *buildCtx) error {
 	if err != nil {
 		return err
 	}
-	html := buildIndexHTML(bc.title, progJSON)
+	// The manifest is read again here rather than threaded through
+	// buildCtx: buildCtx holds what evaluating Main.main produced,
+	// and the locale is a fact about the project, not about the
+	// program.
+	distManifest, err := project.LoadManifestStructure(projectDir)
+	if err != nil {
+		return err
+	}
+	locale := distManifest.ResolveLocale()
+	html := buildIndexHTML(locale, bc.title, progJSON)
 	runtimeJS, err := jsserve.RuntimeJSProduction()
 	if err != nil {
 		return err
@@ -419,7 +428,10 @@ func buildFrontendDist(projectDir, distDir string, bc *buildCtx) error {
 		// what stops "I see the old version until I hard-refresh"
 		// without re-downloading everything on each load. Hosts that
 		// don't understand `_headers` simply ignore the extra file.
-		"_headers": []byte("/*\n  Cache-Control: no-cache\n"),
+		// Content-Language carries the app's declared language at the
+		// header level, the same tag the shell writes as <html lang>.
+		// Static hosting has no server to add it, so it goes here.
+		"_headers": []byte("/*\n  Cache-Control: no-cache\n  Content-Language: " + locale + "\n"),
 	}
 	for name, content := range files {
 		if err := os.WriteFile(filepath.Join(distDir, name), content, 0o644); err != nil {
@@ -741,7 +753,7 @@ func makeProgramJSON(mods []*ast.Module, entry string, devMode bool) ([]byte, er
 // embedded inline as a JSON script element. Differences from the dev
 // version: no SSE reload connection, no dev banner, no waterfall fetch
 // of the AST: boot is one round-trip total (HTML + runtime.js).
-func buildIndexHTML(title string, programJSON []byte) string {
+func buildIndexHTML(locale, title string, programJSON []byte) string {
 	if title == "" {
 		title = "mar app"
 	}
@@ -749,11 +761,11 @@ func buildIndexHTML(title string, programJSON []byte) string {
 	// Escape the < as <: JSON.parse ignores it, no other char
 	// classes need escaping in <script type="application/json">.
 	safeProgram := strings.ReplaceAll(string(programJSON), "</", `</`)
-	return fmt.Sprintf(productionPageHTML, title, safeProgram)
+	return fmt.Sprintf(productionPageHTML, locale, title, safeProgram)
 }
 
 const productionPageHTML = `<!doctype html>
-<html lang="en">
+<html lang="%s">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">

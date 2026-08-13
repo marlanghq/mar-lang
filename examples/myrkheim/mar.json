@@ -1,5 +1,6 @@
 {
   "name": "myrkheim",
+  "locale": "pt-BR",
   "server": {
     "port": 3028
   },

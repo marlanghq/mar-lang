@@ -1,3 +1,4 @@
 {
-  "name": "guestbook"
+  "name": "guestbook",
+  "locale": "en"
 }

@@ -1,5 +1,6 @@
 {
   "name": "soundboard",
+  "locale": "pt-BR",
   "server": {
     "port": 3026
   }

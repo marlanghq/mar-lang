@@ -53,6 +53,7 @@ The project manifest. Pure JSON, no interpolation. Strict schema (unknown fields
 ```json
 {
   "name": "my-app",
+  "locale": "en",
   "entry": "Main.mar",
 
   "server": {
@@ -88,6 +89,24 @@ The project manifest. Pure JSON, no interpolation. Strict schema (unknown fields
   }
 }
 ```
+
+#### `locale`
+
+Required, and deliberately without a default. It is the language the app is
+written in, as a BCP 47 tag: `"en"`, `"pt-BR"`, `"es-419"`.
+
+It has to be declared because it is what a screen reader reads the app with.
+The value becomes the page's `lang` attribute on the web and
+`CFBundleDevelopmentRegion` on iOS, and browsers also use it to hyphenate and
+to decide whether to offer a translation. Defaulting it to `"en"` would mean
+every app written in another language is silently mislabelled, which is worse
+than being asked one question at the start. `mar new` writes `"en"` into the
+template, so the answer is one line to change.
+
+The tag has to be spelled canonically. `pt_BR`, `PT-br` and `en-USA` all parse,
+and all mean something other than what they look like, so the compiler rejects
+them with the correct spelling in the message. App code reads the same value
+back as `App.locale`.
 
 #### Environment variables
 
@@ -766,6 +785,31 @@ Semantics worth knowing:
 Shared is not a server cache. There is no revalidation or staleness policy — if the data can rot, the app decides when to refresh it. And it is not a place for page state: if only one screen cares, it stays in that screen's model.
 
 See `examples/shared-cart`.
+
+### 5.6 The app's language (`App.locale`)
+
+`App.locale : String` is the tag declared as `locale` in mar.json (section
+2.2), read back where the app can use it:
+
+```elm
+greeting : String
+greeting =
+    if App.locale == "pt-BR" then
+        "Ola"
+
+    else
+        "Hello"
+```
+
+It is a value, not a function, because it cannot change while the program runs:
+it is a fact about the build, not about the device. Every runtime reads it from
+the place that already carried it, so no field was added to the bundle: the
+browser from the `<html lang>` the shell wrote, iOS from `Info.plist`, the Go
+server from the manifest at boot.
+
+This is the app's *own* language, not the user's. Reporting what the person at
+the keyboard prefers, and letting them choose, is a separate question with a
+separate answer (`docs/proposals/language.md`).
 
 ## 6. Client and server
 

@@ -1,5 +1,6 @@
 {
   "name": "seasons-gp",
+  "locale": "pt-BR",
   "server": {
     "port": 3025
   },

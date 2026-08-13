@@ -1133,6 +1133,14 @@ func runDev(path string, noOpen bool) int {
 	}
 	jsserve.SetPublicDir(publicDir)
 
+	// The app's language, from mar.json. It reaches the page as
+	// <html lang>, which is what a screen reader picks its voice
+	// from, and app code as `App.locale`. Required in the manifest,
+	// so this is a validated BCP 47 tag whenever there is a manifest
+	// at all (see ResolveLocale for the case with none).
+	jsserve.SetLocale(manifest.ResolveLocale())
+	runtime.SetLocale(manifest.ResolveLocale())
+
 	// PWA: validate the icon (fail fast on a bad master) and install
 	// the resolved config so /_mar/manifest.json + /_mar/icon-*.png
 	// serve. Always on for frontends: every app is installable.

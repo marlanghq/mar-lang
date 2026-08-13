@@ -330,6 +330,7 @@ func qualifiedAliasMapping() map[string]string {
 		"App.backend":                "appBackend",
 		"App.fullstack":              "appFullstack",
 		"App.shared":                 "appShared",
+		"App.locale":                 "appLocale",
 		"Page.create":                "pageCreate",
 		"Page.protected":             "pageProtected",
 		"Page.adminProtected":        "pageAdminProtected",

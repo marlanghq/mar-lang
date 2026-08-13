@@ -1,5 +1,6 @@
 {
   "name": "shared-cart",
+  "locale": "en",
   "server": {
     "port": 3038
   },

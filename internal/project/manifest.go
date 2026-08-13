@@ -122,7 +122,21 @@ type IOSConfig struct {
 // `Main.mar` at the project root (the convention). Only set it for
 // the unusual case of a non-conventional entry filename.
 type Manifest struct {
-	Name       string            `json:"name"`
+	Name string `json:"name"`
+
+	// Locale is the app's language, as a BCP 47 tag: "en", "pt-BR",
+	// "es-419". REQUIRED, and deliberately without a default.
+	//
+	// It becomes the `lang` attribute of the page, which is what a
+	// screen reader picks its voice from and what the browser
+	// hyphenates by. A default would let an app that never thought
+	// about language still make a claim, and the claim would be wrong
+	// half the time: a Portuguese app defaulting to "en" is read aloud
+	// with an English voice. Better to ask once, at scaffold time,
+	// than to be quietly wrong forever. `mar new` writes "en" into the
+	// template so nobody starts from a blank.
+	Locale string `json:"locale"`
+
 	Entry      string            `json:"entry,omitempty"`
 	Server     *ServerConfig     `json:"server,omitempty"`
 	Database   *DatabaseConfig   `json:"database,omitempty"`
@@ -189,6 +203,18 @@ func (p *PWAConfig) ResolvedBackgroundColor() string {
 // ResolvePWA flattens the manifest's PWA settings (with defaults) into
 // a pwa.Config ready for the manifest + icon generators. Resolves the
 // icon path against projectDir. Safe on a nil manifest / nil PWA block.
+// ResolveLocale returns the app's language tag for the HTML shell.
+// `locale` is required in mar.json, so the fallback only covers the
+// no-manifest case (a bare `mar dev` in a directory without one) and
+// exists so the shell never emits `lang=""`, which browsers read as
+// "no idea" rather than as English.
+func (m *Manifest) ResolveLocale() string {
+	if m == nil || m.Locale == "" {
+		return "en"
+	}
+	return m.Locale
+}
+
 func (m *Manifest) ResolvePWA(projectDir string) pwa.Config {
 	var p *PWAConfig
 	name := ""
@@ -618,6 +644,7 @@ func checkUnknownTopFields(m map[string]json.RawMessage) error {
 		"ios":        true,
 		"rateLimit":  true,
 		"admins":     true,
+		"locale":     true,
 		"adminPanel": true,
 		"deploy":     true,
 		"pwa":        true,

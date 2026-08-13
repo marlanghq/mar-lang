@@ -18,7 +18,7 @@ func TestValidateProductionConfig_NoAuthSkips(t *testing.T) {
 	t.Cleanup(runtime.ResetAuthForTesting)
 
 	dir := t.TempDir()
-	writeFile(t, filepath.Join(dir, "mar.json"), `{"name":"no-auth-app"}`)
+	writeFile(t, filepath.Join(dir, "mar.json"), `{"name":"no-auth-app","locale":"en"}`)
 
 	if err := ValidateProductionConfig(dir); err != nil {
 		t.Fatalf("expected no error when auth isn't registered; got %v", err)
@@ -30,7 +30,7 @@ func TestValidateProductionConfig_NoAuthSkips(t *testing.T) {
 // mail, the build fails with copy-pasteable hints.
 func TestValidateProductionConfig_AuthRequiresMail(t *testing.T) {
 	dir := t.TempDir()
-	writeFile(t, filepath.Join(dir, "mar.json"), `{"name":"missing-mail"}`)
+	writeFile(t, filepath.Join(dir, "mar.json"), `{"name":"missing-mail","locale":"en"}`)
 	registerFakeAuth()
 	t.Cleanup(runtime.ResetAuthForTesting)
 
@@ -82,6 +82,7 @@ func TestValidateProductionConfig_PartialMail(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, filepath.Join(dir, "mar.json"), `{
   "name": "partial",
+  "locale": "en",
   "auth": { "sessionSecret": "env:S" },
   "mail": { "from": "noreply@x.com" }
 }`)
@@ -112,6 +113,7 @@ func TestValidateProductionConfig_HappyPath(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, filepath.Join(dir, "mar.json"), `{
   "name": "happy",
+  "locale": "en",
   "auth": { "sessionSecret": "env:SESSION" },
   "mail": {
     "from": "noreply@x.com",
@@ -223,5 +225,23 @@ func TestProductionShellDeclaresColorScheme(t *testing.T) {
 		if !strings.Contains(productionPageHTML, want) {
 			t.Errorf("production shell is missing %s", want)
 		}
+	}
+}
+
+// TestProductionShellCarriesTheLocale guards the same dev≠prod gap for
+// the app's language: both shells have to write the manifest's tag as
+// <html lang>, because that attribute is what a screen reader picks
+// its voice from. Hardcoding "en" here (which is what both shells did
+// before) makes an app in Portuguese get read aloud in English.
+func TestProductionShellCarriesTheLocale(t *testing.T) {
+	if !strings.Contains(productionPageHTML, `<html lang="%s">`) {
+		t.Fatal("production shell does not take a locale for <html lang>")
+	}
+	html := buildIndexHTML("pt-BR", "Diario", []byte("{}"))
+	if !strings.Contains(html, `<html lang="pt-BR">`) {
+		t.Errorf("rendered shell missing the locale:\n%s", html[:200])
+	}
+	if !strings.Contains(html, "<title>Diario</title>") {
+		t.Error("locale and title are swapped: the title did not land")
 	}
 }

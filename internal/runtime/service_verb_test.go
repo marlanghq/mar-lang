@@ -45,7 +45,7 @@ func TestAssembleGetPathParam(t *testing.T) {
 
 func TestAssemblePostBody(t *testing.T) {
 	svc := VService{Verb: "POST", Path: "/things"}
-	v, err := assembleServiceInput(svc, "/things", "", `{"name":"hi"}`)
+	v, err := assembleServiceInput(svc, "/things", "", `{"name":"hi","locale":"en"}`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -56,7 +56,7 @@ func TestAssemblePostBody(t *testing.T) {
 
 func TestAssemblePutPathAndBodyMerge(t *testing.T) {
 	svc := VService{Verb: "PUT", Path: "/things/{id:Int}"}
-	v, err := assembleServiceInput(svc, "/things/7", "", `{"name":"y"}`)
+	v, err := assembleServiceInput(svc, "/things/7", "", `{"name":"y","locale":"en"}`)
 	if err != nil {
 		t.Fatal(err)
 	}

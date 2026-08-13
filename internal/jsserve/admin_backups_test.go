@@ -39,7 +39,7 @@ func makeFakeBundle(t *testing.T, path string, fingerprint string) {
 		data []byte
 	}{
 		{"metadata.json", metaBytes},
-		{"mar.json", []byte(`{"name":"test"}`)},
+		{"mar.json", []byte(`{"name":"test","locale":"en"}`)},
 		// Minimal SQLite header bytes ('SQLite format 3\x00') + zero
 		// pad to 100 bytes (the SQLite header size) so the file is at
 		// least syntactically a SQLite db.

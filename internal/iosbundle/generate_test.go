@@ -18,6 +18,7 @@ func fullSpec() Spec {
 		MarketingVersion: "1.2.3",
 		BuildNumber:      "42",
 		DefaultBaseURL:   "https://notes.example.com",
+		Locale:           "pt-BR",
 		MarVersion:       "test",
 	}
 }
@@ -114,6 +115,12 @@ func TestGenerateMaterializesXcodeProject(t *testing.T) {
 		// itself, so the key's PRESENCE is the thing worth asserting.
 		"<key>MarRuntimeVersion</key>",
 		"<string>test</string>", // spec.MarVersion, verbatim
+		// The app's language, from mar.json. It lands twice on purpose:
+		// CFBundleDevelopmentRegion is what iOS itself takes the app's
+		// language to be (the counterpart of <html lang> on the web),
+		// and MarLocale is what the `App.locale` builtin reads.
+		"<key>CFBundleDevelopmentRegion</key>\n\t<string>pt-BR</string>",
+		"<key>MarLocale</key>\n\t<string>pt-BR</string>",
 	} {
 		if !strings.Contains(info, want) {
 			t.Errorf("Info.plist should contain %q", want)
@@ -124,6 +131,7 @@ func TestGenerateMaterializesXcodeProject(t *testing.T) {
 		"__MAR_DEFAULT_BASE_URL__",
 		"__MAR_PROJECT_NAME__",
 		"__MAR_RUNTIME_VERSION__",
+		"__MAR_LOCALE__",
 	} {
 		if strings.Contains(info, raw) {
 			t.Errorf("Info.plist contains unsubstituted %s", raw)

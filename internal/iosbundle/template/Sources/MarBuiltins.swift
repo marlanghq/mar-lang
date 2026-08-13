@@ -1263,6 +1263,18 @@ enum MarBuiltins {
         env.define("appShared", .fn(appShared))
         env.define("App.shared", .fn(appShared))
 
+        // App.locale : String
+        //
+        // The tag mar.json declared, baked into Info.plist at build
+        // time by `mar build --target ios`. Read from the bundle
+        // rather than carried in program.json: it is already there as
+        // CFBundleDevelopmentRegion's twin, and an older program.json
+        // therefore keeps loading. Missing key means a hand-made
+        // bundle, and "en" is what the other runtimes fall back to.
+        let localeTag = (Bundle.main.object(forInfoDictionaryKey: "MarLocale") as? String) ?? ""
+        env.define("appLocale", .string(localeTag.isEmpty ? "en" : localeTag))
+        env.define("App.locale", .string(localeTag.isEmpty ? "en" : localeTag))
+
         // Page.withShared def builder: the page is a FUNCTION of the shared
         // model, so the wrapper carries the builder unapplied. decodedPages()
         // resolves it, and MarPageRuntime re-resolves it on every read.

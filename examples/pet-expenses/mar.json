@@ -1,5 +1,6 @@
 {
   "name": "pet-expenses",
+  "locale": "en",
   "auth": {
     "sessionSecret": "env:SESSION_SECRET"
   },

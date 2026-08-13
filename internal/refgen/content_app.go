@@ -209,6 +209,7 @@ var appCategories = map[string][]CatGroup{
 	"App": {
 		{"Entry points", []string{"frontend", "backend", "fullstack"}},
 		{"State that outlives navigation", []string{"shared"}},
+		{"What the app declared", []string{"locale"}},
 	},
 	"Device": {
 		{"Watch", []string{"watch"}},
@@ -490,6 +491,7 @@ var appDescriptions = map[string]string{
 	"App.frontend":  "An app that is only a frontend: a list of pages, no server, no database.",
 	"App.backend":   "An app that is only a backend: a list of exposed services.",
 	"App.fullstack": "An app that is both, sharing types and service declarations across the two halves.",
+	"App.locale":    "The language the app is written in, as declared by `locale` in mar.json (\"en\", \"pt-BR\"). The same tag the page carries as its `lang`, which is what a screen reader picks its voice from. It never changes while the app runs.",
 
 	// Device
 	"Device.watch":     "Mirrors what kind of device this is and stays current: the pointer, the screen size, and whether dark mode or reduced motion is asked for. Read capabilities from here rather than guessing from a user agent string.",
@@ -799,6 +801,7 @@ var appExamples = map[string][]string{
 	"App.frontend":  {"App.frontend []"},
 	"App.backend":   {"App.backend { services = [] }"},
 	"App.fullstack": {"App.fullstack { services = [], pages = [] }"},
+	"App.locale":    {"greeting = if App.locale == \"pt-BR\" then \"Ola\" else \"Hello\""},
 
 	// Device
 	"Device.watch":     {"type Msg = Resized Int Int\n\nsubscriptions model = Device.watch (\\device -> Resized device.width device.height)"},

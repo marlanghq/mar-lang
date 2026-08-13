@@ -102,6 +102,14 @@ targets:
     info:
       path: Info.plist
       properties:
+        # CFBundleDevelopmentRegion is the language iOS takes the app
+        # to be written in: the counterpart of <html lang> on the web,
+        # and the reason mar.json's `locale` is required. Declared here
+        # rather than left at xcodegen's $(DEVELOPMENT_LANGUAGE), which
+        # is English no matter what the app is written in. Info.plist is
+        # GENERATED from this file by `make ios-template`, so editing it
+        # directly gets reverted on the next xcodegen run.
+        CFBundleDevelopmentRegion: __MAR_LOCALE__
         # CFBundleDisplayName is the home-screen / app-switcher label.
         # Allowed to differ from the SwiftIdentifier target name:
         # spaces and accents are fine here.
@@ -141,6 +149,12 @@ targets:
         # so another project's dev server on the same LAN can't hijack
         # this app's backend.
         MarAppName: __MAR_PROJECT_NAME__
+
+        # MarLocale is the mar.json `locale`: the app's language, as a
+        # BCP 47 tag. It is also the CFBundleDevelopmentRegion above,
+        # which is the language iOS takes the app to be written in.
+        # The `App.locale` builtin reads this key.
+        MarLocale: __MAR_LOCALE__
 
         # MarRuntimeVersion is the mar version that generated this
         # app: the version of the Swift runtime compiled into the

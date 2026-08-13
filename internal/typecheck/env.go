@@ -3284,6 +3284,20 @@ func stdlibBindings() map[string]Type {
 			},
 		},
 
+		// App.locale : String
+		// The app's declared language, the `locale` field of mar.json, as
+		// the canonical BCP 47 tag it was written as ("en", "pt-BR").
+		// A value, not a function: it cannot change while the program
+		// runs, because it is a fact about the build, not about the
+		// device. What the USER prefers is a separate question and gets
+		// a separate API (docs/proposals/language.md).
+		//
+		// Every runtime reads it from the source it already had: the Go
+		// server from the manifest at boot, the browser from the <html
+		// lang> the shell wrote, iOS from Info.plist. No new field in
+		// program.json, so an old bundle keeps loading.
+		"appLocale": TString,
+
 		// App.frontend : List Page -> Cmd ()
 		// Pure frontend: ships an MVU app (one or many pages) to the browser.
 		// Port comes from <projectDir>/mar.json (server.port, default 3000).
@@ -3895,6 +3909,7 @@ func qualifiedAliases(flat map[string]Type) map[string]Type {
 		"Canvas.onHover":       "onHover",
 		"Canvas.onAltTap":      "onAltTap",
 		"Canvas.onWheel":       "onWheel",
+		"App.locale":           "appLocale",
 		"App.frontend":         "appFrontend",
 		"App.backend":          "appBackend",
 		"App.fullstack":        "appFullstack",

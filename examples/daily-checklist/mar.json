@@ -1,5 +1,6 @@
 {
   "name": "daily-checklist",
+  "locale": "en",
   "server": {
     "port": 3033
   },

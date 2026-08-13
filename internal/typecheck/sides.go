@@ -92,6 +92,12 @@ var sideByName = map[string]Side{
 	// beside the Service.call that fills it. Filing it as build-time would
 	// document it as something it isn't.
 	"App.shared": SideFrontend,
+
+	// App.locale is neither: it is a constant both halves can read, like
+	// a compile-time literal that happens to come from mar.json. A
+	// service that formats a message and a page that picks a string
+	// table both want it.
+	"App.locale": SideBoth,
 }
 
 // sideByModule covers every other qualified builtin, by its module. Every

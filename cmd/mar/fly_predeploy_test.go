@@ -24,7 +24,7 @@ func TestFlyPreDeployValidate(t *testing.T) {
 	t.Cleanup(runtime.ResetAuthForTesting)
 
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "mar.json"), []byte(`{"name":"x"}`), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "mar.json"), []byte(`{"name":"x","locale":"en"}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	runtime.RegisterAuth(runtime.VAuth{}) // simulate Auth.config running in main

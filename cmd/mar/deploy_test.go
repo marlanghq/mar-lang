@@ -63,7 +63,7 @@ func TestRunDeploy_noManifest(t *testing.T) {
 }
 
 func TestRunDeploy_noDeployBlock(t *testing.T) {
-	dir := writeDeployManifest(t, `{"name":"demo"}`)
+	dir := writeDeployManifest(t, `{"name":"demo","locale":"en"}`)
 	if got := runDeploy([]string{dir}); got != 2 {
 		t.Errorf("no deploy block: exit = %d, want 2", got)
 	}
@@ -74,6 +74,7 @@ func TestRunDeploy_noDeployBlock(t *testing.T) {
 func TestRunDeploy_bothBlocksRejected(t *testing.T) {
 	dir := writeDeployManifest(t, `{
 	  "name": "demo",
+	  "locale": "en",
 	  "deploy": {
 	    "fly": {"app": "demo", "region": "gru", "memory": "256mb"},
 	    "cloudflare-pages": {

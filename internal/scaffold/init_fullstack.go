@@ -17,8 +17,13 @@ import "fmt"
 // real Mar projects grow.
 func fullstackFiles(name string) map[string]string {
 	files := sharedFiles(name)
+	// `locale` is required and has no default: an app has to say which
+	// language it is in, because that is what a screen reader reads it
+	// with. The scaffold answers "en" so nobody starts from a blank,
+	// and whoever is writing in another language changes one line.
 	files["mar.json"] = fmt.Sprintf(`{
-  "name": "%s"
+  "name": "%s",
+  "locale": "en"
 }
 `, name)
 	files["Main.mar"] = `module Main exposing (main)

@@ -4802,6 +4802,21 @@
     }));
     def('Nav.replaceTo', envLookup(env, 'navReplaceTo'));
 
+    // App.locale : String
+    //
+    // The tag the shell wrote into <html lang>, which the server took
+    // from mar.json. Read from the document rather than carried in
+    // program.json: the attribute is already there, it is already the
+    // thing browsers and screen readers act on, and an old bundle
+    // therefore needs no new field to keep working. Empty only if a
+    // host page dropped the attribute, in which case "en" matches what
+    // the Go side falls back to.
+    const localeTag = (typeof document !== 'undefined'
+      && document.documentElement
+      && document.documentElement.lang) || 'en';
+    def('appLocale', VString(localeTag));
+    def('App.locale', VString(localeTag));
+
     // App.frontend : List Page -> Cmd ()
     // Mounts a page list with URL routing. Port comes from the host
     // server's mar.json, not user code.

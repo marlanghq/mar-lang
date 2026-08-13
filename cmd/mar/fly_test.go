@@ -21,13 +21,14 @@ func TestDiscoverManifestEnvRefs(t *testing.T) {
 	}{
 		{
 			name:     "no env refs",
-			manifest: `{"name": "test"}`,
+			manifest: `{"name":"test","locale":"en"}`,
 			want:     nil,
 		},
 		{
 			name: "single env ref in mail.smtpPassword",
 			manifest: `{
   "name": "test",
+  "locale": "en",
   "mail": {
     "smtpPassword": "env:RESEND_API_KEY"
   }
@@ -38,6 +39,7 @@ func TestDiscoverManifestEnvRefs(t *testing.T) {
 			name: "multiple refs across mail + auth",
 			manifest: `{
   "name": "test",
+  "locale": "en",
   "mail": {
     "smtpPassword": "env:RESEND_API_KEY",
     "smtpHost": "env:SMTP_HOST"
@@ -52,6 +54,7 @@ func TestDiscoverManifestEnvRefs(t *testing.T) {
 			name: "duplicate ref returns once",
 			manifest: `{
   "name": "test",
+  "locale": "en",
   "mail": {
     "smtpPassword": "env:KEY",
     "smtpUsername": "env:KEY"
@@ -63,6 +66,7 @@ func TestDiscoverManifestEnvRefs(t *testing.T) {
 			name: "ignores non-env-prefixed strings",
 			manifest: `{
   "name": "test",
+  "locale": "en",
   "mail": {
     "from": "ops@example.com",
     "smtpHost": "smtp.example.com"
@@ -100,6 +104,7 @@ func TestLoadFlyManifest_SkipsEnvResolution(t *testing.T) {
 	dir := t.TempDir()
 	manifest := `{
   "name": "test-app",
+  "locale": "en",
   "mail": {
     "from": "noreply@test.app",
     "smtpHost": "smtp.example.com",

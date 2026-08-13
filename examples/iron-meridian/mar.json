@@ -1,5 +1,6 @@
 {
   "name": "iron-meridian",
+  "locale": "pt-BR",
   "server": {
     "port": 3034
   },

@@ -17,8 +17,10 @@ import "fmt"
 // real auth-gated apps grow.
 func fullstackAuthFiles(name string) map[string]string {
 	files := sharedFiles(name)
+	// locale is required; see init_backend.go on why the scaffold picks "en".
 	files["mar.json"] = fmt.Sprintf(`{
-  "name": "%s"
+  "name": "%s",
+  "locale": "en"
 }
 `, name)
 	files["Main.mar"] = `module Main exposing (main)

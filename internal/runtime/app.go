@@ -2,7 +2,41 @@ package runtime
 
 import (
 	"fmt"
+	"sync"
 )
+
+// locale carries the app's declared language (mar.json `locale`) into
+// the `App.locale` builtin. A package var rather than a parameter
+// because the builtin env is built in a dozen places (dev, build, the
+// admin panel, tests) and every one of them would have to thread a
+// value it does not care about. Required in the manifest, so the
+// fallback only covers callers that never set it, which are tests and
+// a bare `mar dev` in a directory with no mar.json.
+var (
+	localeMu sync.RWMutex
+	locale   = "en"
+)
+
+// SetLocale records the app's language tag. Called by `mar dev` and by
+// the deployed runtime after reading mar.json, before Main.main is
+// evaluated.
+// An empty tag is ignored so `App.locale` is never the empty string:
+// app code branching on it would see a value that matches nothing.
+func SetLocale(tag string) {
+	if tag == "" {
+		return
+	}
+	localeMu.Lock()
+	locale = tag
+	localeMu.Unlock()
+}
+
+// Locale returns the tag SetLocale installed.
+func Locale() string {
+	localeMu.RLock()
+	defer localeMu.RUnlock()
+	return locale
+}
 
 // VPage packages a single MVU screen (path + init/update/view) into a
 // runnable value. Pages are first-class so users can compose them into
@@ -296,6 +330,13 @@ func appBuiltins() map[string]Value {
 			page.IsSheet = true
 			return page, nil
 		}),
+
+		// App.locale: the language the app declared in mar.json.
+		//
+		// A value, not a function: it is fixed for the life of the
+		// program. Read through Locale() when the env is built, which
+		// is after the CLI has installed the manifest's tag.
+		"appLocale": VString{V: Locale()},
 
 		// App.shared: the app-wide client store's definition.
 		//

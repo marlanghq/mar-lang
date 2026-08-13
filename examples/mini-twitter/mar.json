@@ -1,5 +1,6 @@
 {
   "name": "mini-twitter",
+  "locale": "en",
 
   "auth": {
     "sessionSecret": "env:SESSION_SECRET"

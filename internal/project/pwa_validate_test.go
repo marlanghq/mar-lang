@@ -42,7 +42,7 @@ func TestValidatePWAIcon(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			m := &Manifest{Name: "X", PWA: &PWAConfig{Icon: tc.icon}}
+			m := &Manifest{Name: "X", Locale: "en", PWA: &PWAConfig{Icon: tc.icon}}
 			err := ValidatePWAIcon(dir, m)
 			if (err != nil) != tc.wantErr {
 				t.Fatalf("ValidatePWAIcon(%s) err=%v, wantErr=%v", tc.icon, err, tc.wantErr)
@@ -51,7 +51,7 @@ func TestValidatePWAIcon(t *testing.T) {
 	}
 
 	// No PWA block / no icon → always fine (a tile is generated).
-	if err := ValidatePWAIcon(dir, &Manifest{Name: "X"}); err != nil {
+	if err := ValidatePWAIcon(dir, &Manifest{Locale: "en", Name: "X"}); err != nil {
 		t.Errorf("nil PWA block should validate: %v", err)
 	}
 	if err := ValidatePWAIcon(dir, nil); err != nil {
@@ -60,11 +60,11 @@ func TestValidatePWAIcon(t *testing.T) {
 }
 
 func TestValidatePWAColors(t *testing.T) {
-	bad := &Manifest{Name: "X", PWA: &PWAConfig{ThemeColor: "blue"}}
+	bad := &Manifest{Name: "X", Locale: "en", PWA: &PWAConfig{ThemeColor: "blue"}}
 	if err := Validate(bad); err == nil {
 		t.Error("expected error for non-hex themeColor")
 	}
-	good := &Manifest{Name: "X", PWA: &PWAConfig{ThemeColor: "#0071e3", BackgroundColor: "#fff"}}
+	good := &Manifest{Name: "X", Locale: "en", PWA: &PWAConfig{ThemeColor: "#0071e3", BackgroundColor: "#fff"}}
 	if err := Validate(good); err != nil {
 		t.Errorf("valid hex colors rejected: %v", err)
 	}
@@ -72,12 +72,12 @@ func TestValidatePWAColors(t *testing.T) {
 
 func TestResolvePWADefaults(t *testing.T) {
 	// No block → name-derived shortName, white colors, no icon.
-	c := (&Manifest{Name: "Daily Checklist"}).ResolvePWA("/proj")
+	c := (&Manifest{Locale: "en", Name: "Daily Checklist"}).ResolvePWA("/proj")
 	if c.ShortName != "Daily Checklist" || c.ThemeColor != "#ffffff" || c.IconPath != "" {
 		t.Errorf("defaults wrong: %+v", c)
 	}
 	// Relative icon path resolves against projectDir.
-	c2 := (&Manifest{Name: "X", PWA: &PWAConfig{Icon: "icon.png", ShortName: "X!"}}).ResolvePWA("/proj")
+	c2 := (&Manifest{Name: "X", Locale: "en", PWA: &PWAConfig{Icon: "icon.png", ShortName: "X!"}}).ResolvePWA("/proj")
 	if c2.IconPath != filepath.Join("/proj", "icon.png") || c2.ShortName != "X!" {
 		t.Errorf("resolve wrong: %+v", c2)
 	}

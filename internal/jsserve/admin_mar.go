@@ -428,7 +428,10 @@ func adminPanelProgram() ([]byte, error) {
 // : the panel's data calls are gated by the admin cookie server-side.
 func handleAdminMarShell(w http.ResponseWriter, r *http.Request) {
 	html := strings.ReplaceAll(
-		fmt.Sprintf(pageHTML, "Mar Admin"),
+		// The panel is the framework's own UI and is written in English,
+		// so it declares English regardless of what the app declares. A
+		// Portuguese app does not make "Entities" a Portuguese word.
+		fmt.Sprintf(pageHTML, "en", "Mar Admin"),
 		"/_mar/program.json",
 		"/_mar/admin/program.json",
 	)

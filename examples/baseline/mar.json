@@ -1,5 +1,6 @@
 {
   "name": "baseline",
+  "locale": "en",
   "server": {
     "port": 3041
   },

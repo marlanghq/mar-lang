@@ -17,7 +17,7 @@ func TestValidate_NilManifest(t *testing.T) {
 // TestValidate_AdminsAcceptsValidEmails confirms the happy path.
 // Multiple addresses, mixed providers, all should pass.
 func TestValidate_AdminsAcceptsValidEmails(t *testing.T) {
-	m := &Manifest{
+	m := &Manifest{Locale: "en",
 		Admins: []string{"me@example.com", "ops@team.io", "a.b+tag@domain.co.uk"},
 	}
 	if err := Validate(m); err != nil {
@@ -41,7 +41,7 @@ func TestValidate_AdminsRejectsBadShape(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			m := &Manifest{Admins: []string{tc.email}}
+			m := &Manifest{Locale: "en", Admins: []string{tc.email}}
 			err := Validate(m)
 			if err == nil {
 				t.Fatalf("expected error for %q; got nil", tc.email)
@@ -58,7 +58,7 @@ func TestValidate_AdminsRejectsBadShape(t *testing.T) {
 // have a typo (same email twice with different casing) the check
 // missed. Compile-time rejection forces them to fix it.
 func TestValidate_AdminsRejectsDuplicates(t *testing.T) {
-	m := &Manifest{
+	m := &Manifest{Locale: "en",
 		Admins: []string{"me@x.com", "ops@x.com", "me@x.com"},
 	}
 	err := Validate(m)
@@ -76,7 +76,7 @@ func TestValidate_AdminsRejectsDuplicates(t *testing.T) {
 func TestValidate_RecentRequestsSizeAcceptsRange(t *testing.T) {
 	cases := []int{0, 10, 200, 1000, 5000}
 	for _, v := range cases {
-		m := &Manifest{AdminPanel: &AdminPanelConfig{RecentRequestsSize: v}}
+		m := &Manifest{Locale: "en", AdminPanel: &AdminPanelConfig{RecentRequestsSize: v}}
 		if err := Validate(m); err != nil {
 			t.Errorf("recentRequestsSize=%d: unexpected error %v", v, err)
 		}
@@ -97,7 +97,7 @@ func TestValidate_RecentRequestsSizeRejectsOutOfRange(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			m := &Manifest{AdminPanel: &AdminPanelConfig{RecentRequestsSize: tc.value}}
+			m := &Manifest{Locale: "en", AdminPanel: &AdminPanelConfig{RecentRequestsSize: tc.value}}
 			err := Validate(m)
 			if err == nil {
 				t.Fatalf("expected error for value=%d; got nil", tc.value)
@@ -123,7 +123,7 @@ func TestValidate_AutoBackupAcceptsRange(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			m := &Manifest{
+			m := &Manifest{Locale: "en",
 				Database: &DatabaseConfig{
 					AutoBackup: &DatabaseAutoBackup{
 						IntervalHours:  tc.interval,
@@ -156,7 +156,7 @@ func TestValidate_AutoBackupRejectsOutOfRange(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			m := &Manifest{
+			m := &Manifest{Locale: "en",
 				Database: &DatabaseConfig{
 					AutoBackup: &DatabaseAutoBackup{
 						IntervalHours:  tc.interval,
@@ -223,7 +223,7 @@ func TestValidate_RateLimitAcceptsRange(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			m := &Manifest{
+			m := &Manifest{Locale: "en",
 				RateLimit: &RateLimitConfig{
 					RequestsPerMinute: tc.rpm,
 					Burst:             tc.brst,
@@ -255,7 +255,7 @@ func TestValidate_RateLimitRejectsOutOfRange(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			m := &Manifest{
+			m := &Manifest{Locale: "en",
 				RateLimit: &RateLimitConfig{
 					RequestsPerMinute: tc.rpm,
 					Burst:             tc.brst,
@@ -292,7 +292,7 @@ func TestValidate_MaxBodyBytesAcceptsRange(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			m := &Manifest{Server: &ServerConfig{MaxBodyBytes: tc.value}}
+			m := &Manifest{Locale: "en", Server: &ServerConfig{MaxBodyBytes: tc.value}}
 			if err := Validate(m); err != nil {
 				t.Errorf("unexpected error for value=%d: %v", tc.value, err)
 			}
@@ -317,7 +317,7 @@ func TestValidate_MaxBodyBytesRejectsOutOfRange(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			m := &Manifest{Server: &ServerConfig{MaxBodyBytes: tc.value}}
+			m := &Manifest{Locale: "en", Server: &ServerConfig{MaxBodyBytes: tc.value}}
 			err := Validate(m)
 			if err == nil {
 				t.Fatalf("expected error mentioning %q for value=%d; got nil", tc.wantSub, tc.value)
@@ -455,7 +455,7 @@ func TestValidate_Mail(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			m := &Manifest{Mail: c.mail}
+			m := &Manifest{Locale: "en", Mail: c.mail}
 			err := Validate(m)
 			if c.wantSub == "" {
 				if err != nil {
@@ -490,7 +490,7 @@ func TestValidate_MailPlaceholderIsTyped(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			m := &Manifest{Mail: c.mail}
+			m := &Manifest{Locale: "en", Mail: c.mail}
 			err := Validate(m)
 			if err == nil {
 				t.Fatalf("expected error; got nil")
@@ -539,7 +539,7 @@ func TestValidate_MailRejectsFreeMailDomains(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.from, func(t *testing.T) {
-			m := &Manifest{Mail: &MailConfig{
+			m := &Manifest{Locale: "en", Mail: &MailConfig{
 				From:         tc.from,
 				SMTPHost:     "smtp.x.com",
 				SMTPUsername: "u",
@@ -583,7 +583,7 @@ func TestValidate_IOSServerURL(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			m := &Manifest{IOS: &IOSConfig{ServerURL: tc.url}}
+			m := &Manifest{Locale: "en", IOS: &IOSConfig{ServerURL: tc.url}}
 			err := Validate(m)
 			if tc.wantErr && err == nil {
 				t.Errorf("expected error for %q; got nil", tc.url)
@@ -606,9 +606,9 @@ func TestResolvedRecentRequestsSize(t *testing.T) {
 	}{
 		{"nil manifest", nil, 200},
 		{"no adminPanel", &Manifest{}, 200},
-		{"explicit zero", &Manifest{AdminPanel: &AdminPanelConfig{}}, 200},
-		{"explicit 50", &Manifest{AdminPanel: &AdminPanelConfig{RecentRequestsSize: 50}}, 50},
-		{"explicit 5000", &Manifest{AdminPanel: &AdminPanelConfig{RecentRequestsSize: 5000}}, 5000},
+		{"explicit zero", &Manifest{Locale: "en", AdminPanel: &AdminPanelConfig{}}, 200},
+		{"explicit 50", &Manifest{Locale: "en", AdminPanel: &AdminPanelConfig{RecentRequestsSize: 50}}, 50},
+		{"explicit 5000", &Manifest{Locale: "en", AdminPanel: &AdminPanelConfig{RecentRequestsSize: 5000}}, 5000},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -624,7 +624,7 @@ func TestResolvedRecentRequestsSize(t *testing.T) {
 // populated with a known-good value. Helper for tests that want to
 // vary one field at a time without re-typing the rest.
 func validCFPages() *Manifest {
-	return &Manifest{
+	return &Manifest{Locale: "en",
 		Deploy: &DeployConfig{
 			CloudflarePages: &CloudflarePagesDeployConfig{
 				App:      "mar-website",
@@ -695,8 +695,8 @@ func TestValidateDeployCloudflarePages_MissingCases(t *testing.T) {
 		m    *Manifest
 	}{
 		{"nil-manifest", nil},
-		{"nil-deploy", &Manifest{Deploy: nil}},
-		{"nil-cloudflare-pages", &Manifest{Deploy: &DeployConfig{}}},
+		{"nil-deploy", &Manifest{Locale: "en", Deploy: nil}},
+		{"nil-cloudflare-pages", &Manifest{Locale: "en", Deploy: &DeployConfig{}}},
 	}
 	for _, tc := range blockCases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -838,7 +838,7 @@ func TestCheckSecrets_APITokenObligatesEnv(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			m := &Manifest{
+			m := &Manifest{Locale: "en",
 				Deploy: &DeployConfig{
 					CloudflarePages: &CloudflarePagesDeployConfig{
 						APIToken: tc.apiToken,
@@ -858,5 +858,47 @@ func TestCheckSecrets_APITokenObligatesEnv(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestValidateLocale pins the two questions the field answers: does the
+// language exist, and is it spelled canonically. The lenient cases are
+// the point: x/text accepts `pt_BR`, `PT-br` and `en-USA` on its own
+// (the last one as the language "usa"), so without the canonical check
+// a typo would ship as a different language, or as the same language
+// spelled two ways across two projects.
+func TestValidateLocale(t *testing.T) {
+	ok := []string{"en", "pt-BR", "es", "es-419", "en-US", "zh-Hans-CN"}
+	for _, tag := range ok {
+		if err := Validate(&Manifest{Name: "app", Locale: tag}); err != nil {
+			t.Errorf("locale %q should be accepted: %v", tag, err)
+		}
+	}
+
+	bad := []struct{ locale, why string }{
+		{"", "required"},
+		{"portuguese", "not a language tag"},
+		{"zz-ZZ", "well-formed but unknown"},
+		{"xx", "well-formed but unknown"},
+		{"en-", "not a language tag"},
+		{"pt_BR", "canonical"},  // separador do Java/POSIX
+		{"PT-br", "canonical"},  // caixa trocada
+		{"en-USA", "canonical"}, // x/text lê isso como a língua "usa"
+	}
+	for _, c := range bad {
+		err := Validate(&Manifest{Name: "app", Locale: c.locale})
+		if err == nil {
+			t.Errorf("locale %q should be rejected (%s)", c.locale, c.why)
+			continue
+		}
+		if !strings.Contains(err.Error(), "locale") {
+			t.Errorf("locale %q: error should name the field, got %v", c.locale, err)
+		}
+	}
+
+	// A mensagem do caso canônico ensina a grafia certa.
+	err := Validate(&Manifest{Name: "app", Locale: "pt_BR"})
+	if err == nil || !strings.Contains(err.Error(), `"pt-BR"`) {
+		t.Errorf("the canonical error should show the right spelling, got %v", err)
 	}
 }

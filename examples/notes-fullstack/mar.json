@@ -1,5 +1,6 @@
 {
   "name": "notes-fullstack",
+  "locale": "en",
   "database": {
     "path": "./notes.db"
   }

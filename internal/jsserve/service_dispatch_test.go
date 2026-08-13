@@ -64,14 +64,14 @@ func TestServiceDispatchVerbAndPathParams(t *testing.T) {
 	})
 
 	t.Run("POST with JSON body", func(t *testing.T) {
-		code, body := do("POST", "/things", `{"name":"hi"}`)
+		code, body := do("POST", "/things", `{"name":"hi","locale":"en"}`)
 		if code != 200 || !strings.Contains(body, `"name":"hi"`) {
 			t.Fatalf("POST /things -> %d %s", code, body)
 		}
 	})
 
 	t.Run("PUT merges path param and body", func(t *testing.T) {
-		code, body := do("PUT", "/things/7", `{"name":"y"}`)
+		code, body := do("PUT", "/things/7", `{"name":"y","locale":"en"}`)
 		if code != 200 || !strings.Contains(body, `"id":7`) || !strings.Contains(body, `"name":"y"`) {
 			t.Fatalf("PUT /things/7 -> %d %s (want id:7 + name:y)", code, body)
 		}

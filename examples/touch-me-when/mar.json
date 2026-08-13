@@ -1,5 +1,6 @@
 {
   "name": "touch-me-when",
+  "locale": "en",
   "deploy": {
     "cloudflare-pages": {
       "app": "touch-me-when",

@@ -21,6 +21,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	"golang.org/x/text/language"
 )
 
 // Defaults for adminPanel knobs. Documented in docs/admin-panel.md §11.4.
@@ -129,6 +131,36 @@ func Validate(m *Manifest) error {
 	}
 	if err := validatePWA(m); err != nil {
 		return err
+	}
+	if err := validateLocale(m); err != nil {
+		return err
+	}
+	return nil
+}
+
+// validateLocale enforces the two things the field has to be: a language
+// that EXISTS, spelled the way the standard spells it.
+//
+// x/text/language answers the first question from the IANA registry, so
+// `zz` is rejected even though it has the shape of a language code. It is
+// lenient about the second, though, and measurably so: it accepts the
+// Java/POSIX `pt_BR` and the miscased `PT-br` and quietly normalizes both
+// to `pt-BR`, and it reads `en-USA` as the language `usa` rather than as
+// a typo. Requiring the value to ALREADY be canonical closes that: one
+// spelling per locale, and a plausible typo that happens to parse as some
+// other language is refused instead of honored.
+//
+// No default: see the Locale field's comment on why.
+func validateLocale(m *Manifest) error {
+	if strings.TrimSpace(m.Locale) == "" {
+		return fmt.Errorf("mar.json: locale is required (a BCP 47 tag, e.g. \"en\" or \"pt-BR\"). It becomes the page's lang attribute, which decides the screen reader's voice")
+	}
+	tag, err := language.Parse(m.Locale)
+	if err != nil {
+		return fmt.Errorf("mar.json: locale %q is not a language tag (%v)", m.Locale, err)
+	}
+	if canonical := tag.String(); canonical != m.Locale {
+		return fmt.Errorf("mar.json: locale %q is not the canonical spelling, write %q", m.Locale, canonical)
 	}
 	return nil
 }

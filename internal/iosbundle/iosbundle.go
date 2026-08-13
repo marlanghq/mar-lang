@@ -97,6 +97,15 @@ type Spec struct {
 	// `mar dev` legitimately don't need a production URL.
 	DefaultBaseURL string
 
+	// Locale is the app's language from mar.json, a canonical BCP 47
+	// tag. Baked into Info.plist twice, for two different readers:
+	// as CFBundleDevelopmentRegion, which is what iOS itself takes
+	// the app's language to be (the counterpart of <html lang> on
+	// the web), and as MarLocale, which is what the `App.locale`
+	// builtin reads. Required in the manifest; empty means a caller
+	// that had no manifest, and falls back to "en".
+	Locale string
+
 	// MarVersion is stamped into the per-file Swift header so anyone
 	// looking at the generated code knows which `mar` produced it
 	// (and that hand-editing won't survive the next build). Empty =
@@ -160,6 +169,11 @@ func Generate(spec Spec, outDir string) (projectDir string, err error) {
 		marVersion = "dev"
 	}
 
+	locale := spec.Locale
+	if locale == "" {
+		locale = "en"
+	}
+
 	subs := map[string]string{
 		"__MAR_RUNTIME_VERSION__":   marVersion,
 		"__MAR_APP_NAME__":          swiftName,
@@ -174,6 +188,7 @@ func Generate(spec Spec, outDir string) (projectDir string, err error) {
 		// so the checklist app can't get hijacked by a game's dev server
 		// that happens to be running on the same LAN.
 		"__MAR_PROJECT_NAME__": spec.AppName,
+		"__MAR_LOCALE__":       locale,
 	}
 
 	// One header per Swift file, stamped with the generator version

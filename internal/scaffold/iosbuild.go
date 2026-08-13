@@ -157,6 +157,7 @@ func BuildIOS(entry, distDir, marVersion string) (IOSBuildResult, error) {
 		MarketingVersion: ios.MarketingVersion,
 		BuildNumber:      ios.BuildNumber,
 		DefaultBaseURL:   ios.ServerURL,
+		Locale:           manifest.ResolveLocale(),
 		MarVersion:       marVersion,
 		EmbeddedProgram:  programJSON,
 	}

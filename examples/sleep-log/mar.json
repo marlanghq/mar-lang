@@ -1,5 +1,6 @@
 {
   "name": "sleep-log",
+  "locale": "en",
   "deploy": {
     "fly": {
       "app": "mar-sleep-log",

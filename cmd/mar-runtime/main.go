@@ -353,6 +353,14 @@ func runFromPath(path string) error {
 		Burst: rateLimitCfg.ResolvedBurst(),
 	}))
 
+	// The app's language, from mar.json. It reaches the page as
+	// <html lang>, which is what a screen reader picks its voice
+	// from, and app code as `App.locale`. Required in the manifest,
+	// so this is a validated BCP 47 tag whenever there is a manifest
+	// at all (see ResolveLocale for the case with none).
+	jsserve.SetLocale(manifest.ResolveLocale())
+	runtime.SetLocale(manifest.ResolveLocale())
+
 	// PWA manifest + icons for a fullstack frontend. No icon
 	// re-validation here: `mar build` already checked it.
 	jsserve.SetPWA(manifest.ResolvePWA(projectDir))

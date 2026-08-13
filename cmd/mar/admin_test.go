@@ -52,6 +52,7 @@ func TestPatchAdmins_AddToEmpty(t *testing.T) {
 func TestPatchAdmins_AppendPreservesOrder(t *testing.T) {
 	raw := []byte(`{
   "name": "my-app",
+  "locale": "en",
   "admins": [
     "z@x.com",
     "a@x.com"
@@ -89,6 +90,7 @@ func TestPatchAdmins_AppendPreservesOrder(t *testing.T) {
 func TestPatchAdmins_NoChangeWhenIdempotent(t *testing.T) {
 	raw := []byte(`{
   "name": "x",
+  "locale": "en",
   "admins": ["me@x.com"]
 }
 `)
@@ -110,6 +112,7 @@ func TestPatchAdmins_NoChangeWhenIdempotent(t *testing.T) {
 func TestPatchAdmins_RemoveAll(t *testing.T) {
 	raw := []byte(`{
   "name": "x",
+  "locale": "en",
   "admins": ["me@x.com"]
 }
 `)
@@ -138,6 +141,7 @@ func TestPatchAdmins_RemoveAll(t *testing.T) {
 func TestPatchAdmins_PreservesOtherFields(t *testing.T) {
 	raw := []byte(`{
   "name": "x",
+  "locale": "en",
   "auth": { "sessionSecret": "env:SESSION" },
   "mail": { "from": "noreply@x.com" }
 }
@@ -174,7 +178,8 @@ func TestRunAdminAddRoundTrip(t *testing.T) {
 		}
 	}
 	must(os.WriteFile(filepath.Join(dir, "mar.json"), []byte(`{
-  "name": "x"
+  "name": "x",
+  "locale": "en"
 }
 `), 0o644))
 
@@ -209,7 +214,7 @@ func TestRunAdminAddRejectsBadEmail(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	must(os.WriteFile(filepath.Join(dir, "mar.json"), []byte(`{"name":"x"}`), 0o644))
+	must(os.WriteFile(filepath.Join(dir, "mar.json"), []byte(`{"name":"x","locale":"en"}`), 0o644))
 	prevWD, _ := os.Getwd()
 	t.Cleanup(func() { os.Chdir(prevWD) })
 	must(os.Chdir(dir))
@@ -242,7 +247,7 @@ func TestLoadAdminsFromManifest(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := LoadAdminsFromManifest(&project.Manifest{Admins: tc.in})
+			got := LoadAdminsFromManifest(&project.Manifest{Locale: "en", Admins: tc.in})
 			if len(got) != len(tc.want) {
 				t.Fatalf("got %v, want %v", got, tc.want)
 			}

@@ -60,7 +60,7 @@ func newRestoreFixture(t *testing.T) *restoreFixture {
 	// resolves it against the project dir.
 	manifestPath := filepath.Join(dir, "mar.json")
 	if err := os.WriteFile(manifestPath,
-		[]byte(`{"name":"restoretest","database":{"path":"./bigapp.db"}}`),
+		[]byte(`{"name":"restoretest","locale":"en","database":{"path":"./bigapp.db"}}`),
 		0o644); err != nil {
 		t.Fatal(err)
 	}

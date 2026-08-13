@@ -1,5 +1,6 @@
 {
   "name": "team-notes",
+  "locale": "en",
   "ios": {
     "bundleId": "com.yourcompany.teamnotes",
     "displayName": "team-notes",

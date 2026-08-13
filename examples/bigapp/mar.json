@@ -1,5 +1,6 @@
 {
   "name": "bigapp",
+  "locale": "en",
   "ios": {
     "bundleId": "com.yourcompany.bigapp",
     "displayName": "BigApp",

@@ -30,7 +30,7 @@ func TestWriteSnapshot_OwnerOnlyPerms(t *testing.T) {
 	db := openTestDB(t)
 	project := t.TempDir()
 	if err := os.WriteFile(filepath.Join(project, "mar.json"),
-		[]byte(`{"name":"perms-test"}`), 0o600); err != nil {
+		[]byte(`{"name":"perms-test","locale":"en"}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 

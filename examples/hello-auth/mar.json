@@ -1,3 +1,4 @@
 {
-  "name": "hello-auth"
+  "name": "hello-auth",
+  "locale": "en"
 }

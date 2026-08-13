@@ -550,6 +550,11 @@ sectionsFor m =
                     [ { moduleName = "App", name = "shared", signature = "{ init : (a, Cmd b), update : b -> a -> (a, Cmd b), subscriptions : a -> Sub b } -> App.Shared a b", side = "frontend", description = "Build the one app-wide model that outlives navigation: loaded once, readable from any page, and unaffected by moving between screens. Pages read it with Page.withShared and change it with Cmd.toShared.", examples = [ [ "cart : App.Shared Int msg", "cart =", "    App.shared", "        { init = (0, Cmd.none)", "        , update = \\_ model -> (model, Cmd.none)", "        , subscriptions = \\_ -> Sub.none", "        }" ] ] }
                     ]
               }
+            , { category = "What the app declared"
+              , entries =
+                    [ { moduleName = "App", name = "locale", signature = "String", side = "both", description = "The language the app is written in, as declared by `locale` in mar.json (\"en\", \"pt-BR\"). The same tag the page carries as its `lang`, which is what a screen reader picks its voice from. It never changes while the app runs.", examples = [ [ "greeting = if App.locale    -- \"pt-BR\" then \"Ola\" else \"Hello\"" ] ] }
+                    ]
+              }
             ]
 
         "Page" ->

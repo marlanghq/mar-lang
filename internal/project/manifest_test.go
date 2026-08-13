@@ -44,14 +44,14 @@ func TestToSMTPConfig(t *testing.T) {
 	})
 
 	t.Run("manifest without mail block yields zero config", func(t *testing.T) {
-		got := ToSMTPConfig(&Manifest{Name: "x"})
+		got := ToSMTPConfig(&Manifest{Locale: "en", Name: "x"})
 		if got.Host != "" {
 			t.Errorf("Host: got %q, want empty", got.Host)
 		}
 	})
 
 	t.Run("default port applied when smtpPort missing", func(t *testing.T) {
-		got := ToSMTPConfig(&Manifest{
+		got := ToSMTPConfig(&Manifest{Locale: "en",
 			Mail: &MailConfig{
 				SMTPHost:     "smtp.resend.com",
 				SMTPUsername: "resend",
@@ -67,7 +67,7 @@ func TestToSMTPConfig(t *testing.T) {
 	})
 
 	t.Run("explicit port preserved", func(t *testing.T) {
-		got := ToSMTPConfig(&Manifest{
+		got := ToSMTPConfig(&Manifest{Locale: "en",
 			Mail: &MailConfig{
 				SMTPHost: "smtp.aws.com",
 				SMTPPort: 465,

@@ -13,7 +13,7 @@ func TestEnvRefsFromBytes(t *testing.T) {
 	}{
 		{
 			name: "no refs returns nil",
-			raw:  `{"name": "x"}`,
+			raw:  `{"name":"x","locale":"en"}`,
 			want: nil,
 		},
 		{
@@ -84,10 +84,10 @@ func TestSessionSecretEnvVar(t *testing.T) {
 	}{
 		{"nil manifest", nil, ""},
 		{"no auth block", &Manifest{}, ""},
-		{"no sessionSecret", &Manifest{Auth: &AuthConfig{}}, ""},
-		{"literal secret (dev mode)", &Manifest{Auth: &AuthConfig{SessionSecret: "literal-secret-12345"}}, ""},
-		{"env ref", &Manifest{Auth: &AuthConfig{SessionSecret: "env:SESSION_SECRET"}}, "SESSION_SECRET"},
-		{"env ref with custom name", &Manifest{Auth: &AuthConfig{SessionSecret: "env:MY_APP_SESSION_KEY"}}, "MY_APP_SESSION_KEY"},
+		{"no sessionSecret", &Manifest{Locale: "en", Auth: &AuthConfig{}}, ""},
+		{"literal secret (dev mode)", &Manifest{Locale: "en", Auth: &AuthConfig{SessionSecret: "literal-secret-12345"}}, ""},
+		{"env ref", &Manifest{Locale: "en", Auth: &AuthConfig{SessionSecret: "env:SESSION_SECRET"}}, "SESSION_SECRET"},
+		{"env ref with custom name", &Manifest{Locale: "en", Auth: &AuthConfig{SessionSecret: "env:MY_APP_SESSION_KEY"}}, "MY_APP_SESSION_KEY"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

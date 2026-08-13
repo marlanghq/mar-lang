@@ -175,6 +175,7 @@ func TestLoadManifest_FoldsDotenv(t *testing.T) {
 	dir := t.TempDir()
 	manifest := `{
   "name": "test",
+  "locale": "en",
   "entry": "Main.mar",
   "mail": {
     "smtpHost": "env:DOTENV_SMTP_HOST",

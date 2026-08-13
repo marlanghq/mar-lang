@@ -52,6 +52,37 @@ var (
 	publicDir   string
 )
 
+// locale is the app's language from mar.json, a validated BCP 47 tag.
+// It reaches the page as the `lang` attribute, which is what a screen
+// reader picks its voice from. Required in the manifest, so the only
+// way it is empty here is a caller that never called SetLocale (a test
+// serving the shell directly); "en" keeps that path rendering valid
+// HTML rather than `lang=""`, which browsers read as "no idea".
+var (
+	localeMu sync.RWMutex
+	locale   = "en"
+)
+
+// SetLocale installs the app's language. Called once from the CLI
+// before ServeLive, with the value already validated by the manifest.
+// An empty tag is ignored rather than stored: `lang=""` is worse than
+// a wrong guess, because it tells assistive technology the language is
+// unknown, and the CLI passes a validated tag anyway.
+func SetLocale(tag string) {
+	if tag == "" {
+		return
+	}
+	localeMu.Lock()
+	locale = tag
+	localeMu.Unlock()
+}
+
+func currentLocale() string {
+	localeMu.RLock()
+	defer localeMu.RUnlock()
+	return locale
+}
+
 // SetPublicDir installs the static-asset directory. Called once from
 // the CLI before ServeLive. Passing "" disables static serving.
 func SetPublicDir(dir string) {
@@ -195,7 +226,11 @@ func serveProgramJSON(lp *LiveProgram) http.HandlerFunc {
 func renderShell(w http.ResponseWriter, lp *LiveProgram) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
-	_, _ = fmt.Fprintf(w, pageHTML, lp.Title())
+	// Content-Language says the same thing as the <html lang> below,
+	// one layer down, for the readers that never look at the markup:
+	// crawlers, proxies, and anything doing content negotiation.
+	w.Header().Set("Content-Language", currentLocale())
+	_, _ = fmt.Fprintf(w, pageHTML, currentLocale(), lp.Title())
 }
 
 // programETag returns the strong ETag value for a program.json payload.
@@ -232,7 +267,7 @@ func programETag(body []byte) string {
 // promise is stashed on `window.__marProgramPromise` so the
 // runtime's marBootstrap can await it instead of re-fetching.
 const pageHTML = `<!doctype html>
-<html lang="en">
+<html lang="%s">
 <head>
 <meta charset="utf-8">
 <!-- viewport-fit=cover: extends the layout into iOS safe-area gutters
