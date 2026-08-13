@@ -552,7 +552,7 @@ sectionsFor m =
               }
             , { category = "What the app declared"
               , entries =
-                    [ { moduleName = "App", name = "locale", signature = "String", side = "both", description = "The language the app is written in, as declared by `locale` in mar.json (\"en\", \"pt-BR\"). The same tag the page carries as its `lang`, which is what a screen reader picks its voice from. It never changes while the app runs.", examples = [ [ "greeting = if App.locale    -- \"pt-BR\" then \"Ola\" else \"Hello\"" ] ] }
+                    [ { moduleName = "App", name = "locale", signature = "String", side = "both", description = "The language the app is written in, as declared by `locale` in mar.json (\"en\", \"pt-BR\"). The same tag the page carries as its `lang`, which is what a screen reader picks its voice from. It never changes while the app runs.", examples = [ [ "greeting =", "    case App.locale of", "        \"pt-BR\" -> \"Ola\"", "        _ -> \"Hello\"" ] ] }
                     ]
               }
             ]

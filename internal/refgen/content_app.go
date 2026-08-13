@@ -801,7 +801,7 @@ var appExamples = map[string][]string{
 	"App.frontend":  {"App.frontend []"},
 	"App.backend":   {"App.backend { services = [] }"},
 	"App.fullstack": {"App.fullstack { services = [], pages = [] }"},
-	"App.locale":    {"greeting = if App.locale == \"pt-BR\" then \"Ola\" else \"Hello\""},
+	"App.locale":    {"greeting =\n    case App.locale of\n        \"pt-BR\" -> \"Ola\"\n        _ -> \"Hello\""},
 
 	// Device
 	"Device.watch":     {"type Msg = Resized Int Int\n\nsubscriptions model = Device.watch (\\device -> Resized device.width device.height)"},

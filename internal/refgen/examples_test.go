@@ -115,11 +115,18 @@ func TestExamplesHold(t *testing.T) {
 // result as a Mar comment. That rewrite is only correct for examples that ARE
 // an equality; a compile-only snippet carrying ` == ` somewhere inside (in a
 // lambda, say) would be silently mangled on the page. Keep the two apart.
+//
+// Only a Bool EXPRESSION earns the rewrite, and the check has to be written
+// that way round. It used to skip anything parseExpr could not read, which
+// meant a declaration snippet was waved through without ever being looked at:
+// `greeting = if App.locale == "pt-BR" then ...` is not an expression, so it
+// failed to parse, so it was skipped, so it shipped to the page as
+// `greeting = if App.locale    -- "pt-BR" then "Ola" else "Hello"`. The
+// examples this guard cannot classify are exactly the ones it must not trust.
 func TestNonEqualityExamplesAreUnambiguous(t *testing.T) {
 	for _, e := range Entries() {
 		for _, ex := range e.Examples {
-			ty, _, err := parseExpr(ex)
-			if err != nil || typecheck.Pretty(ty) == "Bool" {
+			if ty, _, err := parseExpr(ex); err == nil && typecheck.Pretty(ty) == "Bool" {
 				continue
 			}
 			if strings.Contains(ex, " == ") {
