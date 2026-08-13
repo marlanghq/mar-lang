@@ -463,7 +463,16 @@ var OutOfScope = map[string]string{
 	// renderers are compared by the drift and parity tests instead.
 	"UI":     "renders; compared by the renderer parity tests",
 	"Canvas": "renders; compared by the pixel-golden tests",
-	"Sound":  "synthesises audio; compared by the sound shaping tests",
+	// Out of THIS corpus, which reduces everything to a String, and a Sound
+	// cannot be one. It is not out of conformance: sound.go in this package
+	// holds its own corpus, compared voice by voice across the two runtimes
+	// that synthesise, and gated the same way.
+	//
+	// The old reason here said "compared by the sound shaping tests", and
+	// those ran node only. An exemption that names cover it does not have is
+	// worse than no exemption, because it stops anyone from looking: that is
+	// how the master level sat at 0.35 on one side and 0.5 on the other.
+	"Sound": "builds audio, not a value; compared by the sound corpus (sound.go)",
 
 	// Read the world. There is no value to compare, only a device state.
 	"Keyboard": "mirrors device input state",

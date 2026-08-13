@@ -44,6 +44,38 @@ private struct Voice {
 private let soundMinRampMs: Double = 5
 private func rampSec(_ ms: Double) -> Double { max(soundMinRampMs, ms) / 1000 }
 
+/// PolyBLEP: what keeps a hard-edged wave from aliasing.
+///
+/// A square or a sawtooth computed straight from the phase (`2p - 1`) has a
+/// vertical edge, and a vertical edge has harmonics forever. Everything above
+/// half the sample rate folds back down as inharmonic content, heard not as
+/// brightness but as a metallic, tense edge that worsens with pitch. At 900Hz,
+/// a pitch Myrkheim actually uses, most of the harmonic series is past Nyquist
+/// and comes back as hash between the real partials.
+///
+/// The web side never had this: it asks the browser for an `OscillatorNode`,
+/// which the Web Audio spec requires to be band-limited, and builds
+/// `Sound.duty` from a 32-harmonic PeriodicWave. This synth computes its own
+/// samples, so it does its own band-limiting, and this is the cheap standard
+/// way: near an edge, replace the sample with a polynomial that approximates
+/// the same step without the infinite series.
+///
+/// `t` is the phase 0..1 and `dt` the phase advanced per sample, so `dt` is the
+/// width of an edge in phase. Away from an edge the correction is exactly zero,
+/// which is why a triangle and a rest pay nothing for this.
+@inline(__always) private func polyBlep(_ t: Double, _ dt: Double) -> Double {
+    if dt <= 0 || dt >= 0.5 { return 0 }     // nothing to smooth at DC or past Nyquist
+    if t < dt {
+        let x = t / dt
+        return x + x - x * x - 1
+    }
+    if t > 1 - dt {
+        let x = (t - 1) / dt
+        return x * x + x + x + 1
+    }
+    return 0
+}
+
 /// A voice placed on the engine's sample timeline, with per-voice synthesis
 /// state advanced by the render callback.
 private final class LiveVoice {
@@ -166,8 +198,16 @@ final class MarSound: @unchecked Sendable {
 
     // App-owned audio controls (Sound.setMuted / Sound.master). masterLevel
     // mirrors the JS 0..0.5 headroom scaling; muted ducks everything sounding.
+    //
+    // The DEFAULT has to match soundMasterLevel in runtime.js, and for a while
+    // it did not: 0.5 here against 0.35 there, so the same game came out 1.43x
+    // louder on iOS (about 3 dB) than the web build it was tuned against. Worse
+    // than the level itself, the extra gain crossed the 0.7 ceiling knee far
+    // more often, and every crossing is harmonics: the sound was not just
+    // louder, it was harsher. 0.35 is `Sound.master 70`, the headroom an app
+    // gets before it asks for anything.
     private var muted = false
-    private var masterLevel: Double = 0.5
+    private var masterLevel: Double = 0.35
 
     private init() {}
 
@@ -281,16 +321,22 @@ final class MarSound: @unchecked Sendable {
         }
 
         // Oscillator.
-        lv.phase += freq / sr
+        let dt = freq / sr                 // phase per sample: the width of an edge
+        lv.phase += dt
         let wrapped = lv.phase >= 1        // one full cycle at the note's pitch
         if wrapped { lv.phase -= 1 }
         let p = lv.phase
         var osc: Double
         switch v.wave {
         case "Triangle":
+            // Left naive on purpose: a triangle has no jump in VALUE, only in
+            // slope, so its harmonics fall off as 1/n squared instead of 1/n.
+            // The aliasing is there and an order of magnitude quieter, and the
+            // fix for it (polyBLAMP) has scaling nobody here can check by ear.
+            // The two waves with a vertical edge are the two corrected below.
             osc = 4 * abs(p - 0.5) - 1
         case "Sawtooth":
-            osc = 2 * p - 1
+            osc = 2 * p - 1 - polyBlep(p, dt)   // one edge per cycle, at the wrap
         case "Noise":
             // Sample-and-hold at the note's pitch: draw a new random value only
             // when the phase completes a cycle, and hold it in between. Low keys
@@ -316,7 +362,12 @@ final class MarSound: @unchecked Sendable {
             }
         default: // Square, with optional duty
             let duty = (v.duty >= 1 && v.duty <= 99) ? v.duty / 100 : 0.5
-            osc = p < duty ? 1 : -1
+            // Two edges per cycle: up at the wrap, down at the duty point. The
+            // second correction reads the phase that is zero exactly when p
+            // reaches `duty`, which puts it on the falling edge at any width.
+            osc = (p < duty ? 1 : -1)
+                + polyBlep(p, dt)
+                - polyBlep(fmod(p + 1 - duty, 1), dt)
         }
         return shaped(lv, osc, sr: sr) * amp
     }
@@ -370,18 +421,29 @@ final class MarSound: @unchecked Sendable {
             let cents = b.vibDepth * sin(2 * Double.pi * b.vibPhase)
             f *= pow(2, cents / 1200)
         }
-        b.phase += f / sr
+        let dt = f / sr                    // as in voiceSample: the edge width
+        b.phase += dt
         if b.phase >= 1 { b.phase -= 1 }
         let p = b.phase
         var osc: Double
         switch b.wave {
         case "Triangle":
+            // Left naive on purpose: a triangle has no jump in VALUE, only in
+            // slope, so its harmonics fall off as 1/n squared instead of 1/n.
+            // The aliasing is there and an order of magnitude quieter, and the
+            // fix for it (polyBLAMP) has scaling nobody here can check by ear.
+            // The two waves with a vertical edge are the two corrected below.
             osc = 4 * abs(p - 0.5) - 1
         case "Sawtooth":
-            osc = 2 * p - 1
+            osc = 2 * p - 1 - polyBlep(p, dt)   // one edge per cycle, at the wrap
         default:
             let duty = (b.duty >= 1 && b.duty <= 99) ? b.duty / 100 : 0.5
-            osc = p < duty ? 1 : -1
+            // Two edges per cycle: up at the wrap, down at the duty point. The
+            // second correction reads the phase that is zero exactly when p
+            // reaches `duty`, which puts it on the falling edge at any width.
+            osc = (p < duty ? 1 : -1)
+                + polyBlep(p, dt)
+                - polyBlep(fmod(p + 1 - duty, 1), dt)
         }
         return bedShaped(b, osc, sr: sr) * b.amp
     }

@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -388,5 +389,46 @@ process.stdout.write(out.join(' '));
 		t.Fatalf("the master ceiling does not hold its two promises.\n got: %s\nwant: %s\n"+
 			"an id(...)=no means a mix that was already in range now sounds different;\n"+
 			"a maxUnder1/limitUnder1=no means the output can still be driven past full scale and clip.", got, want)
+	}
+}
+
+// The master level is the one number every sound passes through, and the two
+// runtimes each keep their own copy of it. They drifted: the web sat at 0.35
+// and iOS at 0.5, so the same game played 1.43x louder (about 3 dB) on the
+// phone than in the browser it was tuned in. The level was only half of it.
+// The soft ceiling above bends at 0.7, so the louder side also crossed the knee
+// far more often, and every crossing adds harmonics: the drift was audible as
+// harshness, not just as volume.
+//
+// Nothing pinned the pair, which is how they came apart in the first place. The
+// scaling (0..100 -> 0..0.5) was identical on both sides the whole time, so it
+// is specifically the DEFAULT, the value an app gets before it ever calls
+// Sound.master, that this test exists to hold together.
+func TestMasterLevelDefaultMatchesAcrossRuntimes(t *testing.T) {
+	read := func(path, pattern string) string {
+		t.Helper()
+		src, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read %s: %v", path, err)
+		}
+		re := regexp.MustCompile(pattern)
+		m := re.FindStringSubmatch(string(src))
+		if m == nil {
+			t.Fatalf("%s no longer declares the master level as `%s`.\n"+
+				"If the declaration moved, point this test at it: the two "+
+				"runtimes agreeing on this number is the thing being tested.",
+				path, pattern)
+		}
+		return m[1]
+	}
+
+	web := read("runtime.js", `soundMasterLevel\s*=\s*([0-9.]+)`)
+	ios := read("../iosbundle/template/Sources/MarSound.swift",
+		`masterLevel:\s*Double\s*=\s*([0-9.]+)`)
+
+	if web != ios {
+		t.Errorf("master level default drifted: runtime.js has %s, MarSound.swift has %s.\n"+
+			"Every sound in every app is scaled by this, so the two builds of "+
+			"one game do not sound alike until they agree.", web, ios)
 	}
 }
