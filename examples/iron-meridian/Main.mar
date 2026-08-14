@@ -9,6 +9,7 @@ import Bot exposing (..)
 import Draw exposing (..)
 import Hud exposing (..)
 import Sfx exposing (..)
+import Music exposing (missionTheme, skirmishThemeCount)
 import Story exposing (..)
 import Missions exposing (..)
 import Canvas exposing ( canvas, rect, circle, group, rgb, rgba
@@ -86,7 +87,12 @@ type alias Model =
     , menuOpen : Bool        -- esc menu inside a mission
     , speed : Int            -- 0 slow, 1 normal, 2 fast
     , simAcc : Int
-    , muted : Bool
+    -- Two switches, not one. The music is a bed you may want gone while the
+    -- callouts and the gunfire stay, and Sound.setMuted cannot serve both: it
+    -- ducks the MASTER gain, so it is all or nothing by construction. Each
+    -- source is silenced where it is produced instead.
+    , mutedMusic : Bool
+    , mutedSfx : Bool
     , help : Bool
     , log : Bool             -- the story log overlay (L)
     , reBrief : Bool         -- the briefing is being RE-read, not delivered
@@ -96,6 +102,8 @@ type alias Model =
     , skRace : Int           -- 0 compact 1 combine 2 vessari
     , skFoe : Int
     , skDiff : Int
+    , skTheme : Int          -- which mission's music a skirmish borrowed, 1..5
+    , skSeed : Random.Seed   -- and the chain it was drawn from
     , radioIx : Int
     , endLine : Int
     , autoplay : Bool        -- QA autopilot: the bot drives side 1 (Backquote)
@@ -136,7 +144,8 @@ freshModel =
     , menuOpen = False
     , speed = 1
     , simAcc = 0
-    , muted = False
+    , mutedMusic = False
+    , mutedSfx = False
     , help = False
     , log = False
     , reBrief = False
@@ -146,6 +155,11 @@ freshModel =
     , skRace = 0
     , skFoe = 1
     , skDiff = 1
+    , skTheme = 1
+    -- The music gets its OWN chain rather than drawing from the game's. The
+    -- game is seeded from a constant so a map replays identically, which means
+    -- a draw off that seed would hand every skirmish the same tune forever.
+    , skSeed = Random.initialSeed 20260814
     , radioIx = 0
     , endLine = 0
     , autoplay = False
@@ -1231,7 +1245,7 @@ wheel dx dy model =
 pressSidebar : Int -> Int -> Model -> Model
 pressSidebar x y model =
     let
-        mx = mmX { w = model.w, h = model.h, tab = model.tab, kbMode = model.kbMode, shownCredits = 0, sel = [], attackArmed = False, superArmed = False, paused = False, muted = False, speed = 0, helpOpen = False, logOpen = False, logFactions = [], logCast = [], logSoFar = [], objectives = [], clock = 0, hoverCell = 0 - 1, selB = 0 - 1 }
+        mx = mmX { w = model.w, h = model.h, tab = model.tab, kbMode = model.kbMode, shownCredits = 0, sel = [], attackArmed = False, superArmed = False, paused = False, mutedMusic = False, mutedSfx = False, speed = 0, helpOpen = False, logOpen = False, logFactions = [], logCast = [], logSoFar = [], objectives = [], clock = 0, hoverCell = 0 - 1, selB = 0 - 1 }
     in
     if x >= mx && x < mx + mmSizeOf model.h && y >= mmY && y < mmY + mmSizeOf model.h then
         -- minimap: jump the camera, keep panning while dragging
@@ -1515,7 +1529,7 @@ withAtkFlag tgt g =
 
 ackCmd : Bool -> Model -> Cmd Msg
 ackCmd atk model =
-    if model.muted then
+    if model.mutedSfx then
         Cmd.none
     else
         Sound.play (cueSound (CVoice (selLeaderKind model) atk))
@@ -1792,11 +1806,19 @@ playKey k model =
         Keyboard.KeyP ->
             ( { model | paused = bnot model.paused }, Cmd.none )
 
+        -- M silences the music, N the effects. S would have been the obvious
+        -- partner to M, and it is taken: S is Stop, and in an RTS that key is
+        -- not up for negotiation. N is free and sits next to M.
+        --
+        -- Neither calls Sound.setMuted. That is the master gain, and reaching
+        -- for it here is what broke unmuting before: it also stops the runtime
+        -- from STARTING a loop, so the music could not come back. Silence is
+        -- applied at each source now, and the master is left alone.
         Keyboard.KeyM ->
-            let
-                m2 = bnot model.muted
-            in
-            ( { model | muted = m2 }, Sound.setMuted m2 )
+            ( { model | mutedMusic = bnot model.mutedMusic }, Cmd.none )
+
+        Keyboard.KeyN ->
+            ( { model | mutedSfx = bnot model.mutedSfx }, Cmd.none )
 
         Keyboard.Minus ->
             ( { model | speed = max 0 (model.speed - 1) }, Cmd.none )
@@ -2016,7 +2038,16 @@ titleClick x y model =
     else if btnHit x y (cx - 110) (by + 44) 220 34 then
         ( { model | screen = SSkirmish }, menuBlip model )
     else if btnHit x y (cx - 110) (by + 88) 220 34 then
-        ( { model | screen = SPlay, help = True, mission = 0 } |> launchIfEmpty, menuBlip model )
+        -- A skirmish borrows one of the five campaign themes, drawn ONCE right
+        -- here. It cannot be drawn in subscriptions: that runs every frame, so
+        -- it would pick a new tune sixty times a second and restart the loop on
+        -- every one of them.
+        case rnd model.skSeed skirmishThemeCount of
+            ( s2, pick ) ->
+                ( { model | screen = SPlay, help = True, mission = 0, skSeed = s2, skTheme = pick + 1 }
+                    |> launchIfEmpty
+                , menuBlip model
+                )
     else
         ( model, Cmd.none )
 
@@ -2032,7 +2063,7 @@ launchIfEmpty model =
 
 menuBlip : Model -> Cmd Msg
 menuBlip model =
-    if model.muted then Cmd.none else Sound.play (cueSound CMenuMove)
+    if model.mutedSfx then Cmd.none else Sound.play (cueSound CMenuMove)
 
 
 selectClick : Int -> Int -> Model -> (Model, Cmd Msg)
@@ -2174,7 +2205,8 @@ hudStateOf model =
     , attackArmed = model.atkArmed
     , superArmed = model.superArmed
     , paused = model.paused
-    , muted = model.muted
+    , mutedMusic = model.mutedMusic
+    , mutedSfx = model.mutedSfx
     , speed =
         if model.speed == 0 then 50
         else if model.speed == 1 then 100
@@ -2834,7 +2866,42 @@ subscriptions model =
             SPlay -> Time.every (Time.millis 16) (\_ -> Frame)
             _ -> Sub.none
         , Keyboard.watch KeysChanged
+        -- The music, which plays only where the fighting is. Menus, briefings
+        -- and the win and lose screens stay quiet on purpose: the briefing is
+        -- read, and a track under it competes with the reading.
+        --
+        -- Dropping the subscription IS how the music is silenced, and it is
+        -- safe only because nothing here touches Sound.setMuted any more. That
+        -- was the old bug: setMuted put the runtime in a state where it refuses
+        -- to START a loop, so putting the subscription back after unmuting
+        -- produced nothing and the music was gone until a restart. With the
+        -- master left alone, the loop stops and starts on demand.
+        --
+        -- It restarts from the top rather than resuming mid-phrase. For a
+        -- 24-bar bed that is the better of the two: hearing it begin is a
+        -- clearer answer to "did that work?" than coming back mid-bar.
+        , case model.screen of
+            SPlay ->
+                if model.mutedMusic then
+                    Sub.none
+
+                else
+                    Sound.loop (missionTheme (playingTheme model))
+
+            _ ->
+                Sub.none
         ]
+
+
+-- Which theme is under the current fight: the mission's own, or for a skirmish
+-- the one drawn when it started.
+playingTheme : Model -> Int
+playingTheme model =
+    if model.mission == 0 then
+        model.skTheme
+
+    else
+        model.mission
 
 
 page : Page
