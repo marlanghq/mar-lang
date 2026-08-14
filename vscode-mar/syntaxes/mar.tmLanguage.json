@@ -80,7 +80,7 @@
         {
           "comment": "Builtin types. `Decimal` (not Float, Mar has no binary floats) and the Canvas/Sound/Device vocabulary belong here; anything absent still gets the generic capitalized-identifier rule below.",
           "name": "support.type.mar",
-          "match": "\\b(Int|Decimal|String|Bool|Char|List|Maybe|Result|Dict|Set|Time|Duration|Order|Task|Cmd|Sub|View|KeyedView|Page|Path|Attr|Width|Height|Size|Inline|Canvas|Color|Shape|Transform|Align|Blend|Pointer|Device|Sound|Service|ExposedService|Entity|Column|Constraint|Auth|AdminSession|Method)\\b"
+          "match": "\\b(Int|Decimal|String|Bool|Char|List|Maybe|Result|Dict|Set|Time|Duration|Angle|Order|Task|Cmd|Sub|View|KeyedView|Page|Path|Attr|Width|Height|Size|Inline|Canvas|Color|Shape|Transform|Align|Blend|Pointer|Device|Sound|Service|ExposedService|Entity|Column|Constraint|Auth|AdminSession|Method)\\b"
         },
         {
           "name": "constant.language.mar",
