@@ -34,7 +34,8 @@ type alias HudState =
     , attackArmed : Bool
     , superArmed : Bool      -- superweapon is waiting for a target
     , paused : Bool
-    , muted : Bool
+    , mutedMusic : Bool
+    , mutedSfx : Bool
     , speed : Int            -- percent
     , helpOpen : Bool
     , logOpen : Bool         -- the story log (L)
@@ -111,8 +112,19 @@ drawTopBar g hs =
         , [ Canvas.text (hs.w - sideW - 96) 17 10 Canvas.Left (rgb 160 168 180)
                 ("SPEED x" ++ String.fromInt (hs.speed // 100) ++ (if modBy 100 hs.speed == 50 then ".5" else ""))
           ]
-        , if hs.muted then
-            [ Canvas.text (hs.w - sideW - 160) 17 10 Canvas.Left (rgb 240 180 90) "MUTED" ]
+        -- Naming what is off beats a bare MUTED: with two switches, the
+        -- interesting question is which one you hit.
+        , if hs.mutedMusic || hs.mutedSfx then
+            [ Canvas.text (hs.w - sideW - 190) 17 10 Canvas.Left (rgb 240 180 90)
+                (if hs.mutedMusic && hs.mutedSfx then
+                    "MUTED"
+
+                 else if hs.mutedMusic then
+                    "MUSIC OFF"
+
+                 else
+                    "SFX OFF")
+            ]
           else
             []
         , [ Canvas.text (hs.w - 10) 17 10 Canvas.Right (rgb 130 136 148) "H HELP  ESC MENU" ]
@@ -1137,7 +1149,7 @@ drawHelp hs =
           -- and the old "V fire the superweapon" read as if V did the whole job.
           , helpLine x0 y0 2 False "V + CLICK  fire superweapon"
           , helpLine x0 y0 3 False "MINUS / EQUAL  game speed"
-          , helpLine x0 y0 4 False "P  pause    M  mute"
+          , helpLine x0 y0 4 False "P  pause    M  music    N  effects"
           , helpLine x0 y0 5 False "ESC  cancel / menu"
           , helpLine x0 y0 6 False "Capture derelicts with"
           , helpLine x0 y0 7 False "your engineer; sappers"
