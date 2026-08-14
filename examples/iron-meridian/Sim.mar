@@ -731,17 +731,39 @@ rallySpot rx ry slot =
     }
 
 
+-- Is this pixel close enough to the slot to count as being on it?
+onSpot : Int -> Int -> { x : Int, y : Int } -> Bool
+onSpot px py spot =
+    abs (px - spot.x) < rallyGap && abs (py - spot.y) < rallyGap
+
+
+-- A unit already WALKING to the slot has claimed it, even though it is
+-- still somewhere between the factory door and there. Only a plain move
+-- counts: a unit crossing the area on its way to a fight is passing
+-- through, not lining up.
+headedTo : Duty -> { x : Int, y : Int } -> Bool
+headedTo d spot =
+    case d of
+        OMove x y -> onSpot x y spot
+        _ -> False
+
+
 formUpAt : Int -> Int -> Int -> Game -> Duty
 formUpAt sid rx ry g =
     let
+        -- Taken means standing there OR on the way there. Standing alone
+        -- was the whole bug: a unit sent to slot 0 spends the next second
+        -- or two still at the factory door, so slot 0 kept reading as free
+        -- and every unit that came off the line behind it was sent to the
+        -- same pixel. A batch still arrived in a pile, which is exactly
+        -- what this grid was added to stop.
         free =
             \spot ->
                 bnot
                     (List.any
                         (\u ->
                             u.side == sid
-                                && abs (upx u - spot.x) < rallyGap
-                                && abs (upy u - spot.y) < rallyGap
+                                && (onSpot (upx u) (upy u) spot || headedTo u.ord spot)
                         )
                         g.units)
 
@@ -1347,6 +1369,21 @@ walkableFx g fx fy =
     tx >= 0 && ty >= 0 && tx < g.mapW && ty < g.mapH
         && tilePassable (tileAt g.tiles (idxOf g.mapW tx ty))
         && bnot (bldBlocks g tx ty)
+
+
+-- Does this PIXEL land on the building? A unit is a point and gets a 12px
+-- radius; a building is a rectangle of tiles, so the round has to come
+-- down inside the rectangle. Used by the ballistic impact path, which
+-- aims at bpx/bpy (the footprint's centre) and therefore always lands
+-- well inside it.
+inBld : Bld -> Int -> Int -> Bool
+inBld b px py =
+    let
+        tx = px // tileW
+        ty = py // tileW
+    in
+    tx >= b.tx && tx < b.tx + bW b.kind
+        && ty >= b.ty && ty < b.ty + bH b.kind
 
 
 bldBlocks : Game -> Int -> Int -> Bool
@@ -2067,7 +2104,25 @@ impact g s =
                             |> addHitFx px py
 
                     Nothing ->
-                        { g | fxs = { x = px, y = py, t = 0, ttl = 6, kind = FxSpark, a = 0, b = 0 } :: g.fxs }
+                        -- A STRUCTURE standing here counts as "whatever
+                        -- hostile stands here" too. This search used to run
+                        -- over g.units alone, and fireAt only hands the shot
+                        -- its target when dt is 1, so everything else was
+                        -- fired ballistic: a Rifle aimed at a Foundry sent
+                        -- its round to the right pixel, found no soldier
+                        -- within 12px, and the round evaporated. Rifle,
+                        -- ScoutCar, Bulwark and Scrapper could shell a base
+                        -- forever without scratching it, and since no hit
+                        -- ever landed, the under-attack klaxon never fired
+                        -- either. The alarm was never broken; nothing was
+                        -- ever being damaged.
+                        case List.head (List.filter (\b -> hostile g s.side b.side && inBld b px py) g.blds) of
+                            Just b ->
+                                hitBld s.side b.id s.dmg s.dt g
+                                    |> addHitFx px py
+
+                            Nothing ->
+                                { g | fxs = { x = px, y = py, t = 0, ttl = 6, kind = FxSpark, a = 0, b = 0 } :: g.fxs }
 
             t ->
                 damageTgt s.side t s.dmg s.dt g
