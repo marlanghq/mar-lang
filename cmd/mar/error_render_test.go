@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"mar/internal/project"
 	"mar/internal/runtime"
 )
 
@@ -85,6 +86,36 @@ func TestPrintError_BlockedMigrationError_SplitsSummaryAndHint(t *testing.T) {
 	}
 	if !strings.Contains(out, "    ALTER TABLE tasks ADD COLUMN userId INTEGER;") {
 		t.Errorf("Hint body (SQL block) missing:\n%s", out)
+	}
+}
+
+// project.ManifestFieldError is the third structured type, and the
+// one a user is most likely to meet: a fresh `mar.json` missing a
+// required field. The test runs the REAL validator rather than a
+// handmade error, so it also fails if validateLocale ever goes back
+// to returning a plain fmt.Errorf: that would silently drop the whole
+// Hint block, which is the regression worth guarding.
+func TestPrintError_ManifestFieldError_SplitsSummaryAndHint(t *testing.T) {
+	err := project.Validate(&project.Manifest{Name: "my-app"})
+	if err == nil {
+		t.Fatal("a manifest with no locale should not validate")
+	}
+	out := captureStderr(t, func() { printError("mar dev", err) })
+
+	if !strings.Contains(out, "Error: mar dev: mar.json: locale is required.") {
+		t.Errorf("Error block missing:\n%s", out)
+	}
+	if !strings.Contains(out, "Hint: locale is the language your app speaks") {
+		t.Errorf("Hint block missing:\n%s", out)
+	}
+	// The four-space indent is what makes cmd/mar render the line as
+	// a code block; losing it turns the example into prose.
+	if !strings.Contains(out, "    \"locale\": \"en\"") {
+		t.Errorf("Hint body (example block) missing:\n%s", out)
+	}
+	// Backticks are markers for the colorizer, never output.
+	if strings.Contains(out, "`") {
+		t.Errorf("backtick markers leaked into the output:\n%s", out)
 	}
 }
 

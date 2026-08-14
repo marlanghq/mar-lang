@@ -25,6 +25,34 @@ import (
 	"golang.org/x/text/language"
 )
 
+// ManifestFieldError is a validation failure on one field of
+// `mar.json`, split into a one-line Summary and a multi-line Hint so
+// the CLI can render them as the standard `Error:` (red) + `Hint:`
+// (yellow) blocks.
+//
+// Same contract as runtime.BlockedMigrationError, and for the same
+// reason: this package has no idea whether it is writing to a
+// terminal, so it MARKS identifiers with backticks and leaves the
+// coloring to cmd/mar (colorizeSummary / colorizeHint). A marked word
+// turns cyan in the prose and, when the same token appears inside an
+// indented example block, turns cyan there too, which is what makes
+// the sentence and the snippet read as one thing.
+//
+// Error() bundles the halves back together so callers that only
+// stringify still get the whole message: tests, logs, and the dev
+// server's error channel all take that path.
+type ManifestFieldError struct {
+	Summary string // one line, ends with a period
+	Hint    string // what the field is, an example, the options
+}
+
+func (e *ManifestFieldError) Error() string {
+	if e.Hint == "" {
+		return e.Summary
+	}
+	return e.Summary + "\n\n" + e.Hint
+}
+
 // Defaults for adminPanel knobs. Documented in docs/admin-panel.md §11.4.
 const (
 	DefaultRecentRequestsSize = 200
@@ -153,7 +181,20 @@ func Validate(m *Manifest) error {
 // No default: see the Locale field's comment on why.
 func validateLocale(m *Manifest) error {
 	if strings.TrimSpace(m.Locale) == "" {
-		return fmt.Errorf("mar.json: locale is required (a BCP 47 tag, e.g. \"en\" or \"pt-BR\"). It becomes the page's lang attribute, which decides the screen reader's voice")
+		// The example is indented four spaces on purpose: that is what
+		// makes cmd/mar treat the line as a code block. The quoted
+		// forms are backticked so the same token lights up in the
+		// prose and in the snippet.
+		return &ManifestFieldError{
+			Summary: "`mar.json`: `locale` is required.",
+			Hint: "`locale` is the language your app speaks, written as a BCP 47 tag.\n" +
+				"It becomes the page's `lang` attribute, which is what decides the voice\n" +
+				"a screen reader uses to read your app out loud.\n" +
+				"\n" +
+				"    \"locale\": \"en\"\n" +
+				"\n" +
+				"Use `\"en\"` for English, `\"pt-BR\"` for Brazilian Portuguese, `\"ja\"` for Japanese.",
+		}
 	}
 	tag, err := language.Parse(m.Locale)
 	if err != nil {

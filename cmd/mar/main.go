@@ -1437,6 +1437,10 @@ func errorParts(err error) (summary, hint string) {
 	if errors.As(err, &be) {
 		return be.Summary, be.Hint
 	}
+	var mf *project.ManifestFieldError
+	if errors.As(err, &mf) {
+		return mf.Summary, mf.Hint
+	}
 	return "", ""
 }
 
