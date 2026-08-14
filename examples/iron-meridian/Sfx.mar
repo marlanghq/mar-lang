@@ -5,12 +5,15 @@ import Types exposing (..)
 import Balance exposing (..)
 
 
--- IRON MERIDIAN: sound effects only (missions run no music, per the
--- design brief; the menu gets a quiet ambient pad from Main). Chip
--- grammar: Sound.tone wave hz ms, wrapped in volume/sweep/duty, mixed
--- with Sound.sequence / Sound.chord. Every cue is a one-shot fired
--- through Sound.play by Main, deduped per tick so twenty rifles firing
--- at once read as one crack, not a wall.
+-- IRON MERIDIAN: sound effects only. The music that runs under a mission
+-- lives in Music.mar and is a looped subscription, not a cue; this file
+-- is the one-shots. Chip grammar: Sound.tone wave hz ms, wrapped in
+-- volume/sweep/duty, mixed with Sound.sequence / Sound.chord. Every cue
+-- is a one-shot fired through Sound.play by Main, deduped per tick so
+-- twenty rifles firing at once read as one crack, not a wall.
+--
+-- This header used to say missions run no music, per the design brief.
+-- They do now.
 
 
 cueSound : Cue -> Sound
