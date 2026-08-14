@@ -355,13 +355,25 @@ frame model =
 
                     ( m5, endCue ) = checkEnd m4
                 in
+                -- N silences the effects, and THIS is where nearly all of
+                -- them are: every gunshot, explosion, build chirp and the
+                -- under-attack klaxon come through this one drain. The
+                -- guard used to sit only on the unit voice and the menu
+                -- blip, so N left the whole battle audible and muted two
+                -- polite noises. Silence is applied at the source rather
+                -- than through Sound.setMuted, which is the master gain and
+                -- also stops the music loop from ever restarting.
                 ( m5
-                , Cmd.batch
-                    (List.concat
-                        [ List.map (\c -> Sound.play (cueSound c)) cues
-                        , endCue
-                        ]
-                    )
+                , if model.mutedSfx then
+                    Cmd.none
+
+                  else
+                    Cmd.batch
+                        (List.concat
+                            [ List.map (\c -> Sound.play (cueSound c)) cues
+                            , endCue
+                            ]
+                        )
                 )
 
         _ ->
@@ -1773,8 +1785,40 @@ keyDown k model =
             ( model, Cmd.none )
 
 
+-- While the build/train grid is open it OWNS the letter keys. This test
+-- has to come before the case below, not inside its fallthrough: `r` is
+-- both "replay the briefing" and the grid's fourth slot, and the briefing
+-- branch matched first and returned the model untouched whenever the story
+-- panel was closed. B then R looked dead, and the Foundry (slot 3) could
+-- not be built from the keyboard at all. Ordering is the fix; patching the
+-- R branch would just wait for the next letter to collide.
 playKey : Keyboard.Key -> Model -> (Model, Cmd Msg)
 playKey k model =
+    if model.kbMode > 0 && bnot (menuPassthrough k) then
+        gridKey k model
+
+    else
+        freeKey k model
+
+
+-- The two things the grid never takes. Looking around the map is part of
+-- deciding where a building goes, so panning and the group modifier keep
+-- working with the menu open; every other key either picks a slot or
+-- closes the menu (gridKey does that for anything off the grid).
+menuPassthrough : Keyboard.Key -> Bool
+menuPassthrough k =
+    case k of
+        Keyboard.ArrowUp -> True
+        Keyboard.ArrowDown -> True
+        Keyboard.ArrowLeft -> True
+        Keyboard.ArrowRight -> True
+        Keyboard.ShiftLeft -> True
+        Keyboard.ShiftRight -> True
+        _ -> False
+
+
+freeKey : Keyboard.Key -> Model -> (Model, Cmd Msg)
+freeKey k model =
     case k of
         Keyboard.ShiftLeft -> ( { model | shift = True }, Cmd.none )
         Keyboard.ShiftRight -> ( { model | shift = True }, Cmd.none )
@@ -1856,10 +1900,9 @@ playKey k model =
         Keyboard.Digit5 -> groupKey 5 model
 
         _ ->
-            if model.kbMode > 0 then
-                gridKey k model
-            else
-                commandKey k model
+            -- No kbMode test here any more: playKey settles that before it
+            -- reaches this case, so anything arriving here has no menu open.
+            commandKey k model
 
 
 -- An immediate order (Stop/Hold) also cancels a pending attack-move or
