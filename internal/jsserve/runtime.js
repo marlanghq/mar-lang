@@ -4489,12 +4489,22 @@
     def('Page.protected', pageProtectedImpl);
 
     // Page.adminProtected mints the opaque AdminSession capability and threads
-    // it into init/update/view as the leading argument. There's no separate
-    // client-side admin auth gate here: the admin session cookie authorizes the
-    // Mar.Admin.* fetches server-side (the /_mar/admin/api/mar/* routes 401
-    // without it). So we pre-apply a placeholder AdminSession and emit a plain
-    // __Page that mounts like any other: the page only ever passes that value
-    // to Mar.Admin.*, which ignore it. (Web-only; no iOS admin app.)
+    // it into init/update/view as the leading argument. The AdminSession is a
+    // placeholder: the real authorization is the admin session cookie, which
+    // the server checks on every /_mar/admin/api/mar/* route.
+    //
+    // The gate below is UX, not a boundary, and the distinction is load-bearing
+    // (ADR 0031). It cannot be a boundary: the page's view, update and every
+    // literal in them are already in the program.json that any visitor can GET,
+    // so nothing a client-side check does can un-send them. What it buys is
+    // that an operator who is not signed in lands on the panel's login screen
+    // instead of watching an ops page render and then fail — the same courtesy
+    // Page.protected does for users. Anything genuinely secret must come from
+    // a service that checks the session itself.
+    //
+    // It rides as a property rather than a tag for the reason Page.sheet does:
+    // it composes with the plain __Page shape the pre-application produces.
+    // (Web-only; no iOS admin app.)
     const pageAdminProtectedImpl = native(1, ([rec]) => {
       const f = rec.fields;
       const title = f.title || VString('');
@@ -4508,7 +4518,9 @@
       const update = native(2, ([msg, model]) => apply(apply(apply(f.update, adminSession), msg), model));
       const view = native(1, ([model]) => apply(apply(f.view, adminSession), model));
       const subscriptions = native(1, ([model]) => apply(apply(f.subscriptions, adminSession), model));
-      return VCtor('__Page', [f.path, init, update, view, title, subscriptions]);
+      const p = VCtor('__Page', [f.path, init, update, view, title, subscriptions]);
+      p.adminOnly = true;
+      return p;
     });
     def('pageAdminProtected', pageAdminProtectedImpl);
     def('Page.adminProtected', pageAdminProtectedImpl);
@@ -11107,6 +11119,45 @@
       return authPending;
     }
 
+    // Does this browser hold an admin session? Tri-state, because "we have
+    // not asked yet" and "asked, and no" lead to different renders: null =
+    // unknown, true / false = answered. Mirrors authUser / fetchAuthMe.
+    //
+    // The answer is the server's to give: the session is an HttpOnly cookie,
+    // so the only way to know is to make a request that the server refuses
+    // without it. server-info is the cheapest of the admin routes and 401s
+    // like the rest.
+    let adminAuthed = null;
+    let adminPending = null;
+
+    function fetchAdminSession() {
+      if (adminPending) return adminPending;
+      adminPending = fetch('/_mar/admin/api/mar/server-info', {
+        method: 'GET',
+        credentials: 'same-origin',
+      })
+        .then(r => {
+          // Only a 200 is a yes. Testing for `!== 401` would read a 404 as
+          // authorized, and 404 is exactly what a frontend-only app returns:
+          // it mounts no admin routes at all, so the page could never be
+          // legitimately viewed there. Say so, because the redirect below
+          // would otherwise land the operator on a second 404 with no clue
+          // why — the same courtesy Page.protected pays a missing signInPage.
+          if (r.status === 404) {
+            console.error('[mar] Page.adminProtected used in an app with no admin panel. ' +
+              'The panel is mounted by App.fullstack / App.backend; a frontend-only app has ' +
+              'no admin session to gate on.');
+          }
+          adminAuthed = (r.status === 200);
+        })
+        // A network failure is not an authorization answer. Treat it as
+        // "no" so the page does not render on a broken connection, but
+        // leave nothing cached: the next render asks again.
+        .catch(() => { adminAuthed = false; })
+        .finally(() => { adminPending = null; });
+      return adminPending;
+    }
+
     // Path-pattern helpers (parsePathPattern, matchPathPattern,
     // buildPathURL) live at the IIFE level so they're reachable from
     // both makeBuiltinEnv (linkTo / Nav.pushTo) and mountPages.
@@ -11115,7 +11166,7 @@
     // rather than four values because a page built by Page.withShared has to
     // resolve them against the CURRENT shared model on every use. For an
     // ordinary page it closes over one ctor and never changes.
-    function buildPageEntry(path, fns, title, isProtected, isDynamic, isSheet) {
+    function buildPageEntry(path, fns, title, isProtected, isDynamic, isSheet, isAdminOnly) {
       // For protected/dynamic pages init/update/view need extra args
       // threaded in (User, Params, or both). We can't init until those
       // are known, so we defer.
@@ -11183,6 +11234,10 @@
         // routing, auth, init, dispatch and subscriptions are identical
         // to any other page.
         isSheet: !!isSheet,
+        // Page.adminProtected: the panel's own session gates this, and the
+        // gate is UX (ADR 0031) — the page's code shipped to every visitor
+        // in program.json long before render() ran.
+        isAdminOnly: !!isAdminOnly,
         // Per-key state. activeKey is set by currentPage() before
         // render touches model / params: keeping these as getters
         // means the rest of the runtime stays oblivious to the
@@ -11279,11 +11334,12 @@
       // Presentation rides as a property (set by Page.sheet), not a tag
       // or an arg slot, so it composes with all four ctors above.
       const isSheet     = p.presented === true;
+      const isAdminOnly = p.adminOnly === true;
       if (firstPath === null) firstPath = path;
       // Path, title and the flags are read ONCE: they are the route, and a
       // route that moved when the shared model changed would be a different
       // page, not the same page redrawn. Only the four functions are live.
-      const entry = buildPageEntry(path, fns || (() => ctorFns(p)), title, isProtected, isDynamic, isSheet);
+      const entry = buildPageEntry(path, fns || (() => ctorFns(p)), title, isProtected, isDynamic, isSheet, isAdminOnly);
       if (isDynamic) {
         dynamicPages.push({ pattern: parsePathPattern(path), page: entry });
       } else {
@@ -11692,6 +11748,36 @@
         // destination changes. Effects that resolve instantly and effects
         // that go to the network now take the same path.
         mountedPath = pg.activeKey;
+      }
+
+      // Page.adminProtected gating, same shape as the Page.protected block
+      // below: ask once, bail while we don't know, send the operator to the
+      // panel's login when the answer is no.
+      //
+      // This is UX and nothing more (ADR 0031). The page's code is already in
+      // the visitor's hands — program.json carries every page's view and its
+      // literals — so this cannot keep a secret and must not be relied on to.
+      // It exists so an operator who is signed out gets the login screen
+      // rather than an ops page that renders and then fails on every fetch.
+      //
+      // The probe is the same cookie the Mar.Admin.* calls ride on, asked of
+      // the cheapest introspection route. `credentials: same-origin` matters:
+      // the session is an HttpOnly cookie the client cannot read directly.
+      if (pg.isAdminOnly) {
+        if (adminAuthed === null) {
+          fetchAdminSession().then(() => render());
+          return;
+        }
+        if (adminAuthed === false) {
+          // Outside the SPA's router, so a real navigation rather than
+          // replaceNav. Guarded the same way the Mar.Admin.* 401 path is,
+          // so several pages resolving at once redirect once.
+          if (!globalThis.__marAdminRedirecting) {
+            globalThis.__marAdminRedirecting = true;
+            window.location.assign('/_mar/admin/login');
+          }
+          return;
+        }
       }
 
       // Page.protected gating: ensure we know who the user is before
