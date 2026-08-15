@@ -240,6 +240,17 @@ func stringField(rec VRecord, name string) string {
 	return ""
 }
 
+// payloadName says where the duplicate came from, so the 422 tells the
+// caller which half of their request to edit rather than making them guess.
+func payloadName(verb string) string {
+	switch verb {
+	case "GET", "DELETE":
+		return "query string"
+	default:
+		return "request body"
+	}
+}
+
 // assembleServiceInput reconstructs a service handler's typed request
 // value from the wire. Typed `{name:Type}` path params come from the URL
 // path; the remaining fields come from the query string (`q` JSON param,
@@ -248,6 +259,11 @@ func stringField(rec VRecord, name string) string {
 func assembleServiceInput(svc VService, reqPath, query, body string) (Value, error) {
 	fields := map[string]Value{}
 	order := []string{}
+	// Names the URL itself supplied. A path segment is the one part of a
+	// request the SERVER matched on: routing chose this handler because the
+	// URL had this shape. Everything else in the request is whatever the
+	// caller decided to send. See ADR 0032.
+	fromPath := map[string]bool{}
 	merge := func(v Value) {
 		rec, ok := v.(VRecord)
 		if !ok {
@@ -261,6 +277,33 @@ func assembleServiceInput(svc VService, reqPath, query, body string) (Value, err
 		}
 	}
 
+	// mergeBody is the query/body pass. It refuses to write over a name the
+	// path already supplied, rather than letting the last writer win — which
+	// used to be the caller, so `PUT /notes/1` with `{"id":2}` in the body
+	// read and wrote note 2 while every log recorded note 1.
+	//
+	// It rejects instead of ignoring, because no Mar client can produce this
+	// collision: both buildServiceRequest implementations spend the value on
+	// the URL and drop it from the payload (internal/jsserve/runtime.js and
+	// internal/iosbundle/template/Sources/MarBuiltins.swift). A request that
+	// carries the name twice was hand-made, so saying so is more useful than
+	// silently picking a winner — and it keeps the invariant total: if a
+	// request was accepted, the URL is the only place the resource was named.
+	mergeBody := func(v Value) error {
+		rec, ok := v.(VRecord)
+		if !ok {
+			merge(v)
+			return nil
+		}
+		for _, k := range rec.Order {
+			if fromPath[k] {
+				return fmt.Errorf("%q is a path parameter and is already in the URL; remove it from the %s", k, payloadName(svc.Verb))
+			}
+		}
+		merge(v)
+		return nil
+	}
+
 	if strings.Contains(svc.Path, "{") {
 		vpath, err := ParsePathPattern(svc.Path)
 		if err != nil {
@@ -271,6 +314,11 @@ func assembleServiceInput(svc VService, reqPath, query, body string) (Value, err
 			return nil, fmt.Errorf("path %q does not match %q", reqPath, svc.Path)
 		}
 		merge(matched)
+		if rec, ok := matched.(VRecord); ok {
+			for _, k := range rec.Order {
+				fromPath[k] = true
+			}
+		}
 	}
 
 	switch svc.Verb {
@@ -280,7 +328,9 @@ func assembleServiceInput(svc VService, reqPath, query, body string) (Value, err
 			if err != nil {
 				return nil, err
 			}
-			merge(v)
+			if err := mergeBody(v); err != nil {
+				return nil, err
+			}
 		}
 	default: // POST, PUT, PATCH
 		trimmed := strings.TrimSpace(body)
@@ -290,7 +340,9 @@ func assembleServiceInput(svc VService, reqPath, query, body string) (Value, err
 				return nil, err
 			}
 			if _, ok := v.(VRecord); ok {
-				merge(v)
+				if err := mergeBody(v); err != nil {
+					return nil, err
+				}
 			} else if len(order) == 0 {
 				// A non-record body with no path params is the request
 				// value itself (rare; services normally use records or ()).
