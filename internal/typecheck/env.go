@@ -16,6 +16,33 @@ type TypeEnv struct {
 	bindings map[string]Type
 	parent   *TypeEnv
 	customs  map[string]CustomType // populated only on the root frame
+
+	// free is every type-variable ID occurring free in ANY binding
+	// reachable from this frame, its own and all its ancestors'. It is
+	// what let-generalization must NOT quantify: a variable still bound
+	// somewhere out here is not this binding's to make polymorphic.
+	//
+	// It is carried on the frame rather than recomputed because a frame
+	// holds exactly ONE binding (see Bind) and the chain is long: the
+	// base environment alone is 936 frames. Walking it per
+	// generalization measured 13x on a real project.
+	//
+	// Sharing is what makes it cheap. A binding whose type has no free
+	// variables — every builtin, every generalized top-level value —
+	// contributes nothing, so the frame ALIASES its parent's map
+	// instead of copying it. Copies happen only where variables are
+	// actually introduced: lambda parameters, and let bindings that
+	// stayed monomorphic. Those are few and shallow.
+	//
+	// The set is collected syntactically, with no substitution applied,
+	// so it can go stale as unification learns more: an ID recorded
+	// here may since have been bound to a type made of other variables.
+	// envFreeVars resolves each ID through the substitution at query
+	// time, which is correct because substitution only ever refines —
+	// anything free in the environment now is reachable from something
+	// recorded then. A nil map means nothing is free, which is the
+	// steady state for the whole base and module chain.
+	free map[int]bool
 }
 
 // Names returns every binding visible from this frame, sorted and deduped.
@@ -84,7 +111,29 @@ func (e *TypeEnv) Lookup(name string) (Type, bool) {
 // not mutated.
 func (e *TypeEnv) Bind(name string, t Type) *TypeEnv {
 	frame := map[string]Type{name: t}
-	return &TypeEnv{bindings: frame, parent: e}
+	return &TypeEnv{bindings: frame, parent: e, free: extendFree(e.free, t)}
+}
+
+// extendFree returns the free-variable set for a frame binding t under
+// a parent whose set is `parent`. See TypeEnv.free for why this exists.
+//
+// The early return is the whole performance story: a closed type adds
+// nothing, so the child shares the parent's map and the base chain
+// costs one type walk per builtin and not one map copy per builtin.
+func extendFree(parent map[int]bool, t Type) map[int]bool {
+	add := map[int]bool{}
+	collectFreeVars(t, add, map[int]bool{})
+	if len(add) == 0 {
+		return parent
+	}
+	out := make(map[int]bool, len(parent)+len(add))
+	for id := range parent {
+		out[id] = true
+	}
+	for id := range add {
+		out[id] = true
+	}
+	return out
 }
 
 // ExportsOf collects every binding that belongs to module `modName`:
@@ -2794,12 +2843,22 @@ func stdlibBindings() map[string]Type {
 			},
 		},
 
-		// Page.adminProtected: like Page.protected, but gated by the
-		// framework's *admin* session (the operators in mar.json["admins"]),
-		// not the app's user auth. Threads an opaque AdminSession into
-		// init/update/view as the first argument. Because the Mar.Admin.*
+		// Page.adminProtected: like Page.protected, but keyed to the
+		// framework's *admin* session (the operators in mar.json["admins"])
+		// rather than the app's user auth. Threads an opaque AdminSession
+		// into init/update/view as the first argument. Because the Mar.Admin.*
 		// functions require an AdminSession, they're reachable only from an
 		// admin page: a normal page can't call them, caught at compile time.
+		//
+		// What "Protected" does and does not mean (ADR 0031). The runtime
+		// sends the operator to the admin login instead of rendering when
+		// there is no admin session — that is UX, and it is all a page gate
+		// can be. It is NOT a boundary: this page's view, its update and
+		// every literal in them ship inside program.json, which any visitor
+		// can GET. Nothing checked in the browser can un-send that. Data that
+		// must not leak has to come from a service that checks the session
+		// itself — Mar.Admin.* do, which is why the framework's own panel is
+		// safe. Put a secret straight into the view and it is public.
 		//
 		//   { path  : String
 		//   , title : String                                       -- (optional)

@@ -152,11 +152,31 @@ func substituteVars(t Type, m map[int]Type) Type {
 	return t
 }
 
+// envFreeVars is FV(env): every type variable still bound somewhere in
+// scope, and therefore not this let's to quantify.
+//
+// It reads the set the environment carries (TypeEnv.free) rather than
+// walking the frames. It used to read `env.bindings` — the frame it was
+// handed — and a frame holds exactly one binding, so it saw one name and
+// declared everything else generalizable. Two parameters were enough to
+// push a binder out of view:
+//
+//	f x y = let g = x in ( g + y, g ++ "!" )
+//
+// `g` was quantified over `x`'s own type variable, so `g` could be a
+// number in one component and appendable in the other, and the module
+// checked clean while publishing `f : Bool -> Int -> (Int, String)`.
+//
+// The IDs are resolved through the substitution here rather than at
+// bind time, because that is where the current answer lives: an ID
+// recorded when the frame was built may since have been unified with a
+// type made of other variables, and those are free in the environment
+// too.
 func envFreeVars(env *TypeEnv, s *Subst) map[int]bool {
 	out := map[int]bool{}
-	for _, t := range env.bindings {
-		for id := range s.FreeVars(t) {
-			out[id] = true
+	for id := range env.free {
+		for r := range s.FreeVars(TVar{ID: id}) {
+			out[r] = true
 		}
 	}
 	return out
