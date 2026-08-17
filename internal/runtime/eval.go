@@ -3,6 +3,7 @@ package runtime
 import (
 	"fmt"
 	"math/big"
+	"runtime/debug"
 	"sort"
 	"strings"
 
@@ -342,11 +343,78 @@ func evalAt(e ast.Expr, env *Env, depth int) (Value, error) {
 // users dies because one request called a function that calls itself. Measured
 // before this guard: about 1.1 seconds to consume the 1 GB default stack.
 //
-// The limit is chosen to be far past any honest recursion and far short of the
-// stack Go will kill us over. Mar's own list functions are Go loops, so user
-// recursion is usually shallow; a hand-written recursive fold over a large list
-// is the deep case, and 100k frames covers it with room to spare.
-const MaxCallDepth = 100_000
+// The number is DERIVED rather than chosen, because a chosen one goes stale in
+// silence. It was 100_000, described in this comment as "far short of the stack
+// Go will kill us over", and it was not: measured with a fresh process per
+// trial, one Mar call per level, only the cheapest possible shape ever reached
+// it.
+//
+//	deep (n-1)                          tail call   reached the guard at 100k
+//	1 + deep (n-1)                                  died between 60k and 80k
+//	case n of _ -> 1 + deep (n-1)                   died between 60k and 80k
+//	List.length [ deep (n-1) ]                      died between 60k and 80k
+//	Tuple.first ( 1 + deep (n-1), 0 )               died between 50k and 55k
+//
+// The guard was set roughly twice as high as the ceiling for ordinary
+// recursion, so it protected exactly one shape — the one the test happened to
+// use. See ADR 0033.
+//
+// Now: ask the process what a goroutine stack may reach, divide by the worst
+// per-frame cost measured above, and keep a factor of four in hand. When evalAt
+// grows a field, the budget shrinks with it instead of drifting out of date.
+var MaxCallDepth = derivedMaxCallDepth()
+
+// worstCaseFrameBytes is the Go stack one Mar-level call can cost, from the
+// most expensive shape above: ~50k frames inside a 1 GiB stack. Nested calls
+// inside a constructor argument are the expensive case because each argument's
+// evaluation nests another evalAt before the outer one returns.
+//
+// Raise this if a measurement ever finds a costlier shape; do not lower it to
+// buy depth.
+const worstCaseFrameBytes = 21_000
+
+// stackSafetyFactor is how much of the budget is left unspent. Four means the
+// guard fires with three quarters of the stack still untouched, which is the
+// room a shape nobody has measured yet gets to be wrong in.
+const stackSafetyFactor = 4
+
+// Depth is meaningless below a floor (an app would break on honest recursion)
+// and pointless above a ceiling (nothing legitimate goes that deep, and the
+// stack is the real limit anyway).
+const (
+	minCallDepth = 1_000
+	maxCallDepth = 100_000
+)
+
+// stackCeilingBytes reports how large one goroutine's stack may grow before Go
+// kills the process. debug.SetMaxStack returns the PREVIOUS value, so setting
+// and immediately restoring reads it without changing anything — which matters
+// because this package is imported by the compiler and the LSP, not only by the
+// server, and none of them asked to have their limits moved.
+func stackCeilingBytes() int {
+	limit := debug.SetMaxStack(1 << 30)
+	debug.SetMaxStack(limit)
+	return limit
+}
+
+// derivedMaxCallDepth reads the process's own goroutine stack ceiling instead
+// of assuming one. debug.SetMaxStack returns the PREVIOUS value, so setting and
+// immediately restoring is how you read it without changing anything — this
+// leaves the process exactly as it found it, which matters because the package
+// is imported by the compiler and the LSP, not only by the server.
+//
+// Reading rather than hardcoding also means 32-bit hosts (250 MB default) get a
+// budget that fits them, without this file knowing they exist.
+func derivedMaxCallDepth() int {
+	d := stackCeilingBytes() / worstCaseFrameBytes / stackSafetyFactor
+	if d < minCallDepth {
+		return minCallDepth
+	}
+	if d > maxCallDepth {
+		return maxCallDepth
+	}
+	return d
+}
 
 // Apply applies a function value to one argument, handling currying.
 // Exported entry point used by the unified server to invoke handlers.

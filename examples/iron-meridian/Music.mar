@@ -5,149 +5,211 @@ import Sound
 
 -- IRON MERIDIAN: the mission music.
 --
--- The engine and the first four themes were lifted note for note from another
--- game of ours, a space shooter that lives outside this repository; only the
--- names changed on the way in. The fifth, for Meridian Engine, was written
--- here. Every note in this file is original.
+-- Five war beds, each past four minutes. Four voices: a war pulse, a sub, a
+-- body, and a soft top. No percussion in the drum sense, no melody, and nothing
+-- written above 392 Hz.
 --
--- Written the way a tracker is written: a handful of 16-step PATTERNS per
--- voice, and an ORDER LIST saying which pattern plays in which bar. Four
--- voices run at once (bass, a counter-melody in the middle, the lead, drums)
--- and each reads a DIFFERENT order over the same bars, which is what stops the
--- whole thing turning over as one block: the drums fill where the bass is
--- still holding, the counter enters before the lead does, the lead drops out
--- for the bridge.
+-- It took three passes to find, and each pass was wrong in a way worth writing
+-- down, because each wrong turn is a thing that sounds reasonable in the
+-- abstract:
+--
+--   A kit and a horn. The kit put a transient in the mix every half second and
+--   the horn read as a voice asking for attention. Both thrown out whole.
+--
+--   Then no percussion at all, and heavily filtered. That fixed the noise and
+--   created two new problems: it was too quiet to register, and with nothing
+--   marking time it did not read as a war game. "Too quiet" turned out not to
+--   mean too low -- it meant too FILTERED. The same note at 130 Hz with its
+--   ceiling at 620 is a hum; at 1600 it has weight, and it is still 130 Hz.
+--   Presence is harmonic content, not register.
+--
+--   Then tension written as DISSONANCE -- a held tritone, a flat ninth. A
+--   listener heard it as weird rather than as tense, and was right. Measured,
+--   14.9% of that version's interval time was minor seconds, tritones and major
+--   sevenths.
+--
+-- What the pieces are built on now:
+--
+--   THE PENTATONIC. Every piece is a minor pentatonic and nothing else. A minor
+--   pentatonic contains no semitone and no tritone between any two of its five
+--   notes, so the intervals that read as weird cannot occur -- not by care, by
+--   construction. All five measure 0.0% harsh, and the generator refuses to
+--   write this file if any of them rises above 2%.
+--
+--   That rule came out of a single note. An earlier attempt used Bb as a "dark
+--   minor sixth" over D, and Bb is a semitone from A -- which was the fifth in
+--   three of the four voices. Every Bb was a latent semitone waiting for a bar
+--   where the other voice held its A. Sixteen seconds of major seventh in one
+--   piece, from one note that looked harmless.
+--
+--   THE PULSE, which is not a drum: a pitched low tone that sweeps down half an
+--   octave and rings out, so it lands as an impact settling rather than a click.
+--   It carries no noise and its ceiling is 760 Hz, so it cannot be harsh. It
+--   enters and leaves as a MOVEMENT device -- absent in the drone, marching in
+--   the pressure section, gone again in the hollow -- which is what makes it
+--   read as a formation arriving rather than as a metronome. Verified as real:
+--   the loudness envelope of a marching passage peaks at 1.25 Hz, one impact
+--   every 800 ms, well clear of its neighbours.
+--
+--   THE FORM. Seven movements per piece, each with its own dynamic LEVEL as
+--   well as its own patterns and its own pulse density. The last movement ends
+--   where the first begins, so the loop seam has nothing to announce; measured,
+--   the seams land within 8% of level, end against start.
+--
+-- Measured over the five: 4m10s to 4m42s each; loudness spread 7.7x to 12.6x
+-- between each piece's quietest and loudest passages; 27% to 39% of every piece
+-- below its own average; 0.96 to 2.04 note events a second. A-weighted, which
+-- is how an ear weighs it rather than how a meter does, 20% to 44% of each piece
+-- sits under 100 Hz and 41% to 77% in the 100-300 Hz band that a laptop speaker
+-- actually reproduces. Raw energy says 65-88% under 100 Hz, and that reading is
+-- what nearly caused a fifth pass to fix something that was not broken: at 44 Hz
+-- A-weighting is about -30 dB, so unweighted energy exaggerates the bottom by
+-- roughly fourfold and answers a question nobody asked.
+--
+-- Written the way a tracker is written: a handful of 16-step PATTERNS per voice
+-- and an ORDER LIST saying which pattern plays in which bar. A step is 200 ms,
+-- so a bar is 3.2 seconds and a whole-bar note is one sustained 3.2-second tone.
 --
 -- It keeps Sound.loop's invariant true BY CONSTRUCTION rather than by anyone
 -- counting: every pattern is exactly 16 steps and every voice plays the same
--- number of bars, so the four voices cannot drift apart. A voice that summed
--- short would slide a little further out of phase on every repeat until the
--- loop was mush. A generator checks it before this file is written.
+-- number of bars, so the voices cannot drift apart. A voice that summed short
+-- would slide further out of phase on every repeat until the loop was mush. A
+-- generator checks that, the interval budget and the three-minute floor before
+-- this file is written.
 --
 -- Only missionTheme escapes the module. Everything below it is private, which
--- is what lets this file keep its own noteOf without colliding with the one in
--- Sfx.mar.
+-- is what lets this file keep its own note builders without colliding with the
+-- ones in Sfx.mar.
 
 stepMs : Int
-stepMs = 150
+stepMs = 200
 
 
 type alias Note =
-    { hz : Int, n : Int }
+    { hz : Int, n : Int, v : Int }
 
 
+-- `v` is the note's level as a percent of its voice's own volume, and with no
+-- percussion it is the ONLY dynamic there is. The drone movements play at 34 to
+-- 50, the pressure movements at 100. Without it the only way to get softer
+-- would be to stop playing, and an arrangement whose one dynamic is on/off is
+-- the flat wall this rewrite exists to avoid.
 nt : Int -> Int -> Note
 nt hz n =
-    { hz = hz, n = n }
+    { hz = hz, n = n, v = 100 }
 
 
--- Every note gives its last 30ms back as silence, so its total is exactly
--- n * stepMs however it is shaped.
--- ONE KNOB for how loud the music sits under the game.
---
--- The balance BETWEEN the voices is set per theme, where it belongs; this
--- scales all of them together, so turning it changes the level and never the
--- mix. The drums go through it too, and that is the point: the three pitched
--- voices take a volume argument and the kit does not, so trimming only the
--- voices would leave the drums untouched and therefore louder in relative
--- terms, which is the same complaint wearing a different hat.
+ntv : Int -> Int -> Int -> Note
+ntv hz n v =
+    { hz = hz, n = n, v = v }
+
+
+-- One multiply, one divide: keeping the voice volume and the note level
+-- together until the end stops integer truncation from flattening the soft
+-- end, where two levels a fifth apart would otherwise round to the same value.
+level : Int -> Int -> Int
+level vol v =
+    max 1 (vol * v * musicGain // 10000)
+
+
+-- ONE KNOB for how loud the whole bed sits under the game. The balance BETWEEN
+-- the voices is set per theme, where it belongs; this scales all of them
+-- together, so turning it changes the level and never the mix.
 musicGain : Int
-musicGain = 80
+musicGain = 96
 
 
-gained : Int -> Int
-gained v =
-    max 1 (v * musicGain // 100)
+-- Every voice is a triangle. That is the point rather than a shortcut: a
+-- sawtooth or a pulse puts energy in the harmonics that make a sustained tone
+-- read as an instrument playing AT you, and the previous pass proved it. A
+-- triangle's harmonics fall off as 1/n squared, so what is left after the
+-- ceiling below is close to a sine with a little body.
+--
+-- The three differ by register and by how much of their own top survives, which
+-- is what keeps them separable without any of them being bright:
+--
+--   sub   the floor. 41-110 Hz, felt more than heard.
+--   body  the part a small speaker actually reproduces, and the loudest of the
+--         three. 110-262 Hz.
+--   air   the top, and it is not a melody. 165-392 Hz, softest, whole bars.
+-- The cut is passed IN rather than fixed here, because it is the loudness knob
+-- that does not move the pitch. A note at 130 Hz with its ceiling at 620 is a
+-- soft hum; the same note at 1600 has body and edge and is still 130 Hz. That
+-- distinction is what "too quiet" turned out to mean: the pieces were not too
+-- low, they were too filtered.
+subOf : Int -> Int -> List Note -> Sound
+subOf cut vol notes =
+    Sound.sequence (List.map (voiceNote cut 900 1100 vol) notes)
 
 
-noteOf : Sound.Wave -> Int -> Note -> Sound
-noteOf wave vol n =
+bodyOf : Int -> Int -> List Note -> Sound
+bodyOf cut vol notes =
+    Sound.sequence (List.map (voiceNote cut 620 820 vol) notes)
+
+
+airOf : Int -> Int -> List Note -> Sound
+airOf cut vol notes =
+    Sound.sequence (List.map (voiceNote cut 780 980 vol) notes)
+
+
+-- The war pulse, and it is NOT a drum.
+--
+-- The kit in the first version was a synthesised kick plus a band of noise, and
+-- it was the part that got thrown out whole. This is a pitched low tone that
+-- sweeps down about half an octave over its own length and then rings out, so
+-- what a player hears is an impact settling rather than a click: the same job a
+-- war drum does, made of pitch instead of percussion. It carries no noise at
+-- all, and its ceiling is low enough that it can never be harsh.
+--
+-- A piece that wants no pulse simply does not pass this voice.
+pulseOf : Int -> List Note -> Sound
+pulseOf vol notes =
+    Sound.sequence (List.map (pulseNote vol) notes)
+
+
+pulseNote : Int -> Note -> Sound
+pulseNote vol n =
     if n.hz <= 0 then
         Sound.rest (n.n * stepMs)
 
     else
         Sound.sequence
-            [ Sound.release 60 (Sound.volume (gained vol) (Sound.tone wave n.hz (n.n * stepMs - 30)))
-            , Sound.rest 30
-            ]
-
-
-lineOf : Sound.Wave -> Int -> List Note -> Sound
-lineOf wave vol notes =
-    Sound.sequence (List.map (noteOf wave vol) notes)
-
-
--- The middle voice sits behind the lead: softer, rounder, and cut short so it
--- reads as accompaniment rather than as a second tune fighting the first.
-counterNote : Int -> Note -> Sound
-counterNote vol n =
-    if n.hz <= 0 then
-        Sound.rest (n.n * stepMs)
-
-    else
-        Sound.sequence
-            [ Sound.release 100 (Sound.duty 25 (Sound.volume (gained vol) (Sound.tone Sound.Square n.hz (n.n * stepMs - 40))))
-            , Sound.rest 40
-            ]
-
-
-counterOf : Int -> List Note -> Sound
-counterOf vol notes =
-    Sound.sequence (List.map (counterNote vol) notes)
-
-
--- the lead breathes: a slow vibrato and a narrow pulse to cut through
-leadNote : Int -> Note -> Sound
-leadNote vol n =
-    if n.hz <= 0 then
-        Sound.rest (n.n * stepMs)
-
-    else
-        Sound.sequence
-            [ Sound.release 80
-                (Sound.vibrato 18 6
-                    (Sound.duty 40 (Sound.volume (gained vol) (Sound.tone Sound.Square n.hz (n.n * stepMs - 30))))
+            [ Sound.release (max 60 (n.n * stepMs - 90))
+                (Sound.attack 22
+                    (Sound.highCut 760
+                        (Sound.volume (level vol n.v)
+                            (Sound.sweep (max 28 (n.hz * 52 // 100))
+                                (Sound.tone Sound.Triangle n.hz (n.n * stepMs - 30))
+                            )
+                        )
+                    )
                 )
             , Sound.rest 30
             ]
 
 
-leadOf : Int -> List Note -> Sound
-leadOf vol notes =
-    Sound.sequence (List.map (leadNote vol) notes)
-
-
--- One drum step, always exactly stepMs long. Over 50 is a kick, under is skin.
+-- A sustained tone, shaped so it arrives and leaves without an edge.
 --
--- The two halves are NOT on the same scale, and that was a real mistake: the
--- kick took a 28-point discount off its written value and the snare took none,
--- so a snare written 50 came out louder than a kick written 66 (which plays at
--- 38). The skin was the loudest thing in the mix. It is scaled to a bit under
--- half now, and the noise is cut lower so the hats sizzle instead of hissing:
--- 5200 Hz left most of the harshness in, and that band is exactly where a
--- phaser shot lives, so the drums were also fighting the gunfire.
-drumHit : Int -> Sound
-drumHit v =
-    if v <= 0 then
-        Sound.rest stepMs
-
-    else if v > 50 then
-        Sound.sequence
-            [ Sound.volume (gained (v - 28)) (Sound.sweep 45 (Sound.tone Sound.Triangle 160 80))
-            , Sound.rest (stepMs - 80)
-            ]
+-- The attack and release are long -- most of a second each -- and both are
+-- clamped by the runtime to the note's own span, so a short note simply gets a
+-- rounder shape rather than a clipped one. `cut` is the voice's ceiling.
+--
+-- The 25 ms of silence at the end of every note is what makes the invariant
+-- hold: the tone is (n * stepMs - 25) long, the rest is 25, so the pair is
+-- exactly n steps however the note is shaped.
+voiceNote : Int -> Int -> Int -> Int -> Note -> Sound
+voiceNote cut atk rel vol n =
+    if n.hz <= 0 then
+        Sound.rest (n.n * stepMs)
 
     else
         Sound.sequence
-            [ Sound.volume (gained (max 3 (v * 42 // 100)))
-                (Sound.highCut 3000 (Sound.lowCut 260 (Sound.tone Sound.Noise 0 45)))
-            , Sound.rest (stepMs - 45)
+            [ Sound.release rel
+                (Sound.attack atk
+                    (Sound.highCut cut (Sound.volume (level vol n.v) (Sound.tone Sound.Triangle n.hz (n.n * stepMs - 25))))
+                )
+            , Sound.rest 25
             ]
-
-
-drumLine : List Int -> Sound
-drumLine hits =
-    Sound.sequence (List.map drumHit hits)
 
 
 arrange : (Int -> List a) -> List Int -> List a
@@ -155,706 +217,1279 @@ arrange pat order =
     List.concat (List.map pat order)
 
 
--- --- mission 1, Dust and Iron: D minor at 100 BPM (150 ms steps, 24 bars, a 58-second loop). Form: a two-bar G#dim7 fanfare on the Ab-D tritone (1-2), statement and answer (3-6), the war-bar and a real A7 cadence with the leading tone and E natural (7-8), an octave-up pass that the A7 lands on deceptively as Bb (9-10), a bridge that drops to Bb-C major and puts the hook over foreign harmony (11-13), one bar of drums alone on a break pattern heard nowhere else (14), a chromatic climb A2-C#3 in accelerating 16ths that holds the leading tone to the barline (15), then a restatement where the counter doubles the hook an octave below the lead and the bass walks Bb-C-D (16-19), a gallop peak on the dim7 bar (20-22), a C-augmented tension bar (23) and the climb again into bar 1. The hook is the rising fourth D4-G4: the held G is braced by a bass that moves underneath it, Dm to Bb to Gm, so the 11th turns into a root instead of hanging; the answer C4-F4-Eb4 leans the flat second down into the next tonic every single time; and from its second statement onward the hook sours its A to Ab against an Ab bass, so the part a player hums carries the tritone rather than leaving it to the connective bars. I disagreed with two notes. I did not exile bars 1-2 into a one-shot intro: the cure for a dead loop seam is to make bar 1 the biggest hit in the piece (the tritone fanfare at full weight, sparse drums, kick pushed to step 7) so bar 24's crescendo lands on an impact, not to hide it. And I left the E-natural call figure identical at bars 15 and 24 on purpose: it is the only dominant in the piece, and a fixed launch gesture is what makes a restatement read as an arrival instead of a repeat. ---
+-- --- mission 1, Dust and Iron: D minor: open fifths, a minor sixth for weight, a suspended fourth that never resolves. The style probe: the only piece with the war pulse, and the only one whose filters are open.
+-- 78 bars, 4m10s. Movements (in bars): I 14, II 12, III 12, IV 8, V 14, VI 12, VII 6.
+-- I drone, II the build, III the statement, IV the hollow, V pressure, VI the
+-- wide part, VII the descent back into the drone, so bar 78 hands to bar 1
+-- without a seam. The body voice runs from level 30 to 100 across those
+-- seven, and with no percussion that spread is the whole architecture. ---
 
-m1Bass : Int -> List Note
-m1Bass i =
+m1Pulse : Int -> List Note
+m1Pulse i =
     if i == 0 then
-        [ nt 73 3, nt 0 1, nt 73 2, nt 73 1, nt 117 3, nt 0 1, nt 98 2, nt 98 2, nt 110 1 ]
-
-    else if i == 1 then
-        [ nt 117 3, nt 0 1, nt 117 2, nt 117 1, nt 78 3, nt 0 1, nt 78 2, nt 78 2, nt 73 1 ]
-
-    else if i == 2 then
-        [ nt 104 3, nt 0 1, nt 104 2, nt 104 1, nt 104 3, nt 0 1, nt 123 2, nt 123 2, nt 147 1 ]
-
-    else if i == 3 then
-        [ nt 110 3, nt 0 1, nt 110 2, nt 110 1, nt 110 2, nt 139 2, nt 165 2, nt 196 2, nt 110 1 ]
-
-    else if i == 4 then
-        [ nt 117 6, nt 0 1, nt 117 1, nt 131 3, nt 0 1, nt 131 2, nt 65 2 ]
-
-    else if i == 5 then
         [ nt 0 16 ]
 
-    else if i == 6 then
-        [ nt 110 3, nt 0 1, nt 110 2, nt 117 2, nt 123 2, nt 131 2, nt 131 1, nt 139 1, nt 139 1, nt 139 1 ]
-
-    else
-        [ nt 73 3, nt 0 1, nt 73 2, nt 73 1, nt 73 3, nt 0 1, nt 73 2, nt 104 2, nt 104 1 ]
-
-m1Counter : Int -> List Note
-m1Counter i =
-    if i == 0 then
-        [ nt 147 2, nt 175 1, nt 0 1, nt 220 2, nt 196 1, nt 175 1, nt 147 3, nt 0 1, nt 175 2, nt 156 1, nt 147 1 ]
-
     else if i == 1 then
-        [ nt 0 1, nt 175 2, nt 233 1, nt 147 2, nt 175 2, nt 196 2, nt 0 1, nt 233 2, nt 196 2, nt 175 1 ]
+        [ ntv 37 2 62, nt 0 6, ntv 73 2 62, nt 0 6 ]
 
     else if i == 2 then
-        [ nt 208 2, nt 294 1, nt 208 1, nt 0 1, nt 294 2, nt 208 2, nt 247 2, nt 294 1, nt 247 2, nt 208 1, nt 175 1 ]
+        [ ntv 37 2 86, nt 0 2, ntv 73 2 86, nt 0 2, ntv 37 2 86, nt 0 2, ntv 73 2 86, nt 0 2 ]
 
     else if i == 3 then
-        [ nt 220 3, nt 0 1, nt 220 2, nt 196 2, nt 277 2, nt 0 1, nt 330 2, nt 277 2, nt 220 1 ]
+        [ ntv 37 2 86, nt 0 2, ntv 73 2 86, nt 0 2, ntv 55 2 86, nt 0 2, ntv 73 2 86, nt 0 2 ]
 
     else if i == 4 then
-        [ nt 233 3, nt 0 1, nt 233 2, nt 175 2, nt 262 3, nt 0 1, nt 330 2, nt 262 2 ]
+        [ nt 37 2, nt 0 2, nt 73 2, nt 0 2, nt 37 2, nt 0 2, nt 73 2, nt 0 2 ]
 
     else if i == 5 then
-        [ nt 0 16 ]
+        [ nt 37 2, nt 0 2, nt 73 2, nt 0 2, nt 55 2, nt 0 2, nt 73 2, nt 0 2 ]
 
     else if i == 6 then
-        [ nt 0 1, nt 220 2, nt 0 1, nt 208 2, nt 196 2, nt 0 1, nt 175 2, nt 156 2, nt 147 3 ]
-
-    else
-        [ nt 0 1, nt 147 2, nt 196 6, nt 0 1, nt 196 3, nt 175 3 ]
-
-m1Lead : Int -> List Note
-m1Lead i =
-    if i == 0 then
-        [ nt 0 1, nt 294 2, nt 392 5, nt 0 1, nt 392 3, nt 440 2, nt 392 1, nt 349 1 ]
-
-    else if i == 1 then
-        [ nt 0 1, nt 262 2, nt 349 5, nt 0 1, nt 349 3, nt 392 2, nt 349 1, nt 311 1 ]
-
-    else if i == 2 then
-        [ nt 0 1, nt 294 2, nt 392 5, nt 0 1, nt 392 3, nt 415 2, nt 392 1, nt 349 1 ]
-
-    else if i == 3 then
-        [ nt 0 1, nt 587 2, nt 784 5, nt 0 1, nt 784 3, nt 831 2, nt 784 1, nt 698 1 ]
-
-    else if i == 4 then
-        [ nt 0 1, nt 523 2, nt 698 5, nt 0 1, nt 698 3, nt 784 2, nt 698 1, nt 622 1 ]
-
-    else if i == 5 then
-        [ nt 415 2, nt 0 1, nt 294 3, nt 0 2, nt 415 2, nt 0 1, nt 494 2, nt 0 1, nt 587 2 ]
-
-    else if i == 6 then
-        [ nt 466 3, nt 523 3, nt 587 3, nt 0 1, nt 659 2, nt 587 2, nt 523 2 ]
+        [ nt 37 1, nt 0 3, nt 73 1, nt 0 3, nt 37 1, nt 0 3, nt 73 1, nt 0 1, nt 73 1, nt 0 1 ]
 
     else if i == 7 then
-        [ nt 0 10, nt 330 2, nt 392 2, nt 0 1, nt 294 1 ]
-
-    else
-        [ nt 0 16 ]
-
-m1Drum : Int -> List Int
-m1Drum i =
-    if i == 0 then
-        [ 74, 18, 0, 26, 46, 18, 0, 60, 0, 26, 0, 0, 46, 0, 24, 0 ]
-
-    else if i == 1 then
-        [ 74, 18, 0, 0, 46, 20, 0, 0, 66, 0, 22, 48, 0, 0, 28, 20 ]
-
-    else if i == 2 then
-        [ 78, 0, 0, 0, 50, 0, 0, 70, 0, 0, 0, 50, 0, 0, 44, 46 ]
-
-    else if i == 3 then
-        [ 76, 20, 24, 20, 48, 20, 24, 20, 72, 20, 24, 20, 48, 22, 26, 30 ]
-
-    else if i == 4 then
-        [ 74, 0, 0, 68, 0, 0, 70, 0, 46, 0, 0, 24, 46, 0, 0, 0 ]
-
-    else if i == 5 then
-        [ 80, 0, 0, 0, 76, 0, 0, 0, 80, 0, 0, 74, 0, 40, 44, 48 ]
-
-    else
-        [ 74, 0, 22, 0, 46, 0, 0, 0, 30, 32, 36, 40, 44, 48, 50, 50 ]
-
-m1Order : List Int
-m1Order = [ 7, 2, 0, 1, 7, 1, 2, 3, 1, 0, 4, 1, 4, 5, 6, 7, 4, 7, 0, 2, 1, 0, 4, 6, 5, 4, 1, 7, 0, 7, 2, 4, 4, 0, 4, 1, 1, 7, 2, 3, 6, 6, 1, 0, 7, 0, 2, 1, 1, 2, 0, 7, 0, 1, 6, 3, 2, 7, 1, 1, 4, 0, 4, 4, 2, 7, 0, 7, 1, 4, 5, 6 ]
-
-m1CounterOrder : List Int
-m1CounterOrder = [ 2, 2, 0, 1, 6, 1, 2, 3, 1, 1, 4, 1, 4, 5, 3, 7, 4, 7, 1, 2, 7, 0, 4, 3, 5, 4, 1, 2, 0, 6, 2, 4, 4, 0, 4, 1, 1, 7, 2, 3, 3, 3, 1, 1, 7, 1, 2, 7, 7, 2, 1, 7, 1, 1, 3, 3, 2, 7, 1, 1, 4, 0, 4, 4, 2, 6, 0, 2, 1, 4, 5, 3 ]
-
-m1LeadOrder : List Int
-m1LeadOrder = [ 5, 8, 0, 1, 2, 4, 5, 7, 3, 4, 6, 1, 0, 8, 7, 3, 4, 2, 1, 5, 3, 4, 3, 7, 8, 6, 1, 5, 0, 2, 5, 0, 4, 4, 3, 1, 4, 2, 8, 7, 7, 7, 3, 4, 3, 1, 5, 3, 3, 5, 1, 3, 4, 3, 7, 7, 8, 2, 4, 1, 3, 4, 4, 0, 5, 2, 0, 5, 1, 6, 8, 7 ]
-
-m1DrumOrder : List Int
-m1DrumOrder = [ 2, 6, 0, 1, 0, 1, 2, 6, 3, 3, 4, 4, 0, 5, 6, 3, 0, 1, 3, 3, 3, 0, 2, 6, 5, 4, 4, 2, 0, 0, 2, 0, 0, 0, 2, 1, 1, 1, 6, 6, 6, 6, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 6, 6, 6, 1, 1, 1, 2, 0, 0, 0, 2, 0, 0, 2, 4, 4, 5, 6 ]
-
--- --- mission 2, The Silo Gambit: D minor implied and never stated: a D2 pedal that enters on step 1 (never the downbeat) and flicks A#2 instead of a third, a chromatic wedge that descends one step further each time it returns (bar 6 stops on B2, bar 10 reaches A#2, bar 19 finally completes the line), an E7b5 floor whose symmetry hides its own root, a G# minor bridge at the tritone pole, and a loop seam where the bass leaps G#2 down to D2 under a hanging A#4. The hook now has a shape and a fixed rhythm — A4(6) A#4(2) A4(4) E4(4) — restated as a real sequence on G4-G#4-G4-D4, as a true inversion up high (E5-D#5-E5-B4, not the descent the old draft mislabelled), and stretched into a two-stage chromatic climb that tops out on F#5 in bar 15, the only F# in the piece and the only moment D turns major. The counter is capped at D#4 so it never crosses or doubles the lead, and it moves in three or four long notes per bar; a formal falling D4-A3-E3 in long-short-long bookends the loop at bars 1 and 19 as the imperial signature. Two deliberate disagreements with the critiques: I kept the F major release consonant rather than dissolving it, but released it by SUBTRACTION — drums out entirely in bar 16, counter tacet, the tune dropped an octave to A4 — so the warmth is an exposure, not a fanfare; and I kept a drum escalation rather than flattening it, because the busiest bars (12-14) now sit under the most dissonant harmony instead of substituting for it, and bar 15 drops to a bare crescendo roll so the loudest thing in the cue is still only a 66-velocity kick. ---
-
-m2Bass : Int -> List Note
-m2Bass i =
-    if i == 0 then
-        [ nt 0 1, nt 73 7, nt 0 1, nt 73 4, nt 0 2, nt 110 1 ]
-
-    else if i == 1 then
-        [ nt 0 1, nt 73 6, nt 117 3, nt 0 1, nt 73 3, nt 0 1, nt 110 1 ]
-
-    else if i == 2 then
-        [ nt 73 3, nt 69 4, nt 65 5, nt 123 3, nt 0 1 ]
-
-    else if i == 3 then
-        [ nt 73 3, nt 69 4, nt 65 4, nt 123 2, nt 117 2, nt 0 1 ]
-
-    else if i == 4 then
-        [ nt 0 2, nt 82 6, nt 0 1, nt 117 4, nt 82 2, nt 104 1 ]
-
-    else if i == 5 then
-        [ nt 0 1, nt 104 7, nt 78 4, nt 0 1, nt 104 2, nt 65 1 ]
-
-    else
-        [ nt 0 1, nt 87 7, nt 117 4, nt 0 1, nt 65 2, nt 0 1 ]
-
-m2Counter : Int -> List Note
-m2Counter i =
-    if i == 0 then
-        [ nt 0 1, nt 294 6, nt 220 2, nt 165 7 ]
-
-    else if i == 1 then
-        [ nt 0 16 ]
-
-    else if i == 2 then
-        [ nt 0 3, nt 147 4, nt 220 4, nt 233 5 ]
-
-    else if i == 3 then
-        [ nt 0 1, nt 220 4, nt 233 4, nt 247 4, nt 262 3 ]
-
-    else if i == 4 then
-        [ nt 0 2, nt 165 5, nt 208 4, nt 233 3, nt 147 2 ]
-
-    else if i == 5 then
-        [ nt 0 3, nt 208 4, nt 247 3, nt 311 4, nt 277 2 ]
-
-    else
-        [ nt 0 4, nt 175 5, nt 262 4, nt 220 3 ]
-
-m2Lead : Int -> List Note
-m2Lead i =
-    if i == 0 then
-        [ nt 0 10, nt 440 4, nt 466 2 ]
-
-    else if i == 1 then
-        [ nt 440 6, nt 466 2, nt 440 4, nt 330 4 ]
-
-    else if i == 2 then
-        [ nt 0 1, nt 392 6, nt 415 2, nt 392 4, nt 294 3 ]
-
-    else if i == 3 then
-        [ nt 0 2, nt 659 6, nt 622 2, nt 659 3, nt 494 3 ]
-
-    else if i == 4 then
-        [ nt 0 1, nt 415 3, nt 440 3, nt 466 4, nt 494 5 ]
-
-    else if i == 5 then
-        [ nt 0 1, nt 523 3, nt 554 3, nt 587 4, nt 740 5 ]
-
-    else
-        [ nt 0 2, nt 349 3, nt 440 6, nt 392 3, nt 349 2 ]
-
-m2Drum : Int -> List Int
-m2Drum i =
-    if i == 0 then
-        [ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 ]
-
-    else if i == 1 then
-        [ 0, 0, 0, 54, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 ]
-
-    else if i == 2 then
-        [ 0, 0, 0, 52, 0, 0, 0, 0, 0, 0, 0, 56, 0, 0, 12, 0 ]
-
-    else if i == 3 then
-        [ 0, 0, 54, 0, 0, 0, 16, 0, 0, 58, 0, 0, 0, 14, 0, 20 ]
-
-    else if i == 4 then
-        [ 66, 0, 18, 0, 0, 22, 60, 0, 0, 16, 58, 0, 0, 20, 0, 24 ]
-
-    else if i == 5 then
-        [ 0, 0, 60, 0, 20, 0, 26, 0, 62, 0, 22, 0, 24, 58, 0, 28 ]
-
-    else
-        [ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 12, 18, 24, 30 ]
-
-m2Order : List Int
-m2Order = [ 0, 1, 0, 1, 0, 2, 1, 4, 4, 3, 4, 5, 5, 5, 5, 6, 6, 6, 3, 4, 1, 6, 2, 4, 0, 0, 6, 6, 1, 4, 5, 0, 1, 3, 4, 4, 3, 5, 5, 5, 5, 5, 5, 3, 4, 4, 3, 1, 0, 5, 4, 1, 6, 6, 0, 0, 2, 6, 1, 4 ]
-
-m2CounterOrder : List Int
-m2CounterOrder = [ 0, 1, 2, 1, 4, 3, 2, 4, 3, 3, 4, 5, 5, 3, 5, 1, 6, 6, 0, 4, 1, 1, 3, 4, 0, 2, 6, 6, 1, 4, 5, 4, 2, 0, 4, 3, 3, 5, 3, 5, 5, 3, 5, 3, 3, 4, 0, 2, 4, 5, 4, 1, 6, 6, 2, 0, 3, 1, 1, 4 ]
-
-m2LeadOrder : List Int
-m2LeadOrder = [ 0, 0, 1, 0, 2, 1, 2, 1, 2, 1, 0, 4, 3, 4, 5, 6, 6, 2, 1, 0, 0, 6, 1, 0, 0, 1, 6, 2, 0, 0, 5, 2, 2, 1, 1, 2, 1, 4, 4, 3, 3, 4, 4, 1, 2, 1, 1, 2, 2, 5, 0, 0, 2, 6, 1, 0, 1, 6, 0, 0 ]
-
-m2DrumOrder : List Int
-m2DrumOrder = [ 1, 0, 1, 2, 2, 0, 2, 3, 3, 3, 6, 4, 5, 4, 6, 0, 1, 1, 2, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 6, 6, 2, 2, 2, 3, 3, 3, 4, 4, 5, 5, 4, 4, 3, 3, 3, 2, 2, 2, 6, 6, 2, 1, 1, 1, 1, 0, 0, 0, 0 ]
-
--- --- mission 3, Static: E minor, 24 bars: the E2 pulse floor now actually MOVES in whole bars, not 16th-note dents (i–VI–bVII–i–V at 9-12, again at 13-16, bII pedal at 17-22, i–V at 23-24), so the counter's fixed F3 beep — the b2, an alien pitch that is never a chord tone — is reinterpreted as b2, then 4th over C, m3 over D, tritone over B, and finally ROOT at bar 17, without ever changing pitch; that is the Reich device the old draft only claimed, and the phasing is real because 16 mod 3 = 1, so counter patterns 0/1/2 continue the 3-step cycle unbroken across bars 3-12 and 20-22 instead of resetting at every barline (the lead's period-5 F5 beep drifts the same way in patterns 3/4/5). The hook is a signal, not a tune: F5–E5–B4, a semitone fall into a tritone, always entering off the downbeat at step 2, and it is never transposed — at bar 17 the floor lurches to F2 while counter and hook STAY in E (E4 rubbing F4, E5 a major seventh, B4 a tritone over the new root), so the semitone shift is a wound rather than a key lift, and bars 20 and 22 fault in TIME as well as pitch (bass rests at 3, 7-8 and 13, drums rotated so the loud hits land on 1/7/13 and nothing at all hits step 0). Two deliberate disagreements: I kept the chromatic glissando's Bb5 because here it sounds where the counter is on F4, not B3, so there is no false relation; and I reconciled "almost no melody" with the ask for a stronger hook by making the hook a three-note siren that recurs identically eight times rather than a theme that develops — the development is all in the floor underneath it. ---
-
-m3Bass : Int -> List Note
-m3Bass i =
-    if i == 0 then
-        [ nt 82 2, nt 82 2, nt 82 2, nt 82 2, nt 82 2, nt 82 2, nt 82 2, nt 82 2 ]
-
-    else if i == 1 then
-        [ nt 82 3, nt 82 3, nt 82 2, nt 0 1, nt 82 3, nt 82 2, nt 82 2 ]
-
-    else if i == 2 then
-        [ nt 65 2, nt 65 2, nt 65 2, nt 65 1, nt 82 1, nt 65 2, nt 65 2, nt 65 2, nt 65 2 ]
-
-    else if i == 3 then
-        [ nt 73 3, nt 73 3, nt 73 2, nt 73 2, nt 69 1, nt 73 3, nt 73 2 ]
-
-    else if i == 4 then
-        [ nt 123 2, nt 123 2, nt 123 3, nt 78 1, nt 123 2, nt 123 2, nt 123 2, nt 0 1, nt 87 1 ]
-
-    else if i == 5 then
-        [ nt 87 2, nt 87 2, nt 87 2, nt 87 1, nt 123 1, nt 87 2, nt 87 2, nt 87 2, nt 87 2 ]
-
-    else
-        [ nt 87 3, nt 0 1, nt 87 2, nt 87 1, nt 0 2, nt 87 3, nt 87 1, nt 0 1, nt 87 1, nt 78 1 ]
-
-m3Counter : Int -> List Note
-m3Counter i =
-    if i == 0 then
-        [ nt 175 1, nt 0 2, nt 175 1, nt 0 2, nt 175 1, nt 0 2, nt 175 1, nt 0 2, nt 175 1, nt 0 2, nt 175 1 ]
-
-    else if i == 1 then
-        [ nt 0 2, nt 175 1, nt 0 2, nt 175 1, nt 0 2, nt 175 1, nt 0 2, nt 175 1, nt 0 2, nt 175 1, nt 0 1 ]
-
-    else if i == 2 then
-        [ nt 0 1, nt 175 1, nt 0 2, nt 175 1, nt 0 2, nt 175 1, nt 0 2, nt 175 1, nt 0 2, nt 175 1, nt 0 2 ]
-
-    else if i == 3 then
-        [ nt 247 10, nt 349 6 ]
-
-    else if i == 4 then
-        [ nt 0 1, nt 349 1, nt 0 1, nt 247 1, nt 0 1, nt 349 1, nt 0 1, nt 247 1, nt 0 1, nt 349 1, nt 0 1, nt 247 1, nt 0 1, nt 349 1, nt 0 1, nt 247 1 ]
-
-    else if i == 5 then
-        [ nt 247 2, nt 0 1, nt 330 1, nt 349 1, nt 0 1, nt 247 2, nt 0 1, nt 370 1, nt 0 1, nt 330 1, nt 349 1, nt 0 2, nt 247 1 ]
-
-    else
-        [ nt 165 3, nt 330 3, nt 165 2, nt 0 1, nt 330 3, nt 165 2, nt 330 2 ]
-
-m3Lead : Int -> List Note
-m3Lead i =
-    if i == 0 then
-        [ nt 0 16 ]
-
-    else if i == 1 then
-        [ nt 0 2, nt 698 2, nt 659 2, nt 0 3, nt 494 3, nt 0 2, nt 698 1, nt 0 1 ]
-
-    else if i == 2 then
-        [ nt 0 2, nt 698 2, nt 659 2, nt 0 1, nt 988 1, nt 0 1, nt 494 3, nt 0 2, nt 659 1, nt 0 1 ]
-
-    else if i == 3 then
-        [ nt 698 1, nt 0 4, nt 698 1, nt 0 4, nt 698 1, nt 0 4, nt 698 1 ]
-
-    else if i == 4 then
-        [ nt 0 4, nt 698 1, nt 0 4, nt 698 1, nt 0 4, nt 698 1, nt 0 1 ]
-
-    else if i == 5 then
-        [ nt 0 3, nt 698 1, nt 0 4, nt 698 1, nt 0 4, nt 698 1, nt 0 2 ]
-
-    else
-        [ nt 0 2, nt 1047 1, nt 988 1, nt 932 1, nt 880 1, nt 831 1, nt 784 1, nt 740 1, nt 698 1, nt 659 1, nt 622 1, nt 587 1, nt 554 1, nt 523 2 ]
-
-m3Drum : Int -> List Int
-m3Drum i =
-    if i == 0 then
-        [ 64, 0, 0, 12, 0, 0, 18, 0, 0, 0, 14, 0, 0, 26, 0, 10 ]
-
-    else if i == 1 then
-        [ 68, 0, 14, 0, 46, 10, 0, 64, 0, 12, 16, 66, 46, 0, 12, 22 ]
-
-    else if i == 2 then
-        [ 70, 0, 12, 0, 44, 0, 10, 0, 0, 8, 0, 62, 44, 0, 10, 26 ]
-
-    else if i == 3 then
-        [ 78, 0, 16, 20, 48, 0, 58, 0, 64, 0, 16, 22, 48, 56, 0, 24 ]
-
-    else if i == 4 then
-        [ 70, 0, 14, 0, 46, 0, 0, 44, 0, 20, 24, 28, 48, 54, 44, 60 ]
-
-    else if i == 5 then
-        [ 60, 0, 0, 14, 0, 10, 0, 0, 0, 0, 16, 0, 0, 12, 0, 0 ]
-
-    else
-        [ 0, 74, 0, 14, 0, 0, 10, 66, 0, 12, 0, 0, 18, 62, 0, 20 ]
-
-m3Order : List Int
-m3Order = [ 0, 0, 0, 1, 0, 1, 0, 1, 2, 3, 0, 4, 1, 2, 3, 4, 5, 5, 5, 6, 5, 6, 1, 4, 4, 0, 0, 0, 6, 6, 1, 0, 0, 1, 0, 3, 3, 5, 5, 1, 2, 1, 2, 5, 5, 1, 4, 4, 4, 1, 5, 5, 2, 1, 2, 1, 5, 5, 3, 3, 0, 1, 0, 0, 1, 6, 6, 0, 0, 0, 4, 4 ]
-
-m3CounterOrder : List Int
-m3CounterOrder = [ 3, 3, 0, 1, 2, 0, 1, 2, 0, 1, 2, 0, 4, 4, 5, 3, 5, 5, 5, 0, 1, 2, 6, 3, 3, 3, 3, 2, 0, 2, 2, 2, 0, 1, 1, 1, 5, 5, 5, 0, 0, 4, 4, 5, 1, 6, 0, 3, 0, 6, 1, 5, 4, 4, 0, 0, 5, 5, 5, 1, 1, 1, 0, 2, 2, 2, 0, 2, 3, 3, 3, 3 ]
-
-m3LeadOrder : List Int
-m3LeadOrder = [ 0, 0, 0, 0, 0, 0, 3, 4, 5, 1, 2, 6, 1, 2, 6, 0, 2, 1, 6, 3, 4, 5, 2, 1, 0, 0, 0, 0, 3, 5, 4, 2, 0, 0, 3, 1, 6, 1, 6, 0, 5, 1, 2, 2, 4, 2, 6, 1, 6, 2, 4, 2, 2, 1, 5, 0, 6, 1, 6, 1, 3, 0, 0, 2, 4, 5, 3, 0, 0, 0, 0, 1 ]
-
-m3DrumOrder : List Int
-m3DrumOrder = [ 0, 0, 1, 1, 2, 4, 1, 2, 3, 1, 2, 4, 3, 3, 1, 5, 3, 1, 1, 6, 3, 6, 3, 4, 5, 0, 0, 2, 6, 6, 2, 2, 1, 1, 1, 1, 1, 1, 1, 4, 3, 3, 3, 3, 3, 3, 4, 4, 4, 3, 3, 3, 3, 3, 3, 4, 1, 1, 1, 1, 1, 1, 1, 2, 2, 6, 6, 2, 0, 0, 5, 4 ]
-
--- --- mission 4, Scrap Truce: E phrygian dominant (E F G# A B C D), with D# used strictly as an ascending leading tone to E and never as a free color, so the seventh is never ambiguous; bars 9-14 are a real key change to D harmonic minor (three new pitches: G natural, B-flat, C#, and its own B-flat-to-C# augmented second), pivoted in by a full A7 at bar 8 and returned at bar 14 by a Bb-F-E cadence, so the restatement is an arrival and not a texture change. Form: 2-bar intro stating the bass riff bare with a lead pickup at the end of bar 2; statement and answer (3-7) where the bass anticipates E on step 15 and the whole ensemble then drops the downbeat of the answer bar; 6-bar bridge with a slow sustained counter-voice; 3-bar restatement (call-answer-call) with the counter arpeggio added and a real B7 (D# in the counter over the bass B) as the one functional dominant; a near-silent break at bar 18; a two-bar chromatic riser that actually crosses bars and lands on D#4; and a 4-bar climax. The hook is E-F-G#(held)-rest-A-G#-F-rest-E(held): the augmented second gets the long note and the phrase has two rests, so it has a silhouette you can whistle rather than being an undifferentiated 16th stream; it returns an octave up as E6-C6-G#5 in bars 23-24, where bass, lead and drum lock in unison on a 3+3+3+3+4 grouping (the "bred soldier" moment) after bars 21-22 run that asymmetric bass against a straight machine 16th pulse. Two disagreements with the critiques: I kept phrygian dominant, because the "generic exotic cue" charge is really about the Afro-Cuban tresillo, not the mode, so I cut the tresillo to a single pivot bar and built the rest on 3-against-4 and rotated 2-3-3 cells; and I kept G natural, but only inside the bridge key and inside the A7 that opens it, never adjacent to G# at home. ---
-
-m4Bass : Int -> List Note
-m4Bass i =
-    if i == 0 then
-        [ nt 82 3, nt 87 3, nt 104 3, nt 82 3, nt 0 4 ]
-
-    else if i == 1 then
-        [ nt 82 3, nt 165 3, nt 104 3, nt 87 3, nt 87 3, nt 82 1 ]
-
-    else if i == 2 then
-        [ nt 0 1, nt 82 3, nt 131 2, nt 131 3, nt 123 2, nt 123 3, nt 87 2 ]
-
-    else if i == 3 then
-        [ nt 110 3, nt 110 3, nt 139 2, nt 110 3, nt 196 3, nt 139 2 ]
-
-    else if i == 4 then
-        [ nt 73 2, nt 73 3, nt 147 3, nt 110 2, nt 73 3, nt 175 3 ]
-
-    else if i == 5 then
-        [ nt 98 2, nt 98 3, nt 196 3, nt 117 2, nt 98 3, nt 147 3 ]
-
-    else if i == 6 then
-        [ nt 117 3, nt 117 3, nt 233 2, nt 175 3, nt 175 3, nt 87 2 ]
-
-    else if i == 7 then
-        [ nt 82 2, nt 87 2, nt 92 2, nt 98 2, nt 104 2, nt 110 2, nt 117 2, nt 123 2 ]
+        [ ntv 37 2 76, nt 0 6, ntv 37 2 76, nt 0 2, ntv 73 2 76, nt 0 2 ]
 
     else if i == 8 then
-        [ nt 131 2, nt 147 2, nt 165 2, nt 175 2, nt 196 1, nt 208 1, nt 220 1, nt 233 1, nt 247 1, nt 262 1, nt 277 1, nt 311 1 ]
+        [ ntv 37 2 76, nt 0 6, ntv 73 2 76, nt 0 6 ]
 
     else
-        [ nt 82 3, nt 87 3, nt 104 3, nt 123 3, nt 247 2, nt 165 2 ]
+        [ ntv 37 2 46, nt 0 6, ntv 73 2 46, nt 0 6 ]
 
-m4Counter : Int -> List Note
-m4Counter i =
+m1Sub : Int -> List Note
+m1Sub i =
     if i == 0 then
-        [ nt 0 16 ]
+        [ ntv 73 16 48 ]
 
     else if i == 1 then
-        [ nt 0 4, nt 330 6, nt 349 6 ]
+        [ ntv 73 8 48, ntv 55 8 48 ]
 
     else if i == 2 then
-        [ nt 0 1, nt 330 2, nt 0 1, nt 415 2, nt 0 1, nt 494 2, nt 0 1, nt 349 2, nt 0 1, nt 262 2, nt 0 1 ]
+        [ ntv 55 16 48 ]
 
     else if i == 3 then
-        [ nt 0 2, nt 330 2, nt 415 4, nt 440 2, nt 311 2, nt 330 2, nt 349 2 ]
+        [ ntv 73 16 68 ]
 
     else if i == 4 then
-        [ nt 294 4, nt 349 4, nt 440 3, nt 349 3, nt 294 2 ]
+        [ ntv 87 16 68 ]
 
     else if i == 5 then
-        [ nt 294 4, nt 466 4, nt 392 3, nt 466 3, nt 294 2 ]
+        [ ntv 73 8 68, ntv 55 8 68 ]
 
     else if i == 6 then
-        [ nt 277 3, nt 330 3, nt 392 2, nt 277 3, nt 330 3, nt 392 2 ]
+        [ ntv 87 16 86 ]
 
     else if i == 7 then
-        [ nt 466 3, nt 294 3, nt 349 2, nt 349 3, nt 440 3, nt 262 2 ]
+        [ ntv 65 16 86 ]
 
     else if i == 8 then
-        [ nt 165 1, nt 208 1, nt 247 1, nt 330 1, nt 247 1, nt 208 1, nt 165 3, nt 175 1, nt 220 1, nt 262 1, nt 349 1, nt 262 1, nt 220 1, nt 175 1 ]
+        [ ntv 73 16 86 ]
 
     else if i == 9 then
-        [ nt 415 4, nt 494 4, nt 349 4, nt 330 4 ]
+        [ ntv 73 12 86, ntv 65 4 86 ]
 
     else if i == 10 then
-        [ nt 415 2, nt 494 2, nt 698 2, nt 494 2, nt 415 2, nt 349 2, nt 415 2, nt 494 2 ]
-
-    else
-        [ nt 247 4, nt 262 4, nt 277 4, nt 311 4 ]
-
-m4Lead : Int -> List Note
-m4Lead i =
-    if i == 0 then
-        [ nt 0 16 ]
-
-    else if i == 1 then
-        [ nt 659 1, nt 698 1, nt 831 3, nt 0 1, nt 880 1, nt 831 1, nt 698 2, nt 0 1, nt 659 4, nt 0 1 ]
-
-    else if i == 2 then
-        [ nt 0 2, nt 988 1, nt 880 1, nt 831 3, nt 0 1, nt 698 1, nt 659 2, nt 622 1, nt 659 2, nt 0 2 ]
-
-    else if i == 3 then
-        [ nt 880 2, nt 784 2, nt 659 2, nt 554 2, nt 440 3, nt 0 1, nt 554 1, nt 587 1, nt 659 1, nt 587 1 ]
-
-    else if i == 4 then
-        [ nt 587 3, nt 698 1, nt 587 2, nt 440 4, nt 0 1, nt 466 2, nt 440 1, nt 587 2 ]
-
-    else if i == 5 then
-        [ nt 466 2, nt 587 2, nt 698 3, nt 587 1, nt 466 3, nt 392 2, nt 440 1, nt 466 1, nt 554 1 ]
-
-    else if i == 6 then
-        [ nt 466 2, nt 587 2, nt 698 2, nt 880 2, nt 698 2, nt 659 2, nt 698 3, nt 831 1 ]
-
-    else if i == 7 then
-        [ nt 659 1, nt 698 1, nt 831 3, nt 0 1, nt 1047 1, nt 988 1, nt 880 2, nt 0 1, nt 831 1, nt 698 1, nt 659 2, nt 0 1 ]
-
-    else if i == 8 then
-        [ nt 0 13, nt 440 1, nt 494 1, nt 622 1 ]
-
-    else if i == 9 then
-        [ nt 349 1, nt 415 1, nt 440 1, nt 466 1, nt 494 1, nt 523 1, nt 587 1, nt 622 1, nt 659 2, nt 831 2, nt 880 2, nt 988 1, nt 1047 1 ]
-
-    else if i == 10 then
-        [ nt 698 1, nt 831 1, nt 880 1, nt 698 1, nt 831 1, nt 880 1, nt 988 1, nt 1047 1, nt 988 1, nt 880 1, nt 831 1, nt 698 1, nt 659 4 ]
-
-    else
-        [ nt 1319 1, nt 1047 1, nt 831 1, nt 1319 1, nt 1047 1, nt 831 1, nt 1319 1, nt 1175 1, nt 1047 1, nt 698 1, nt 831 1, nt 1047 1, nt 1319 4 ]
-
-m4Drum : Int -> List Int
-m4Drum i =
-    if i == 0 then
-        [ 64, 0, 0, 58, 0, 0, 58, 0, 0, 54, 0, 0, 48, 0, 0, 0 ]
-
-    else if i == 1 then
-        [ 68, 0, 16, 58, 0, 16, 60, 0, 16, 54, 0, 18, 50, 0, 20, 44 ]
-
-    else if i == 2 then
-        [ 70, 0, 18, 0, 46, 0, 60, 18, 0, 0, 58, 20, 46, 0, 18, 40 ]
-
-    else if i == 3 then
-        [ 0, 0, 60, 0, 46, 0, 0, 58, 20, 0, 46, 0, 60, 18, 0, 44 ]
-
-    else if i == 4 then
-        [ 66, 0, 0, 0, 44, 0, 20, 0, 58, 0, 0, 20, 44, 0, 0, 26 ]
-
-    else if i == 5 then
-        [ 68, 0, 20, 58, 0, 20, 46, 0, 58, 0, 20, 0, 46, 30, 38, 46 ]
-
-    else if i == 6 then
-        [ 70, 0, 24, 0, 48, 0, 24, 0, 66, 0, 26, 0, 30, 36, 42, 50 ]
-
-    else if i == 7 then
-        [ 72, 0, 20, 58, 46, 0, 60, 20, 0, 58, 20, 0, 46, 16, 20, 42 ]
-
-    else if i == 8 then
-        [ 62, 0, 0, 0, 0, 0, 0, 0, 44, 0, 0, 0, 0, 0, 0, 36 ]
-
-    else if i == 9 then
-        [ 58, 14, 26, 14, 46, 16, 28, 16, 60, 18, 30, 18, 48, 20, 32, 24 ]
-
-    else if i == 10 then
-        [ 60, 20, 30, 22, 48, 24, 32, 26, 62, 28, 34, 30, 50, 34, 40, 46 ]
+        [ ntv 49 16 32 ]
 
     else if i == 11 then
-        [ 74, 22, 34, 22, 50, 22, 34, 24, 74, 24, 36, 24, 50, 26, 38, 30 ]
+        [ ntv 73 16 32 ]
+
+    else if i == 12 then
+        [ nt 73 16 ]
+
+    else if i == 13 then
+        [ nt 87 16 ]
+
+    else if i == 14 then
+        [ nt 65 16 ]
+
+    else if i == 15 then
+        [ nt 73 12, nt 65 4 ]
+
+    else if i == 16 then
+        [ ntv 87 16 82 ]
+
+    else if i == 17 then
+        [ ntv 73 16 82 ]
+
+    else if i == 18 then
+        [ ntv 65 16 82 ]
+
+    else if i == 19 then
+        [ ntv 73 8 82, ntv 55 8 82 ]
+
+    else if i == 20 then
+        [ ntv 73 8 50, ntv 55 8 50 ]
+
+    else if i == 21 then
+        [ ntv 73 16 50 ]
 
     else
-        [ 78, 20, 20, 72, 20, 20, 72, 20, 20, 70, 20, 20, 68, 24, 28, 50 ]
+        [ ntv 55 16 50 ]
 
-m4Order : List Int
-m4Order = [ 0, 0, 1, 2, 1, 2, 1, 3, 4, 5, 3, 4, 5, 6, 1, 2, 1, 0, 7, 8, 9, 9, 9, 9, 0, 0, 4, 5, 4, 5, 2, 2, 2, 7, 1, 1, 1, 6, 0, 3, 3, 1, 1, 9, 9, 8, 9, 9, 9, 8, 9, 9, 1, 1, 3, 3, 0, 6, 1, 1, 1, 7, 2, 2, 2, 5, 4, 5, 4, 0, 0, 9 ]
-
-m4CounterOrder : List Int
-m4CounterOrder = [ 0, 1, 2, 3, 2, 3, 2, 6, 4, 5, 6, 4, 5, 7, 8, 3, 8, 1, 0, 11, 9, 9, 10, 10, 1, 0, 4, 5, 4, 5, 3, 3, 3, 0, 2, 2, 2, 7, 1, 6, 6, 8, 8, 9, 9, 11, 10, 10, 10, 11, 9, 9, 8, 8, 6, 6, 1, 7, 2, 2, 2, 0, 3, 3, 3, 5, 4, 5, 4, 0, 1, 10 ]
-
-m4LeadOrder : List Int
-m4LeadOrder = [ 0, 8, 1, 2, 1, 2, 1, 3, 4, 5, 3, 4, 5, 6, 7, 2, 7, 0, 0, 9, 10, 10, 11, 11, 0, 0, 4, 5, 4, 5, 2, 2, 2, 0, 1, 1, 1, 6, 8, 3, 3, 7, 7, 10, 10, 9, 11, 11, 11, 9, 10, 10, 7, 7, 3, 3, 8, 6, 1, 1, 1, 0, 2, 2, 2, 5, 4, 5, 4, 0, 0, 11 ]
-
-m4DrumOrder : List Int
-m4DrumOrder = [ 0, 1, 2, 3, 2, 3, 2, 5, 4, 4, 5, 4, 4, 6, 7, 3, 7, 8, 9, 10, 11, 11, 12, 12, 8, 0, 4, 4, 4, 4, 3, 3, 3, 9, 2, 2, 2, 6, 1, 5, 5, 7, 7, 11, 11, 10, 12, 12, 12, 10, 11, 11, 7, 7, 5, 5, 1, 6, 2, 2, 2, 9, 3, 3, 3, 4, 4, 4, 4, 0, 8, 12 ]
-
--- --- meridian engine (mission 5, finale): "aeolian weight". F natural minor
--- and only F natural minor -- F G Ab Bb C Db Eb -- from step 0 to step 383.
--- There is no E natural anywhere, so there is no dominant and no leading tone:
--- the cadence is always bVII to i. That is what keeps this off m1's ground,
--- which is a D minor war drum with a real A7 in it.
---
--- The finale as MASS rather than as speed. The other four themes are a
--- fanfare, a cold line that never resolves, a flat pulse and a fast attack;
--- this one moves in half notes, every lead note is 2 to 7 steps long, and
--- there is not one sixteenth-note run in the piece. The tempo grid is
--- untouched -- the note lengths do the work.
---
--- The theme is six bars: Ab4-C5, a rise of a minor sixth into F5 held seven
--- steps, then a sigh onto Eb5; a fall (C5 Bb4 Ab4 F4); a lift over Db; a climb;
--- the Ab5 peak in bar 7 braced by a third underneath; and a cadence bar that
--- walks home. It is stated twice, bars 3-8 and 15-20, note for note -- but at
--- bar 16 the counter order disagrees with the lead order by one index, so the
--- second statement is re-harmonised without the tune changing a note.
---
--- The counter has it FIRST. Bars 1 and 2 are the theme an octave down, low and
--- alone over the F pedal, before the lead has ever been heard, so bar 3 is the
--- lead TAKING it rather than starting it; the same low statement returns at
--- bar 13, the one hole, under a drum break with no lead over it.
---
--- Counterpoint is composed, not collided into: m5CounterOrder and m5LeadOrder
--- are the same list except at bar 16, so every sounding lead pattern meets the
--- one counter pattern written against it. Where it shadows it runs a third or
--- a sixth below and BREAKS the parallel by walking while the lead holds (bar 3:
--- the lead holds F5 seven steps while the counter walks Db5, Bb4, Ab4 -- one
--- held note producing a third, a fifth and a sixth in turn). Where the tune
--- leans it drops the shadow entirely: bars 5/12/17/22 put Eb4 under Db5, a
--- minor seventh, and bars 9/14/21 open into fourths and fifths. Measured over
--- the loop: 57.2% thirds and sixths, 28.4% unison/fourths/fifths, 14.4%
--- seconds and minor sevenths, and not one octave doubling in 285 shared steps,
--- so the counter is always audible as its own pitch.
---
--- The bass gains notes exactly once. It is half notes for 22 bars; at 19 and
--- 20 -- the peak of the second statement and its cadence -- it goes to straight
--- eighths, F Ab C F C Ab F C, the same three chord tones it has been holding,
--- now running. The machine coming up to speed is the form, not an effect, and
--- it lasts 4.8 seconds out of 57.6.
---
--- The whole loop is a moving floor. There is NO drum-silent bar (the thinnest,
--- bar 11, is a 28-velocity skin tick), the longest gap between drum hits
--- anywhere is 6 steps, and there is not one step in the 384 where all four
--- voices are empty. So the seam cannot bang: bar 24 is the quietest kit in the
--- piece (a 56 kick, tapering to a 16 skin on the last step) handing to bar 1's
--- 68, the same kick-on-1-and-9 skeleton one notch louder, over the same F
--- pedal, and Eb resolves to F minor across the barline.
---
--- Under gunfire: the lead never reaches 880 Hz. Its ceiling is Ab5 at 831, for
--- 10 steps of 384, and it lives between F4 and F5 the rest of the loop, so the
--- band the callouts and the phasers live in is clear for the whole 57.6 s.
--- Suggested voicing: bass Sound.Triangle 13, counter 7, lead 10.
-
-
-m5Bass : Int -> List Note
-m5Bass i =
+m1Body : Int -> List Note
+m1Body i =
     if i == 0 then
-        -- the pedal. F2, twice, with a breath at each half bar
-        [ nt 87 7, nt 0 1, nt 87 7, nt 0 1 ]
+        [ ntv 110 16 46 ]
 
     else if i == 1 then
-        -- i (Fm): the walking form, root and the two chord tones
-        [ nt 87 6, nt 104 2, nt 87 4, nt 131 2, nt 104 2 ]
+        [ ntv 174 16 46 ]
 
     else if i == 2 then
-        -- bVI (Db)
-        [ nt 69 7, nt 0 1, nt 104 6, nt 139 2 ]
+        [ ntv 110 16 66 ]
 
     else if i == 3 then
-        -- bVII (Eb)
-        [ nt 78 7, nt 0 1, nt 117 6, nt 156 2 ]
+        [ ntv 174 16 66 ]
 
     else if i == 4 then
-        -- bIII (Ab)
-        [ nt 104 7, nt 0 1, nt 156 6, nt 104 2 ]
+        [ ntv 110 8 66, ntv 131 8 66 ]
 
     else if i == 5 then
-        -- iv (Bb), bar 13 only, under the low restatement
-        [ nt 117 7, nt 0 1, nt 175 4, nt 104 4 ]
+        [ ntv 174 16 88 ]
 
     else if i == 6 then
-        -- bars 19-20 ONLY: the same F chord tones, now running eighths
-        [ nt 87 2, nt 104 2, nt 131 2, nt 175 2, nt 131 2, nt 104 2, nt 87 2, nt 131 2 ]
+        [ ntv 131 16 88 ]
+
+    else if i == 7 then
+        [ ntv 147 16 88 ]
+
+    else if i == 8 then
+        [ ntv 110 8 88, ntv 131 8 88 ]
+
+    else if i == 9 then
+        [ ntv 110 16 30 ]
+
+    else if i == 10 then
+        [ ntv 147 8 30, ntv 131 8 30 ]
+
+    else if i == 11 then
+        [ nt 131 16 ]
+
+    else if i == 12 then
+        [ nt 131 8, nt 110 8 ]
+
+    else if i == 13 then
+        [ nt 196 4, nt 175 4, nt 196 4, nt 220 4 ]
+
+    else if i == 14 then
+        [ ntv 196 4 92, ntv 175 4 92, ntv 196 4 92, ntv 220 4 92 ]
+
+    else if i == 15 then
+        [ ntv 147 8 92, ntv 131 8 92 ]
+
+    else if i == 16 then
+        [ ntv 131 16 92 ]
 
     else
-        -- bar 24: the bare pedal again, for the hand-over
-        [ nt 87 8, nt 0 2, nt 87 4, nt 0 2 ]
+        [ ntv 110 8 92, ntv 131 8 92 ]
 
-
-m5Counter : Int -> List Note
-m5Counter i =
+m1Air : Int -> List Note
+m1Air i =
     if i == 0 then
-        -- bars 1, 2, 13: the theme LOW and alone, before the lead exists
-        [ nt 208 2, nt 262 2, nt 349 7, nt 0 1, nt 311 4 ]
-
-    else if i == 1 then
-        -- under the head: thirds, then it WALKS under the held F5
-        [ nt 349 2, nt 415 2, nt 554 3, nt 466 2, nt 415 3, nt 0 2, nt 523 2 ]
-
-    else if i == 2 then
-        -- bar 4: a low arch against the falling answer, breathing where it moves
-        [ nt 208 3, nt 0 2, nt 262 2, nt 349 3, nt 262 2, nt 0 1, nt 208 3 ]
-
-    else if i == 3 then
-        -- the leaning bar: Eb4 under Db5 is a minor seventh, on purpose
-        [ nt 466 2, nt 554 3, nt 415 3, nt 0 1, nt 466 2, nt 311 5 ]
-
-    else if i == 4 then
-        -- the only G in the piece, and only over Eb bars
-        [ nt 392 3, nt 415 3, nt 0 2, nt 349 4, nt 311 4 ]
-
-    else if i == 5 then
-        -- the peak bars: F4 under the Ab5, a third at the octave
-        [ nt 415 2, nt 523 2, nt 466 4, nt 0 1, nt 349 5, nt 415 2 ]
-
-    else if i == 6 then
-        -- the cadence, the most mixed bar in the piece: fifth, seventh, thirds
-        [ nt 466 3, nt 349 3, nt 0 1, nt 415 3, nt 349 2, nt 262 4 ]
-
-    else
-        -- the pedal figure: indifferent to the tune, opens into fourths
-        [ nt 208 6, nt 262 4, nt 0 1, nt 233 2, nt 208 3 ]
-
-
-m5Lead : Int -> List Note
-m5Lead i =
-    if i == 0 then
-        -- bars 1, 2, 13
         [ nt 0 16 ]
 
     else if i == 1 then
-        -- the head: a minor sixth up into F5, held seven steps, sighing to Eb5
-        [ nt 415 2, nt 523 2, nt 698 7, nt 0 1, nt 622 4 ]
+        [ ntv 294 16 40 ]
 
     else if i == 2 then
-        -- the fall
-        [ nt 523 3, nt 466 3, nt 415 5, nt 0 1, nt 349 4 ]
+        [ ntv 294 16 56 ]
 
     else if i == 3 then
-        -- the lift over Db
-        [ nt 554 2, nt 698 6, nt 622 3, nt 0 1, nt 554 4 ]
+        [ ntv 175 16 56 ]
 
     else if i == 4 then
-        -- the climb
-        [ nt 466 3, nt 523 3, nt 622 5, nt 0 1, nt 466 4 ]
+        [ ntv 175 16 74 ]
 
     else if i == 5 then
-        -- the peak: Ab5, the highest note in the loop, five steps
-        [ nt 523 2, nt 622 2, nt 698 4, nt 831 5, nt 0 1, nt 698 2 ]
+        [ ntv 220 16 74 ]
 
     else if i == 6 then
-        -- the cadence: walks home to F4
-        [ nt 698 3, nt 622 3, nt 523 4, nt 415 2, nt 0 1, nt 349 3 ]
+        [ ntv 294 16 74 ]
+
+    else if i == 7 then
+        [ ntv 294 8 74, ntv 175 8 74 ]
+
+    else if i == 8 then
+        [ ntv 262 16 86 ]
+
+    else if i == 9 then
+        [ ntv 220 16 86 ]
+
+    else if i == 10 then
+        [ ntv 220 16 86 ]
+
+    else if i == 11 then
+        [ nt 220 16 ]
+
+    else if i == 12 then
+        [ nt 220 16 ]
+
+    else if i == 13 then
+        [ nt 262 16 ]
+
+    else if i == 14 then
+        [ nt 175 8, nt 196 8 ]
 
     else
-        -- the wide bar, all long tones
-        [ nt 523 4, nt 622 4, nt 698 5, nt 0 1, nt 622 2 ]
+        [ ntv 175 16 38 ]
+
+m1PulseOrder : List Int
+m1PulseOrder =
+    [ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 0, 1, 1, 1, 0, 1
+    , 1, 1, 2, 2, 3, 2, 2, 2, 3, 2, 2, 2, 3, 2, 0, 0, 0, 0, 0, 0, 0, 0, 4, 5
+    , 4, 6, 4, 5, 4, 6, 4, 5, 4, 6, 4, 5, 7, 7, 8, 7, 7, 7, 8, 7, 7, 7, 8, 7
+    , 9, 0, 0, 9, 0, 0
+    ]
+
+m1SubOrder : List Int
+m1SubOrder =
+    [ 0, 0, 1, 2, 0, 0, 1, 2, 0, 0, 1, 2, 0, 0, 3, 4, 3, 5, 3, 4, 3, 5, 3, 4
+    , 3, 5, 6, 7, 8, 9, 6, 7, 8, 9, 6, 7, 8, 9, 10, 11, 10, 11, 10, 11, 10, 11, 12, 13
+    , 14, 15, 12, 13, 14, 15, 12, 13, 14, 15, 12, 13, 16, 17, 18, 19, 16, 17, 18, 19, 16, 17, 18, 19
+    , 20, 21, 22, 20, 21, 22
+    ]
+
+m1BodyOrder : List Int
+m1BodyOrder =
+    [ 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 2, 3, 4, 2, 2, 3, 4, 2, 2, 3
+    , 4, 2, 5, 6, 7, 8, 5, 6, 7, 8, 5, 6, 7, 8, 9, 10, 9, 10, 9, 10, 9, 10, 11, 12
+    , 13, 11, 11, 12, 13, 11, 11, 12, 13, 11, 11, 12, 14, 15, 16, 17, 14, 15, 16, 17, 14, 15, 16, 17
+    , 1, 0, 0, 1, 0, 0
+    ]
+
+m1AirOrder : List Int
+m1AirOrder =
+    [ 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 2, 0, 3, 0, 2, 0, 3, 0, 2, 0
+    , 3, 0, 4, 5, 6, 7, 4, 5, 6, 7, 4, 5, 6, 7, 0, 0, 0, 0, 0, 0, 0, 0, 8, 9
+    , 8, 10, 8, 9, 8, 10, 8, 9, 8, 10, 8, 9, 11, 12, 13, 14, 11, 12, 13, 14, 11, 12, 13, 14
+    , 15, 0, 0, 15, 0, 0
+    ]
 
 
-m5Drum : Int -> List Int
-m5Drum i =
+-- --- mission 2, The Silo Gambit: B minor pentatonic. Infiltration: the harmony barely moves and the pulse is distant and irregular, so its tempo never settles.
+-- 86 bars, 4m35s. Movements (in bars): I 18, II 14, III 12, IV 10, V 14, VI 12, VII 6.
+-- I drone, II the build, III the statement, IV the hollow, V pressure, VI the
+-- wide part, VII the descent back into the drone, so bar 86 hands to bar 1
+-- without a seam. The body voice runs from level 26 to 100 across those
+-- seven, and with no percussion that spread is the whole architecture. ---
+
+m2Pulse : Int -> List Note
+m2Pulse i =
     if i == 0 then
-        -- bar 24: the quietest kit in the piece, still ticking on the last step
-        [ 56, 0, 0, 0, 24, 0, 0, 0, 42, 0, 0, 0, 24, 0, 0, 16 ]
+        [ nt 0 16 ]
 
     else if i == 1 then
-        -- the skeleton: kick on 1 and 9, a skin before each barline
-        [ 68, 0, 0, 0, 0, 0, 0, 18, 46, 0, 0, 0, 0, 0, 0, 18 ]
+        [ ntv 46 2 54, nt 0 14 ]
 
     else if i == 2 then
-        [ 72, 0, 0, 16, 44, 0, 0, 0, 64, 0, 0, 16, 44, 0, 0, 20 ]
+        [ ntv 46 2 76, nt 0 6, ntv 62 2 76, nt 0 6 ]
 
     else if i == 3 then
-        [ 74, 0, 18, 0, 46, 0, 20, 0, 66, 0, 18, 0, 46, 20, 24, 28 ]
+        [ ntv 46 2 76, nt 0 14 ]
 
     else if i == 4 then
-        [ 70, 0, 0, 0, 46, 0, 62, 0, 0, 0, 18, 0, 46, 0, 20, 24 ]
+        [ ntv 46 2 76, nt 0 2, ntv 62 2 76, nt 0 10 ]
 
     else if i == 5 then
-        -- the full kit, at the two peaks
-        [ 76, 20, 24, 20, 48, 20, 24, 20, 70, 20, 24, 20, 48, 22, 26, 30 ]
+        [ nt 46 2, nt 0 6, nt 62 2, nt 0 6 ]
 
     else if i == 6 then
-        -- bar 11: the thinnest bar. skin only, no kick. the floor never stops
-        [ 28, 0, 0, 0, 12, 0, 0, 0, 22, 0, 0, 0, 12, 0, 0, 8 ]
+        [ nt 46 2, nt 0 2, nt 62 2, nt 0 2, nt 46 2, nt 0 6 ]
+
+    else if i == 7 then
+        [ nt 46 2, nt 0 6, nt 92 2, nt 0 6 ]
+
+    else if i == 8 then
+        [ ntv 46 2 70, nt 0 2, ntv 62 2 70, nt 0 10 ]
+
+    else if i == 9 then
+        [ ntv 46 2 70, nt 0 6, ntv 62 2 70, nt 0 6 ]
+
+    else if i == 10 then
+        [ ntv 46 2 70, nt 0 14 ]
 
     else
-        -- bar 13: the break, under the counter's low restatement
-        [ 74, 0, 20, 24, 48, 0, 20, 0, 70, 0, 22, 26, 46, 20, 24, 30 ]
+        [ ntv 46 2 42, nt 0 14 ]
+
+m2Sub : Int -> List Note
+m2Sub i =
+    if i == 0 then
+        [ ntv 62 16 40 ]
+
+    else if i == 1 then
+        [ ntv 62 8 40, ntv 46 8 40 ]
+
+    else if i == 2 then
+        [ ntv 62 16 60 ]
+
+    else if i == 3 then
+        [ ntv 46 16 60 ]
+
+    else if i == 4 then
+        [ ntv 62 8 60, ntv 46 8 60 ]
+
+    else if i == 5 then
+        [ ntv 73 16 80 ]
+
+    else if i == 6 then
+        [ ntv 82 16 80 ]
+
+    else if i == 7 then
+        [ ntv 62 16 80 ]
+
+    else if i == 8 then
+        [ ntv 62 12 80, ntv 55 4 80 ]
+
+    else if i == 9 then
+        [ ntv 46 16 28 ]
+
+    else if i == 10 then
+        [ ntv 62 16 28 ]
+
+    else if i == 11 then
+        [ nt 62 16 ]
+
+    else if i == 12 then
+        [ nt 73 16 ]
+
+    else if i == 13 then
+        [ nt 55 16 ]
+
+    else if i == 14 then
+        [ nt 82 16 ]
+
+    else if i == 15 then
+        [ ntv 73 16 78 ]
+
+    else if i == 16 then
+        [ ntv 62 16 78 ]
+
+    else if i == 17 then
+        [ ntv 82 16 78 ]
+
+    else if i == 18 then
+        [ ntv 62 8 78, ntv 46 8 78 ]
+
+    else if i == 19 then
+        [ ntv 62 8 44, ntv 46 8 44 ]
+
+    else
+        [ ntv 62 16 44 ]
+
+m2Body : Int -> List Note
+m2Body i =
+    if i == 0 then
+        [ ntv 185 16 38 ]
+
+    else if i == 1 then
+        [ ntv 123 16 38 ]
+
+    else if i == 2 then
+        [ ntv 123 16 58 ]
+
+    else if i == 3 then
+        [ ntv 185 16 58 ]
+
+    else if i == 4 then
+        [ ntv 147 16 58 ]
+
+    else if i == 5 then
+        [ ntv 147 16 82 ]
+
+    else if i == 6 then
+        [ ntv 165 16 82 ]
+
+    else if i == 7 then
+        [ ntv 123 16 82 ]
+
+    else if i == 8 then
+        [ ntv 185 8 82, ntv 165 8 82 ]
+
+    else if i == 9 then
+        [ ntv 123 16 26 ]
+
+    else if i == 10 then
+        [ ntv 147 8 26, ntv 123 8 26 ]
+
+    else if i == 11 then
+        [ nt 220 16 ]
+
+    else if i == 12 then
+        [ nt 220 8, nt 185 8 ]
+
+    else if i == 13 then
+        [ nt 165 4, nt 185 4, nt 165 4, nt 147 4 ]
+
+    else if i == 14 then
+        [ nt 165 16 ]
+
+    else if i == 15 then
+        [ ntv 165 4 90, ntv 185 4 90, ntv 165 4 90, ntv 147 4 90 ]
+
+    else if i == 16 then
+        [ ntv 147 8 90, ntv 123 8 90 ]
+
+    else if i == 17 then
+        [ ntv 220 8 90, ntv 185 8 90 ]
+
+    else if i == 18 then
+        [ ntv 123 8 90, ntv 147 8 90 ]
+
+    else if i == 19 then
+        [ ntv 147 16 40 ]
+
+    else if i == 20 then
+        [ ntv 123 16 40 ]
+
+    else
+        [ ntv 185 16 40 ]
+
+m2Air : Int -> List Note
+m2Air i =
+    if i == 0 then
+        [ nt 0 16 ]
+
+    else if i == 1 then
+        [ ntv 247 16 32 ]
+
+    else if i == 2 then
+        [ ntv 247 16 48 ]
+
+    else if i == 3 then
+        [ ntv 294 16 48 ]
+
+    else if i == 4 then
+        [ ntv 294 16 68 ]
+
+    else if i == 5 then
+        [ ntv 330 16 68 ]
+
+    else if i == 6 then
+        [ ntv 247 16 68 ]
+
+    else if i == 7 then
+        [ ntv 247 8 68, ntv 294 8 68 ]
+
+    else if i == 8 then
+        [ ntv 220 16 86 ]
+
+    else if i == 9 then
+        [ ntv 370 8 86, ntv 330 8 86 ]
+
+    else if i == 10 then
+        [ ntv 330 16 86 ]
+
+    else if i == 11 then
+        [ ntv 370 16 86 ]
+
+    else if i == 12 then
+        [ nt 370 16 ]
+
+    else if i == 13 then
+        [ nt 370 8, nt 330 8 ]
+
+    else if i == 14 then
+        [ nt 294 8, nt 247 8 ]
+
+    else
+        [ nt 294 16 ]
+
+m2PulseOrder : List Int
+m2PulseOrder =
+    [ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 0, 1
+    , 0, 1, 0, 1, 0, 1, 0, 1, 2, 3, 4, 2, 2, 3, 4, 2, 2, 3, 4, 2, 0, 0, 0, 0
+    , 0, 0, 0, 0, 0, 0, 5, 6, 7, 6, 5, 6, 7, 6, 5, 6, 7, 6, 5, 6, 8, 9, 10, 8
+    , 8, 9, 10, 8, 8, 9, 10, 8, 11, 0, 0, 11, 0, 0
+    ]
+
+m2SubOrder : List Int
+m2SubOrder =
+    [ 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 2, 3, 2, 4, 2, 3
+    , 2, 4, 2, 3, 2, 4, 2, 3, 5, 6, 7, 8, 5, 6, 7, 8, 5, 6, 7, 8, 9, 10, 9, 10
+    , 9, 10, 9, 10, 9, 10, 11, 12, 13, 14, 11, 12, 13, 14, 11, 12, 13, 14, 11, 12, 15, 16, 17, 18
+    , 15, 16, 17, 18, 15, 16, 17, 18, 19, 20, 20, 19, 20, 20
+    ]
+
+m2BodyOrder : List Int
+m2BodyOrder =
+    [ 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 2, 3, 4, 3, 2, 3
+    , 4, 3, 2, 3, 4, 3, 2, 3, 5, 6, 7, 8, 5, 6, 7, 8, 5, 6, 7, 8, 9, 10, 9, 10
+    , 9, 10, 9, 10, 9, 10, 11, 12, 13, 14, 11, 12, 13, 14, 11, 12, 13, 14, 11, 12, 15, 16, 17, 18
+    , 15, 16, 17, 18, 15, 16, 17, 18, 19, 20, 21, 19, 20, 21
+    ]
+
+m2AirOrder : List Int
+m2AirOrder =
+    [ 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 2, 0, 3, 0, 2, 0
+    , 3, 0, 2, 0, 3, 0, 2, 0, 4, 5, 6, 7, 4, 5, 6, 7, 4, 5, 6, 7, 0, 0, 0, 0
+    , 0, 0, 0, 0, 0, 0, 8, 9, 10, 11, 8, 9, 10, 11, 8, 9, 10, 11, 8, 9, 12, 13, 14, 15
+    , 12, 13, 14, 15, 12, 13, 14, 15, 1, 0, 0, 1, 0, 0
+    ]
 
 
-m5Order : List Int
-m5Order = [ 0, 0, 0, 1, 2, 3, 1, 1, 4, 3, 1, 2, 5, 3, 0, 1, 2, 3, 6, 6, 4, 2, 3, 7, 1, 0, 0, 2, 7, 0, 1, 2, 1, 0, 1, 2, 3, 3, 2, 3, 4, 3, 3, 6, 5, 1, 6, 4, 4, 6, 1, 5, 6, 3, 3, 4, 3, 2, 3, 3, 2, 1, 0, 1, 2, 1, 0, 2, 0, 0, 1, 7 ]
+-- --- mission 3, Static: E minor pentatonic, and it still does not move. Barely any pulse; the beating in the top voice is the only thing that throbs.
+-- 88 bars, 4m42s. Movements (in bars): I 20, II 14, III 12, IV 10, V 14, VI 12, VII 6.
+-- I drone, II the build, III the statement, IV the hollow, V pressure, VI the
+-- wide part, VII the descent back into the drone, so bar 88 hands to bar 1
+-- without a seam. The body voice runs from level 24 to 98 across those
+-- seven, and with no percussion that spread is the whole architecture. ---
+
+m3Pulse : Int -> List Note
+m3Pulse i =
+    if i == 0 then
+        [ nt 0 16 ]
+
+    else if i == 1 then
+        [ ntv 41 2 66, nt 0 14 ]
+
+    else if i == 2 then
+        [ nt 0 8, ntv 41 2 66, nt 0 6 ]
+
+    else if i == 3 then
+        [ nt 41 2, nt 0 6, nt 82 2, nt 0 6 ]
+
+    else if i == 4 then
+        [ nt 41 2, nt 0 14 ]
+
+    else if i == 5 then
+        [ ntv 41 2 62, nt 0 14 ]
+
+    else
+        [ nt 0 8, ntv 41 2 62, nt 0 6 ]
+
+m3Sub : Int -> List Note
+m3Sub i =
+    if i == 0 then
+        [ ntv 41 16 38 ]
+
+    else if i == 1 then
+        [ ntv 41 16 56 ]
+
+    else if i == 2 then
+        [ ntv 82 16 56 ]
+
+    else if i == 3 then
+        [ ntv 62 16 56 ]
+
+    else if i == 4 then
+        [ ntv 49 16 78 ]
+
+    else if i == 5 then
+        [ ntv 41 16 78 ]
+
+    else if i == 6 then
+        [ ntv 73 16 78 ]
+
+    else if i == 7 then
+        [ ntv 41 16 26 ]
+
+    else if i == 8 then
+        [ nt 49 16 ]
+
+    else if i == 9 then
+        [ nt 73 16 ]
+
+    else if i == 10 then
+        [ nt 55 16 ]
+
+    else if i == 11 then
+        [ nt 41 16 ]
+
+    else if i == 12 then
+        [ ntv 55 16 74 ]
+
+    else if i == 13 then
+        [ ntv 41 16 74 ]
+
+    else if i == 14 then
+        [ ntv 73 16 74 ]
+
+    else if i == 15 then
+        [ ntv 41 8 74, ntv 73 8 74 ]
+
+    else if i == 16 then
+        [ ntv 62 16 42 ]
+
+    else
+        [ ntv 41 16 42 ]
+
+m3Body : Int -> List Note
+m3Body i =
+    if i == 0 then
+        [ ntv 165 16 36 ]
+
+    else if i == 1 then
+        [ ntv 165 16 54 ]
+
+    else if i == 2 then
+        [ ntv 220 16 54 ]
+
+    else if i == 3 then
+        [ ntv 196 16 80 ]
+
+    else if i == 4 then
+        [ ntv 165 16 80 ]
+
+    else if i == 5 then
+        [ ntv 147 16 80 ]
+
+    else if i == 6 then
+        [ ntv 220 16 80 ]
+
+    else if i == 7 then
+        [ ntv 165 16 24 ]
+
+    else if i == 8 then
+        [ ntv 247 16 24 ]
+
+    else if i == 9 then
+        [ ntv 247 16 98 ]
+
+    else if i == 10 then
+        [ ntv 147 16 98 ]
+
+    else if i == 11 then
+        [ ntv 220 16 98 ]
+
+    else if i == 12 then
+        [ ntv 123 16 98 ]
+
+    else if i == 13 then
+        [ ntv 196 8 84, ntv 220 8 84 ]
+
+    else if i == 14 then
+        [ ntv 123 16 84 ]
+
+    else if i == 15 then
+        [ ntv 147 16 84 ]
+
+    else if i == 16 then
+        [ ntv 165 16 84 ]
+
+    else
+        [ ntv 165 16 40 ]
+
+m3Air : Int -> List Note
+m3Air i =
+    if i == 0 then
+        [ nt 0 16 ]
+
+    else if i == 1 then
+        [ ntv 167 16 28 ]
+
+    else if i == 2 then
+        [ ntv 167 16 42 ]
+
+    else if i == 3 then
+        [ ntv 223 16 42 ]
+
+    else if i == 4 then
+        [ ntv 330 16 62 ]
+
+    else if i == 5 then
+        [ ntv 167 16 62 ]
+
+    else if i == 6 then
+        [ ntv 294 16 62 ]
+
+    else if i == 7 then
+        [ ntv 223 16 62 ]
+
+    else if i == 8 then
+        [ ntv 294 16 82 ]
+
+    else if i == 9 then
+        [ ntv 247 16 82 ]
+
+    else if i == 10 then
+        [ ntv 223 16 82 ]
+
+    else if i == 11 then
+        [ ntv 167 16 82 ]
+
+    else if i == 12 then
+        [ nt 247 16 ]
+
+    else if i == 13 then
+        [ nt 330 8, nt 294 8 ]
+
+    else if i == 14 then
+        [ nt 294 16 ]
+
+    else if i == 15 then
+        [ nt 167 16 ]
+
+    else
+        [ ntv 167 16 32 ]
+
+m3PulseOrder : List Int
+m3PulseOrder =
+    [ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+    , 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 2, 0, 1, 0, 2, 0, 1, 0, 2, 0, 0, 0
+    , 0, 0, 0, 0, 0, 0, 0, 0, 3, 4, 3, 4, 3, 4, 3, 4, 3, 4, 3, 4, 3, 4, 5, 0
+    , 6, 0, 5, 0, 6, 0, 5, 0, 6, 0, 0, 0, 0, 0, 0, 0
+    ]
+
+m3SubOrder : List Int
+m3SubOrder =
+    [ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 2, 1, 3
+    , 1, 2, 1, 3, 1, 2, 1, 3, 1, 2, 4, 5, 6, 5, 4, 5, 6, 5, 4, 5, 6, 5, 7, 7
+    , 7, 7, 7, 7, 7, 7, 7, 7, 8, 9, 10, 11, 8, 9, 10, 11, 8, 9, 10, 11, 8, 9, 12, 13
+    , 14, 15, 12, 13, 14, 15, 12, 13, 14, 15, 16, 17, 17, 16, 17, 17
+    ]
+
+m3BodyOrder : List Int
+m3BodyOrder =
+    [ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 2, 1
+    , 1, 1, 2, 1, 1, 1, 2, 1, 1, 1, 3, 4, 5, 6, 3, 4, 5, 6, 3, 4, 5, 6, 7, 8
+    , 7, 8, 7, 8, 7, 8, 7, 8, 9, 10, 11, 12, 9, 10, 11, 12, 9, 10, 11, 12, 9, 10, 13, 14
+    , 15, 16, 13, 14, 15, 16, 13, 14, 15, 16, 17, 17, 17, 17, 17, 17
+    ]
+
+m3AirOrder : List Int
+m3AirOrder =
+    [ 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 2, 0, 3, 0
+    , 2, 0, 3, 0, 2, 0, 3, 0, 2, 0, 4, 5, 6, 7, 4, 5, 6, 7, 4, 5, 6, 7, 0, 0
+    , 0, 0, 0, 0, 0, 0, 0, 0, 8, 9, 10, 11, 8, 9, 10, 11, 8, 9, 10, 11, 8, 9, 12, 13
+    , 14, 15, 12, 13, 14, 15, 12, 13, 14, 15, 16, 16, 0, 16, 16, 0
+    ]
 
 
-m5CounterOrder : List Int
-m5CounterOrder = [ 0, 0, 1, 2, 3, 4, 5, 6, 7, 4, 1, 3, 0, 7, 1, 7, 3, 4, 5, 6, 7, 3, 4, 6, 1, 0, 0, 3, 6, 1, 2, 3, 6, 1, 7, 3, 4, 7, 3, 4, 7, 4, 4, 6, 0, 5, 5, 7, 7, 5, 5, 0, 6, 4, 4, 7, 4, 3, 7, 4, 3, 7, 1, 6, 3, 2, 1, 3, 0, 0, 1, 6 ]
+-- --- mission 4, Scrap Truce: A minor pentatonic, and the one that moves: the heaviest pulse, the most harmonic motion, the most open filters.
+-- 80 bars, 4m16s. Movements (in bars): I 12, II 12, III 12, IV 8, V 18, VI 12, VII 6.
+-- I drone, II the build, III the statement, IV the hollow, V pressure, VI the
+-- wide part, VII the descent back into the drone, so bar 80 hands to bar 1
+-- without a seam. The body voice runs from level 30 to 100 across those
+-- seven, and with no percussion that spread is the whole architecture. ---
+
+m4Pulse : Int -> List Note
+m4Pulse i =
+    if i == 0 then
+        [ nt 0 16 ]
+
+    else if i == 1 then
+        [ ntv 41 2 64, nt 0 6, ntv 55 2 64, nt 0 6 ]
+
+    else if i == 2 then
+        [ ntv 41 2 86, nt 0 2, ntv 55 2 86, nt 0 2, ntv 41 2 86, nt 0 2, ntv 55 2 86, nt 0 2 ]
+
+    else if i == 3 then
+        [ ntv 41 2 86, nt 0 2, ntv 55 2 86, nt 0 2, ntv 41 2 86, nt 0 2, ntv 110 2 86, nt 0 2 ]
+
+    else if i == 4 then
+        [ nt 41 2, nt 0 2, nt 55 2, nt 0 2, nt 41 2, nt 0 2, nt 55 2, nt 0 2 ]
+
+    else if i == 5 then
+        [ nt 41 1, nt 0 1, nt 55 1, nt 0 1, nt 41 1, nt 0 1, nt 55 1, nt 0 1, nt 41 1, nt 0 1, nt 55 1, nt 0 1, nt 41 1, nt 0 1, nt 55 1, nt 0 1 ]
+
+    else if i == 6 then
+        [ nt 41 2, nt 0 2, nt 55 2, nt 0 2, nt 41 2, nt 0 2, nt 110 2, nt 0 2 ]
+
+    else if i == 7 then
+        [ ntv 41 2 78, nt 0 2, ntv 41 2 78, nt 0 2, ntv 55 2 78, nt 0 2, ntv 55 2 78, nt 0 2 ]
+
+    else if i == 8 then
+        [ ntv 41 2 78, nt 0 2, ntv 55 2 78, nt 0 2, ntv 41 2 78, nt 0 2, ntv 55 2 78, nt 0 2 ]
+
+    else if i == 9 then
+        [ ntv 41 2 78, nt 0 6, ntv 55 2 78, nt 0 6 ]
+
+    else
+        [ ntv 41 2 58, nt 0 6, ntv 55 2 58, nt 0 6 ]
+
+m4Sub : Int -> List Note
+m4Sub i =
+    if i == 0 then
+        [ ntv 55 16 48 ]
+
+    else if i == 1 then
+        [ ntv 55 8 48, ntv 41 8 48 ]
+
+    else if i == 2 then
+        [ ntv 82 16 48 ]
+
+    else if i == 3 then
+        [ ntv 55 16 70 ]
+
+    else if i == 4 then
+        [ ntv 65 16 70 ]
+
+    else if i == 5 then
+        [ ntv 49 16 70 ]
+
+    else if i == 6 then
+        [ ntv 73 16 70 ]
+
+    else if i == 7 then
+        [ ntv 55 16 88 ]
+
+    else if i == 8 then
+        [ ntv 65 16 88 ]
+
+    else if i == 9 then
+        [ ntv 49 16 88 ]
+
+    else if i == 10 then
+        [ ntv 55 4 88, ntv 65 4 88, ntv 73 4 88, ntv 82 4 88 ]
+
+    else if i == 11 then
+        [ ntv 55 8 32, ntv 41 8 32 ]
+
+    else if i == 12 then
+        [ ntv 55 16 32 ]
+
+    else if i == 13 then
+        [ nt 55 16 ]
+
+    else if i == 14 then
+        [ nt 73 16 ]
+
+    else if i == 15 then
+        [ nt 82 16 ]
+
+    else if i == 16 then
+        [ nt 49 16 ]
+
+    else if i == 17 then
+        [ ntv 55 4 84, ntv 65 4 84, ntv 73 4 84, ntv 82 4 84 ]
+
+    else if i == 18 then
+        [ ntv 65 16 84 ]
+
+    else if i == 19 then
+        [ ntv 73 16 84 ]
+
+    else if i == 20 then
+        [ ntv 82 16 84 ]
+
+    else if i == 21 then
+        [ ntv 55 12 62, ntv 49 4 62 ]
+
+    else if i == 22 then
+        [ ntv 55 16 62 ]
+
+    else
+        [ ntv 55 8 62, ntv 41 8 62 ]
+
+m4Body : Int -> List Note
+m4Body i =
+    if i == 0 then
+        [ ntv 165 16 46 ]
+
+    else if i == 1 then
+        [ ntv 220 16 46 ]
+
+    else if i == 2 then
+        [ ntv 220 16 68 ]
+
+    else if i == 3 then
+        [ ntv 131 16 68 ]
+
+    else if i == 4 then
+        [ ntv 196 8 68, ntv 165 8 68 ]
+
+    else if i == 5 then
+        [ ntv 165 16 68 ]
+
+    else if i == 6 then
+        [ ntv 220 16 90 ]
+
+    else if i == 7 then
+        [ ntv 196 8 90, ntv 165 8 90 ]
+
+    else if i == 8 then
+        [ ntv 131 16 90 ]
+
+    else if i == 9 then
+        [ ntv 165 8 90, ntv 147 8 90 ]
+
+    else if i == 10 then
+        [ ntv 165 16 30 ]
+
+    else if i == 11 then
+        [ ntv 165 8 30, ntv 147 8 30 ]
+
+    else if i == 12 then
+        [ nt 220 16 ]
+
+    else if i == 13 then
+        [ nt 147 16 ]
+
+    else if i == 14 then
+        [ nt 196 16 ]
+
+    else if i == 15 then
+        [ nt 220 8, nt 262 8 ]
+
+    else if i == 16 then
+        [ ntv 165 4 92, ntv 196 4 92, ntv 165 4 92, ntv 131 4 92 ]
+
+    else if i == 17 then
+        [ ntv 131 8 92, ntv 147 8 92 ]
+
+    else if i == 18 then
+        [ ntv 196 16 92 ]
+
+    else if i == 19 then
+        [ ntv 196 8 92, ntv 165 8 92 ]
+
+    else if i == 20 then
+        [ ntv 196 16 58 ]
+
+    else if i == 21 then
+        [ ntv 220 16 58 ]
+
+    else
+        [ ntv 165 16 58 ]
+
+m4Air : Int -> List Note
+m4Air i =
+    if i == 0 then
+        [ nt 0 16 ]
+
+    else if i == 1 then
+        [ ntv 220 16 40 ]
+
+    else if i == 2 then
+        [ ntv 220 16 58 ]
+
+    else if i == 3 then
+        [ ntv 330 16 58 ]
+
+    else if i == 4 then
+        [ ntv 392 16 58 ]
+
+    else if i == 5 then
+        [ ntv 220 16 76 ]
+
+    else if i == 6 then
+        [ ntv 294 8 76, ntv 262 8 76 ]
+
+    else if i == 7 then
+        [ ntv 330 16 76 ]
+
+    else if i == 8 then
+        [ ntv 262 8 76, ntv 294 8 76 ]
+
+    else if i == 9 then
+        [ ntv 262 16 90 ]
+
+    else if i == 10 then
+        [ ntv 392 16 90 ]
+
+    else if i == 11 then
+        [ ntv 330 8 90, ntv 392 8 90 ]
+
+    else if i == 12 then
+        [ ntv 294 8 90, ntv 262 8 90 ]
+
+    else if i == 13 then
+        [ nt 330 8, nt 392 8 ]
+
+    else if i == 14 then
+        [ nt 262 8, nt 294 8 ]
+
+    else if i == 15 then
+        [ nt 262 16 ]
+
+    else if i == 16 then
+        [ nt 392 16 ]
+
+    else if i == 17 then
+        [ ntv 330 16 50 ]
+
+    else
+        [ ntv 220 16 50 ]
+
+m4PulseOrder : List Int
+m4PulseOrder =
+    [ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 0, 1, 1, 1, 0, 1, 1, 1
+    , 2, 2, 3, 2, 2, 2, 3, 2, 2, 2, 3, 2, 0, 0, 0, 0, 0, 0, 0, 0, 4, 5, 6, 5
+    , 4, 5, 6, 5, 4, 5, 6, 5, 4, 5, 6, 5, 4, 5, 7, 8, 7, 9, 7, 8, 7, 9, 7, 8
+    , 7, 9, 10, 10, 0, 10, 10, 0
+    ]
+
+m4SubOrder : List Int
+m4SubOrder =
+    [ 0, 0, 1, 2, 0, 0, 1, 2, 0, 0, 1, 2, 3, 4, 5, 6, 3, 4, 5, 6, 3, 4, 5, 6
+    , 7, 8, 9, 10, 7, 8, 9, 10, 7, 8, 9, 10, 11, 12, 11, 12, 11, 12, 11, 12, 13, 14, 15, 16
+    , 13, 14, 15, 16, 13, 14, 15, 16, 13, 14, 15, 16, 13, 14, 17, 18, 19, 20, 17, 18, 19, 20, 17, 18
+    , 19, 20, 21, 22, 23, 21, 22, 23
+    ]
+
+m4BodyOrder : List Int
+m4BodyOrder =
+    [ 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 2, 3, 4, 5, 2, 3, 4, 5, 2, 3, 4, 5
+    , 6, 7, 8, 9, 6, 7, 8, 9, 6, 7, 8, 9, 10, 11, 10, 11, 10, 11, 10, 11, 12, 13, 14, 15
+    , 12, 13, 14, 15, 12, 13, 14, 15, 12, 13, 14, 15, 12, 13, 16, 17, 18, 19, 16, 17, 18, 19, 16, 17
+    , 18, 19, 20, 21, 22, 20, 21, 22
+    ]
+
+m4AirOrder : List Int
+m4AirOrder =
+    [ 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 2, 0, 3, 4, 2, 0, 3, 4, 2, 0, 3, 4
+    , 5, 6, 7, 8, 5, 6, 7, 8, 5, 6, 7, 8, 0, 0, 0, 0, 0, 0, 0, 0, 9, 10, 11, 12
+    , 9, 10, 11, 12, 9, 10, 11, 12, 9, 10, 11, 12, 9, 10, 13, 14, 15, 16, 13, 14, 15, 16, 13, 14
+    , 15, 16, 17, 18, 0, 17, 18, 0
+    ]
 
 
-m5LeadOrder : List Int
-m5LeadOrder = [ 0, 0, 1, 2, 3, 4, 5, 6, 7, 4, 1, 3, 0, 7, 1, 2, 3, 4, 5, 6, 7, 3, 4, 6, 1, 0, 0, 3, 6, 1, 2, 3, 6, 1, 2, 3, 4, 7, 3, 4, 7, 4, 4, 6, 0, 5, 5, 7, 7, 5, 5, 0, 6, 4, 4, 7, 4, 3, 7, 4, 3, 2, 1, 6, 3, 2, 1, 3, 0, 0, 1, 6 ]
+-- --- mission 5, Meridian Engine: F minor pentatonic, the heaviest. The lowest pulse in the game, twice a bar at most: slow, and enormous.
+-- 86 bars, 4m35s. Movements (in bars): I 16, II 14, III 12, IV 10, V 16, VI 12, VII 6.
+-- I drone, II the build, III the statement, IV the hollow, V pressure, VI the
+-- wide part, VII the descent back into the drone, so bar 86 hands to bar 1
+-- without a seam. The body voice runs from level 28 to 100 across those
+-- seven, and with no percussion that spread is the whole architecture. ---
 
+m5Pulse : Int -> List Note
+m5Pulse i =
+    if i == 0 then
+        [ nt 0 16 ]
 
-m5DrumOrder : List Int
-m5DrumOrder = [ 1, 1, 2, 2, 2, 3, 5, 2, 3, 3, 6, 1, 7, 4, 2, 2, 2, 3, 5, 3, 5, 4, 2, 0, 6, 1, 1, 1, 0, 2, 2, 2, 2, 2, 2, 2, 2, 4, 4, 3, 3, 3, 3, 3, 7, 5, 5, 5, 5, 5, 5, 7, 3, 3, 3, 3, 3, 4, 4, 2, 2, 2, 2, 2, 2, 2, 2, 1, 1, 1, 6, 0 ]
+    else if i == 1 then
+        [ ntv 44 2 58, nt 0 14 ]
+
+    else if i == 2 then
+        [ ntv 44 2 80, nt 0 6, ntv 87 2 80, nt 0 6 ]
+
+    else if i == 3 then
+        [ ntv 44 2 80, nt 0 14 ]
+
+    else if i == 4 then
+        [ ntv 44 3 80, nt 0 5, ntv 87 3 80, nt 0 5 ]
+
+    else if i == 5 then
+        [ nt 44 3, nt 0 5, nt 87 3, nt 0 5 ]
+
+    else if i == 6 then
+        [ nt 44 2, nt 0 2, nt 87 2, nt 0 2, nt 44 2, nt 0 6 ]
+
+    else if i == 7 then
+        [ nt 44 2, nt 0 6, nt 87 2, nt 0 6 ]
+
+    else if i == 8 then
+        [ ntv 44 2 74, nt 0 6, ntv 87 2 74, nt 0 6 ]
+
+    else if i == 9 then
+        [ ntv 44 3 74, nt 0 5, ntv 87 3 74, nt 0 5 ]
+
+    else if i == 10 then
+        [ ntv 44 2 74, nt 0 14 ]
+
+    else
+        [ ntv 44 2 44, nt 0 14 ]
+
+m5Sub : Int -> List Note
+m5Sub i =
+    if i == 0 then
+        [ ntv 44 16 42 ]
+
+    else if i == 1 then
+        [ ntv 87 16 42 ]
+
+    else if i == 2 then
+        [ ntv 87 16 64 ]
+
+    else if i == 3 then
+        [ ntv 44 16 64 ]
+
+    else if i == 4 then
+        [ ntv 65 16 64 ]
+
+    else if i == 5 then
+        [ ntv 52 16 84 ]
+
+    else if i == 6 then
+        [ ntv 44 16 84 ]
+
+    else if i == 7 then
+        [ ntv 78 16 84 ]
+
+    else if i == 8 then
+        [ ntv 65 16 84 ]
+
+    else if i == 9 then
+        [ ntv 87 16 30 ]
+
+    else if i == 10 then
+        [ ntv 44 16 30 ]
+
+    else if i == 11 then
+        [ nt 52 16 ]
+
+    else if i == 12 then
+        [ nt 78 16 ]
+
+    else if i == 13 then
+        [ nt 58 16 ]
+
+    else if i == 14 then
+        [ nt 87 16 ]
+
+    else if i == 15 then
+        [ ntv 58 16 82 ]
+
+    else if i == 16 then
+        [ ntv 65 16 82 ]
+
+    else if i == 17 then
+        [ ntv 78 16 82 ]
+
+    else if i == 18 then
+        [ ntv 44 8 82, ntv 78 8 82 ]
+
+    else if i == 19 then
+        [ ntv 44 8 46, ntv 78 8 46 ]
+
+    else
+        [ ntv 44 16 46 ]
+
+m5Body : Int -> List Note
+m5Body i =
+    if i == 0 then
+        [ ntv 131 16 40 ]
+
+    else if i == 1 then
+        [ ntv 175 16 40 ]
+
+    else if i == 2 then
+        [ ntv 131 16 62 ]
+
+    else if i == 3 then
+        [ ntv 208 16 62 ]
+
+    else if i == 4 then
+        [ ntv 175 16 62 ]
+
+    else if i == 5 then
+        [ ntv 208 16 86 ]
+
+    else if i == 6 then
+        [ ntv 233 16 86 ]
+
+    else if i == 7 then
+        [ ntv 131 8 86, ntv 156 8 86 ]
+
+    else if i == 8 then
+        [ ntv 131 16 86 ]
+
+    else if i == 9 then
+        [ ntv 175 16 28 ]
+
+    else if i == 10 then
+        [ ntv 156 16 28 ]
+
+    else if i == 11 then
+        [ nt 233 16 ]
+
+    else if i == 12 then
+        [ nt 262 16 ]
+
+    else if i == 13 then
+        [ nt 208 8, nt 233 8 ]
+
+    else if i == 14 then
+        [ nt 131 8, nt 156 8 ]
+
+    else if i == 15 then
+        [ ntv 131 4 90, ntv 156 4 90, ntv 131 4 90, ntv 175 4 90 ]
+
+    else if i == 16 then
+        [ ntv 175 8 90, ntv 208 8 90 ]
+
+    else if i == 17 then
+        [ ntv 262 16 90 ]
+
+    else if i == 18 then
+        [ ntv 131 16 90 ]
+
+    else if i == 19 then
+        [ ntv 175 16 42 ]
+
+    else
+        [ ntv 131 16 42 ]
+
+m5Air : Int -> List Note
+m5Air i =
+    if i == 0 then
+        [ nt 0 16 ]
+
+    else if i == 1 then
+        [ ntv 262 16 34 ]
+
+    else if i == 2 then
+        [ ntv 262 16 52 ]
+
+    else if i == 3 then
+        [ ntv 208 16 52 ]
+
+    else if i == 4 then
+        [ ntv 208 16 72 ]
+
+    else if i == 5 then
+        [ ntv 262 16 72 ]
+
+    else if i == 6 then
+        [ ntv 233 16 72 ]
+
+    else if i == 7 then
+        [ ntv 262 8 72, ntv 311 8 72 ]
+
+    else if i == 8 then
+        [ ntv 262 16 88 ]
+
+    else if i == 9 then
+        [ ntv 233 16 88 ]
+
+    else if i == 10 then
+        [ ntv 311 16 88 ]
+
+    else if i == 11 then
+        [ ntv 349 16 88 ]
+
+    else if i == 12 then
+        [ nt 349 8, nt 311 8 ]
+
+    else if i == 13 then
+        [ nt 311 16 ]
+
+    else if i == 14 then
+        [ nt 262 8, nt 311 8 ]
+
+    else
+        [ nt 233 16 ]
+
+m5PulseOrder : List Int
+m5PulseOrder =
+    [ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 0, 1, 1, 1
+    , 0, 1, 1, 1, 0, 1, 2, 3, 4, 2, 2, 3, 4, 2, 2, 3, 4, 2, 0, 0, 0, 0, 0, 0
+    , 0, 0, 0, 0, 5, 6, 7, 6, 5, 6, 7, 6, 5, 6, 7, 6, 5, 6, 7, 6, 8, 9, 10, 9
+    , 8, 9, 10, 9, 8, 9, 10, 9, 11, 0, 0, 11, 0, 0
+    ]
+
+m5SubOrder : List Int
+m5SubOrder =
+    [ 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 2, 3, 4, 2, 2, 3, 4, 2
+    , 2, 3, 4, 2, 2, 3, 5, 6, 7, 8, 5, 6, 7, 8, 5, 6, 7, 8, 9, 10, 9, 10, 9, 10
+    , 9, 10, 9, 10, 11, 12, 13, 14, 11, 12, 13, 14, 11, 12, 13, 14, 11, 12, 13, 14, 15, 16, 17, 18
+    , 15, 16, 17, 18, 15, 16, 17, 18, 19, 20, 20, 19, 20, 20
+    ]
+
+m5BodyOrder : List Int
+m5BodyOrder =
+    [ 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 2, 3, 4, 2, 2, 3, 4, 2
+    , 2, 3, 4, 2, 2, 3, 5, 6, 7, 8, 5, 6, 7, 8, 5, 6, 7, 8, 9, 10, 9, 10, 9, 10
+    , 9, 10, 9, 10, 11, 12, 13, 14, 11, 12, 13, 14, 11, 12, 13, 14, 11, 12, 13, 14, 15, 16, 17, 18
+    , 15, 16, 17, 18, 15, 16, 17, 18, 19, 20, 20, 19, 20, 20
+    ]
+
+m5AirOrder : List Int
+m5AirOrder =
+    [ 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 2, 0, 3, 0, 2, 0, 3, 0
+    , 2, 0, 3, 0, 2, 0, 4, 5, 6, 7, 4, 5, 6, 7, 4, 5, 6, 7, 0, 0, 0, 0, 0, 0
+    , 0, 0, 0, 0, 8, 9, 10, 11, 8, 9, 10, 11, 8, 9, 10, 11, 8, 9, 10, 11, 12, 13, 14, 15
+    , 12, 13, 14, 15, 12, 13, 14, 15, 1, 0, 0, 1, 0, 0
+    ]
 
 
 -- The theme for a mission, 1 to 5. Skirmish draws a number in this range
@@ -865,47 +1500,47 @@ missionTheme m =
     if m == 1 then
         -- Dust and Iron
         Sound.chord
-            [ lineOf Sound.Sawtooth 13 (arrange m1Bass m1Order)
-            , counterOf 8 (arrange m1Counter m1CounterOrder)
-            , leadOf 11 (arrange m1Lead m1LeadOrder)
-            , drumLine (arrange m1Drum m1DrumOrder)
+            [ pulseOf 31 (arrange m1Pulse m1PulseOrder)
+            , subOf 520 22 (arrange m1Sub m1SubOrder)
+            , bodyOf 1600 31 (arrange m1Body m1BodyOrder)
+            , airOf 2100 22 (arrange m1Air m1AirOrder)
             ]
 
     else if m == 2 then
         -- The Silo Gambit
         Sound.chord
-            [ lineOf Sound.Triangle 14 (arrange m2Bass m2Order)
-            , counterOf 7 (arrange m2Counter m2CounterOrder)
-            , leadOf 9 (arrange m2Lead m2LeadOrder)
-            , drumLine (arrange m2Drum m2DrumOrder)
+            [ pulseOf 26 (arrange m2Pulse m2PulseOrder)
+            , subOf 460 21 (arrange m2Sub m2SubOrder)
+            , bodyOf 1300 29 (arrange m2Body m2BodyOrder)
+            , airOf 1800 21 (arrange m2Air m2AirOrder)
             ]
 
     else if m == 3 then
         -- Static
         Sound.chord
-            [ lineOf Sound.Square 11 (arrange m3Bass m3Order)
-            , counterOf 6 (arrange m3Counter m3CounterOrder)
-            , leadOf 7 (arrange m3Lead m3LeadOrder)
-            , drumLine (arrange m3Drum m3DrumOrder)
+            [ pulseOf 22 (arrange m3Pulse m3PulseOrder)
+            , subOf 420 21 (arrange m3Sub m3SubOrder)
+            , bodyOf 1100 30 (arrange m3Body m3BodyOrder)
+            , airOf 1500 24 (arrange m3Air m3AirOrder)
             ]
 
     else if m == 4 then
         -- Scrap Truce
         Sound.chord
-            [ lineOf Sound.Sawtooth 12 (arrange m4Bass m4Order)
-            , counterOf 8 (arrange m4Counter m4CounterOrder)
-            , leadOf 10 (arrange m4Lead m4LeadOrder)
-            , drumLine (arrange m4Drum m4DrumOrder)
+            [ pulseOf 33 (arrange m4Pulse m4PulseOrder)
+            , subOf 560 22 (arrange m4Sub m4SubOrder)
+            , bodyOf 1800 31 (arrange m4Body m4BodyOrder)
+            , airOf 2300 22 (arrange m4Air m4AirOrder)
             ]
 
     else
         -- Meridian Engine, and the fallback for any number outside 1..5,
         -- which is what skirmish rides on when its draw lands here.
         Sound.chord
-            [ lineOf Sound.Triangle 13 (arrange m5Bass m5Order)
-            , counterOf 7 (arrange m5Counter m5CounterOrder)
-            , leadOf 9 (arrange m5Lead m5LeadOrder)
-            , drumLine (arrange m5Drum m5DrumOrder)
+            [ pulseOf 26 (arrange m5Pulse m5PulseOrder)
+            , subOf 600 18 (arrange m5Sub m5SubOrder)
+            , bodyOf 1500 34 (arrange m5Body m5BodyOrder)
+            , airOf 1900 23 (arrange m5Air m5AirOrder)
             ]
 
 

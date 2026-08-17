@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 
@@ -296,3 +297,62 @@ describe msg =
 		t.Errorf("a message meant for another page is not a compiler bug: %v", uerr)
 	}
 }
+
+// The guard has to hold for every SHAPE of recursion, not one.
+//
+// This table is the test that was missing. The suite used to exercise
+// `loop n = loop (n + 1)` — a bare tail call, the cheapest thing the evaluator
+// can do — and pass, while every ordinary shape blew the Go stack before the
+// guard was reached. Measured then, fresh process per trial: the tail call hit
+// the guard at 100k; `1 + deep (n-1)` died between 60k and 80k; a recursive
+// call inside a tuple died between 50k and 55k. The one shape that worked was
+// the one under test. See ADR 0033.
+//
+// Each case asserts the guard error AND, implicitly but importantly, that the
+// process is still here to report it: a Go stack overflow is a fatal throw, so
+// a regression does not fail this test — it takes the whole test binary down.
+// A crashed `go test ./internal/runtime/` IS the failure signal for this file.
+func TestRecursionGuardHoldsForEveryShape(t *testing.T) {
+	shapes := []struct {
+		name string
+		body string
+	}{
+		{"tail call", "    if n == 0 then\n        0\n    else\n        deep (n - 1)"},
+		{"sum after the call", "    if n == 0 then\n        0\n    else\n        1 + deep (n - 1)"},
+		{"case around the call", "    case n of\n        0 -> 0\n        _ -> 1 + deep (n - 1)"},
+		{"call inside a list", "    if n == 0 then\n        0\n    else\n        List.length [ deep (n - 1) ]"},
+		{"call inside a tuple", "    if n == 0 then\n        0\n    else\n        Tuple.first ( 1 + deep (n - 1), 0 )"},
+		{"call through a pipe", "    if n == 0 then\n        0\n    else\n        (n - 1) |> deep"},
+		{"call under a let", "    if n == 0 then\n        0\n    else\n        let\n            inner =\n                deep (n - 1)\n        in\n        1 + inner"},
+	}
+	// Comfortably past the guard, so every shape must trip it rather than
+	// finish. Written in terms of the derived depth so the test follows the
+	// budget instead of pinning a number that goes stale with it.
+	depth := MaxCallDepth * 3
+	for _, s := range shapes {
+		t.Run(s.name, func(t *testing.T) {
+			src := "module M exposing (boom)\n\n\ndeep : Int -> Int\ndeep n =\n" + s.body +
+				"\n\n\nboom : Int\nboom =\n    deep " + itoa(depth) + "\n"
+			_, err := evalTop(t, src, "boom")
+			wantRecursionError(t, err, s.name)
+		})
+	}
+}
+
+// The budget is derived, not chosen, so the arithmetic behind it is what needs
+// pinning: a stack ceiling divided by the worst measured frame, with a quarter
+// of it spent. If someone raises the depth without raising the measurement, or
+// drops the safety factor, this is the line that argues back.
+func TestMaxCallDepthStaysInsideItsStackBudget(t *testing.T) {
+	if MaxCallDepth*worstCaseFrameBytes*stackSafetyFactor > stackCeilingBytes() {
+		t.Fatalf("MaxCallDepth=%d at %d B/frame leaves less than a factor of %d against a %d B stack",
+			MaxCallDepth, worstCaseFrameBytes, stackSafetyFactor, stackCeilingBytes())
+	}
+	if MaxCallDepth < minCallDepth {
+		t.Fatalf("MaxCallDepth=%d is below the floor honest recursion needs", MaxCallDepth)
+	}
+	t.Logf("MaxCallDepth=%d from a %d B stack at %d B/frame with %dx in hand",
+		MaxCallDepth, stackCeilingBytes(), worstCaseFrameBytes, stackSafetyFactor)
+}
+
+func itoa(n int) string { return strconv.Itoa(n) }
