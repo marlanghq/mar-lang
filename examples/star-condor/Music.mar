@@ -1,0 +1,458 @@
+module Music exposing (..)
+
+-- The soundtrack: drum cells, bass, arps, and one melody per stage. Written
+-- in cells so a groove beat can be assembled per tick instead of looping a
+-- fixed track.
+
+import Types exposing (..)
+
+
+-- per-stage melodies: TWO 16-slot phrases (8 beats x 2 eighths, 0 = rest),
+-- played A A B A across each 32-beat cycle so the tune breathes and returns
+melA : Int -> List Int
+melA s =
+    case s of
+        1 -> [ Sound.a 4, 0, Sound.c 5, Sound.d 5, Sound.e 5, 0, Sound.d 5, Sound.c 5, Sound.a 4, 0, Sound.g 4, Sound.a 4, Sound.c 5, 0, Sound.a 4, 0 ]
+        2 -> [ Sound.a 5, Sound.g 5, Sound.e 5, Sound.d 5, Sound.c 5, 0, Sound.d 5, Sound.e 5, Sound.a 5, Sound.g 5, Sound.e 5, Sound.d 5, Sound.c 5, Sound.d 5, Sound.e 5, 0 ]
+        3 -> [ Sound.a 4, 0, Sound.a 4, Sound.b 4, Sound.c 5, 0, Sound.b 4, Sound.a 4, Sound.e 5, 0, 0, Sound.e 5, Sound.f 5, Sound.e 5, Sound.c 5, Sound.b 4 ]
+        4 -> [ Sound.e 4, 0, 0, 0, Sound.a 4, 0, 0, Sound.c 5, Sound.b 4, 0, 0, 0, Sound.g 4, 0, Sound.a 4, 0 ]
+        5 -> [ Sound.a 4, 0, Sound.b 4, Sound.c 5, Sound.e 5, 0, Sound.g 5, Sound.e 5, Sound.d 5, 0, Sound.b 4, Sound.d 5, Sound.e 5, 0, Sound.b 4, 0 ]
+        6 -> [ Sound.a 4, Sound.c 5, Sound.e 5, Sound.g 5, Sound.a 5, 0, Sound.g 5, Sound.e 5, Sound.c 5, Sound.a 4, Sound.c 5, Sound.e 5, Sound.g 5, Sound.e 5, Sound.c 5, 0 ]
+        7 -> [ Sound.e 5, Sound.e 5, Sound.d 5, Sound.c 5, Sound.a 4, 0, Sound.c 5, Sound.d 5, Sound.e 5, Sound.e 5, Sound.g 5, Sound.e 5, Sound.d 5, Sound.c 5, Sound.a 4, 0 ]
+        8 -> [ Sound.c 5, 0, Sound.e 5, Sound.c 5, Sound.d 5, 0, Sound.g 5, 0, Sound.e 5, Sound.c 5, Sound.d 5, Sound.e 5, Sound.c 5, 0, Sound.g 4, 0 ]
+        9 -> [ 0, Sound.a 4, 0, Sound.c 5, Sound.d 5, 0, Sound.e 5, 0, 0, Sound.e 5, 0, Sound.d 5, Sound.c 5, Sound.d 5, Sound.e 5, 0 ]
+        _ -> [ Sound.a 4, 0, Sound.e 5, 0, Sound.d 5, Sound.e 5, Sound.g 5, 0, Sound.a 5, 0, Sound.g 5, Sound.e 5, Sound.d 5, 0, Sound.e 5, 0 ]
+
+
+melB : Int -> List Int
+melB s =
+    case s of
+        1 -> [ Sound.e 5, 0, Sound.g 5, Sound.e 5, Sound.a 5, 0, Sound.g 5, Sound.e 5, Sound.d 5, Sound.e 5, Sound.c 5, 0, Sound.a 4, Sound.c 5, Sound.d 5, 0 ]
+        2 -> [ Sound.c 6, 0, Sound.a 5, Sound.g 5, Sound.e 5, Sound.g 5, Sound.a 5, 0, Sound.g 5, Sound.e 5, Sound.d 5, Sound.c 5, Sound.d 5, Sound.e 5, Sound.c 5, 0 ]
+        3 -> [ Sound.d 5, 0, Sound.d 5, Sound.e 5, Sound.f 5, 0, Sound.e 5, Sound.d 5, Sound.gs 4, 0, Sound.b 4, Sound.d 5, Sound.e 5, 0, Sound.e 5, 0 ]
+        4 -> [ Sound.e 5, 0, 0, Sound.d 5, Sound.c 5, 0, Sound.b 4, 0, Sound.a 4, 0, Sound.e 4, Sound.g 4, Sound.a 4, 0, 0, 0 ]
+        5 -> [ Sound.a 5, 0, Sound.g 5, Sound.a 5, Sound.e 5, 0, Sound.d 5, Sound.e 5, Sound.b 4, 0, Sound.c 5, Sound.d 5, Sound.e 5, Sound.g 5, Sound.a 5, 0 ]
+        6 -> [ Sound.e 5, Sound.g 5, Sound.a 5, Sound.c 6, Sound.a 5, Sound.g 5, Sound.e 5, 0, Sound.c 5, Sound.e 5, Sound.g 5, Sound.a 5, Sound.g 5, Sound.e 5, Sound.c 5, 0 ]
+        7 -> [ Sound.a 5, 0, Sound.g 5, Sound.e 5, Sound.g 5, Sound.a 5, Sound.g 5, Sound.e 5, Sound.d 5, Sound.e 5, Sound.c 5, Sound.d 5, Sound.e 5, 0, Sound.e 5, 0 ]
+        8 -> [ Sound.g 5, 0, Sound.e 5, Sound.g 5, Sound.a 5, 0, Sound.g 5, Sound.e 5, Sound.d 5, 0, Sound.e 5, Sound.d 5, Sound.c 5, Sound.d 5, Sound.e 5, 0 ]
+        9 -> [ 0, Sound.a 5, 0, Sound.g 5, Sound.e 5, 0, Sound.d 5, Sound.c 5, 0, Sound.d 5, 0, Sound.e 5, Sound.g 5, Sound.e 5, Sound.d 5, 0 ]
+        _ -> [ Sound.a 5, 0, 0, Sound.g 5, Sound.e 5, Sound.d 5, Sound.e 5, 0, Sound.c 5, Sound.d 5, Sound.e 5, Sound.g 5, Sound.a 5, 0, 0, 0 ]
+
+
+bossMelA : List Int
+bossMelA =
+    [ Sound.a 3, Sound.a 3, Sound.c 4, 0, Sound.b 3, 0, Sound.gs 3, Sound.a 3, Sound.a 3, Sound.a 3, Sound.c 4, Sound.d 4, Sound.e 4, 0, Sound.gs 3, 0 ]
+
+
+bossMelB : List Int
+bossMelB =
+    [ Sound.a 4, 0, Sound.gs 4, 0, Sound.e 4, Sound.d 4, Sound.c 4, Sound.b 3, Sound.a 3, 0, Sound.b 3, Sound.c 4, Sound.d 4, Sound.ds 4, Sound.e 4, 0 ]
+
+
+
+
+drKick : Sound
+drKick =
+    Sound.sequence
+        [ Sound.chord
+            [ Sound.volume 62 (Sound.sweep 42 (Sound.tone Sound.Triangle 160 85))
+            , Sound.volume 18 (Sound.tone Sound.Noise 0 25)
+            ]
+        , Sound.rest 165
+        ]
+
+
+drSnare : Sound
+drSnare =
+    Sound.sequence
+        [ Sound.chord
+            [ Sound.volume 38 (Sound.tone Sound.Noise 0 90)
+            , Sound.volume 18 (Sound.sweep 120 (Sound.tone Sound.Triangle 200 45))
+            ]
+        , Sound.rest 160
+        ]
+
+
+drGhost : Sound
+drGhost =
+    Sound.sequence [ Sound.volume 12 (Sound.tone Sound.Noise 0 40), Sound.rest 210 ]
+
+
+drHat : Sound
+drHat =
+    Sound.sequence [ Sound.volume 12 (Sound.tone Sound.Noise 0 28), Sound.rest 222 ]
+
+
+drHat2 : Sound
+drHat2 =
+    Sound.sequence
+        [ Sound.volume 12 (Sound.tone Sound.Noise 0 28), Sound.rest 97
+        , Sound.volume 9 (Sound.tone Sound.Noise 0 24), Sound.rest 101
+        ]
+
+
+drOpen : Sound
+drOpen =
+    Sound.sequence [ Sound.volume 14 (Sound.tone Sound.Noise 0 120), Sound.rest 130 ]
+
+
+-- end-of-cycle snare fill: three rising hits into the next bar
+drFill : Sound
+drFill =
+    Sound.sequence
+        [ Sound.volume 26 (Sound.tone Sound.Noise 0 55), Sound.rest 70
+        , Sound.volume 32 (Sound.tone Sound.Noise 0 55), Sound.rest 70
+        , Sound.volume 40 (Sound.sweep 110 (Sound.tone Sound.Triangle 230 55)), Sound.rest 195
+        ]
+
+
+r8 : Sound
+r8 =
+    Sound.rest 250
+
+
+bassC : Int -> Sound
+bassC hz =
+    Sound.sequence
+        [ Sound.chord
+            [ Sound.volume 30 (Sound.tone Sound.Triangle hz 205)
+            , Sound.volume 8 (Sound.tone Sound.Sawtooth hz 205)
+            ]
+        , Sound.rest 45
+        ]
+
+
+arpC : Int -> Int -> Int -> Sound
+arpC hz third fifth =
+    Sound.sequence
+        [ Sound.volume 10 (Sound.arp [ third, fifth ] (Sound.duty 25 (Sound.tone Sound.Square hz 470)))
+        , Sound.rest 30
+        ]
+
+
+p2 : Sound -> Sound -> Sound
+p2 a b =
+    Sound.sequence [ a, b ]
+
+
+-- one beat of backing groove. The 32-beat cycle walks bars Am F Dm G, the
+-- kit BUILDS a layer every 32 beats (drums -> hats -> arp+ghosts -> open
+-- hats), and every cycle ends on a snare fill: the track evolves instead
+-- of looping one bar. Boss: Am/E drive, double kick, no arp.
+grooveBeat : Int -> Sound
+grooveBeat key =
+    let
+        inBoss = key >= 100000
+        b = modBy 1000 key
+        stage = modBy 100 (key // 1000)
+        style = modBy 3 stage
+        k = modBy 4 b
+        bar = modBy 4 (b // 8)
+        build = min 3 (b // 32)
+        fill = modBy 32 b == 31
+        root =
+            if inBoss then
+                if modBy 2 bar == 0 then Sound.a 2 else Sound.e 2
+            else if bar == 0 then Sound.a 2
+            else if bar == 1 then Sound.f 2
+            else if bar == 2 then Sound.d 3
+            else Sound.g 2
+        rootO =
+            if inBoss then
+                if modBy 2 bar == 0 then Sound.a 3 else Sound.e 3
+            else if bar == 0 then Sound.a 3
+            else if bar == 1 then Sound.f 3
+            else if bar == 2 then Sound.d 4
+            else Sound.g 3
+        third =
+            if bar == 0 then Sound.c 4 else if bar == 1 then Sound.a 3 else if bar == 2 then Sound.f 4 else Sound.b 3
+        fifth =
+            if bar == 0 then Sound.e 4 else if bar == 1 then Sound.c 4 else if bar == 2 then Sound.a 4 else Sound.d 4
+        kick =
+            if inBoss then
+                if k == 0 || k == 2 then p2 drKick drKick else p2 r8 drKick
+            else if style == 0 then
+                -- cumbia lean: kick 1 and 3
+                if k == 0 || k == 2 then p2 drKick r8 else p2 r8 r8
+            else if style == 1 then
+                -- syncopated: 1, and-2, and-4
+                if k == 0 then p2 drKick r8
+                else if k == 1 || k == 3 then p2 r8 drKick
+                else p2 r8 r8
+            else
+                -- highland stomp: 1, 3, and-3
+                if k == 0 then p2 drKick r8
+                else if k == 2 then p2 drKick drKick
+                else p2 r8 r8
+        snare =
+            if fill then
+                drFill
+            else if inBoss then
+                if k == 1 || k == 3 then p2 drSnare (if build >= 3 then drGhost else r8) else p2 r8 r8
+            else if style == 2 then
+                if k == 2 then p2 drSnare r8
+                else if k == 3 && build >= 2 then p2 r8 drGhost
+                else p2 r8 r8
+            else if k == 1 || k == 3 then
+                p2 drSnare (if build >= 2 && k == 3 then drGhost else r8)
+            else
+                p2 r8 r8
+        hat =
+            if build == 0 && inBoss == False then
+                p2 r8 r8
+            else if k == 3 && (build >= 3 || inBoss) then
+                p2 drHat drOpen
+            else if style == 0 then
+                p2 r8 drHat2
+            else if style == 1 then
+                p2 drHat2 drHat2
+            else
+                p2 drHat drHat
+        bass =
+            if inBoss then
+                p2 (bassC root) (bassC (if modBy 2 b == 1 then rootO else root))
+            else if style == 0 then
+                -- offbeat bass: the cumbia bounce
+                if k == 3 then p2 (bassC rootO) (bassC root) else p2 r8 (bassC root)
+            else if k == 0 then
+                p2 (bassC root) r8
+            else if k == 2 then
+                p2 (bassC root) (bassC rootO)
+            else
+                p2 r8 (bassC rootO)
+        arps =
+            if inBoss == False && build >= 2 then
+                [ arpC rootO third fifth ]
+            else
+                []
+    in
+    Sound.chord (List.concat [ [ kick, snare, hat, bass ], arps ])
+
+
+-- one eighth of lead melody: singing triangle + square edge (0 = rest)
+melNote : Int -> Sound
+melNote hz =
+    if hz == 0 then
+        Sound.rest 250
+    else
+        Sound.sequence
+            [ Sound.chord
+                [ Sound.vibrato 10 5 (Sound.volume 24 (Sound.tone Sound.Triangle hz 235))
+                , Sound.volume 8 (Sound.duty 50 (Sound.tone Sound.Square hz 120))
+                ]
+            , Sound.rest 15
+            ]
+
+
+cueSound : Cue -> Sound
+cueSound cue =
+    case cue of
+        CBeat key ->
+            grooveBeat key
+
+        CMel hzA hzB ->
+            Sound.sequence [ melNote hzA, melNote hzB ]
+
+        CShot w ->
+            if w == 0 then
+                Sound.chord
+                    [ Sound.volume 15 (Sound.sweep 900 (Sound.duty 25 (Sound.tone Sound.Square 1300 70)))
+                    , Sound.volume 6 (Sound.sweep 500 (Sound.tone Sound.Triangle 2400 45))
+                    ]
+            else if w == 1 then
+                Sound.chord
+                    [ Sound.volume 15 (Sound.sweep 260 (Sound.duty 12 (Sound.tone Sound.Square 680 85)))
+                    , Sound.volume 7 (Sound.tone Sound.Noise 0 30)
+                    ]
+            else
+                Sound.chord
+                    [ Sound.volume 14 (Sound.sweep 620 (Sound.tone Sound.Triangle 340 95))
+                    , Sound.volume 5 (Sound.vibrato 35 10 (Sound.tone Sound.Square 510 80))
+                    ]
+
+        CHit ->
+            Sound.chord
+                [ Sound.volume 28 (Sound.tone Sound.Noise 0 45)
+                , Sound.volume 14 (Sound.sweep 300 (Sound.duty 25 (Sound.tone Sound.Square 900 35)))
+                ]
+
+        CHitFoe ->
+            -- the "I am doing damage" tick for tough enemies
+            Sound.chord
+                [ Sound.volume 18 (Sound.tone Sound.Noise 0 30)
+                , Sound.volume 12 (Sound.sweep 480 (Sound.duty 25 (Sound.tone Sound.Square 1500 35)))
+                ]
+
+        CBoomK k ->
+            if k == 0 then
+                -- drone: the classic mid pop
+                Sound.chord
+                    [ Sound.volume 34 (Sound.tone Sound.Noise 0 180)
+                    , Sound.volume 26 (Sound.sweep 40 (Sound.tone Sound.Triangle 250 160))
+                    ]
+            else if k == 1 then
+                -- diver: sharp crack with a falling whistle
+                Sound.chord
+                    [ Sound.volume 30 (Sound.tone Sound.Noise 0 90)
+                    , Sound.volume 20 (Sound.sweep 90 (Sound.tone Sound.Sawtooth 900 260))
+                    ]
+            else if k == 2 then
+                -- floater: deep slow whomp
+                Sound.chord
+                    [ Sound.volume 40 (Sound.tone Sound.Noise 0 260)
+                    , Sound.volume 32 (Sound.sweep 30 (Sound.tone Sound.Triangle 160 320))
+                    , Sound.volume 12 (Sound.sweep 45 (Sound.tone Sound.Sawtooth 90 240))
+                    ]
+            else if k == 3 then
+                -- zig: metallic clank
+                Sound.chord
+                    [ Sound.volume 26 (Sound.tone Sound.Noise 0 120)
+                    , Sound.volume 16 (Sound.arp [ 620, 480 ] (Sound.duty 25 (Sound.tone Sound.Square 830 180)))
+                    , Sound.volume 16 (Sound.sweep 60 (Sound.tone Sound.Triangle 300 160))
+                    ]
+            else
+                -- pinata: a festive crack and rising sparkle
+                Sound.chord
+                    [ Sound.volume 30 (Sound.tone Sound.Noise 0 120)
+                    , Sound.sequence
+                        [ Sound.volume 18 (Sound.duty 25 (Sound.tone Sound.Square (Sound.c 6) 50))
+                        , Sound.volume 18 (Sound.duty 25 (Sound.tone Sound.Square (Sound.e 6) 50))
+                        , Sound.volume 18 (Sound.duty 25 (Sound.tone Sound.Square (Sound.g 6) 50))
+                        , Sound.volume 18 (Sound.duty 25 (Sound.tone Sound.Square 2093 140))
+                        ]
+                    ]
+
+        CShipBoom ->
+            -- the Condor goes down: rolling multi-blast with a deep floor
+            Sound.chord
+                [ Sound.volume 60 (Sound.tone Sound.Noise 0 700)
+                , Sound.volume 46 (Sound.sweep 24 (Sound.tone Sound.Triangle 190 620))
+                , Sound.volume 30 (Sound.sweep 36 (Sound.tone Sound.Sawtooth 130 480))
+                , Sound.sequence [ Sound.rest 180, Sound.volume 40 (Sound.tone Sound.Noise 0 420) ]
+                , Sound.sequence [ Sound.rest 360, Sound.volume 30 (Sound.tone Sound.Noise 0 320) ]
+                , Sound.sequence [ Sound.rest 90, Sound.volume 24 (Sound.tone Sound.Triangle 62 600) ]
+                ]
+
+        CBigBoom ->
+            Sound.chord
+                [ Sound.volume 58 (Sound.tone Sound.Noise 0 520)
+                , Sound.volume 42 (Sound.sweep 30 (Sound.tone Sound.Triangle 220 480))
+                , Sound.volume 26 (Sound.sweep 45 (Sound.tone Sound.Sawtooth 150 380))
+                , Sound.sequence [ Sound.rest 140, Sound.volume 34 (Sound.tone Sound.Noise 0 300) ]
+                , Sound.sequence [ Sound.rest 60, Sound.volume 20 (Sound.tone Sound.Triangle (Sound.a 2) 400) ]
+                ]
+
+        CStar ->
+            Sound.sequence
+                [ Sound.volume 22 (Sound.duty 25 (Sound.tone Sound.Square (Sound.c 6) 55))
+                , Sound.volume 22 (Sound.duty 25 (Sound.tone Sound.Square (Sound.e 6) 55))
+                , Sound.chord
+                    [ Sound.volume 24 (Sound.duty 25 (Sound.tone Sound.Square (Sound.g 6) 150))
+                    , Sound.volume 10 (Sound.vibrato 14 6 (Sound.tone Sound.Triangle (Sound.e 6) 160))
+                    ]
+                ]
+
+        CHeal ->
+            -- an energy cell hums back to life
+            Sound.chord
+                [ Sound.volume 22 (Sound.arp [ Sound.e 5, Sound.a 5, Sound.cs 6 ] (Sound.tone Sound.Triangle (Sound.a 4) 340))
+                , Sound.volume 10 (Sound.sweep 900 (Sound.duty 50 (Sound.tone Sound.Square 320 240)))
+                ]
+
+        CHurt ->
+            Sound.chord
+                [ Sound.volume 40 (Sound.tone Sound.Noise 0 220)
+                , Sound.volume 34 (Sound.sweep 55 (Sound.tone Sound.Sawtooth 340 280))
+                , Sound.volume 16 (Sound.sweep 70 (Sound.duty 25 (Sound.tone Sound.Square 190 240)))
+                ]
+
+        CWarn ->
+            Sound.sequence
+                [ Sound.chord
+                    [ Sound.volume 30 (Sound.duty 50 (Sound.tone Sound.Square 145 190))
+                    , Sound.volume 16 (Sound.tone Sound.Triangle 73 190)
+                    ]
+                , Sound.rest 90
+                , Sound.chord
+                    [ Sound.volume 30 (Sound.duty 50 (Sound.tone Sound.Square 145 190))
+                    , Sound.volume 16 (Sound.tone Sound.Triangle 73 190)
+                    ]
+                , Sound.rest 90
+                , Sound.volume 34 (Sound.sweep 60 (Sound.duty 50 (Sound.tone Sound.Square 190 320)))
+                ]
+
+        CTurbineCharge ->
+            Sound.chord
+                [ Sound.volume 24 (Sound.sweep 940 (Sound.vibrato 22 7 (Sound.tone Sound.Sawtooth 120 900)))
+                , Sound.volume 14 (Sound.sweep 520 (Sound.tone Sound.Triangle 70 900))
+                , Sound.sequence
+                    [ Sound.rest 380
+                    , Sound.volume 18 (Sound.arp [ 440, 554, 659 ] (Sound.duty 25 (Sound.tone Sound.Square 330 500)))
+                    ]
+                ]
+
+        CTurbineBeam ->
+            Sound.chord
+                [ Sound.volume 34 (Sound.tone Sound.Noise 0 520)
+                , Sound.volume 32 (Sound.sweep 90 (Sound.tone Sound.Sawtooth 760 650))
+                , Sound.volume 24 (Sound.vibrato 35 10 (Sound.tone Sound.Triangle 92 700))
+                ]
+
+        CJIntro ->
+            Sound.sequence
+                [ Sound.volume 20 (Sound.duty 25 (Sound.tone Sound.Square (Sound.a 4) 95))
+                , Sound.volume 20 (Sound.duty 25 (Sound.tone Sound.Square (Sound.cs 5) 95))
+                , Sound.chord
+                    [ Sound.volume 22 (Sound.duty 25 (Sound.tone Sound.Square (Sound.e 5) 240))
+                    , Sound.volume 12 (Sound.tone Sound.Triangle (Sound.a 3) 260)
+                    ]
+                ]
+
+        CJClear ->
+            Sound.chord
+                [ Sound.sequence
+                    [ Sound.volume 24 (Sound.duty 25 (Sound.tone Sound.Square (Sound.c 5) 120))
+                    , Sound.volume 24 (Sound.duty 25 (Sound.tone Sound.Square (Sound.e 5) 120))
+                    , Sound.volume 24 (Sound.duty 25 (Sound.tone Sound.Square (Sound.g 5) 120))
+                    , Sound.vibrato 16 6 (Sound.volume 26 (Sound.duty 25 (Sound.tone Sound.Square (Sound.a 5) 450)))
+                    ]
+                , Sound.sequence
+                    [ Sound.volume 18 (Sound.tone Sound.Triangle (Sound.c 3) 240)
+                    , Sound.volume 18 (Sound.tone Sound.Triangle (Sound.g 3) 240)
+                    , Sound.volume 20 (Sound.tone Sound.Triangle (Sound.a 3) 420)
+                    ]
+                ]
+
+        CJOver ->
+            Sound.chord
+                [ Sound.sequence
+                    [ Sound.volume 22 (Sound.duty 12 (Sound.tone Sound.Square (Sound.e 4) 180))
+                    , Sound.volume 22 (Sound.duty 12 (Sound.tone Sound.Square (Sound.c 4) 180))
+                    , Sound.vibrato 8 4 (Sound.volume 24 (Sound.duty 12 (Sound.tone Sound.Square (Sound.a 3) 420)))
+                    ]
+                , Sound.sequence
+                    [ Sound.rest 360
+                    , Sound.volume 20 (Sound.tone Sound.Triangle (Sound.a 2) 430)
+                    ]
+                ]
+
+        CJEnd ->
+            Sound.chord
+                [ Sound.sequence
+                    [ Sound.volume 24 (Sound.duty 50 (Sound.tone Sound.Square (Sound.a 4) 200))
+                    , Sound.volume 24 (Sound.duty 50 (Sound.tone Sound.Square (Sound.c 5) 200))
+                    , Sound.volume 24 (Sound.duty 50 (Sound.tone Sound.Square (Sound.e 5) 200))
+                    , Sound.vibrato 14 5 (Sound.volume 28 (Sound.duty 50 (Sound.tone Sound.Square (Sound.a 5) 800)))
+                    ]
+                , Sound.sequence
+                    [ Sound.volume 24 (Sound.tone Sound.Triangle (Sound.a 2) 700)
+                    , Sound.volume 24 (Sound.tone Sound.Triangle (Sound.e 3) 700)
+                    ]
+                , Sound.sequence
+                    [ Sound.rest 600
+                    , Sound.volume 12 (Sound.arp [ Sound.c 6, Sound.e 6 ] (Sound.duty 25 (Sound.tone Sound.Square (Sound.a 5) 500)))
+                    ]
+                ]
+
+        CBlip ->
+            Sound.volume 20 (Sound.duty 25 (Sound.tone Sound.Square (Sound.g 5) 60))

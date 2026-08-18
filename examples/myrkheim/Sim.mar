@@ -1,0 +1,1639 @@
+module Sim exposing (..)
+
+-- One tick: read input, move, open doors, swing and throw, run every actor's
+-- mind, resolve damage, and step the projectiles, gibs, pickups and timers.
+-- Pure functions of the model.
+
+import Balance exposing (..)
+import Barrows exposing (..)
+import Raycaster exposing (..)
+import Sfx exposing (..)
+import Types exposing (..)
+import World exposing (..)
+
+
+
+
+emit : Model -> (Model, Cmd Msg)
+emit model =
+    if List.length model.sfx == 0 then
+        ( model, Cmd.none )
+    else
+        ( { model | sfx = [] }
+        , Cmd.batch (List.map (\c -> Sound.play (cueSound c)) model.sfx)
+        )
+
+
+update : Msg -> Model -> (Model, Cmd Msg)
+update msg model =
+    case msg of
+        Resized w h ->
+            ( { model | w = w, h = h }, Cmd.none )
+
+        Tick ->
+            case model.mode of
+                Play -> emit (stepPlay model)
+                Title -> ( { model | tick = model.tick + 1 }, Cmd.none )
+                Won -> emit { model | tick = model.tick + 1, modeT = model.modeT + 1 }
+                _ ->
+                    -- between-screens (Intro / Cleared / Dead) only advance
+                    -- the clock; the phase NEVER starts on its own: the
+                    -- player presses a key to descend (see advance / Tapped)
+                    ( { model | tick = model.tick + 1, modeT = model.modeT + 1 }, Cmd.none )
+
+        Tapped x y ->
+            if inMuteZone model x y then
+                toggleMute model
+            else
+                case model.mode of
+                    -- Play is the mirror's job: it is the only channel that
+                    -- can tell one finger from another.
+                    Play -> ( model, Cmd.none )
+                    Title -> emit (titleTap model x y)
+                    _ ->
+                        if canDismiss model then emit (advance model) else ( model, Cmd.none )
+
+        Pointers ps ->
+            if model.mode == Play then
+                ( applyPointers model ps, Cmd.none )
+            else
+                ( { model | moveId = Nothing, padMove = Nothing, turnId = Nothing, padTurn = Nothing, lookId = Nothing, fireId = Nothing, ptrIds = [] }, Cmd.none )
+
+        KeysChanged st ->
+            -- held movement/fire is mirrored wholesale (syncHeld, gated to
+            -- Play so a menu-dismiss key can't seed a step or a spear-throw
+            -- into the barrow's first frame); weapon/mute/menu actions fire
+            -- on the press-edge (keys NEW to the set). Releases are automatic
+            --: a key simply leaves the set, so syncHeld drops it next frame.
+            let
+                pressed = List.filter (\k -> List.member k model.keysDown == False) st.down
+                m1 = { model | keysDown = st.down }
+                base = if model.mode == Play then syncHeld m1 else m1
+            in
+            List.foldl applyKeyPress ( base, Cmd.none ) pressed
+
+        PadChanged p ->
+            -- ONE snapshot carries BOTH sticks: LEFT (leftX/leftY) moves and
+            -- strafes, RIGHT (rightX) turns/looks. The analog axes are stored
+            -- straight from the snapshot; A-held fire and the weapon/menu
+            -- edges fold in from p.down. rightY is unused (turning rides X).
+            let
+                pressed = List.filter (\b -> List.member b model.padDown == False) p.down
+                m1 = { model | padDown = p.down, padX = p.leftX, padY = p.leftY, padRX = p.rightX }
+                base = if model.mode == Play then syncHeld m1 else m1
+            in
+            List.foldl applyPadPress ( base, Cmd.none ) pressed
+
+        DeviceChanged d ->
+            ( { model | dev = Just d }, Cmd.none )
+
+
+-- the held movement/fire mirror: recompute the digital held bools from the
+-- raw key/button sets. Called only while playing, so a menu-dismiss press
+-- can never seed movement or a spear-throw into the first frame of a barrow.
+-- The analog sticks (padX/padY/padRX) are set straight from the snapshot in
+-- update; releases need no code: a key just leaves keysDown/padDown and the
+-- next syncHeld drops it (keyboard AND gamepad feed their own bools, summed
+-- later in stepMove: keys are digital, the sticks analog).
+syncHeld : Model -> Model
+syncHeld m =
+    let
+        k = \key -> List.member key m.keysDown
+    in
+    { m
+        | kF = k Keyboard.KeyW || k Keyboard.ArrowUp
+        , kB = k Keyboard.KeyS || k Keyboard.ArrowDown
+        , kSL = k Keyboard.KeyA
+        , kSR = k Keyboard.KeyD
+        , kTL = k Keyboard.ArrowLeft
+        , kTR = k Keyboard.ArrowRight
+        , fireHeld = k Keyboard.Space
+        , padA = List.member Gamepad.A m.padDown
+    }
+
+
+-- discrete on-DOWN keys while playing: the number row picks a weapon, Q
+-- cycles. Movement/fire keys are held (syncHeld), so they no-op here.
+playKeyEdge : Keyboard.Key -> Model -> Model
+playKeyEdge key m =
+    case key of
+        Keyboard.Digit1 -> setWeapon 0 m
+        Keyboard.Digit2 -> setWeapon 1 m
+        Keyboard.Digit3 -> setWeapon 2 m
+        Keyboard.Digit4 -> setWeapon 3 m
+        Keyboard.Digit5 -> setWeapon 4 m
+        Keyboard.KeyQ -> cycleWeapon m
+        _ -> m
+
+
+-- press-edge for one key that JUST went down (folded over, threading the
+-- Cmd). M mutes in any mode; otherwise Play switches weapons, Title moves
+-- the saga cursor / starts, and a between-screen advances once its hold has
+-- elapsed. Play edges queue their click in sfx for the next Tick (exactly as
+-- the old KeyDown did: Cmd.none); menu edges emit right away.
+applyKeyPress : Keyboard.Key -> (Model, Cmd Msg) -> (Model, Cmd Msg)
+applyKeyPress key acc =
+    let
+        (m, cmd) = acc
+    in
+    if key == Keyboard.KeyM then
+        let
+            (m2, c2) = toggleMute m
+        in
+        ( m2, Cmd.batch [ cmd, c2 ] )
+    else
+        case m.mode of
+            Play ->
+                ( playKeyEdge key m, cmd )
+
+            Title ->
+                let
+                    (m2, c2) = emit (titleKey m key)
+                in
+                ( m2, Cmd.batch [ cmd, c2 ] )
+
+            _ ->
+                if canDismiss m then
+                    let
+                        (m2, c2) = emit (advance m)
+                    in
+                    ( m2, Cmd.batch [ cmd, c2 ] )
+                else
+                    ( m, cmd )
+
+
+-- press-edge for one gamepad button. Play: B cycles the weapon (the A-fire is
+-- held via syncHeld, so it is not an edge here). Title: Start/A starts, D-pad
+-- up/down moves the saga cursor. Between-screens: Start/A advances once
+-- dismissable. Mirrors the old PadDown per-mode branching.
+applyPadPress : Gamepad.Button -> (Model, Cmd Msg) -> (Model, Cmd Msg)
+applyPadPress btn acc =
+    let
+        (m, cmd) = acc
+    in
+    case m.mode of
+        Play ->
+            if btn == Gamepad.B then
+                ( cycleWeapon m, cmd )
+            else
+                ( m, cmd )
+
+        Title ->
+            if btn == Gamepad.Start || btn == Gamepad.A then
+                let
+                    (m2, c2) = emit (startGame m)
+                in
+                ( m2, Cmd.batch [ cmd, c2 ] )
+            else if btn == Gamepad.Up then
+                let
+                    (m2, c2) = emit { m | sel = 0 }
+                in
+                ( m2, Cmd.batch [ cmd, c2 ] )
+            else if btn == Gamepad.Down then
+                let
+                    (m2, c2) = emit { m | sel = 1 }
+                in
+                ( m2, Cmd.batch [ cmd, c2 ] )
+            else
+                ( m, cmd )
+
+        _ ->
+            if canDismiss m && (btn == Gamepad.Start || btn == Gamepad.A) then
+                let
+                    (m2, c2) = emit (advance m)
+                in
+                ( m2, Cmd.batch [ cmd, c2 ] )
+            else
+                ( m, cmd )
+
+
+setWeapon : Int -> Model -> Model
+setWeapon w model =
+    if w == model.weapon then
+        model
+    else if hasAmmo w model then
+        { model | weapon = w, cool = min model.cool 8, sfx = CClick :: model.sfx }
+    else
+        { model | sfx = CClick :: model.sfx }
+
+
+-- a arma está no cinto? (a seleção exige POSSE; disparar sem munição
+-- vira o clique seco)
+hasAmmo : Int -> Model -> Bool
+hasAmmo w m =
+    case w of
+        1 -> m.hasSpear
+        2 -> m.hasBow
+        3 -> m.axes > 0
+        4 -> m.flasks > 0
+        _ -> True
+
+
+-- Q steps to the next weapon that actually has ammo (spear always does)
+cycleWeapon : Model -> Model
+cycleWeapon model =
+    let
+        pick =
+            List.filter (\w -> hasAmmo w model)
+                [ modBy 5 (model.weapon + 1)
+                , modBy 5 (model.weapon + 2)
+                , modBy 5 (model.weapon + 3)
+                , modBy 5 (model.weapon + 4)
+                ]
+    in
+    setWeapon (Maybe.withDefault 0 (List.head pick)) model
+
+
+toggleMute : Model -> (Model, Cmd Msg)
+toggleMute model =
+    let
+        m2 = model.muted == False
+    in
+    ( { model | muted = m2 }, Sound.setMuted m2 )
+
+
+titleKey : Model -> Keyboard.Key -> Model
+titleKey model key =
+    case key of
+        Keyboard.KeyW -> { model | sel = 0 }
+        Keyboard.ArrowUp -> { model | sel = 0 }
+        Keyboard.KeyS -> { model | sel = 1 }
+        Keyboard.ArrowDown -> { model | sel = 1 }
+        Keyboard.Enter -> startGame model
+        Keyboard.Space -> startGame model
+        _ -> model
+
+
+titleTap : Model -> Int -> Int -> Model
+titleTap model x y =
+    let
+        lay = layout model
+        ly = (y - lay.oy) * 100 // max 1 lay.scale
+    in
+    if ly >= 112 && ly < 136 then
+        startGame { model | sel = 0 }
+    else if ly >= 136 && ly < 160 then
+        startGame { model | sel = 1 }
+    else
+        model
+
+
+startGame : Model -> Model
+startGame model =
+    initBarrow 0
+        { model
+            | hardcore = model.sel == 1
+            , gold = 0
+            , kills = 0
+            , weapon = 0
+            , hasSpear = False
+            , hasBow = False
+            , arrows = 0
+            , axes = 0
+            , flasks = 0
+            , armor = 0
+        }
+
+
+-- how long a between-screen must stay up before ANY input can dismiss
+-- it. Most screens just debounce a key held over from the frame before
+-- (12 ticks); the death screen holds ~3.5s so it can breathe while the
+-- funeral march opens: you were fighting, holding fire, and shouldn't
+-- blink past your own death.
+holdTicks : Mode -> Int
+holdTicks mode =
+    case mode of
+        -- Dead: eyes close (0..190), a beat of black silence (190..240),
+        -- the verdict + hint fade in (240), then dismissable at 262
+        Dead -> 262
+        -- the between-barrow and victory screens lock for a few seconds so
+        -- a shot fired the instant the waystone lit can't skip them unread
+        Cleared -> 170
+        Won -> 220
+        _ -> 12
+
+
+-- a between-screen accepts a dismissal only once its hold has elapsed
+canDismiss : Model -> Bool
+canDismiss model =
+    model.modeT >= holdTicks model.mode
+
+
+-- what a keypress does on the between screens
+advance : Model -> Model
+advance model =
+    case model.mode of
+        Intro -> { model | mode = Play, modeT = 0 }
+        Cleared ->
+            if model.barrow < lastBarrow then
+                initBarrow (model.barrow + 1) model
+            else
+                { model | mode = Title, modeT = 0 }
+        Dead ->
+            if model.hardcore then
+                { model | mode = Title, modeT = 0 }
+            else
+                let
+                    restored =
+                        { model
+                            | gold = model.snapGold
+                            , kills = model.snapKills
+                            , arrows = model.snapArrows
+                            , axes = model.snapAxes
+                            , flasks = model.snapFlasks
+                            , armor = model.snapArmor
+                        }
+                    -- the rollback can un-own the selected weapon (axes /
+                    -- flasks picked up THIS run roll back to the entry
+                    -- snapshot): a dead slot must not stay selected. Fall
+                    -- back to Gungnir if she has it, else the seax
+                    rearmed =
+                        if hasAmmo restored.weapon restored then
+                            restored
+                        else
+                            { restored | weapon = if restored.hasSpear then 1 else 0 }
+                in
+                initBarrow model.barrow rearmed
+        Won ->
+            -- the hold is enforced by canDismiss (holdTicks Won); once it
+            -- elapses, any key returns to the title
+            { model | mode = Title, modeT = 0 }
+        _ -> model
+
+
+padSpots : Model -> Pads
+padSpots model =
+    let
+        lay = layout model
+        gw = gameW * lay.scale // 100
+        gh = gameH * lay.scale // 100
+        bezL = lay.ox
+        bezB = model.h - lay.oy - gh
+        -- `inset` pulls a stick off the very edge where the layout puts it ON
+        -- the rim. A thumb resting in a corner has to bend backwards to reach
+        -- the pad, and the hand holding the phone is already there.
+        inset = 30
+        -- Portrait is the exception, because its x was never a rim: `w // 4` is
+        -- a quarter of the way in already, so an inset on top of it walks the
+        -- two sticks towards each other, and on a portrait tablet (w // 4 is
+        -- 205pt on an iPad) they end up meeting in the middle of the screen.
+        -- The cap anchors them a thumb from the edge whatever the width is.
+        side = min (model.w // 4) 96
+        m =
+            if bezL >= 96 then
+                { x = bezL // 2 + inset, y = model.h * 2 // 3 }
+            else if bezB >= 96 then
+                { x = side, y = lay.oy + gh + bezB // 2 }
+            else
+                { x = lay.ox + 76 + inset, y = lay.oy + gh - 76 - 20 }
+        t =
+            if bezL >= 96 then
+                { x = model.w - bezL // 2 - inset, y = model.h * 2 // 3 }
+            else if bezB >= 96 then
+                { x = model.w - side, y = lay.oy + gh + bezB // 2 }
+            else
+                { x = lay.ox + gw - 76 - inset, y = lay.oy + gh - 76 - 20 }
+
+        -- ATK + switch: above the turn stick when there is head room (side
+        -- bezels, deep portrait bezel), BESIDE it in a short bottom strip
+        -- (tablet landscape) where "above" would poke into the picture.
+        f =
+            if bezL < 96 && bezB >= 96 && bezB < 230 then
+                { x = min (model.w - 44) (t.x + 148), y = t.y + 16 }
+            else
+                { x = t.x, y = t.y - 98 }
+    in
+    { mcx = m.x, mcy = m.y, tcx = t.x, tcy = t.y, fx = f.x, fy = f.y }
+
+
+inBox : Int -> Int -> Int -> Int -> Int -> Bool
+inBox x y cx cy r =
+    absI (x - cx) <= r && absI (y - cy) <= r
+
+
+-- Everything analog that turns the view pays into model.turnQ in SIXTEENTHS of
+-- a screen pixel, and 4 whole pixels buy one heading step (1.5 degrees).
+--
+-- The fraction is the point. A heading step is a coarse thing to be the
+-- smallest amount of turning there is: a stick leaning gently owes a fraction
+-- of one per frame, and while the queue counted whole pixels that fraction
+-- truncated to nothing. The turn stick had four speeds (0, 1, 2, 3 steps a
+-- frame) and the first non-zero one arrived 38px into a 60px throw, so the
+-- first two thirds of the travel read as a dead zone: push a little, nothing
+-- happens; push a lot, it lurches. Counting sixteenths lets a small lean spend
+-- one step every several frames, which is what a slow turn is.
+turnPerPixel : Int
+turnPerPixel = 16
+
+
+turnPerStep : Int
+turnPerStep = 64
+
+
+-- A screen's worth of queued travel, the guard for frames stopping (a
+-- backgrounded tab) while touches keep arriving.
+turnCap : Int
+turnCap = 480 * turnPerPixel
+
+
+-- What a turn stick pushed all the way over is worth, in HUNDREDTHS of a
+-- heading step per frame. 150 is 1.5 steps a frame, which is deliberately the
+-- speed the arrow keys turn at (aStep alternates 1 and 2), because that is the
+-- speed this game's fighting was tuned against: how long a draugr takes to
+-- come round, how far you can swing before a bolt reaches you.
+--
+-- It used to be 3 steps a frame, twice this, inherited from the gamepad and
+-- never actually felt by anybody: reaching it took 38px of a 60px throw back
+-- when everything below that truncated to standing still. The hundredths are
+-- what let it be 1.5 at all; as a whole-number multiplier the choices were 1
+-- (too slow to spin round) and 2 (still too fast).
+turnTopRate : Int
+turnTopRate = 150
+
+
+-- One snapshot of every finger on the glass (Canvas.watchPointers). A finger
+-- picks its job when it LANDS and keeps it until it leaves.
+--
+-- There are four jobs and each answers to a different idea of a control. The
+-- two round pads are STICKS: the knob follows the thumb and the model holds
+-- where it was left, which is why holding one over keeps you walking or
+-- turning. The rest of the picture is a SWIPE surface, where the heading
+-- follows how far the finger travelled and stops dead when it stops. The
+-- buttons are buttons. Drawing one of these and behaving like another is a lie
+-- the hand notices before the eye does.
+--
+-- The old shape asked "which pad is this x,y over?" on every move event,
+-- because the tap/drag channel carries no pointer id. Three things followed,
+-- and all three are what made the controls feel unreliable rather than merely
+-- stiff: a thumb that slid off its 84px box lost the stick and fell into the
+-- look-anywhere branch, fighting the other thumb; lifting the look finger over
+-- the move pad cleared the move; and the single lastDragX slot was shared by
+-- whichever finger happened to be outside a pad.
+applyPointers : Model -> List { id : Int, x : Int, y : Int } -> Model
+applyPointers m0 ps =
+    let
+        ids = List.map (\p -> p.id) ps
+        stillDown =
+            \mid ->
+                case mid of
+                    Just i -> List.any (\j -> j == i) ids
+                    Nothing -> False
+
+        -- a finger that left the glass drops whatever it was driving
+        m1 =
+            { m0
+                | moveId = if stillDown m0.moveId then m0.moveId else Nothing
+                , padMove = if stillDown m0.moveId then m0.padMove else Nothing
+                , turnId = if stillDown m0.turnId then m0.turnId else Nothing
+                , padTurn = if stillDown m0.turnId then m0.padTurn else Nothing
+                , lookId = if stillDown m0.lookId then m0.lookId else Nothing
+                , fireId = if stillDown m0.fireId then m0.fireId else Nothing
+            }
+    in
+    -- The snapshot is stamped AFTER the fold, and that order is the whole
+    -- mechanism: stepPointer asks "did this finger land just now?" against the
+    -- PREVIOUS list. Writing the current ids first makes every finger look
+    -- already-known, so none of them ever claims a job and nothing moves.
+    List.foldl stepPointer m1 ps
+        |> (\m -> { m | ptrIds = ids })
+
+
+stepPointer : { id : Int, x : Int, y : Int } -> Model -> Model
+stepPointer p m =
+    let
+        pd = padSpots m
+        fresh = List.any (\j -> j == p.id) m.ptrIds == False
+        off =
+            \cx cy ->
+                Just
+                    { dx = iclamp (0 - 60) 60 (p.x - cx)
+                    , dy = iclamp (0 - 60) 60 (p.y - cy)
+                    }
+        -- Each stick's box is generous, and on a narrow phone two generous
+        -- boxes would overlap: the left one is tested first, so it would own
+        -- ground that belongs to the right one. Half the gap between the
+        -- centres is the widest they can be and still each keep their side.
+        r = min 96 ((pd.tcx - pd.mcx) // 2)
+    in
+    if m.moveId == Just p.id then
+        { m | padMove = off pd.mcx pd.mcy }
+
+    else if m.turnId == Just p.id then
+        { m | padTurn = off pd.tcx pd.tcy }
+
+    else if m.lookId == Just p.id then
+        -- LOOK IS A SWIPE, not a stick: the heading follows how far the finger
+        -- MOVED since the last frame, which is what every mobile FPS does and
+        -- what a position-driven stick cannot express. Pointer events arrive
+        -- faster than frames, so the travel is queued and stepMove spends it.
+        { m
+            | turnQ = iclamp (0 - turnCap) turnCap (m.turnQ + (p.x - m.lookX) * turnPerPixel)
+            , lookX = p.x
+        }
+
+    else if m.fireId == Just p.id then
+        { m | fireQ = True }
+
+    else if fresh == False then
+        m
+
+    else if inBox p.x p.y pd.fx (pd.fy - 62) 26 then
+        cycleWeapon m
+
+    else if inBox p.x p.y pd.fx pd.fy 36 then
+        { m | fireId = Just p.id, fireQ = True }
+
+    else if inBox p.x p.y pd.mcx pd.mcy r then
+        { m | moveId = Just p.id, padMove = off pd.mcx pd.mcy }
+
+    else if inBox p.x p.y pd.tcx pd.tcy r then
+        { m | turnId = Just p.id, padTurn = off pd.tcx pd.tcy }
+
+    else
+        -- anywhere else is the look surface, including the whole picture
+        { m | lookId = Just p.id, lookX = p.x }
+
+
+-- Touch stick response: a dead zone, so a thumb that never sits perfectly
+-- still does not drive the player; then a curve that is gentle near the middle
+-- and full at the rim, so small corrections are possible at all. Answers
+-- -100..100 for an offset in screen pixels.
+--
+-- The dead zone is an argument because the two sticks are not owed the same
+-- one, and what decides it is what a resting thumb COSTS. On the move stick a
+-- drift walks you into a wall or off an edge with no warning, so it is worth
+-- 14px. On the turn stick a drift only rotates the view, which you can see
+-- happening and correct, so it is worth 8 and the turning starts about as soon
+-- as the thumb does.
+padAxis : Int -> Int -> Int
+padAxis dead v =
+    let
+        a = absI v
+    in
+    if a <= dead then
+        0
+
+    else
+        let
+            t = min 100 ((a - dead) * 100 // 46)
+            c = (t * 30 + t * t * 70 // 100) // 100
+        in
+        if v < 0 then 0 - c else c
+
+
+inMuteZone : Model -> Int -> Int -> Bool
+inMuteZone model x y =
+    let
+        lay = layout model
+        lx = (x - lay.ox) * 100 // max 1 lay.scale
+        ly = (y - lay.oy) * 100 // max 1 lay.scale
+    in
+    lx >= 296 && lx <= 318 && ly >= 2 && ly <= 20
+
+
+
+
+stepPlay : Model -> Model
+stepPlay model =
+    model
+        |> stepMove
+        |> stepDoors
+        |> stepFire
+        |> stepActors
+        |> stepBolts
+        |> stepPBolts
+        |> stepBooms
+        |> stepGibs
+        |> stepPickups
+        |> stepTimers
+
+
+stepMove : Model -> Model
+stepMove m =
+    let
+        d = dirAt m.heading
+        tp = Maybe.withDefault { dx = 0, dy = 0 } m.padMove
+        tt = Maybe.withDefault { dx = 0, dy = 0 } m.padTurn
+        -- Twin-stick, standard-FPS layout: LEFT stick moves (Y = forward/back,
+        -- X = strafe), RIGHT stick turns (X = look). Gamepad.watch feeds padRX.
+        stickF = if absI m.padY > 24 then (0 - m.padY) * walkF // 100 else 0
+        stickS = if absI m.padX > 24 then m.padX * walkS // 100 else 0
+        fwd =
+            iclamp (0 - walkS) walkF
+                ((if m.kF then walkF else 0)
+                    - (if m.kB then walkS else 0)
+                    + stickF
+                    + padAxis 14 (0 - tp.dy) * walkF // 100)
+        strafe =
+            iclamp (0 - walkS) walkS
+                ((if m.kSR then walkS else 0)
+                    - (if m.kSL then walkS else 0)
+                    + stickS
+                    -- LEFT stick's horizontal strafes (standard dual-stick)
+                    + padAxis 14 tp.dx * walkS // 100)
+        -- arrows turn a bit slower than a flat 2 steps/frame: alternate 1 and
+        -- 2 by tick (~1.5 avg). A flat 2 felt too fast.
+        aStep = 1 + modBy 2 m.tick
+        turn =
+            iclamp (0 - 4) 4
+                ((if m.kTR then aStep else 0)
+                    - (if m.kTL then aStep else 0))
+        -- Both analog turn controls, the RIGHT touch pad and the gamepad's
+        -- right stick, are RATE sticks: held over they keep turning, centred
+        -- they stop. Both pay their rate into the swipe queue rather than
+        -- adding whole heading steps of their own, which is what buys them any
+        -- speed below one step a frame, turnTopRate included.
+        padPay = padAxis 8 tt.dx * turnTopRate * turnPerStep // 10000
+        stickPay = if absI m.padRX > 24 then m.padRX * turnTopRate * turnPerStep // 10000 else 0
+        -- The queue is NOT under the arrow cap, and that is the difference
+        -- between a flick that turns you round and one that turns you 6°. The
+        -- cap is there to stop a HELD arrow key from spinning the view; a
+        -- finger can only travel as far as the glass, so it is already its own
+        -- limit. A swipe across a phone is about 145° whether it takes one
+        -- frame or twenty.
+        queued = m.turnQ + padPay + stickPay
+        swipe = queued // turnPerStep
+        h2 = modBy 240 (m.heading + turn + swipe + 240)
+        mvx = (d.x * fwd - d.y * strafe) // k1
+        mvy = (d.y * fwd + d.x * strafe) // k1
+        -- walls AND bodies block: without the actor check you could walk
+        -- INSIDE a draugr, its center would sit behind you, and the spear's
+        -- dot > 0 aim test could never find it. A body only blocks moves
+        -- that CLOSE the distance: retreating out of a clinch always works
+        free =
+            \x y ->
+                canStand m.grid x y
+                    && List.any
+                        (\a ->
+                            isDead a.st == False
+                                && octDist (a.x - x) (a.y - y) < 430
+                                && octDist (a.x - x) (a.y - y) < octDist (a.x - m.px) (a.y - m.py))
+                        m.actors
+                        == False
+        nx = if free (m.px + mvx) m.py then m.px + mvx else m.px
+        ny = if free nx (m.py + mvy) then m.py + mvy else m.py
+        -- walking into a shut door is the interact: probe half a cell ahead
+        probe = cellAt m.grid ((nx + d.x * 480 // k1) // k1) ((ny + d.y * 480 // k1) // k1)
+        -- Drain exactly what was spent, so the sixteenths that did not add up
+        -- to a whole step carry into the next frame. This is what lets a stick
+        -- held gently turn at all: it owes a fraction of a step per frame, and
+        -- the fractions accumulate until they are worth one.
+        m2 = { m | px = nx, py = ny, heading = h2, turnQ = queued - swipe * turnPerStep }
+    in
+    if fwd > 0 && (probe == 4 || probe == 5) then
+        touchDoor m2 ((ny + d.y * 480 // k1) // k1) ((nx + d.x * 480 // k1) // k1)
+    else
+        m2
+
+
+touchDoor : Model -> Int -> Int -> Model
+touchDoor m cy cx =
+    let
+        hit = List.filter (\dr -> dr.cx == cx && dr.cy == cy && dr.openT < 0) m.doors
+    in
+    case List.head hit of
+        Nothing ->
+            m
+
+        Just dr ->
+            if dr.rune && m.hasRune == False then
+                if m.lockT == 0 then
+                    { m | lockT = 40, runeBlink = 40, sfx = CLocked :: m.sfx }
+                else
+                    m
+            else
+                { m
+                    | doors =
+                        List.map
+                            (\o ->
+                                if o.cx == cx && o.cy == cy then { o | openT = 18 } else o)
+                            m.doors
+                    , sfx = CDoor :: m.sfx
+                }
+
+
+stepDoors : Model -> Model
+stepDoors m =
+    let
+        opened = List.filter (\dr -> dr.openT == 1) m.doors
+        grid2 =
+            List.foldl (\dr g -> Dict.insert (dr.cy * 24 + dr.cx) 0 g) m.grid opened
+        doors2 =
+            List.map (\dr -> if dr.openT > 0 then { dr | openT = dr.openT - 1 } else dr) m.doors
+    in
+    { m
+        | grid = grid2
+        , doors = doors2
+        , mapRuns = if List.length opened > 0 then computeRuns grid2 else m.mapRuns
+    }
+
+
+-- the spear: hitscan along the center ray. Gungnir's blessing, if it is
+-- aimed at flesh with a clear line, it hits, whatever the range
+stepFire : Model -> Model
+stepFire m =
+    let
+        want = (m.fireHeld || m.padA || m.fireQ) && m.cool == 0
+        m0 = { m | fireQ = False }
+    in
+    if want == False then
+        m0
+    else if m.weapon == 0 then
+        seaxSwing m0
+    else if m.weapon == 2 then
+        loose m0 1 150 (CBow :: m0.sfx) m0.arrows (\mm -> { mm | arrows = mm.arrows - 1 })
+    else if m.weapon == 3 then
+        loose m0 2 95 (CAxeT :: m0.sfx) m0.axes (\mm -> { mm | axes = mm.axes - 1 })
+    else if m.weapon == 4 then
+        loose m0 3 70 (CFuse :: m0.sfx) m0.flasks (\mm -> { mm | flasks = mm.flasks - 1 })
+    else
+        let
+            d = dirAt m.heading
+            aimed =
+                List.filter
+                    (\a ->
+                        let
+                            relX = a.x - m.px
+                            relY = a.y - m.py
+                            dot = d.x * relX + d.y * relY
+                            perp = (d.x * relY - d.y * relX) // k1
+                            rad = if a.kind == 2 then 470 else 310
+                            -- point-blank forgiveness: inside ~1.5 cells the
+                            -- sprite fills the view, so the body counts:
+                            -- without this you can whiff through a draugr
+                            -- that is chewing on your face
+                            blank = dot // k1 < 1500 && absI perp < (if a.kind == 2 then 980 else 760)
+                        in
+                        isDead a.st == False
+                            && dot > 0
+                            && (absI perp < rad || blank)
+                            && losClear m.grid m.px m.py a.x a.y)
+                    m.actors
+            best =
+                List.sortBy (\a -> d.x * (a.x - m.px) + d.y * (a.y - m.py)) aimed
+                    |> List.head
+            wall = castCol (castEnv m0) (nCols // 2)
+            tracer =
+                { x = m0.px + d.x * 300 // k1
+                , y = m0.py + d.y * 300 // k1
+                , vx = d.x * 340 // k1
+                , vy = d.y * 340 // k1
+                , kind = 9
+                , t = 26
+                }
+            m1 =
+                { m0
+                    | cool = wcool 0
+                    , sfx = CThrow :: m0.sfx
+                    , pbolts = tracer :: m0.pbolts
+                }
+        in
+        case best of
+            Nothing ->
+                -- no flesh on the line: maybe the spear finds a crack
+                crackCheck m1 wall
+
+            Just t ->
+                hurtActorN m1 t 1
+
+
+-- seax: swing curto e largo. Sem alcance, sem munição, a fiel companheira
+-- do primeiro corredor (e do pânico)
+seaxSwing : Model -> Model
+seaxSwing m =
+    let
+        d = dirAt m.heading
+        near =
+            List.filter
+                (\a ->
+                    let
+                        relX = a.x - m.px
+                        relY = a.y - m.py
+                        dot = d.x * relX + d.y * relY
+                        perp = (d.x * relY - d.y * relX) // k1
+                    in
+                    isDead a.st == False && dot > 0 && dot // k1 < 1350 && absI perp < 720)
+                m.actors
+        best =
+            List.sortBy (\a -> d.x * (a.x - m.px) + d.y * (a.y - m.py)) near
+                |> List.head
+        m1 = { m | cool = wcool 0, sfx = CThrow :: m.sfx }
+    in
+    case best of
+        Nothing ->
+            crackCheck m1 (castCol (castEnv m1) (nCols // 2))
+
+        Just t ->
+            hurtActorN m1 t 1
+
+
+-- shared launcher for the ammo weapons: spends a round, spawns the
+-- projectile, starts the cooldown. Empty chamber = a dry click
+loose : Model -> Int -> Int -> List Cue -> Int -> (Model -> Model) -> Model
+loose m kind speed cues left spend =
+    if left <= 0 then
+        { m | cool = 14, sfx = CClick :: m.sfx }
+    else
+        let
+            d = dirAt m.heading
+            b =
+                { x = m.px + d.x * 300 // k1
+                , y = m.py + d.y * 300 // k1
+                , vx = d.x * speed // k1
+                , vy = d.y * speed // k1
+                , kind = kind
+                , t = 140
+                }
+            thrown = spend { m | cool = wcool kind, sfx = cues, pbolts = b :: m.pbolts }
+        in
+        -- if that was the LAST shot (this weapon's ammo was 1 before the
+        -- throw), auto-fall-back to the seax (weapon 0): you're never left
+        -- holding a spent weapon that only clicks. cycleWeapon already hides
+        -- empty weapons; this covers the one you deplete in your own hand.
+        -- Covers arrows / axes / flasks alike, since `left` is the real count.
+        if left <= 1 then { thrown | weapon = 0 } else thrown
+
+
+-- a cracked wall shatters when anything hard hits it: the way to secrets
+crackCheck : Model -> Hit -> Model
+crackCheck m wall =
+    if wall.code == 6 && wall.d < 6144 then
+        shatter m wall.cx wall.cy
+    else
+        m
+
+
+shatter : Model -> Int -> Int -> Model
+shatter m cx cy =
+    let
+        wx = cx * k1 + 512
+        wy = cy * k1 + 512
+        (s2, a0) = rnd m.seed 240
+    in
+    let
+        grid2 = Dict.insert (cy * 24 + cx) 0 m.grid
+    in
+    { m
+        | grid = grid2
+        , mapRuns = computeRuns grid2
+        , secretsFound = m.secretsFound + 1
+        , seed = s2
+        , gibs = List.take 30 (spawnGibs s2 wx wy 7 a0 m.gibs)
+        , sfx = CSecret :: CShatter :: m.sfx
+        , pickMsg = "SECRET FOUND"
+        , pickT = 130
+    }
+
+
+isDead : St -> Bool
+isDead st =
+    case st of
+        ADie _ -> True
+        _ -> False
+
+
+isAwake : St -> Bool
+isAwake st =
+    case st of
+        ASleep -> False
+        ADie _ -> False
+        _ -> True
+
+
+-- the skjaldmaer BLOCKS whatever meets her shield while she simply
+-- advances (AChase); the openings are her own swing, her recover and her
+-- sleep. Surtr-fire wraps around a shield, so explosions go in raw.
+hurtActorN : Model -> Actor -> Int -> Model
+hurtActorN m t dmg =
+    if t.kind == 4 && t.st == AChase then
+        { m | sfx = CClank :: m.sfx, combatT = 200 }
+    else
+        hurtActorRaw m t dmg
+
+
+hurtActorRaw : Model -> Actor -> Int -> Model
+hurtActorRaw m t dmg =
+    let
+        hp2 = t.hp - dmg
+        killed = hp2 <= 0
+        (s2, spread) = rnd m.seed 240
+        actors2 =
+            List.map
+                (\a ->
+                    if a.idx == t.idx then
+                        { a
+                            | hp = hp2
+                            , fT = 5
+                            , st =
+                                if killed then ADie 12
+                                else if a.st == ASleep then AChase
+                                else a.st
+                        }
+                    else
+                        a)
+                m.actors
+        burst = if killed then 9 else 3
+        gibs2 = List.take 30 (spawnGibs s2 t.x t.y burst spread m.gibs)
+        (s3, roll) = rnd s2 6
+        drops =
+            if killed && t.kind == 0 && roll < 2 then
+                [ { kind = 4, x = t.x, y = t.y, taken = False } ]
+            else if killed && t.kind == 0 && roll == 2 then
+                [ { kind = 5, x = t.x, y = t.y, taken = False } ]
+            else
+                []
+    in
+    { m
+        | actors = actors2
+        , seed = s3
+        , gibs = gibs2
+        , items = List.concat [ m.items, drops ]
+        , kills = m.kills + (if killed then 1 else 0)
+        , combatT = 200
+        -- a varg (wolf, kind 3) yelps when it dies; the draugr-kin grunt
+        , sfx = (if killed then (if t.kind == 3 then CYelp else CDieD) else CHitF) :: m.sfx
+    }
+
+
+spawnGibs : Random.Seed -> Int -> Int -> Int -> Int -> List Gib -> List Gib
+spawnGibs seed x y n a0 acc =
+    if n <= 0 then
+        acc
+    else
+        let
+            (s2, a) = rnd seed 240
+            d = dirAt (modBy 240 (a0 + a))
+        in
+        spawnGibs s2 x y (n - 1) a
+            ({ x = x, y = y, vx = d.x * 42 // k1, vy = d.y * 42 // k1, t = 14 } :: acc)
+
+
+stepActors : Model -> Model
+stepActors m =
+    let
+        acc0 =
+            { acs = []
+            , piles = m.piles
+            , newItems = []
+            , bolts = []
+            , cues = []
+            , dmg = 0
+            , seed = m.seed
+            , s1 = m.jarlS1
+            , s2 = m.jarlS2
+            , alert = False
+            }
+        acc = List.foldl (\actor a -> stepActor m a actor) acc0 m.actors
+        m2 =
+            { m
+                | actors = acc.acs
+                , piles = acc.piles
+                , items = List.concat [ m.items, acc.newItems ]
+                , bolts = List.concat [ m.bolts, acc.bolts ]
+                , seed = acc.seed
+                , jarlS1 = acc.s1
+                , jarlS2 = acc.s2
+                , combatT = if acc.alert then 200 else m.combatT
+                , sfx = List.concat [ acc.cues, m.sfx ]
+            }
+    in
+    if acc.dmg > 0 then
+        hurtPlayer m2 acc.dmg
+    else
+        m2
+
+
+hurtPlayer : Model -> Int -> Model
+hurtPlayer m dmg =
+    if m.invulnT > 0 then
+        m
+    else
+        let
+            -- byrnie rule, Doom-school: while you wear iron, every blow
+            -- loses one pip (never below one) and the iron loses one
+            dmg2 = if m.armor > 0 then max 1 (dmg - 1) else dmg
+            armor2 = if m.armor > 0 then m.armor - 1 else 0
+            hp2 = m.hp - dmg2
+        in
+        if hp2 <= 0 then
+            -- the death blow: the dying cry (grunt + breath + the body's
+            -- thud) fires once here; the funeral march itself rides the
+            -- Sound.once sub gated on mode == Dead, so a restart cuts it.
+            { m | hp = 0, armor = armor2, mode = Dead, modeT = 0, hurtT = 20, sfx = CDeathCry :: m.sfx }
+        else
+            { m | hp = hp2, armor = armor2, hurtT = 14, invulnT = 42, sfx = CHurt :: m.sfx }
+
+
+stepActor : Model -> ActAcc -> Actor -> ActAcc
+stepActor m acc a0 =
+    let
+        a = { a0 | fT = max 0 (a0.fT - 1) }
+        relX = m.px - a.x
+        relY = m.py - a.y
+        d = octDist relX relY
+        awake =
+            case a.st of
+                ASleep -> False
+                ADie _ -> False
+                _ -> True
+        acc1 = if awake then { acc | alert = True } else acc
+    in
+    case a.st of
+        ADie t ->
+            if t <= 1 then
+                -- the body comes apart: a pool and bones stay on the floor,
+                -- and the Jarl gives up the Dawn Rune he swallowed
+                let
+                    p = { x = a.x, y = a.y, big = a.kind == 2 }
+                    acc2 = { acc1 | piles = p :: acc1.piles }
+                in
+                if a.kind == 2 then
+                    { acc2
+                        | newItems = { kind = 0, x = a.x, y = a.y, taken = False } :: acc2.newItems
+                        , cues = CBell :: acc2.cues
+                    }
+                else
+                    acc2
+            else
+                { acc1 | acs = { a | st = ADie (t - 1) } :: acc1.acs }
+
+        ASleep ->
+            let
+                -- stagger the sight checks so 12 sleepers don't all pay LOS
+                -- on the same tick
+                sees =
+                    modBy 12 (m.tick + a.idx * 5) == 0
+                        && d < (if a.kind == 1 || a.kind == 5 || a.kind == 6 then 10240 else 9216)
+                        && losClear m.grid a.x a.y m.px m.py
+                -- vargs hunt as a pack: one waking calls the rest of it
+                packCall =
+                    a.kind == 3
+                        && modBy 12 (m.tick + a.idx * 5) == 6
+                        && List.any
+                            (\o -> o.kind == 3 && o.idx /= a.idx && isAwake o.st && octDist (o.x - a.x) (o.y - a.y) < 6144)
+                            m.actors
+            in
+            if sees || packCall then
+                { acc1
+                    | acs = { a | st = AChase } :: acc1.acs
+                    , cues = (if a.kind == 3 then CHowl else CGroan) :: acc1.cues
+                    , alert = True
+                }
+            else
+                { acc1 | acs = a :: acc1.acs }
+
+        AWind t ->
+            if t <= 1 then
+                windupResolve m acc1 a d relX relY
+            else
+                { acc1 | acs = { a | st = AWind (t - 1) } :: acc1.acs }
+
+        ARec t ->
+            { acc1 | acs = { a | st = if t <= 1 then AChase else ARec (t - 1) } :: acc1.acs }
+
+        ASum t ->
+            if t <= 1 then
+                summon m acc1 a
+            else
+                { acc1 | acs = { a | st = ASum (t - 1) } :: acc1.acs }
+
+        AChase ->
+            if a.kind == 1 then
+                wraithChase m acc1 a d relX relY
+            else if a.kind == 3 then
+                vargChase m acc1 a d relX relY
+            else if a.kind == 5 then
+                volvaChase m acc1 a d relX relY
+            else if a.kind == 6 then
+                archerChase m acc1 a d relX relY
+            else
+                draugrChase m acc1 a d relX relY
+
+
+windupResolve : Model -> ActAcc -> Actor -> Int -> Int -> Int -> ActAcc
+windupResolve m acc a d relX relY =
+    if a.kind == 1 || a.kind == 5 || a.kind == 6 then
+        -- ranged attackers loose bolts (octagonal-normalized, dodgeable):
+        -- the wraith a single fast bolt, the volva a TWIN fan you slip
+        -- between, the draug-archer a HARD-driven arrow (much faster, so
+        -- you dodge on the telegraph, not the bolt). All bolts fly faster
+        -- now than before, and the casters recover sooner to fire again.
+        let
+            n = max 1 (octDist relX relY)
+            thrown =
+                if a.kind == 5 then
+                    [ { x = a.x, y = a.y, vx = (relX * 102 - relY * 18) // n, vy = (relY * 102 + relX * 18) // n }
+                    , { x = a.x, y = a.y, vx = (relX * 102 + relY * 18) // n, vy = (relY * 102 - relX * 18) // n }
+                    ]
+                else if a.kind == 6 then
+                    [ { x = a.x, y = a.y, vx = relX * 156 // n, vy = relY * 156 // n } ]
+                else
+                    [ { x = a.x, y = a.y, vx = relX * 112 // n, vy = relY * 112 // n } ]
+        in
+        { acc
+            | acs = { a | st = ARec (if a.kind == 5 then 38 else if a.kind == 6 then 30 else 34) } :: acc.acs
+            , bolts = List.concat [ thrown, acc.bolts ]
+            , cues = CBolt :: acc.cues
+        }
+    else
+        let
+            -- the draugr's swing bites FURTHER than it looks: backing off
+            -- during its (short) windup no longer guarantees a clean escape
+            reach = if a.kind == 2 then 1150 else if a.kind == 3 then 1100 else if a.kind == 0 then 1250 else 1000
+            hit = d < reach && losClear m.grid a.x a.y m.px m.py
+            dmgN = if a.kind == 3 then 1 else 2
+        in
+        { acc
+            | acs = { a | st = ARec (if a.kind == 2 then 30 else if a.kind == 3 then 26 else 22) } :: acc.acs
+            , dmg = acc.dmg + (if hit then dmgN else 0)
+        }
+
+
+-- wake up to two bone piles as fresh draugr: including the piles the
+-- player just made. The dead are a resource down here
+summon : Model -> ActAcc -> Actor -> ActAcc
+summon m acc a =
+    let
+        near =
+            List.filter (\p -> octDist (p.x - a.x) (p.y - a.y) < 7168) acc.piles
+                |> List.take 2
+        rest =
+            List.filter
+                (\p -> List.any (\q -> q.x == p.x && q.y == p.y) near == False)
+                acc.piles
+        risen =
+            List.indexedMap
+                (\i p ->
+                    let
+                        b = actorFor 0 (p.x // k1) (p.y // k1)
+                    in
+                    { b | st = ARec 30, idx = 200 + m.tick + i })
+                near
+    in
+    { acc
+        | acs = List.concat [ risen, [ { a | st = ARec 30 } ], acc.acs ]
+        , piles = rest
+    }
+
+
+draugrChase : Model -> ActAcc -> Actor -> Int -> Int -> Int -> ActAcc
+draugrChase m acc a d relX relY =
+    let
+        isJarl = a.kind == 2
+    in
+    -- the Jarl calls the dead at 16 and 8 HP, once each
+    if isJarl && a.hp <= 16 && acc.s1 == False then
+        { acc | acs = { a | st = ASum 60 } :: acc.acs, s1 = True, cues = CJarl :: acc.cues }
+    else if isJarl && a.hp <= 8 && acc.s2 == False then
+        { acc | acs = { a | st = ASum 60 } :: acc.acs, s2 = True, cues = CJarl :: acc.cues }
+    else if d < (if isJarl then 900 else 760) then
+        -- the plain draugr swings briskly (34 ticks ~0.57s): readable, but
+        -- you dodge by moving, not by strolling backward. Skjald keeps her
+        -- long telegraph (the shield window IS her design); the Jarl is fair
+        { acc | acs = { a | st = AWind (if a.kind == 4 then 46 else if a.kind == 0 then 34 else 42) } :: acc.acs, cues = CGroan :: acc.cues }
+    else if d > 15360 then
+        { acc | acs = { a | st = ASleep } :: acc.acs }
+    else
+        let
+            spd = if isJarl then 20 else if a.kind == 4 then 18 else 26
+            n = max 1 d
+            a2 = slideActor m.grid acc.acs m.tick a (relX * spd // n) (relY * spd // n)
+        in
+        { acc | acs = a2 :: acc.acs }
+
+
+wraithChase : Model -> ActAcc -> Actor -> Int -> Int -> Int -> ActAcc
+wraithChase m acc a d relX relY =
+    let
+        n = max 1 d
+        -- keep 3..6 cells: back off, close in, or circle
+        mv =
+            if d < 3072 then
+                { x = 0 - relX * 18 // n, y = 0 - relY * 18 // n }
+            else if d > 6144 then
+                { x = relX * 18 // n, y = relY * 18 // n }
+            else
+                { x = (0 - relY) * a.sdir * 16 // n, y = relX * a.sdir * 16 // n }
+        a2 = slideActor m.grid acc.acs m.tick a mv.x mv.y
+        blocked = a2.x == a.x && a2.y == a.y
+        (s2, flip) = rnd acc.seed 2
+        a3 =
+            if blocked || (modBy 90 (m.tick + a.idx * 13) == 0 && flip == 1) then
+                { a2 | sdir = 0 - a2.sdir }
+            else
+                a2
+        wantsFire =
+            modBy 96 (m.tick + a.idx * 7) == 0
+                && d < 9216
+                && losClear m.grid a.x a.y m.px m.py
+    in
+    if wantsFire then
+        { acc | acs = { a3 | st = AWind 42 } :: acc.acs, cues = CWhine :: acc.cues, seed = s2 }
+    else
+        { acc | acs = a3 :: acc.acs, seed = s2 }
+
+
+-- the draug-archer: a ranged BOWMAN, not a caster. It holds the middle
+-- distance like a wraith but keeps its face to you and looses fast arrows
+-- often. No blink, no circling magic - just relentless, physical volleys
+-- you have to break line-of-sight or close on to stop.
+archerChase : Model -> ActAcc -> Actor -> Int -> Int -> Int -> ActAcc
+archerChase m acc a d relX relY =
+    let
+        n = max 1 d
+        -- hold 4..8 cells: back off if crowded, close if too far, else hold
+        mv =
+            if d < 4096 then
+                { x = 0 - relX * 20 // n, y = 0 - relY * 20 // n }
+            else if d > 8192 then
+                { x = relX * 20 // n, y = relY * 20 // n }
+            else
+                { x = 0, y = 0 }
+        a2 = slideActor m.grid acc.acs m.tick a mv.x mv.y
+        wantsFire =
+            modBy 84 (m.tick + a.idx * 9) == 0
+                && d < 10240
+                && losClear m.grid a.x a.y m.px m.py
+    in
+    if wantsFire then
+        { acc | acs = { a2 | st = AWind 30 } :: acc.acs, cues = CWhine :: acc.cues }
+    else
+        { acc | acs = a2 :: acc.acs }
+
+
+-- the varg is a running bite: no caution, no circling. Straight in with
+-- a hound's weave, and a SHORT lunge telegraph you learn to respect
+vargChase : Model -> ActAcc -> Actor -> Int -> Int -> Int -> ActAcc
+vargChase m acc a d relX relY =
+    if d < 860 then
+        { acc | acs = { a | st = AWind 22 } :: acc.acs, cues = CSnarl :: acc.cues }
+    else if d > 17408 then
+        { acc | acs = { a | st = ASleep } :: acc.acs }
+    else
+        let
+            n = max 1 d
+            weave = if modBy 2 (m.tick // 20 + a.idx * 7) == 0 then 1 else 0 - 1
+            a2 =
+                slideActor m.grid acc.acs m.tick a
+                    (relX * 34 // n + (0 - relY) * weave * 10 // n)
+                    (relY * 34 // n + relX * weave * 10 // n)
+            -- a hunting hound BARKS: every ~2.3s per varg, staggered by idx
+            -- so a pack sounds like scattered yaps, and only in earshot:
+            -- barking IS the warning that the pack is coming
+            barks = modBy 140 (m.tick + a.idx * 29) == 0 && d < 11264
+        in
+        { acc
+            | acs = a2 :: acc.acs
+            , cues = if barks then CBark :: acc.cues else acc.cues
+        }
+
+
+-- the volva holds the middle distance, and when her wind is ready she is
+-- simply SOMEWHERE ELSE - reappearing with the next cast already rising
+volvaChase : Model -> ActAcc -> Actor -> Int -> Int -> Int -> ActAcc
+volvaChase m acc a0 d relX relY =
+    let
+        a1 = { a0 | bt = max 0 (a0.bt - 1) }
+        -- when the blink is ready, ONE line-of-sight ray decides: blink
+        -- now, or back off the check for 18 ticks. Without the backoff a
+        -- wall between us meant a full LOS walk EVERY tick, forever
+        ready = a1.bt == 0 && d < 10240
+        canBlink = ready && losClear m.grid a1.x a1.y m.px m.py
+        a = if ready && canBlink == False then { a1 | bt = 18 } else a1
+    in
+    if canBlink then
+        blinkAway m acc a
+    else
+        let
+            n = max 1 d
+            mv =
+                if d < 4096 then
+                    { x = 0 - relX * 16 // n, y = 0 - relY * 16 // n }
+                else if d > 7168 then
+                    { x = relX * 14 // n, y = relY * 14 // n }
+                else
+                    { x = (0 - relY) * a.sdir * 12 // n, y = relX * a.sdir * 12 // n }
+            a2 = slideActor m.grid acc.acs m.tick a mv.x mv.y
+            a3 = if a2.x == a.x && a2.y == a.y then { a2 | sdir = 0 - a2.sdir } else a2
+            wantsFire =
+                modBy 120 (m.tick + a.idx * 11) == 0
+                    && d < 9216
+                    && losClear m.grid a.x a.y m.px m.py
+        in
+        if wantsFire then
+            { acc | acs = { a3 | st = AWind 36 } :: acc.acs, cues = CWhine :: acc.cues }
+        else
+            { acc | acs = a3 :: acc.acs }
+
+
+-- eight candidate cells in a ring; take the first free one that is not
+-- point-blank on the player
+blinkAway : Model -> ActAcc -> Actor -> ActAcc
+blinkAway m acc a =
+    let
+        (s2, r0) = rnd acc.seed 8
+        pick =
+            List.filter
+                (\c ->
+                    cellAt m.grid c.cx c.cy == 0
+                        && c.cx > 0 && c.cx < 23 && c.cy > 0 && c.cy < 23
+                        && octDist (c.cx * k1 + 512 - m.px) (c.cy * k1 + 512 - m.py) > 2048)
+                (List.map
+                    (\i ->
+                        let
+                            o = blinkOffset (modBy 8 (r0 + i))
+                        in
+                        { cx = a.x // k1 + o.x, cy = a.y // k1 + o.y })
+                    (range 8))
+                |> List.head
+    in
+    case pick of
+        Just c ->
+            { acc
+                | acs = { a | x = c.cx * k1 + 512, y = c.cy * k1 + 512, bt = 170, st = AWind 30 } :: acc.acs
+                , cues = CBlink :: acc.cues
+                , seed = s2
+            }
+
+        Nothing ->
+            { acc | acs = { a | bt = 90 } :: acc.acs, seed = s2 }
+
+
+blinkOffset : Int -> { x : Int, y : Int }
+blinkOffset i =
+    case i of
+        0 -> { x = 3, y = 0 }
+        1 -> { x = 0 - 3, y = 0 }
+        2 -> { x = 0, y = 3 }
+        3 -> { x = 0, y = 0 - 3 }
+        4 -> { x = 2, y = 2 }
+        5 -> { x = 0 - 2, y = 2 }
+        6 -> { x = 2, y = 0 - 2 }
+        _ -> { x = 0 - 2, y = 0 - 2 }
+
+
+-- axis-separated slide with wall checks and a little body-blocking so a
+-- pack does not collapse into one sprite. If BOTH axes are blocked (wedged
+-- on a corner with the other component rounded to zero: the classic
+-- pursuit deadlock), sidestep perpendicular to the desired move so the
+-- draugr shuffles along the wall until the opening lines up.
+slideActor : Dict Int Int -> List Actor -> Int -> Actor -> Int -> Int -> Actor
+slideActor grid others tick a mvx mvy =
+    let
+        r = 220
+        freeAt =
+            \x y ->
+                (solidAtPt grid (x - r) (y - r)
+                    || solidAtPt grid (x + r) (y - r)
+                    || solidAtPt grid (x - r) (y + r)
+                    || solidAtPt grid (x + r) (y + r)
+                    || List.any (\o -> isDead o.st == False && octDist (o.x - x) (o.y - y) < 380) others)
+                    == False
+        nx = if mvx /= 0 && freeAt (a.x + mvx) a.y then a.x + mvx else a.x
+        ny = if mvy /= 0 && freeAt nx (a.y + mvy) then a.y + mvy else a.y
+    in
+    if nx == a.x && ny == a.y then
+        let
+            jig = if modBy 2 (tick // 45 + a.idx * 3) == 0 then 22 else 0 - 22
+        in
+        if freeAt a.x (a.y + jig) then
+            { a | y = a.y + jig }
+        else if freeAt a.x (a.y - jig) then
+            { a | y = a.y - jig }
+        else if freeAt (a.x + jig) a.y then
+            { a | x = a.x + jig }
+        else if freeAt (a.x - jig) a.y then
+            { a | x = a.x - jig }
+        else
+            a
+    else
+        { a | x = nx, y = ny }
+
+
+stepPBolts : Model -> Model
+stepPBolts m =
+    let
+        step =
+            \b acc ->
+                let
+                    nx = b.x + b.vx
+                    ny = b.y + b.vy
+                    target =
+                        List.filter
+                            (\a -> isDead a.st == False && octDist (a.x - nx) (a.y - ny) < 340)
+                            m.actors
+                            |> List.head
+                    cellCode = cellAt m.grid (nx // k1) (ny // k1)
+                in
+                if b.kind == 9 then
+                    -- the spear tracer is pure light: dies on walls or timeout
+                    if b.t <= 1 || cellCode > 0 then
+                        acc
+                    else
+                        { acc | bs = { b | x = nx, y = ny, t = b.t - 1 } :: acc.bs }
+                else if b.kind == 3 then
+                    -- the flask goes off on ANY contact (or its fuse)
+                    case target of
+                        Just _ ->
+                            { acc | boomAt = { x = nx, y = ny, t = 14 } :: acc.boomAt }
+
+                        Nothing ->
+                            if cellCode > 0 || b.t <= 1 then
+                                { acc | boomAt = { x = b.x, y = b.y, t = 14 } :: acc.boomAt }
+                            else
+                                { acc | bs = { b | x = nx, y = ny, t = b.t - 1 } :: acc.bs }
+                else
+                    case target of
+                        Just a ->
+                            { acc | hits = { a = a, dmg = if b.kind == 2 then 3 else 1 } :: acc.hits }
+
+                        Nothing ->
+                            if cellCode == 6 then
+                                { acc | cracks = { cx = nx // k1, cy = ny // k1 } :: acc.cracks, cues = CClank :: acc.cues }
+                            else if cellCode > 0 || b.t <= 1 then
+                                { acc | cues = CClank :: acc.cues }
+                            else
+                                { acc | bs = { b | x = nx, y = ny, t = b.t - 1 } :: acc.bs }
+        r = List.foldl step { bs = [], hits = [], boomAt = [], cues = [], cracks = [] } m.pbolts
+        m1 = { m | pbolts = r.bs, sfx = List.concat [ r.cues, m.sfx ] }
+        m2 = List.foldl (\h mm -> hurtActorN mm h.a h.dmg) m1 r.hits
+        m3 = List.foldl (\c mm -> shatter mm c.cx c.cy) m2 r.cracks
+    in
+    List.foldl explode m3 r.boomAt
+
+
+-- Surtr-fire: everything within two cells burns, including you. The
+-- classic lesson is taught the classic way
+explode : Boom -> Model -> Model
+explode b m =
+    let
+        m1 = { m | booms = b :: m.booms, sfx = CBoom :: m.sfx, combatT = 200 }
+        near =
+            List.filter
+                (\a -> isDead a.st == False && octDist (a.x - b.x) (a.y - b.y) < 2048)
+                m1.actors
+        m2 = List.foldl (\a mm -> hurtActorRaw mm a 3) m1 near
+        -- a blast that kills leaves remains on the floor; scorching bare
+        -- stone leaves nothing the Jarl could call back up
+        m3 =
+            if List.length near > 0 then
+                { m2 | piles = { x = b.x, y = b.y, big = True } :: m2.piles }
+            else
+                m2
+    in
+    if octDist (m3.px - b.x) (m3.py - b.y) < 1536 then
+        hurtPlayer m3 2
+    else
+        m3
+
+
+stepBooms : Model -> Model
+stepBooms m =
+    { m | booms = List.filterMap (\b -> if b.t <= 1 then Nothing else Just { b | t = b.t - 1 }) m.booms }
+
+
+
+
+stepBolts : Model -> Model
+stepBolts m =
+    let
+        step =
+            \b acc ->
+                let
+                    nx = b.x + b.vx
+                    ny = b.y + b.vy
+                in
+                if solidAtPt m.grid nx ny then
+                    acc
+                else if octDist (nx - m.px) (ny - m.py) < 340 then
+                    { acc | dmg = acc.dmg + 1 }
+                else
+                    { acc | bs = { b | x = nx, y = ny } :: acc.bs }
+        r = List.foldl step { bs = [], dmg = 0 } m.bolts
+        m2 = { m | bolts = r.bs }
+    in
+    if r.dmg > 0 then
+        hurtPlayer m2 r.dmg
+    else
+        m2
+
+
+stepGibs : Model -> Model
+stepGibs m =
+    { m
+        | gibs =
+            List.filterMap
+                (\g ->
+                    if g.t <= 1 then
+                        Nothing
+                    else
+                        Just { g | x = g.x + g.vx, y = g.y + g.vy, vx = g.vx * 7 // 8, vy = g.vy * 7 // 8, t = g.t - 1 })
+                m.gibs
+    }
+
+
+stepPickups : Model -> Model
+stepPickups m =
+    List.foldl touchItem m m.items
+
+
+-- pickups are grabbed within ~0.7 of a cell now (was ~0.4): you no
+-- longer have to stand ON the thing. Each grab drops a discreet on-screen
+-- note (pickMsg/pickT) so you can tell WHAT you just picked up.
+pickupR : Int
+pickupR = 820
+
+
+-- stamp the little "what did I grab" note
+noted : String -> Model -> Model
+noted label mm =
+    { mm | pickMsg = label, pickT = 130 }
+
+
+touchItem : Item -> Model -> Model
+touchItem it m =
+    if it.taken || octDist (it.x - m.px) (it.y - m.py) > pickupR then
+        m
+    else
+        let
+            take =
+                { m
+                    | items =
+                        List.map
+                            (\o -> if o.x == it.x && o.y == it.y && o.kind == it.kind then { o | taken = True } else o)
+                            m.items
+                }
+        in
+        case it.kind of
+            0 ->
+                noted "DAWN RUNE" { take | hasRune = True, sfx = CRune :: take.sfx }
+
+            1 ->
+                if m.hp >= 6 then
+                    noted "HEALTH FULL" m
+                else
+                    noted "MEAD HORN" { take | hp = min 6 (m.hp + 2), sfx = CHorn :: take.sfx }
+
+            2 ->
+                noted "GOLD RING" { take | gold = take.gold + 1, sfx = CGold :: take.sfx }
+
+            4 ->
+                if m.arrows >= 30 then noted "ARROWS FULL" m else noted "ARROWS" { take | arrows = min 30 (m.arrows + 6), sfx = CGold :: take.sfx }
+
+            5 ->
+                if m.axes >= 10 then
+                    noted "AXES FULL" m
+                else
+                    -- first axe equips immediately (new weapon!)
+                    noted (if m.axes == 0 then "HEWING AXE" else "AXES")
+                        { take
+                            | axes = min 10 (m.axes + 2)
+                            , weapon = if m.axes == 0 then 3 else take.weapon
+                            , sfx = (if m.axes == 0 then CArmor else CGold) :: take.sfx
+                        }
+
+            6 ->
+                if m.flasks >= 3 then
+                    noted "FLASKS FULL" m
+                else
+                    noted (if m.flasks == 0 then "SURTR FLASK" else "FIRE FLASK")
+                        { take
+                            | flasks = min 3 (m.flasks + 1)
+                            , weapon = if m.flasks == 0 then 4 else take.weapon
+                            , sfx = (if m.flasks == 0 then CArmor else CFuse) :: take.sfx
+                        }
+
+            9 ->
+                noted "GUNGNIR SPEAR" { take | hasSpear = True, weapon = 1, sfx = CBell :: take.sfx }
+
+            10 ->
+                noted "HUNTING BOW" { take | hasBow = True, weapon = 2, sfx = CBell :: take.sfx }
+
+            7 ->
+                if m.armor >= 8 then noted "ARMOR FULL" m else noted "LEATHER ARMOR" { take | armor = min 8 (m.armor + 4), sfx = CArmor :: take.sfx }
+
+            8 ->
+                if m.armor >= 8 then noted "ARMOR FULL" m else noted "IRON BYRNIE" { take | armor = 8, sfx = CArmor :: take.sfx }
+
+            _ ->
+                -- the waystone: barrow cleared, or, at the bottom, dawn
+                if m.barrow >= lastBarrow then
+                    { take | mode = Won, modeT = 0, sfx = CTriumph :: CDawn :: take.sfx }
+                else
+                    { take | mode = Cleared, modeT = 0, sfx = CFanfare :: CBell :: take.sfx }
+
+
+stepTimers : Model -> Model
+stepTimers m =
+    { m
+        | tick = m.tick + 1
+        , timeT = m.timeT + 1
+        , cool = max 0 (m.cool - 1)
+        , invulnT = max 0 (m.invulnT - 1)
+        , hurtT = max 0 (m.hurtT - 1)
+        , lockT = max 0 (m.lockT - 1)
+        , runeBlink = max 0 (m.runeBlink - 1)
+        , pickT = max 0 (m.pickT - 1)
+        , combatT = max 0 (m.combatT - 1)
+        , sfx = if m.cool == 11 then CReturn :: m.sfx else m.sfx
+    }

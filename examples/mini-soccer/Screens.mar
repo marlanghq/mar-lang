@@ -1,0 +1,222 @@
+module Screens exposing (..)
+
+-- Everything that is not the match: title, full time, the trophy, the goal
+-- celebration and the mute button.
+
+import Draw exposing (..)
+import Font exposing (..)
+import Palette exposing (..)
+import Pitch exposing (..)
+import Types exposing (..)
+import Canvas exposing ( rect )
+
+
+titleScreen : Model -> List Shape
+titleScreen model =
+    let
+        cx = model.w // 2
+        -- anchor the whole ~290px block by its TOP so it's vertically centred, but
+        -- never let the top rise above an 8px margin: that way it fits even a SHORT
+        -- landscape phone (where centring on h/2 pushed the footer off the bottom).
+        ty = max 8 ((model.h - 290) // 2)
+        glow = titleGlow model.intro
+    in
+    List.concat
+        [ [ rect 0 0 model.w model.h bgBorder
+          , rect 0 ty model.w 148 grassB
+          , rect 0 ty model.w 3 lineWhite
+          , rect 0 (ty + 145) model.w 3 lineWhite
+          ]
+        , pixTextC (cx + 3) (ty + 19) 9 ink "SUPER"
+        , pixTextC cx (ty + 16) 9 glow "SUPER"
+        , pixTextC (cx + 3) (ty + 62) 9 ink "STRIKER"
+        , pixTextC cx (ty + 59) 9 glow "STRIKER"
+        , pixTextC cx (ty + 174) 3 hudDim "8-BIT SOCCER"
+        , pixTextC cx (ty + 192) 2 lineWhite "WASD OR ARROWS TO MOVE"
+        , pixTextC cx (ty + 208) 2 lineWhite "L SHOOT OR STEAL"
+        , pixTextC cx (ty + 224) 2 lineWhite "K SLIDING TACKLE"
+        , pixTextC cx (ty + 240) 2 lineWhite "J SWITCH PLAYER  M MUTE"
+        , pixTextC cx (ty + 268) 4 (blink model.intro) "TAP OR PRESS A KEY"
+        ]
+
+
+-- The end screen, distinct for a win / loss / draw: a coloured band (green cheer,
+-- dark-red gloom, neutral draw), a big shimmering / dim headline, a trophy for a
+-- win. The falling confetti (win) or grey rain (loss) is the `celebration` overlay
+-- drawn on top in `view`; the crowd cheers or boos underneath (musicSub).
+fullScreen : Model -> List Shape
+fullScreen model =
+    let
+        cx = model.w // 2
+        cy = model.h // 2
+        won = model.blue > model.red
+        lost = model.red > model.blue
+        score = String.join " " [ String.fromInt model.blue, "-", String.fromInt model.red ]
+        headline = if won then "YOU WIN" else if lost then "YOU LOSE" else "DRAW"
+        band = if won then grassA else if lost then redTrim else grassB
+        face = if won then titleGlow model.intro else if lost then lineWhite else hudAmber
+    in
+    List.concat
+        [ [ rect 0 0 model.w model.h bgBorder
+          , rect 0 (cy - 78) model.w 156 band
+          , rect 0 (cy - 78) model.w 3 lineWhite
+          , rect 0 (cy + 75) model.w 3 lineWhite
+          ]
+        , if won then trophy cx (cy - 140) else []
+        , pixTextC (cx + 4) (cy - 30) 9 ink headline
+        , pixTextC cx (cy - 34) 9 face headline
+        , pixTextC cx (cy + 26) 6 lineWhite score
+        -- the prompt only appears once the input lock (flash) lapses, so you are not
+        -- invited to press until the result has had a beat to land.
+        , if model.flash <= 0 then pixTextC cx (cy + 104) 3 (blink model.animTick) "PRESS A KEY" else []
+        ]
+
+
+-- a little pixel cup, drawn above the headline on a win.
+trophy : Int -> Int -> List Shape
+trophy cx y =
+    [ rect (cx - 16) y 32 6 hudAmber
+    , rect (cx - 13) (y + 6) 26 14 hudGlow1
+    , rect (cx - 22) (y + 2) 6 12 hudAmber
+    , rect (cx + 16) (y + 2) 6 12 hudAmber
+    , rect (cx - 8) (y + 20) 16 6 hudAmber
+    , rect (cx - 4) (y + 26) 8 10 hudAmber
+    , rect (cx - 12) (y + 36) 24 6 hudAmber
+    ]
+
+
+
+
+confettiCount : Int
+confettiCount = 64
+
+
+-- Falling overlays. Confetti showers a goal celebration and also rains over a WIN
+-- screen; both scatter over the FULL canvas and loop by height, so a tall portrait
+-- phone gets an even shower top-to-bottom (not a clustered band). A LOSE screen gets
+-- grey gloom-rain. All deterministic (index + a tick counter), so no Random and it
+-- replays under the time-travel debugger.
+celebration : Model -> List Shape
+celebration model =
+    if model.phase == Break && model.flashText == "GOAL!" then
+        confettiFall model.scorer (goalFlash - model.flash) model.w model.h
+    else if model.phase == Full && model.blue > model.red then
+        confettiFall Blue model.intro model.w model.h
+    else if model.phase == Full && model.red > model.blue then
+        gloomFall model.intro model.w model.h
+    else
+        []
+
+
+confettiFall : Team -> Int -> Int -> Int -> List Shape
+confettiFall team elapsed w h =
+    List.map (\i -> confettiPiece team i elapsed w h) (List.range 0 (confettiCount - 1))
+
+
+teamKit : Team -> Color
+teamKit team =
+    if team == Blue then blueKit else redKit
+
+
+-- Confetti in the celebrating team's colours: their kit dominates (about half the
+-- pieces), sprinkled with neutral festive tones (gold, white, pale cream). The
+-- OPPONENT's kit never appears, so a Blue party reads blue+gold+white and a Red
+-- party reads red+gold+white: the shower always belongs to the team that scored.
+confColor : Team -> Int -> Color
+confColor team i =
+    case imodP i 6 of
+        0 -> teamKit team
+        1 -> teamKit team
+        2 -> teamKit team
+        3 -> hudAmber
+        4 -> lineWhite
+        _ -> hudGlow2
+
+
+-- One falling square. Start x and start y are scattered over the WHOLE canvas with
+-- DIFFERENT quadratic hashes (i*i terms), so pieces never line up into diagonal
+-- streaks the way a plain `i * step` does. It falls straight (a gentle oscillating
+-- sway, no accumulating drift) and wraps by height, so the shower is even and
+-- endless across a tall portrait screen for the whole celebration.
+confettiPiece : Team -> Int -> Int -> Int -> Int -> Shape
+confettiPiece team i elapsed w h =
+    let
+        x = imodP (i * 71 + i * i * 17) w             -- scattered across the width
+        y0 = imodP (i * 113 + i * i * 29) h           -- scattered down the FULL height
+        spd = 3 + imodP i 4                            -- 3..6 px/tick fall
+        yy = imodP (y0 + elapsed * spd) h             -- fall + wrap over the height
+        sway = imodP (elapsed // 4 + i * 7) 5 - 2       -- -2..2 px oscillating wobble (not a drift)
+        sz = 4 + imodP i 3                             -- 4..6 px squares
+    in
+    rect (x + sway) yy sz sz (confColor team i)
+
+
+-- grey rain for a loss: thin streaks looping down the screen, a gloomy foil to
+-- the win confetti.
+gloomFall : Int -> Int -> Int -> List Shape
+gloomFall elapsed w h =
+    List.map (\i -> gloomDrop i elapsed w h) (List.range 0 33)
+
+
+gloomDrop : Int -> Int -> Int -> Int -> Shape
+gloomDrop i elapsed w h =
+    let
+        x = imodP (i * 61 + 20) w
+        spd = 5 + imodP i 3
+        yy = imodP (imodP (i * 41) 200 + elapsed * spd) (h + 40) - 20
+    in
+    rect x yy 2 11 hudDim
+
+
+-- the sound toggle: a speaker icon in the top-right, tappable in every phase
+-- (keyboard M does the same). Sits above the pitch and menus.
+muteCenter : Int -> Vec
+muteCenter w =
+    { x = w - 30, y = 30 }
+
+
+muteReach : Int
+muteReach = 22           -- generous square hit area for touch
+
+
+inMuteButton : Model -> Int -> Int -> Bool
+inMuteButton model x y =
+    let
+        c = muteCenter model.w
+    in
+    absI (x - c.x) <= muteReach && absI (y - c.y) <= muteReach
+
+
+muteButton : Model -> List Shape
+muteButton model =
+    let
+        c = muteCenter model.w
+    in
+    List.concat
+        [ outlined (c.x - 17) (c.y - 14) 34 28 panelBlack
+        , muteIcon c.x c.y model.muted
+        ]
+
+
+-- a small pixel speaker: a box and a widening cone, then sound waves (on) or a
+-- red slash (muted).
+muteIcon : Int -> Int -> Bool -> List Shape
+muteIcon cx cy muted =
+    let
+        body = if muted then hudDim else hudAmber
+    in
+    List.concat
+        [ [ rect (cx - 10) (cy - 2) 3 4 body
+          , rect (cx - 7) (cy - 4) 2 8 body
+          , rect (cx - 5) (cy - 6) 2 12 body
+          ]
+        , if muted then
+            [ rect (cx + 1) (cy - 7) 3 3 redKit
+            , rect (cx + 4) (cy - 3) 3 3 redKit
+            , rect (cx + 7) (cy + 1) 3 3 redKit
+            ]
+          else
+            [ rect (cx + 1) (cy - 3) 2 6 hudAmber
+            , rect (cx + 4) (cy - 6) 2 12 hudAmber
+            ]
+        ]

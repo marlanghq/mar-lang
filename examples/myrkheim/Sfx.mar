@@ -1,0 +1,329 @@
+module Sfx exposing (..)
+
+-- The sounds of the barrow, including the war drums that play under a fight.
+
+import Types exposing (..)
+
+
+
+
+-- funeral march voices. mnote = one melody attack: the tune doubled an
+-- octave up (Chopin wrote the theme in right-hand octaves) with a slow
+-- vibrato so the held notes sing instead of sitting static.
+-- a brassy horn note for the victory jingles: a bright square carrying the
+-- tune over a triangle an octave below for body (a chiptune bugle)
+blare : Int -> Int -> Sound
+blare hz dur =
+    Sound.chord
+        [ Sound.volume 22 (Sound.tone Sound.Square hz dur)
+        , Sound.volume 11 (Sound.tone Sound.Triangle (hz // 2) dur)
+        ]
+
+
+cueSound : Cue -> Sound
+cueSound c =
+    case c of
+        CThrow ->
+            Sound.volume 30 (Sound.sweep 40 (Sound.tone Sound.Sawtooth 340 90))
+
+        CReturn ->
+            Sound.volume 13 (Sound.sweep 200 (Sound.tone Sound.Sawtooth 150 70))
+
+        CHitF ->
+            Sound.chord
+                [ Sound.volume 34 (Sound.tone Sound.Noise 0 55)
+                , Sound.volume 26 (Sound.sweep 60 (Sound.tone Sound.Triangle 160 80))
+                ]
+
+        CDieD ->
+            -- a death SCENE, not a blip (~0.8s): the creature's long guttural
+            -- groan sags from mid pitch down into the floor under a rough,
+            -- slow vibrato, a chest subharmonic underneath, while ragged
+            -- noise pulses gurgle in the throat (blood), and only at the END
+            -- of the groan the body thuds down onto the barrow stone.
+            Sound.chord
+                [ Sound.volume 22 (Sound.vibrato 28 9 (Sound.sweep 38 (Sound.tone Sound.Sawtooth 165 820)))
+                , Sound.volume 12 (Sound.vibrato 14 6 (Sound.sweep 30 (Sound.tone Sound.Square 84 780)))
+                , Sound.sequence
+                    [ Sound.rest 90
+                    , Sound.volume 13 (Sound.tone Sound.Noise 0 70)
+                    , Sound.rest 80
+                    , Sound.volume 10 (Sound.tone Sound.Noise 0 55)
+                    , Sound.rest 90
+                    , Sound.volume 7 (Sound.tone Sound.Noise 0 45)
+                    ]
+                , Sound.sequence
+                    [ Sound.rest 640
+                    , Sound.chord
+                        [ Sound.volume 17 (Sound.tone Sound.Noise 0 110)
+                        , Sound.volume 14 (Sound.sweep 30 (Sound.tone Sound.Triangle 70 160))
+                        ]
+                    ]
+                ]
+
+        CYelp ->
+            -- the varg's death cry (~0.7s): a sharp "KAI!" leaping up, then a
+            -- long pained fall with a slow, deep waver (a crying tremble, not
+            -- a growl), fading into one low final whimper.
+            Sound.sequence
+                [ Sound.volume 19 (Sound.sweep 950 (Sound.tone Sound.Sawtooth 520 60))
+                , Sound.volume 18 (Sound.vibrato 34 9 (Sound.sweep 190 (Sound.tone Sound.Sawtooth 900 480)))
+                , Sound.volume 9 (Sound.sweep 90 (Sound.tone Sound.Triangle 180 140))
+                ]
+
+        CGroan ->
+            Sound.volume 22 (Sound.sweep 70 (Sound.vibrato 14 5 (Sound.tone Sound.Sawtooth 84 380)))
+
+        CWhine ->
+            Sound.volume 15 (Sound.sweep 240 (Sound.tone Sound.Triangle 250 340))
+
+        CBolt ->
+            Sound.volume 18 (Sound.sweep 45 (Sound.duty 25 (Sound.tone Sound.Square 520 260)))
+
+        CDoor ->
+            Sound.chord
+                [ Sound.volume 26 (Sound.sweep 55 (Sound.tone Sound.Triangle 52 300))
+                , Sound.volume 13 (Sound.tone Sound.Noise 0 180)
+                ]
+
+        CLocked ->
+            Sound.sequence
+                [ Sound.volume 24 (Sound.tone Sound.Triangle 90 60)
+                , Sound.rest 40
+                , Sound.volume 16 (Sound.duty 25 (Sound.tone Sound.Square 70 50))
+                ]
+
+        CRune ->
+            Sound.sequence
+                [ Sound.volume 18 (Sound.duty 25 (Sound.tone Sound.Square 440 70))
+                , Sound.volume 20 (Sound.duty 25 (Sound.tone Sound.Square 554 70))
+                , Sound.volume 22 (Sound.duty 25 (Sound.tone Sound.Square 659 140))
+                ]
+
+        CGold ->
+            Sound.volume 15 (Sound.duty 25 (Sound.tone Sound.Square 940 50))
+
+        CHorn ->
+            Sound.chord
+                [ Sound.volume 20 (Sound.tone Sound.Triangle 220 280)
+                , Sound.volume 13 (Sound.tone Sound.Triangle 330 280)
+                ]
+
+        CHurt ->
+            Sound.chord
+                [ Sound.volume 30 (Sound.tone Sound.Noise 0 60)
+                , Sound.volume 30 (Sound.sweep 55 (Sound.tone Sound.Triangle 110 130))
+                ]
+
+        CBell ->
+            Sound.chord
+                [ Sound.volume 24 (Sound.tone Sound.Triangle 440 700)
+                , Sound.volume 15 (Sound.tone Sound.Triangle 660 700)
+                , Sound.volume 9 (Sound.tone Sound.Triangle 880 700)
+                ]
+
+        CJarl ->
+            Sound.volume 34 (Sound.vibrato 10 5 (Sound.sweep 80 (Sound.tone Sound.Sawtooth 72 700)))
+
+        CDawn ->
+            Sound.sequence
+                [ Sound.volume 18 (Sound.tone Sound.Triangle 262 170)
+                , Sound.volume 20 (Sound.tone Sound.Triangle 330 170)
+                , Sound.volume 22 (Sound.tone Sound.Triangle 392 170)
+                , Sound.chord
+                    [ Sound.volume 24 (Sound.tone Sound.Triangle 523 800)
+                    , Sound.volume 16 (Sound.tone Sound.Triangle 659 800)
+                    ]
+                ]
+
+        CFanfare ->
+            -- a barrow cleared: a short brass horn-call in D major, a
+            -- rising figure that turns and lands on a bright major chord
+            Sound.sequence
+                [ blare 587 170, blare 740 170, blare 880 360
+                , blare 988 160, blare 880 160, blare 784 160
+                , Sound.chord
+                    [ Sound.volume 22 (Sound.tone Sound.Square 587 950)
+                    , Sound.volume 15 (Sound.tone Sound.Triangle 740 950)
+                    , Sound.volume 15 (Sound.tone Sound.Triangle 880 950)
+                    , Sound.volume 12 (Sound.tone Sound.Triangle 294 950)
+                    ]
+                ]
+
+        CTriumph ->
+            -- dawn at the root of the world: the full victory fanfare, a
+            -- longer horn melody climbing to the octave and settling on a
+            -- wide, sustained D-major sunrise chord over a deep bass D
+            Sound.sequence
+                [ blare 587 240, blare 740 240, blare 880 240, blare 1175 560
+                , blare 988 200, blare 880 200, blare 784 200
+                , blare 740 260, blare 587 260
+                , Sound.chord
+                    [ Sound.volume 22 (Sound.tone Sound.Square 587 1600)
+                    , Sound.volume 16 (Sound.tone Sound.Triangle 740 1600)
+                    , Sound.volume 16 (Sound.tone Sound.Triangle 880 1600)
+                    , Sound.volume 14 (Sound.tone Sound.Triangle 294 1600)
+                    , Sound.volume 12 (Sound.tone Sound.Triangle 147 1600)
+                    ]
+                ]
+
+        CStart ->
+            Sound.volume 20 (Sound.duty 25 (Sound.tone Sound.Square 660 80))
+
+        CBow ->
+            Sound.chord
+                [ Sound.volume 22 (Sound.sweep 55 (Sound.duty 25 (Sound.tone Sound.Square 620 70)))
+                , Sound.volume 12 (Sound.tone Sound.Noise 0 30)
+                ]
+
+        CAxeT ->
+            Sound.volume 26 (Sound.vibrato 30 9 (Sound.sweep 70 (Sound.tone Sound.Sawtooth 210 240)))
+
+        CFuse ->
+            Sound.volume 12 (Sound.tone Sound.Noise 0 260)
+
+        CBoom ->
+            Sound.chord
+                [ Sound.volume 46 (Sound.tone Sound.Noise 0 240)
+                , Sound.volume 36 (Sound.sweep 30 (Sound.tone Sound.Triangle 90 320))
+                , Sound.volume 18 (Sound.sweep 45 (Sound.tone Sound.Sawtooth 60 300))
+                ]
+
+        CClank ->
+            Sound.volume 16 (Sound.sweep 60 (Sound.tone Sound.Square 320 40))
+
+        CHowl ->
+            -- a wolf throat: rises, holds, breaks downward
+            Sound.sequence
+                [ Sound.volume 20 (Sound.sweep 210 (Sound.vibrato 9 5 (Sound.tone Sound.Sawtooth 160 260)))
+                , Sound.volume 22 (Sound.vibrato 9 5 (Sound.tone Sound.Sawtooth 340 280))
+                , Sound.volume 16 (Sound.sweep 55 (Sound.tone Sound.Sawtooth 330 260))
+                ]
+
+        CSnarl ->
+            Sound.chord
+                [ Sound.volume 20 (Sound.sweep 70 (Sound.vibrato 40 12 (Sound.tone Sound.Sawtooth 120 190)))
+                , Sound.volume 12 (Sound.tone Sound.Noise 0 120)
+                ]
+
+        CDeathCry ->
+            -- Vigdis falls: a long, throat-deep dying groan that sags in
+            -- pitch under a wide, failing vibrato as the breath runs out:
+            -- it plays the whole time the eyes are sliding shut. A hiss of
+            -- escaping air rides over it, and near the end the dull thud of
+            -- the body settling on the barrow floor.
+            Sound.chord
+                [ Sound.volume 32 (Sound.vibrato 30 7 (Sound.sweep 48 (Sound.tone Sound.Sawtooth 250 2600)))
+                , Sound.volume 14 (Sound.holdPitch 900 (Sound.sweep 150 (Sound.tone Sound.Triangle 250 2600)))
+                , Sound.volume 12 (Sound.tone Sound.Noise 0 1500)
+                , Sound.sequence
+                    [ Sound.rest 2100
+                    , Sound.chord
+                        [ Sound.volume 30 (Sound.sweep 35 (Sound.tone Sound.Triangle 72 180))
+                        , Sound.volume 16 (Sound.tone Sound.Noise 0 80)
+                        ]
+                    ]
+                ]
+
+        CBark ->
+            -- a hoarse howl-bark, "aaauu!": the voice jumps UP for a short
+            -- attack ("a-"), then sags in one long fall to a low tail
+            -- ("-aaauu"), with a rough mid-speed vibrato for the growl edge.
+            -- Hoarseness comes from a quiet bed of ragged noise riding the
+            -- WHOLE cry (breath in the throat), plus a low square chest
+            -- resonance that joins under the falling part.
+            Sound.chord
+                [ Sound.sequence
+                    [ Sound.volume 19 (Sound.sweep 780 (Sound.tone Sound.Sawtooth 380 80))
+                    , Sound.volume 22 (Sound.vibrato 26 15 (Sound.sweep 140 (Sound.tone Sound.Sawtooth 600 480)))
+                    ]
+                , Sound.volume 9 (Sound.tone Sound.Noise 0 520)
+                , Sound.sequence
+                    [ Sound.rest 60
+                    , Sound.volume 10 (Sound.sweep 70 (Sound.tone Sound.Square 190 460))
+                    ]
+                ]
+
+        CBlink ->
+            -- the volva's blink: a warbling whoosh as she tears out of here,
+            -- then a bright rising shimmer as she snaps back into being
+            -- somewhere else: loud enough to catch across the room
+            Sound.sequence
+                [ Sound.vibrato 45 22 (Sound.volume 28 (Sound.sweep 170 (Sound.tone Sound.Sawtooth 780 150)))
+                , Sound.volume 10 (Sound.tone Sound.Noise 0 60)
+                , Sound.vibrato 30 26 (Sound.volume 24 (Sound.sweep 940 (Sound.tone Sound.Triangle 300 190)))
+                ]
+
+        CShatter ->
+            Sound.sequence
+                [ Sound.chord
+                    [ Sound.volume 30 (Sound.tone Sound.Noise 0 140)
+                    , Sound.volume 18 (Sound.sweep 50 (Sound.tone Sound.Triangle 240 120))
+                    ]
+                , Sound.volume 12 (Sound.sweep 60 (Sound.tone Sound.Triangle 160 90))
+                ]
+
+        CSecret ->
+            -- secret found! A tiny three-note reveal chime (Zelda 1 spirit,
+            -- our notes): a rest so the wall's crash lands first, then a
+            -- quick NES-pulse rise up the D-major arpeggio, the last note
+            -- held with vibrato over a triangle for sparkle
+            Sound.sequence
+                [ Sound.rest 200
+                , Sound.volume 23 (Sound.duty 25 (Sound.tone Sound.Square 587 95))
+                , Sound.volume 24 (Sound.duty 25 (Sound.tone Sound.Square 740 95))
+                , Sound.chord
+                    [ Sound.vibrato 12 7 (Sound.volume 26 (Sound.duty 25 (Sound.tone Sound.Square 880 560)))
+                    , Sound.volume 12 (Sound.tone Sound.Triangle 440 560)
+                    ]
+                ]
+
+        CArmor ->
+            Sound.sequence
+                [ Sound.volume 20 (Sound.duty 25 (Sound.tone Sound.Square 520 50))
+                , Sound.volume 22 (Sound.duty 25 (Sound.tone Sound.Square 780 90))
+                ]
+
+        CClick ->
+            Sound.volume 12 (Sound.tone Sound.Square 140 30)
+
+
+-- held bed: a low drone that leans a few Hz sharper while anything is
+-- hunting you (the ambient key retunes in place, so it GLIDES)
+drone : Model -> Sound
+drone m =
+    Sound.volume (if m.hp <= 2 then 15 else 12)
+        (Sound.vibrato 8 3
+            (Sound.tone Sound.Triangle
+                (50
+                    + m.barrow * 8
+                    + (if m.combatT > 0 then 7 else 0)
+                    -- a wounded Vigdis hears the drone go WRONG: a minor
+                    -- second against itself
+                    + (if m.hp <= 2 then 13 else 0))
+                800))
+
+
+-- combat drums: 8 beats at 120 BPM = 4000 ms per voice, seamless
+drumKick : Sound
+drumKick =
+    Sound.sequence [ Sound.volume 46 (Sound.sweep 45 (Sound.tone Sound.Triangle 130 85)), Sound.rest 415 ]
+
+
+drumTom : Sound
+drumTom =
+    Sound.sequence [ Sound.rest 250, Sound.volume 24 (Sound.sweep 70 (Sound.tone Sound.Triangle 95 110)), Sound.rest 140 ]
+
+
+drumPulse : Sound
+drumPulse =
+    Sound.sequence [ Sound.volume 13 (Sound.duty 12 (Sound.tone Sound.Square 55 430)), Sound.rest 70 ]
+
+
+warDrums : Sound
+warDrums =
+    Sound.chord
+        [ Sound.sequence [ drumKick, drumKick, drumKick, drumKick, drumKick, drumKick, drumKick, drumKick ]
+        , Sound.sequence [ drumTom, drumTom, drumTom, drumTom, drumTom, drumTom, drumTom, drumTom ]
+        , Sound.sequence [ drumPulse, drumPulse, drumPulse, drumPulse, drumPulse, drumPulse, drumPulse, drumPulse ]
+        ]

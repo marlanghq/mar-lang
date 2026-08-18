@@ -6,7 +6,7 @@
 const spd = 2, fp = 16, grav = 4, jumpV = 60, pw = 13, groundY = 164;
 const unitPx = 15, beatPx = 60, loopPx = 1920, finishX = 17280;
 
-// ----- the level (must match obs in Main.mar) -----
+// ----- the level (must match obs in Level.mar) -----
 const obs = [
   // loop 1
   ['S',34,0],['S',50,0],['S',66,0],['S',82,0],['S',94,0],['S',98,0],['S',114,0],
@@ -92,7 +92,7 @@ const obs = [
   ['S',1142,0],['S',1146,0],['S',1150,0],
 ];
 
-// ----- jump plan (must match jumps1..jumps6 in Main.mar) -----
+// ----- jump plan (must match jumps1..jumps9 in Music.mar) -----
 const jumps = {
   0: [8,12,16,20,23,24,28],
   1: [2,4,8,11,12,14,16,20,22,24,25,26,29],

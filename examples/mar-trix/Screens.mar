@@ -1,0 +1,117 @@
+module Screens exposing (..)
+
+-- Title and game over.
+
+
+import Draw exposing (..)
+import Sim exposing (..)
+import Types exposing (..)
+import Canvas exposing ( rect, rgb, rgba )
+
+
+-- The title screen shows the seven pieces bobbing above the wordmark, which
+-- says what the game is before a word of it is read.
+titleShapes : Model -> Layout -> List Shape
+titleShapes m lay =
+    let
+        cell = lay.cell
+        cx = m.w // 2
+        cy = m.h // 2
+        mark = max 16 (cell * 5 // 4)
+        step = mark * 5 // 4
+        markW = step * 7
+        pulse = 51 + wave 44 m.frame * 2
+
+        -- The wordmark is eight glyphs, and at this weight eight glyphs run
+        -- about 4.7 times the point size wide. On a desktop the cell decides;
+        -- on a phone the SCREEN decides, or MAR-TRIX runs off both edges:
+        -- which is exactly what a size derived only from the cell did.
+        wordSize = min (cell * 3) ((m.w - cell) * 10 // 47)
+
+        -- A soft column of shade down the middle so the wordmark sits on
+        -- something quiet instead of on the backdrop. Never wider than the
+        -- canvas, or the "column" is just the whole screen.
+        plateW = min m.w (max 320 (cell * 15))
+    in
+    List.map (\i -> driftPiece m cell i) (List.range 0 11)
+        ++ [ rect (cx - plateW // 2) 0 plateW m.h (rgba 9 10 16 45) ]
+        ++ List.concat
+            (List.map
+                (\i ->
+                    tile (cx - markW // 2 + i * step)
+                        (cy - cell * 5 + wave 26 (m.frame + i * 8))
+                        mark
+                        (i + 1)
+                )
+                (List.range 0 6)
+            )
+        ++ [ Canvas.text (cx + 3) (cy - cell * 2 + 3) wordSize Canvas.Center (rgba 0 0 0 66) "MAR-TRIX"
+           , Canvas.text cx (cy - cell * 2) wordSize Canvas.Center (rgb 246 240 228) "MAR-TRIX"
+           , rect (cx - cell * 4) (cy - cell // 2) (cell * 8) 2 (rgba 226 196 84 31)
+           , Canvas.text cx (cy + cell // 2) (max 12 (cell * 3 // 5)) Canvas.Center (rgba 255 255 255 51)
+                "stack, clear, repeat"
+           , Canvas.text cx (cy + cell * 5 // 2) (max 14 (cell * 4 // 5)) Canvas.Center (rgba 232 204 96 pulse)
+                (if lay.handheld then "tap to start" else "press SPACE to start")
+
+           -- Two different games to explain, because they really are two
+           -- different games to play: one has a key per action, the other
+           -- steers the piece with the thumb that is already on the glass.
+           , Canvas.text cx (cy + cell * 9 // 2) (max 10 (cell // 2)) Canvas.Center (rgba 255 255 255 39)
+                (if lay.handheld then
+                    "drag to move        tap to turn"
+
+                 else
+                    "arrows move    up rotates    Z counter-rotates    C holds"
+                )
+           , Canvas.text cx (cy + cell * 11 // 2) (max 10 (cell // 2)) Canvas.Center (rgba 255 255 255 39)
+                (if lay.handheld then "swipe down to drop        swipe up to hold" else "space hard-drops")
+           ]
+
+
+overShapes : Model -> Layout -> List Shape
+overShapes m lay =
+    let
+        cell = lay.cell
+        cx = lay.bx + lay.bw // 2
+        cy = lay.by + lay.bh // 2
+        pulse = 51 + wave 44 m.frame * 2
+
+        cardW = lay.bw - cell
+        cardX = lay.bx + cell // 2
+        cardH = cell * 7
+        cardY = cy - cardH // 2
+
+        -- Every size here is derived from the CARD, not from the cell: a
+        -- character is about six tenths of the font size wide, so the longest
+        -- line of each row decides its divisor. Sizing from the cell is what
+        -- let the headline run out of its own box on a wide matrix.
+        titleSize = max 14 (cardW // 9)
+        scoreSize = max 12 (cardW // 14)
+        detailSize = max 10 (cardW // 20)
+        promptSize = max 11 (cardW // 17)
+    in
+    -- The matrix stays visible under the scrim: the shape of the stack that
+    -- ended the run is the most interesting thing on the screen, and the card
+    -- is translucent for the same reason, so the stack reads THROUGH the
+    -- numbers instead of being boxed out by them. 88% still leaves the text
+    -- far clear of the scrimmed tiles behind it.
+    [ rect lay.bx lay.by lay.bw lay.bh (rgba 8 9 14 78)
+    , rect cardX cardY cardW cardH (rgba 22 24 34 88)
+    , rect cardX cardY cardW 2 (rgba 232 204 96 55)
+    ]
+        ++ [ Canvas.text cx (cardY + cardH * 24 // 100) titleSize Canvas.Center (rgb 246 240 228) "NO ROOM LEFT"
+           , Canvas.text cx (cardY + cardH * 47 // 100) scoreSize Canvas.Center (rgba 255 255 255 63)
+                (String.fromInt m.score ++ " points")
+           , Canvas.text cx (cardY + cardH * 63 // 100) detailSize Canvas.Center (rgba 255 255 255 47)
+                (if m.score >= m.best then
+                    "best of the session"
+
+                 else
+                    "best " ++ String.fromInt m.best
+                )
+           -- The way back has to name the input the player actually has. A
+           -- phone has no space bar, and the tap that restarts works anywhere
+           -- on the screen.
+           , Canvas.text cx (cardY + cardH * 83 // 100) promptSize Canvas.Center (rgba 232 204 96 pulse)
+                (if lay.handheld then "tap to play again" else "press SPACE to play again")
+           ]

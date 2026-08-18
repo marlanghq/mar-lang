@@ -1,0 +1,233 @@
+module Palette exposing (..)
+
+-- Every colour, one set per season. Colour here is a FUNCTION of the season,
+-- so the whole game repaints from these tables and no drawing code decides
+-- what winter looks like.
+
+import Balance exposing (..)
+import Canvas exposing ( rgb )
+
+
+
+
+bezel : Color
+bezel = rgb 10 10 14
+
+
+hudBg : Color
+hudBg = rgb 12 12 16
+
+
+hudWhite : Color
+hudWhite = rgb 236 240 236
+
+
+hudAmber : Color
+hudAmber = rgb 244 196 72
+
+
+hudRed : Color
+hudRed = rgb 240 72 60
+
+
+hudDim : Color
+hudDim = rgb 130 136 142
+
+
+barBg : Color
+barBg = rgb 34 34 40
+
+
+ink : Color
+ink = rgb 16 16 20
+
+
+tailRed : Color
+tailRed = rgb 252 64 48
+
+
+glassC : Color
+glassC = rgb 30 34 44
+
+
+wheelC : Color
+wheelC = rgb 20 20 24
+
+
+bodyWhite : Color
+bodyWhite = rgb 236 240 244
+
+
+bodyLower : Color
+bodyLower = rgb 168 176 188
+
+
+stripeBlue : Color
+stripeBlue = rgb 48 96 232
+
+
+dustBrown : Color
+dustBrown = rgb 150 120 80
+
+
+dustSnow : Color
+dustSnow = rgb 244 248 252
+
+
+gantryC : Color
+gantryC = rgb 40 44 52
+
+
+lightOff : Color
+lightOff = rgb 70 22 22
+
+
+lightOn : Color
+lightOn = rgb 248 48 40
+
+
+lightGo : Color
+lightGo = rgb 48 220 72
+
+
+snowCap : Color
+snowCap = rgb 242 246 250
+
+
+cabinLit : Color
+cabinLit = rgb 252 220 120
+
+
+-- Smooth sky gradient: each row's colour is a lerp from the season's top colour
+-- down to its horizon haze, drawn as many overlapping 2px bands (gradientSky)
+-- so there are no hard steps. skyColorAt gives the sky colour at a logical y.
+skyColorAt : Int -> Int -> Color
+skyColorAt ix y =
+    let
+        yy = iclamp 0 horizonY y
+        mix = \a b -> a + (b - a) * yy // horizonY
+    in
+    case ix of
+        0 -> rgb (mix 96 200) (mix 152 234) (mix 236 250)
+        1 -> rgb (mix 30 200) (mix 96 214) (mix 224 252)
+        2 -> rgb (mix 6 48) (mix 6 32) (mix 22 78)
+        _ -> rgb (mix 128 224) (mix 152 234) (mix 182 242)
+
+
+grassAOf : Int -> Color
+grassAOf ix =
+    case ix of
+        0 -> rgb 84 160 56
+        1 -> rgb 172 152 66
+        2 -> rgb 26 36 24
+        _ -> rgb 220 228 234
+
+
+roadAOf : Int -> Color
+roadAOf ix =
+    case ix of
+        0 -> rgb 108 108 116
+        1 -> rgb 122 118 112
+        2 -> rgb 48 48 62
+        _ -> rgb 142 148 158
+
+
+rumbleAOf : Int -> Color
+rumbleAOf ix =
+    case ix of
+        2 -> rgb 132 44 40
+        _ -> rgb 216 60 52
+
+
+rumbleBOf : Int -> Color
+rumbleBOf ix =
+    case ix of
+        2 -> rgb 148 148 150
+        _ -> rgb 236 236 228
+
+
+dashOf : Int -> Color
+dashOf ix =
+    case ix of
+        2 -> rgb 150 150 160
+        _ -> rgb 228 228 220
+
+
+-- the two mountain layers, per season
+farOf : Int -> Color
+farOf ix =
+    case ix of
+        0 -> rgb 96 156 122
+        1 -> rgb 172 140 92
+        2 -> rgb 16 16 38
+        _ -> rgb 178 194 208
+
+
+mtnOf : Int -> Color
+mtnOf ix =
+    case ix of
+        0 -> rgb 58 118 90
+        1 -> rgb 138 106 66
+        2 -> rgb 24 26 48
+        _ -> rgb 152 168 186
+
+
+sunOf : Int -> Color
+sunOf ix =
+    case ix of
+        0 -> rgb 252 224 96
+        1 -> rgb 252 208 64
+        2 -> rgb 216 220 232
+        _ -> rgb 240 240 224
+
+
+cloudC : Color
+cloudC = rgb 244 248 252
+
+
+-- headlight-lit road (autumn night only): a touch lighter than the night road
+litA : Color
+litA = rgb 78 78 96
+
+
+litB : Color
+litB = rgb 70 70 86
+
+
+-- rival car bodies: 3 kinds (body / shaded lower / roof highlight)
+kindBody : Int -> Color
+kindBody k =
+    case k of
+        0 -> rgb 200 56 48
+        1 -> rgb 56 160 168
+        _ -> rgb 224 168 48
+
+
+kindDark : Int -> Color
+kindDark k =
+    case k of
+        0 -> rgb 120 24 20
+        1 -> rgb 24 96 104
+        _ -> rgb 150 104 24
+
+
+kindLite : Int -> Color
+kindLite k =
+    case k of
+        0 -> rgb 236 104 92
+        1 -> rgb 108 200 208
+        _ -> rgb 248 208 104
+
+
+-- roadside scenery colours
+trunkC : Color
+trunkC = rgb 96 64 40
+
+
+leafOf : Int -> Color
+leafOf ix =
+    case ix of
+        0 -> rgb 56 148 60
+        1 -> rgb 120 136 52
+        2 -> rgb 20 30 20
+        _ -> rgb 236 242 246

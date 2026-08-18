@@ -1,0 +1,176 @@
+module Balance exposing (..)
+
+-- The logical screen, the road's fixed-point geometry, and every tuned number
+-- the car obeys. Also the letterbox layout, because where the screen sits is
+-- geometry rather than drawing, and the touch code needs it too.
+
+import Types exposing (..)
+import Canvas exposing ( rect )
+
+
+
+
+
+
+gameW : Int
+gameW = 320
+
+
+gameH : Int
+gameH = 200
+
+
+horizonY : Int
+horizonY = 72
+
+
+-- The road is NSTRIPS horizontal strips, strip 0 nearest (bottom). A flat road
+-- of constant world width projects to straight edges, so the strip's half-width
+-- shrinks LINEARLY toward the horizon; the 1/z nonlinearity lives in each
+-- strip's world distance zOf (used for stripe bands, sprites and the flags):
+--   zOf i = zNear * NSTRIPS / (NSTRIPS - i)      (near 300 .. far 19200)
+
+
+nstrips : Int
+nstrips = 64
+
+
+stripH : Int
+stripH = 2
+
+
+zNear : Int
+zNear = 300
+
+
+viewDist : Int
+viewDist = 19200          -- zNear * nstrips
+
+
+roadHalfW : Int
+roadHalfW = 1000          -- world units; on screen the bottom strip is +-120px
+
+
+halfWNearPx : Int
+halfWNearPx = 120
+
+
+
+
+fps : Int
+fps = 60
+
+
+maxSpeed : Int
+maxSpeed = 240            -- also the km/h shown on the HUD
+
+
+-- Where the mountain parallax accumulator (mtnOff) wraps. NOT arbitrary: each
+-- ridge shifts by mtnOff/divisor inside its own mod, so the wrap is invisible
+-- only if the drop lands on a whole number of that ridge's periods. Far ridge =
+-- mtnOff/2 in mod 520 -> needs multiples of 1040; peaks = mtnOff/4 in mod 560 ->
+-- needs multiples of 2240; LCM(1040, 2240) = 29120 (29120/2 = 28*520, /4 = 13*560).
+-- If you change a ridge's mod or divisor (see mountainShapes), recompute this.
+mtnWrap : Int
+mtnWrap = 29120
+
+
+accel : Int
+accel = 1                 -- speed gained per tick on the gas (gentle: ~4s to top)
+
+
+coastDecel : Int
+coastDecel = 1
+
+
+brakeDecel : Int
+brakeDecel = 4
+
+
+crashSpeed : Int
+crashSpeed = 24
+
+
+grassEdge : Int
+grassEdge = 850           -- world-x beyond which the car's outer edge is on grass
+
+
+passPlane : Int
+passPlane = 260           -- world-rel at which a rival draws level with the player
+
+
+steerMax : Int
+steerMax = 26             -- world units per tick at full lock
+
+
+phaseLen : Int
+phaseLen = 260000         -- world units per season (~45s flat out)
+
+
+playerCarY : Int
+playerCarY = 170          -- top of the player sprite (34x23)
+
+
+countStart : Int
+countStart = 240          -- start-light countdown, in ticks (4s)
+
+
+
+
+absI : Int -> Int
+absI n =
+    if n < 0 then 0 - n else n
+
+
+iclamp : Int -> Int -> Int -> Int
+iclamp lo hi v =
+    if v < lo then lo else if v > hi then hi else v
+
+
+mod2 : Int -> Int
+mod2 n =
+    n - (n // 2) * 2
+
+
+range : Int -> List Int
+range n =
+    List.indexedMap (\i _ -> i) (List.repeat n 0)
+
+
+-- Threads a Random.Seed through the sim so curves and traffic are random but
+-- the model stays a plain record (time travel still works). A thin adapter over
+-- the stdlib: value first out of Random.step, seed flipped to the front so the
+-- (seed, value) call sites below stay exactly as they were.
+rnd : Random.Seed -> Int -> (Random.Seed, Int)
+rnd seed n =
+    let
+        (v, s2) = Random.step (Random.int 0 (max 1 n - 1)) seed
+    in
+    ( s2, v )
+
+
+-- a rect clipped to the logical screen: the scaled canvas group does not clip,
+-- so anything that can wander past the edge (mountains, clouds, scenery,
+-- flags) goes through here instead of spilling onto the bezel.
+clampRX : Int -> Int -> Int -> Int -> Color -> List Shape
+clampRX x y w h color =
+    let
+        x1 = max 0 x
+        x2 = min gameW (x + w)
+    in
+    if x2 > x1 then [ rect x1 y (x2 - x1) h color ] else []
+
+
+layout : Model -> Layout
+layout model =
+    let
+        s = max 60 (min (model.w * 100 // gameW) (model.h * 100 // gameH))
+        slack = model.h - gameH * s // 100
+    in
+    { scale = s
+    , ox = (model.w - gameW * s // 100) // 2
+    -- Portrait phones: seat the picture in the UPPER area (top margin = 1/6 of
+    -- the vertical slack) instead of dead centre, leaving the roomy space below
+    -- for the touch pads (bottom-anchored in padRects). Landscape stays centred.
+    , oy = if model.h > model.w then slack // 6 else slack // 2
+    }

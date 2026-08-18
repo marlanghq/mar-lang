@@ -1,0 +1,117 @@
+module Balance exposing (..)
+
+-- The logical screen, the fixed-point unit, the length of a stage, and the
+-- letterbox layout. Where the screen sits is geometry, so the touch code and
+-- the drawing code read the same numbers.
+
+import Types exposing (..)
+
+
+
+
+
+
+fps : Int
+fps = 60
+
+
+gameW : Int
+gameW = 320
+
+
+gameH : Int
+gameH = 240
+
+
+-- The whole HUD is one row deep at the top: score, hull cells, the shared
+-- centre slot, the weapon readout, the mute icon. Nothing sits at the
+-- bottom on purpose. In a vertical shmup the bottom strip is where the
+-- player actually lives, so spending it on a readout costs the fight; the
+-- ship gets the floor and the readouts get the sky, which is the half of
+-- the screen a player only visits.
+--
+-- Both bounds are derived from the sprite instead of eyeballed: the nose
+-- reaches 11px above the ship's centre and the engine flames 14px below it.
+-- So the ceiling clears the HUD row by one pixel, the floor puts the flame
+-- tips exactly on the bottom edge, and editing the HUD moves the ceiling
+-- with it.
+hudTopRow : Int
+hudTopRow = 13            -- lowest pixel of the HUD row (mute icon, boss bar)
+
+
+playTop : Int
+playTop = hudTopRow + 11 + 1
+
+
+playBot : Int
+playBot = gameH - 14 - 1
+
+
+fp : Int
+fp = 16                   -- fixed-point scale for entity positions
+
+
+stageTicks : Int
+stageTicks = 3600         -- waves end here (60s); the boss warning begins
+
+
+bossTick : Int
+bossTick = 3720           -- the boss flies in
+
+
+
+
+
+
+iclamp : Int -> Int -> Int -> Int
+iclamp lo hi v = max lo (min hi v)
+
+
+absI : Int -> Int
+absI n = if n < 0 then 0 - n else n
+
+
+approach : Int -> Int -> Int -> Int
+approach current target amount =
+    if current < target then min target (current + amount)
+    else if current > target then max target (current - amount)
+    else current
+
+
+-- octagonal distance: cheap length approx for aiming shots
+octd : Int -> Int -> Int
+octd dx dy =
+    let
+        ax = absI dx
+        ay = absI dy
+    in
+    max ax ay + min ax ay // 2
+
+
+layout : Model -> Layout
+layout model =
+    let
+        s = max 60 (min (model.w * 100 // gameW) (model.h * 100 // gameH))
+    in
+    { scale = s
+    , ox = (model.w - gameW * s // 100) // 2
+    , oy = (model.h - gameH * s // 100) // 2
+    }
+
+
+toLogical : Model -> Int -> Int -> { x : Int, y : Int }
+toLogical model x y =
+    let
+        lay = layout model
+    in
+    { x = (x - lay.ox) * 100 // max 1 lay.scale
+    , y = (y - lay.oy) * 100 // max 1 lay.scale
+    }
+
+
+inMuteZone : Model -> Int -> Int -> Bool
+inMuteZone model x y =
+    let
+        p = toLogical model x y
+    in
+    p.x > 294 && p.y < 18

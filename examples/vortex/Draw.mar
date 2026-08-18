@@ -1,0 +1,622 @@
+module Draw exposing (..)
+
+-- The tube as glowing lines: the sky behind it, the web, the actors, the
+-- sparks. Colour fades with depth, which is the whole look of the game.
+
+import Balance exposing (..)
+import Camera exposing (..)
+import Geometry exposing (..)
+import Lanes exposing (..)
+import Sim exposing (..)
+import Types exposing (..)
+import Canvas exposing ( circle, rect, rgb, rgba )
+import Keyboard
+
+
+
+
+-- THE PICTURE FILLS WHAT IT IS GIVEN.
+--
+-- The scale used to be `min w h / 2.5`, which is the right answer for a circle
+-- and the wrong one for anything else. Half the webs are OPEN: a fan, a line,
+-- a bowl, and their rim is wider than it is tall, so on a phone held
+-- sideways the game drew itself into a third of the screen and left the rest
+-- black. You could not tell which lane a thing was in because the whole thing
+-- was a postage stamp.
+--
+-- So it measures the rim it actually has and fits THAT. The rim is the widest
+-- the web ever gets: everything deeper converges on the vanishing point, and
+-- the lean is capped at a third of the way there, so nothing can reach past
+-- the near edge. Fitting the rim therefore fits the whole picture.
+--
+-- The box it fits into is what is left after the readouts and the controls,
+-- not the glass. In landscape the touch band is a quarter of the height, and
+-- centring on the screen put the near rim, the part you play on, underneath
+-- your own thumbs.
+camera : Model -> Cam
+camera m =
+    let
+        -- The real box the drawing occupies, as min/max and not as a radius.
+        -- Half the shapes are not centred on the origin: a fan has its rim
+        -- along the bottom and its far end up at the vanishing point, so a
+        -- fit measured as `max |y|` reserves room on a side that has nothing
+        -- on it and draws the shape small AND low.
+        --
+        -- Three kinds of point bound it: the two ends of every lane, and every
+        -- vanishing point the lean can reach. The lean is a third of the way
+        -- back from a lane's middle, so those are known in advance, and using
+        -- the whole set rather than the CURRENT one is what keeps the fit
+        -- fixed for the level: measuring the live lean would rescale the
+        -- picture as you walked, which is a zoom, and this camera does not
+        -- zoom.
+        grow = \p b ->
+            { x0 = min b.x0 p.x, x1 = max b.x1 p.x
+            , y0 = min b.y0 p.y, y1 = max b.y1 p.y
+            }
+
+        box =
+            List.foldl
+                (\l b ->
+                    let
+                        mid = rotate m.spin l.mid
+                    in
+                    grow (rotate m.spin l.a)
+                        (grow (rotate m.spin l.b)
+                            (grow { x = 0 - mid.x * 34 // 100, y = 0 - mid.y * 34 // 100 } b))
+                )
+                { x0 = 0, x1 = 0, y0 = 0, y1 = 0 }
+                m.lanes
+
+        spanX = max 1 (box.x1 - box.x0)
+        spanY = max 1 (box.y1 - box.y0)
+
+        -- The controls are drawn small and the ZONES they answer for are
+        -- large, so only the marks need clearing, not the whole band.
+        top = 54
+        bottom =
+            if m.pads then
+                (zonesOf m).fireR * 2 + 24
+
+            else
+                28
+
+        boxW = max 40 (m.w * 92 // 100)
+        boxH = max 40 (m.h - top - bottom)
+        fit = min (boxW * one // spanX) (boxH * one // spanY)
+    in
+    -- Everything here is either fixed for the level (`spin` and the fit, which
+    -- are the shape's own) or a value `leanStep` moved because the player
+    -- moved. No term is a function of the frame counter, which is the whole
+    -- point: a still player means a still camera.
+    -- and the box's own middle is put in the middle of the space, which is
+    -- what stops an off-centre shape from sitting off-centre on the glass
+    { cx = m.w // 2 - (box.x0 + box.x1) // 2 * fit // one
+    , cy = top + boxH // 2 - (box.y0 + box.y1) // 2 * fit // one
+    , scale = max 24 fit
+    , spin = m.spin
+    , vx = m.leanX
+    , vy = m.leanY
+    , camZ = m.camZ
+    }
+
+
+
+
+-- How much of the game is left showing on the title. The demo is a rehearsal
+-- happening behind the logo, and at full strength it was indistinguishable
+-- from the real thing: you look up and think you are already playing. Dimmed
+-- it stays legible as a game without ever being mistaken for yours.
+attractDim : Int
+attractDim = 46
+
+
+backdrop : Model -> List Shape
+backdrop m =
+    [ rect 0 0 m.w m.h (rgb 4 4 10) ]
+
+
+-- Stars streaming out of the vanishing point. They earn their place for a
+-- reason beyond decoration: the well is a wireframe with nothing inside it,
+-- so the space between the lanes was flat black and read as EMPTY. A field of
+-- points falling down the same hyperbola as the lanes fills it with something
+-- unmistakably far away, and the tube stops being a shape drawn on a
+-- background and becomes a shape you are looking through.
+--
+-- This moves on its own, which the camera never does, and that is not a
+-- contradiction of the rule. The camera still answers only the player: the
+-- vanishing point stays exactly where the player left it, and the frame never
+-- shifts. What moves is content, the same way an enemy climbing a lane is
+-- content.
+
+
+-- The sky is the one thing in this game that moves without being asked, all
+-- the way through every level and the dive between them. So it is also the
+-- one thing whose STOPPING means something, and it stops when the run does.
+-- `phaseT` counts frames since the run ended, so subtracting it pins the sky
+-- to the exact frame you died on: no easing, no drift, a full stop.
+skyFrame : Model -> Int
+skyFrame m =
+    if m.phase == Over then m.frame - m.phaseT else m.frame
+
+
+-- Where each star sits on the plane of the rim, as an offset from the
+-- vanishing point. Computed ONCE: a top-level value in Mar is evaluated when
+-- the program loads, so none of this trigonometry runs during a frame.
+--
+-- The two strides are what spread the field. 97 and 256 are coprime, so the
+-- angles walk the whole turn without landing twice; so do 613 and 1900 for the
+-- radii; and because the strides differ, a star's angle tells you nothing
+-- about its distance. It is a lattice rather than a scatter, which at
+-- fifty-six points looks more even than random actually does.
+sky : List Pt
+sky =
+    List.map
+        (\i ->
+            let
+                ang = modBy 256 (i * 97)
+                rad = 260 + modBy 2400 (i * 613)
+            in
+            { x = rad * cosB ang // one, y = rad * sinB ang // one }
+        )
+        (List.range 0 (skyCount - 1))
+
+
+skyShapes : Model -> Cam -> List Shape
+skyShapes m cam =
+    List.indexedMap
+        (\i p ->
+            let
+                -- Spaced evenly through the cycle by index, so stars arrive at
+                -- a steady rate. Random phases would clump, and a clump of
+                -- stars arriving together reads as something happening.
+                -- Depth is measured from the EYE, and the eye's own travel is
+                -- part of what advances it.
+                --
+                -- It used to be measured from the rim, which made the sky a
+                -- fixed slab sitting in the well, and the dive between levels
+                -- takes the camera `zFar + camD` forward, past the whole slab.
+                -- Halfway down, every star was behind the eye, and the ones
+                -- being born were born behind it too, so the sky emptied and
+                -- stayed empty for the rest of the best-looking move in the
+                -- game. Adding `camZ` here makes it a shell the eye carries:
+                -- a star always recycles in FRONT, and the dive rushes them
+                -- past faster because the eye is closing on them as well.
+                age = modBy skyCycle (skyFrame m * skySpeed + cam.camZ + i * skyCycle // skyCount)
+                d = zFar - age
+                k = one * camD // max 40 (camD + d)
+
+                -- The web's projection minus the spin: a shape's orientation
+                -- belongs to that shape, and a sky that turned with it would
+                -- be a sky bolted to the level.
+                x = cam.cx + (cam.vx + p.x * k // one) * cam.scale // one
+                y = cam.cy + (cam.vy + p.y * k // one) * cam.scale // one
+
+                sz = clamp 1 4 (k * 4 // one)
+
+                -- The far end sits at a sixth of the scale, so an opacity
+                -- taken straight off the perspective factor leaves a distant
+                -- star at nothing, and the distant ones ARE the effect, being
+                -- the ones close to the vanishing point that the field appears
+                -- to pour out of. So the ramp starts well clear of zero and
+                -- only widens from there.
+                lit = min 64 (18 + k * 46 // one)
+
+                -- Fading out the last stretch is what keeps the wrap-around
+                -- invisible: by the time a star's turn comes round again it
+                -- has dimmed away rather than blinked out wherever it happened
+                -- to be standing.
+                fade = min one (one * (skyCycle - age) // skyFade)
+                a = lit * fade // one
+            in
+            rect (x - sz // 2) (y - sz // 2) sz sz (rgba 150 175 225 a)
+        )
+        sky
+
+
+-- The web: the far outline, the lane walls, then the near rim on top.
+-- Drawing the far end first and brightening as it comes forward is the whole
+-- of the depth cueing: no fog, no shading, just three weights of one colour.
+-- Blend two inks, `k` per cent of the way from the first to the second.
+mixInk : { r : Int, g : Int, b : Int } -> { r : Int, g : Int, b : Int } -> Int -> { r : Int, g : Int, b : Int }
+mixInk from to k =
+    { r = from.r + (to.r - from.r) * k // 100
+    , g = from.g + (to.g - from.g) * k // 100
+    , b = from.b + (to.b - from.b) * k // 100
+    }
+
+
+-- THE LIGHTS GO OUT AROUND YOU.
+--
+-- The ending happens to the OBJECT, which is the rule the rest of the game
+-- follows. Two earlier attempts got that half right and still fell flat, and
+-- both failed the same way: they treated the web as ONE thing. Draining every
+-- line to grey together, or backing the eye out so the whole picture shrank,
+-- says "the game stopped": a switch being thrown, over in an instant, with
+-- nothing to watch and nothing that belongs to the run that just ended.
+--
+-- A wave says something. The far side of the well goes dark first and the
+-- darkness closes on you a ring at a time, so the LAST thing still lit is the
+-- lane you were standing in when it got you. That is the one piece of the
+-- picture that is about this particular death, and the ending now points at
+-- it for a second and a half before letting it go too. The frame never moves
+-- and nothing is added to the screen: the place simply stops being lit, from
+-- the outside in.
+deadInk : { r : Int, g : Int, b : Int }
+deadInk = { r = 30, g = 32, b = 42 }
+
+
+-- How far round the ring boundary `i` sits from the lane the claw was holding.
+-- On a closed web that is the short way round; on an open one there is only
+-- one way to count.
+ringDist : Model -> Int -> Int
+ringDist m i =
+    let
+        n = max 1 m.laneCount
+    in
+    if m.web.closed then
+        min (modBy n (i - m.lane + n)) (modBy n (m.lane - i + n))
+
+    else
+        abs (i - m.lane)
+
+
+-- The ink of one piece of the web right now. Every line of the web asks for
+-- its own, which is what lets the sweep exist at all: a single colour for the
+-- whole shape can only ever fade as one thing.
+inkAt : Model -> Int -> { r : Int, g : Int, b : Int }
+inkAt m i =
+    case m.phase of
+        Over ->
+            let
+                n = max 1 m.laneCount
+                edge = if m.web.closed then n // 2 else n
+                startAt = (edge - ringDist m i) * outStep
+            in
+            mixInk m.web.ink deadInk (clamp 0 100 ((m.phaseT - startAt) * 100 // outFade))
+
+        _ ->
+            m.web.ink
+
+
+webShapes : Model -> Cam -> List Shape
+webShapes m cam =
+    let
+        ink = m.web.ink
+        near = List.map (\l -> project cam l.a 0) m.lanes
+        far = List.map (\l -> project cam l.a zFar) m.lanes
+
+        edges =
+            \pts alpha w ->
+                List.concat
+                    (List.indexedMap
+                        (\i p ->
+                            case List.head (List.drop (modBy (List.length pts) (i + 1)) pts) of
+                                Just q ->
+                                    if not m.web.closed && i == List.length pts - 1 then
+                                        []
+
+                                    else
+                                        seg p q w (inkAt m i) alpha
+
+                                Nothing ->
+                                    []
+                        )
+                        pts
+                    )
+
+        -- A wall with something behind it is drawn brighter, and brighter the
+        -- nearer that something is. This is the cheapest possible answer to
+        -- the only question the game asks, WHICH lane is it coming up, and
+        -- it puts the answer on the lane instead of on a readout. Walls are
+        -- lane BOUNDARIES, so boundary i belongs to lane i and to the lane
+        -- before it, and both count.
+        neighbour = \i ->
+            if m.web.closed then
+                modBy (max 1 m.laneCount) (i - 1 + m.laneCount)
+
+            else
+                i - 1
+
+        -- The strongest claim on a wall: how solid the nearest thing behind it
+        -- is, AND what colour that thing is.
+        -- ...but only while the run is on. The highlight exists to answer
+        -- "which lane is it coming up", and once you are dead that is not a
+        -- question anyone is asking. Leaving it on made the ending incoherent:
+        -- half the web dimming on the sweep while the other half stayed lit
+        -- bright red, still warning a player who has nothing left to do about
+        -- it. Off, the web goes out as one shape and the creatures still on
+        -- the rim keep their own colour against it, which is the picture the
+        -- ending wants: the place is dark, and they are what is left in it.
+        threat = \i ->
+            if m.phase == Over then
+                { t = 0, tint = inkAt m i }
+
+            else
+            List.foldl
+                (\f acc ->
+                    let
+                        s = solidity cam f.z
+                    in
+                    if (f.lane == i || f.lane == neighbour i) && s > acc.t then
+                        { t = s, tint = foeInk f.kind }
+
+                    else
+                        acc
+                )
+                { t = 0, tint = inkAt m i }
+                m.foes
+
+
+        -- Opacity alone was too polite for the job, and thickness alone is a
+        -- blunt way to say it. So the wall takes on the COLOUR of what is
+        -- behind it: the lane wears what is in it, which also tells you
+        -- WHICH creature without you having to find it first, and gets
+        -- heavier only in the last moment, when the thing is right on top of
+        -- the rim and heavy is the correct amount of shouting.
+        wall = \i p q ->
+            let
+                th = threat i
+            in
+            if th.t == 0 then
+                seg p q 1 (inkAt m i) 30
+
+            else
+                -- A TINT, not a repaint: two fifths of the way to the
+                -- creature's colour at the very most, and the wall never goes
+                -- fully opaque. The web has to stay the web, if a lit lane
+                -- reads as a different object then the shape you are meant to
+                -- be learning comes apart every time something climbs it.
+                seg p q
+                    (if th.t > 85 then 2 else 1)
+                    (mixInk (inkAt m i) th.tint (th.t * 40 // 100))
+                    (30 + th.t * 50 // 100)
+
+        walls =
+            List.concat
+                (List.indexedMap
+                    (\i p ->
+                        case List.head (List.drop i far) of
+                            Just q -> wall i p q
+                            Nothing -> []
+                    )
+                    near
+                )
+    in
+    edges far 62 1 ++ walls ++ edges near 100 2
+
+
+-- How solid a thing at depth z is: barely there at the far end, solid at your
+-- feet. It is the cheapest depth cue there is and it does something size
+-- alone cannot: with two enemies in the same lane, size tells you they are
+-- at different depths but not by how much, while opacity reads as "this one
+-- is the problem" at a glance.
+--
+-- The floor is 40 rather than 0 because an enemy you cannot see is not
+-- atmosphere, it is an ambush. It has to be dim, not absent.
+--
+-- The fade lives entirely in the BACK HALF: anything nearer than `fadeFrom`
+-- is fully solid. Ramping all the way to the rim looked reasonable and was
+-- backwards: the perspective curve is nearly flat far away and steep close
+-- up, so a fade anchored at the rim barely moved across the whole far half
+-- and then did all its work in the last stretch, where the thing is already
+-- big and obvious. The distinction worth drawing is between two SMALL shapes
+-- at the far end, so that is where the whole 40-to-100 range now goes.
+fadeFrom : Int
+fadeFrom = 500
+
+
+solidity : Cam -> Int -> Int
+solidity cam z =
+    let
+        near = one * camD // (camD + fadeFrom)
+        far = one * camD // (camD + zFar)
+    in
+    clamp 40 100 (40 + (depthK cam z - far) * 60 // max 1 (near - far))
+
+
+-- A flipper is two linked chevrons; a tanker is a squat diamond. Both are
+-- outlines rather than fills, so a thing far down the well reads as the same
+-- creature as one at your feet, only smaller.
+--
+-- They have to be told apart at a glance and at any size, which is why the
+-- difference is SHAPE first and colour second: a chevron is pinched in the
+-- middle and a diamond is not, and that survives being six pixels across.
+foeShapes : Model -> Cam -> List Shape
+foeShapes m cam =
+    List.concatMap
+        (\f ->
+            let
+                p = project cam (laneAt m.lanes f.lane).mid f.z
+                -- In WELL units, through both factors, like everything else.
+                -- Held in screen pixels it was one size on every screen, so
+                -- the bigger the well got the smaller the enemy read against
+                -- it, which is most of why one was hard to place in a lane.
+                r = max 2 (foeR * depthK cam f.z // one * cam.scale // one)
+                w = max 1 (r // 5)
+                ink = foeInk f.kind
+
+                -- A rim-walker whose stay is nearly up blinks out. Without the
+                -- tell it just vanishes mid-chase, which reads as the game
+                -- losing it rather than as the thing giving up.
+                leaving = f.rim >= 0 && f.rim < 72 && modBy 12 f.rim < 6
+                solid =
+                    if leaving then
+                        solidity cam f.z * 35 // 100
+
+                    else
+                        solidity cam f.z
+                -- the chevron's far half was already dimmer to suggest the
+                -- fold; that stays a RATIO so the fold survives the fade
+                folded = solid * 60 // 100
+            in
+            case f.kind of
+                Flipper ->
+                    let
+                        a = { x = p.x - r, y = p.y }
+                        b = { x = p.x, y = p.y - r * 3 // 4 }
+                        c = { x = p.x + r, y = p.y }
+                        d = { x = p.x, y = p.y + r * 3 // 4 }
+                    in
+                    seg a b w ink solid ++ seg b c w ink solid
+                        ++ seg c d w ink folded
+                        ++ seg d a w ink folded
+
+                Tanker ->
+                    let
+                        a = { x = p.x - r, y = p.y }
+                        b = { x = p.x, y = p.y - r * 2 // 3 }
+                        c = { x = p.x + r, y = p.y }
+                        d = { x = p.x, y = p.y + r * 2 // 3 }
+                    in
+                    seg a b w ink solid ++ seg b c w ink solid
+                        ++ seg c d w ink solid
+                        ++ seg d a w ink solid
+                        -- a bar across the waist: this is the one that is
+                        -- carrying something
+                        ++ seg { x = p.x - r // 2, y = p.y } { x = p.x + r // 2, y = p.y } w ink (solid * 70 // 100)
+        )
+        m.foes
+
+
+shotShapes : Model -> Cam -> List Shape
+shotShapes m cam =
+    List.concatMap
+        (\s ->
+            let
+                lane = laneAt m.lanes s.lane
+                head = project cam lane.mid s.z
+                tail = project cam lane.mid (min zFar (s.z + 60))
+            in
+            seg tail head 2 { r = 255, g = 255, b = 210 } 100
+        )
+        m.shots
+
+
+-- The claw is built from its OWN lane and goes through the same projection as
+-- the web, so it is always welded to the lane it occupies: it foreshortens
+-- with the lane, leans with the camera, and cannot drift off the rim the way
+-- a screen-space sprite would.
+--
+-- How FAR into the well it reaches is measured against the lane's WIDTH, not
+-- against a depth in well units. That distinction is the whole of it. A fixed
+-- depth makes the claw a fraction of the lane's LENGTH on screen, and lane
+-- length swings wildly between shapes: short on a sixteen-lane ring, very
+-- long on an open bowl whose far end is a small arc a long way off. The claw
+-- came out compact on one web and stretched into a tall spindly thing on the
+-- next, on a shape that had not changed. Measured against width it is about
+-- as deep as it is wide wherever it stands, which is what a claw is.
+clawShapes : Model -> Cam -> List Shape
+clawShapes m cam =
+    if m.phase == Over then
+        []
+
+    else
+        let
+            lane = laneAt m.lanes m.lane
+            a = project cam lane.a 0
+            b = project cam lane.b 0
+            mid = project cam lane.mid 0
+            deep = project cam lane.mid zFar
+
+            -- how wide its lane is, on screen
+            wx = b.x - a.x
+            wy = b.y - a.y
+            width = max 4 (isqrt (wx * wx + wy * wy))
+
+            -- and which way "into the well" points from here, and how much of
+            -- that run the claw is allowed to take
+            dx = deep.x - mid.x
+            dy = deep.y - mid.y
+            run = max 1 (isqrt (dx * dx + dy * dy))
+
+            -- A claw is SHALLOW. It hugs the rim; it does not reach into the
+            -- well. Both terms of this min matter and they matter in
+            -- different places: on a ring the lane is short and the run term
+            -- wins, which is the proportion that looked right all along; on
+            -- an open bowl the lane runs a long way to a small far arc and
+            -- the run term explodes, so the width term takes over. Getting
+            -- this wrong in either direction is loud: too deep and the claw
+            -- is a wedge of pie, too shallow and you cannot see which lane
+            -- you are in.
+            depth = min (run * 26 // 100) (width * 60 // 100)
+
+            into = \p amount -> { x = p.x + dx * amount // run, y = p.y + dy * amount // run }
+
+            -- outer prongs pulled a little toward the middle, and a notch
+            -- between them: the crab silhouette this genre has always used
+            ain = into (lerpPt a mid (one // 4)) (depth * 80 // 100)
+            bin = into (lerpPt b mid (one // 4)) (depth * 80 // 100)
+            tip = into mid (depth * 30 // 100)
+
+            stroke = clamp 2 3 (width // 40)
+            ink = { r = 255, g = 240, b = 90 }
+        in
+        seg a ain stroke ink 100
+            ++ seg b bin stroke ink 100
+            ++ seg ain tip stroke ink 100
+            ++ seg bin tip stroke ink 100
+            -- a dim bar across the mouth, so the lane you occupy is legible
+            -- even when the claw is edge-on at the far side of the ring
+            ++ seg a b 2 ink 45
+
+
+sparkShapes : Model -> Cam -> List Shape
+sparkShapes m cam =
+    List.concatMap
+        (\s ->
+            let
+                p = project cam s.p s.z
+                k = depthK cam s.z
+
+                -- The burst grows in WELL units and then goes through BOTH
+                -- factors the web goes through: perspective and `cam.scale`.
+                -- It used to skip the scale, which made it a size in screen
+                -- pixels: correct at one window size and wrong at every other.
+                -- The well is drawn off the short side of the screen, so on a
+                -- phone it shrinks by a third and an explosion that ignored
+                -- the scale did not, and every kill bloomed a third too big.
+                -- Same class of mistake as a claw measured in pixels.
+                r = max 1 ((sparkR0 + s.t * sparkGrow) * k // one * cam.scale // one)
+                a = max 0 (100 - s.t * 4)
+            in
+            [ circle p.x p.y r (rgba s.ink.r s.ink.g s.ink.b a)
+            , circle p.x p.y (max 1 (r // 2)) (rgba 255 255 255 (max 0 (70 - s.t * 5)))
+            ]
+        )
+        m.sparks
+
+
+-- The touch controls, drawn only on a device with no pointer, from the very
+-- rectangles `padKeys` tests against. A pad lights while a finger is on it,
+-- because a control with no feedback is indistinguishable from a broken one.
+-- The stick and the fire button. Neither is a box you have to hit: the zones
+-- they answer for are much larger than the marks that stand for them, so
+-- they are drawn small and dim on purpose. What you are looking at is the
+-- well; these are the reminder of where your thumbs go, not the controls.
+padShapes : Model -> List Shape
+padShapes m =
+    if not m.pads || m.phase == Title || m.phase == Over then
+        []
+
+    else
+        let
+            z = zonesOf m
+            r = z.rail
+            push = stickPush m
+            held = m.stick /= Nothing
+
+            -- The knob sits at the middle of the rail and moves by the
+            -- DEFLECTION, not to where the thumb is: the thumb may be
+            -- anywhere in the walking half, and the knob showing its offset
+            -- rather than its position is what says "this is a stick".
+            knobR = r.h * 3
+            knobX = r.x + r.w // 2 + clamp (0 - r.w // 2) (r.w // 2) push
+            knobY = r.y + r.h // 2
+
+            firing = List.member Keyboard.Space m.touch
+        in
+        [ rect r.x r.y r.w r.h (rgba 150 170 220 (if held then 26 else 12))
+        , circle knobX knobY knobR (rgba 215 230 255 (if held then 62 else 26))
+        , circle z.fireX z.fireY z.fireR (rgba 255 240 90 (if firing then 42 else 14))
+        , circle z.fireX z.fireY (z.fireR // 3) (rgba 255 240 90 (if firing then 92 else 34))
+        ]

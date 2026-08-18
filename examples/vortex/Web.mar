@@ -1,0 +1,159 @@
+module Web exposing (..)
+
+-- The sixteen webs as data plus the rim each one traces: ring, polygon, star,
+-- line, bowl. A level's SHAPE lives here and nothing else needs to know which
+-- kind it is.
+
+import Balance exposing (..)
+import Geometry exposing (..)
+import Types exposing (..)
+
+
+-- A ring of n evenly spaced points.
+ringRim : Int -> List Pt
+ringRim n =
+    List.map (\i -> polar (i * 256 // n) webR) (List.range 0 (n - 1))
+
+
+-- A closed polygon with `sides` corners, sampled at `per` points per side, so
+-- a square gets lanes along its edges rather than one enormous lane per side.
+polyRim : Int -> Int -> List Pt
+polyRim sides per =
+    List.concatMap
+        (\s ->
+            let
+                a = corner sides s
+                b = corner sides (s + 1)
+            in
+            List.map
+                (\k -> lerpPt a b (k * one // per))
+                (List.range 0 (per - 1))
+        )
+        (List.range 0 (sides - 1))
+
+
+-- A star: alternating long and short radii.
+starRim : Int -> Int -> List Pt
+starRim points inner =
+    List.map
+        (\i ->
+            polar (i * 256 // (points * 2))
+                (if modBy 2 i == 0 then webR else webR * inner // 100)
+        )
+        (List.range 0 (points * 2 - 1))
+
+
+-- An open horizontal line: the shape that taught everyone the difference
+-- between a tube you can circle and a wall you can be cornered against.
+-- An open horizontal line: the shape that taught everyone the difference
+-- between a tube you can circle and a wall you can be cornered against.
+--
+-- It sits BELOW the middle on purpose. The lanes converge upward toward the
+-- vanishing point, so the near wall is low and wide and the far one is high
+-- and short: you are looking up a slope at things coming down it, which is
+-- what this level is in the arcade and what makes it read at a glance.
+lineRim : Int -> List Pt
+lineRim n =
+    List.map
+        (\i -> { x = 0 - webR + 2 * webR * i // (n - 1), y = webR // 2 })
+        (List.range 0 (n - 1))
+
+
+-- A shallow open bowl: a line bent enough that its two ends feel far away.
+--
+-- The arc sweeps the BOTTOM of the circle (brads 24 through 104, which is
+-- 34 to 146 degrees) so it cups upward like a valley you are standing in.
+-- Swept across the top instead it is a dome, and a dome with the tube behind
+-- it is a shape nobody can read.
+bowlRim : Int -> List Pt
+bowlRim n =
+    List.map
+        (\i -> polar (modBy 256 (24 + 80 * i // (n - 1))) webR)
+        (List.range 0 (n - 1))
+
+
+-- Sixteen webs, then the sequence repeats with a new ink. That is the shape
+-- of the original's level list and it is worth keeping: by the time a shape
+-- comes back around you know it, and the game is counting on you knowing it.
+webCount : Int
+webCount = 16
+
+
+webFor : Int -> Web
+webFor level =
+    let
+        shape = modBy webCount level
+        cycle = level // webCount
+    in
+    { rim = rimFor shape
+    , closed = closedFor shape
+    , ink = inkFor cycle
+    }
+
+
+-- THE ORDER IS THE DIFFICULTY CURVE.
+--
+-- There are no difficulty settings in this game and the numbers barely move:
+-- what changes between levels is the PLACE. So the order these arrive in is
+-- the whole ramp, and it has one rule: a CLOSED web is a kinder web. It has
+-- no ends, you can walk it forever, and nothing can ever corner you. An open
+-- one has two ends, and being backed into one with something coming is the
+-- hardest thing here.
+--
+-- Ranked, easiest first:
+--
+--   RINGS are the kindest. Regular, symmetric, endless: the shape teaches
+--     you the well and asks nothing else.
+--   POLYGONS next. Still closed and still regular, but the corners make the
+--     lanes uneven, so a lane is no longer just "one step".
+--   STARS are harder, and the deeper the notch the harder: the rim zigzags,
+--     so left stops meaning left on the screen. Ordered by their inner
+--     radius, mildest first.
+--   OPEN shapes are the hardest of all, because you can be backed into an
+--     end with something walking at you.
+--
+-- The old list ran ring, square, LINE-16, STAR-6: the widest open shape and
+-- then the deep star, third and fourth, back to back. Two cliffs in a row,
+-- landing exactly where someone is still learning what the well is. Now the
+-- first four are all regular and closed, the first star is the shallow one,
+-- and nothing open turns up until the seventh.
+rimFor : Int -> List Pt
+rimFor shape =
+    case shape of
+        0 -> ringRim 16
+        1 -> polyRim 4 4
+        2 -> ringRim 13
+        3 -> polyRim 6 3
+        4 -> starRim 8 62
+        5 -> ringRim 12
+        6 -> lineRim 12
+        7 -> polyRim 3 5
+        8 -> starRim 7 58
+        9 -> bowlRim 14
+        10 -> ringRim 15
+        11 -> starRim 6 55
+        12 -> polyRim 5 3
+        13 -> lineRim 16
+        14 -> starRim 5 48
+        _ -> bowlRim 16
+
+
+closedFor : Int -> Bool
+closedFor shape =
+    case shape of
+        6 -> False
+        9 -> False
+        13 -> False
+        15 -> False
+        _ -> True
+
+
+inkFor : Int -> { r : Int, g : Int, b : Int }
+inkFor cycle =
+    case modBy 6 cycle of
+        0 -> { r = 90, g = 130, b = 255 }
+        1 -> { r = 255, g = 90, b = 170 }
+        2 -> { r = 120, g = 255, b = 140 }
+        3 -> { r = 255, g = 180, b = 60 }
+        4 -> { r = 180, g = 120, b = 255 }
+        _ -> { r = 90, g = 235, b = 255 }

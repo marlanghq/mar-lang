@@ -1,0 +1,544 @@
+module Draw exposing (..)
+
+-- The scene as pixels, back to front: sky, mountains, clouds, scenery, the
+-- rivals and the car.
+
+import Balance exposing (..)
+import Font exposing (..)
+import Palette exposing (..)
+import Road exposing (..)
+import Seasons exposing (..)
+import Sim exposing (..)
+import Types exposing (..)
+import Canvas exposing ( group, rect, rgb )
+
+
+-- On-screen touch controls, revealed once the player has used touch: an analog
+-- STEER pad (with a knob that tracks your finger) and GAS / BRAKE pedals.
+-- Drawn at ROOT level in SCREEN coordinates, in the letterbox around the
+-- picture (see padRects): they never cover the game.
+-- True on finger-only hardware (phone / tablet): coarse pointer, no fine
+-- pointer attached, no hover. Desktop and touch-laptops read False, so a mouse
+-- click never summons the pads: the capability, not a past tap, is the gate.
+padsWanted : Maybe Device -> Bool
+padsWanted dev =
+    case dev of
+        Just d -> Device.touchOnly d
+        Nothing -> False
+
+
+touchControlsShapes : Model -> List Shape
+touchControlsShapes m =
+    if padsWanted m.dev && m.mode == Race then
+        let
+            r = padRects m
+            knobW = max 12 (r.steer.w // 8)
+            travel = max 1 (r.steer.w - knobW - 8)
+            kx = r.steer.x + (r.steer.w - knobW) // 2
+                + (if m.touching then m.touchX else 0) * travel // 2400
+            gasCol = if m.tGas then rgb 74 178 96 else rgb 26 58 36
+            brakeCol = if m.tBrake then rgb 196 74 74 else rgb 70 32 32
+        in
+        List.concat
+            [ [ rect r.steer.x r.steer.y r.steer.w r.steer.h (rgb 30 34 48)
+              , rect r.steer.x r.steer.y r.steer.w 2 (rgb 88 98 128)
+              , rect kx (r.steer.y + r.steer.h // 4) knobW (r.steer.h // 2)
+                    (if m.touching then rgb 150 200 255 else rgb 70 78 104)
+              ]
+            , pixTextC (r.steer.x + r.steer.w // 2) (r.steer.y + 8) 2 (rgb 120 132 168) "STEER"
+            , [ rect r.brake.x r.brake.y r.brake.w r.brake.h brakeCol
+              , rect r.brake.x r.brake.y r.brake.w 2 (rgb 130 70 70)
+              ]
+            , pixTextC (r.brake.x + r.brake.w // 2) (r.brake.y + r.brake.h // 2 - 5) 2 hudWhite "BRAKE"
+            , [ rect r.gas.x r.gas.y r.gas.w r.gas.h gasCol
+              , rect r.gas.x r.gas.y r.gas.w 2 (rgb 70 130 90)
+              ]
+            , pixTextC (r.gas.x + r.gas.w // 2) (r.gas.y + r.gas.h // 2 - 5) 2 hudWhite "GAS"
+            ]
+    else
+        []
+
+
+-- how far the car visually points into the steer, in degrees: the eased wheel
+-- velocity scaled by the SAME speed authority the physics uses, so a parked
+-- car holding the wheel stays straight, and on ice the nose swings lazily
+-- (playerVx lags behind the stick there). Kept DISCREET: full lock at top
+-- speed is only ~7 deg: a hint of yaw, not a spin.
+playerYaw : Model -> Int
+playerYaw m =
+    let
+        eff = 118 * m.speed // (m.speed + 60)
+    in
+    iclamp (0 - 7) 7 (m.playerVx * eff // 350)
+
+
+-- the headlights: at night a pool of lighter road projects UP the road AHEAD of
+-- the car: from the car's lane (near plane) toward the vanishing point,
+-- following the curve, brightest nearby and reaching partway up; the far road
+-- and edges stay dark.
+-- A headlight cone thrown AHEAD of the car: its apex sits at the nose (narrow)
+-- and it fans out up the road, like a beam spreading from the lamps. It bends
+-- with the curve and is capped to the middle of the lane, so the road edges and
+-- grass stay dark - clearly light cast forward, not the whole road lit up. Only
+-- strips ahead of the sprite are drawn (nearer strips sit under the car).
+headlightShapes : Model -> List Shape
+headlightShapes m =
+    if isNight m.phaseIx && m.mode /= Title then
+        let
+            yaw = playerYaw m
+            -- apex glued to the nose: rotating the sprite around its centre
+            -- moves the nose sideways by ~sin(yaw) * 11px
+            cxp = 160 + m.playerX * halfWNearPx // roadHalfW + yaw // 5
+        in
+        List.concat
+            (List.map
+                (\j ->
+                    let
+                        i = j + 14
+                        y = stripY i
+                        band = mod2 ((m.camZ + zOf i) // 700)
+                        -- bolted to the nose HEADING: the beam sweeps with the
+                        -- car's yaw (each strip is 2px further up, so the tilt
+                        -- grows with distance: slightly steeper than true tan
+                        -- so the sweep reads on screen). It still does NOT
+                        -- follow the road's curve: on a bend the untouched
+                        -- beam points off toward the outside, like real lamps
+                        cx = cxp + 2 * j * yaw // 14
+                        -- narrow at the nose, fanning out, but never past the middle
+                        -- of the lane
+                        w = min (halfWPx i) (10 + j * 6)
+                    in
+                    if w < 4 then
+                        []
+                    else
+                        clampRX (cx - w // 2) y w (stripH + 1) (if band == 0 then litA else litB)
+                )
+                (range 22))
+    else
+        []
+
+
+-- --- roadside scenery: trees and bushes (world-spaced, projected) ---
+
+
+sceneryShapes : Model -> List Shape
+sceneryShapes m =
+    List.concat
+        (List.map
+            (\k ->
+                let
+                    slot = (m.camZ + zNear) // 1900 + 1 + k
+                    zp = slot * 1900
+                    rel = zp - m.camZ
+                in
+                if rel < zNear || rel > viewDist then
+                    []
+                else
+                    let
+                        h = modBy 100 (slot * 73 + 31)
+                        i = iclamp 0 (nstrips - 1) (nstrips - viewDist // max zNear rel)
+                        sc = nstrips - i
+                        y = stripY i
+                        hw = halfWPx i
+                        cx = roadCenterPx m.curve i
+                        off = hw + 8 + (10 + modBy 26 h) * sc // nstrips
+                        sx = if mod2 slot == 0 then cx - off else cx + off
+                    in
+                    if h < 52 then
+                        treeShapes m sx y sc
+                    else if h < 86 then
+                        bushShapes m sx y sc
+                    else
+                        []
+            )
+            (range 8))
+
+
+treeShapes : Model -> Int -> Int -> Int -> List Shape
+treeShapes m sx y sc =
+    let
+        th = max 3 (26 * sc // nstrips)
+        tw = max 1 (4 * sc // nstrips)
+        fw = max 3 (16 * sc // nstrips)
+        fh = max 2 (9 * sc // nstrips)
+        leaf = leafOf m.phaseIx
+    in
+    List.concat
+        [ clampRX (sx - tw // 2) (y - th) tw th trunkC
+        , clampRX (sx - fw // 2) (y - th - fh) fw fh leaf
+        , clampRX (sx - fw * 2 // 5) (y - th - fh * 2 + 1) (fw * 4 // 5) fh leaf
+        , clampRX (sx - fw // 4) (y - th - fh * 3 + 2) (fw // 2) (max 1 (fh - 1)) leaf
+        ]
+
+
+bushShapes : Model -> Int -> Int -> Int -> List Shape
+bushShapes m sx y sc =
+    let
+        bw = max 3 (12 * sc // nstrips)
+        bh = max 2 (5 * sc // nstrips)
+    in
+    List.concat
+        [ clampRX (sx - bw // 2) (y - bh) bw bh (leafOf m.phaseIx)
+        , clampRX (sx - bw // 3) (y - bh * 2 + 1) (bw * 2 // 3) bh (leafOf m.phaseIx)
+        ]
+
+
+-- --- backdrop: gradient sky, sun/moon, stars, clouds, mountain ranges ---
+
+
+skyShapes : Model -> List Shape
+skyShapes m =
+    List.concat
+        [ gradientSky m
+        , celestialShapes m
+        , cloudShapes m
+        , mountainShapes m
+        ]
+
+
+-- 24 overlapping 3px bands from the top of the screen to the horizon (24*3 = 72
+-- the +1px overlap avoids sub-pixel seams at non-integer zoom. 3px bands (was
+-- 2px/37) cut a third of the sky rects with no visible banding at this scale.
+gradientSky : Model -> List Shape
+gradientSky m =
+    List.map
+        (\k -> rect 0 (k * 3) gameW 4 (skyColorAt m.phaseIx (k * 3)))
+        (range 24)
+
+
+celestialShapes : Model -> List Shape
+celestialShapes m =
+    let
+        sun = sunOf m.phaseIx
+    in
+    if isNight m.phaseIx then
+        List.concat
+            [ [ rect 252 24 10 10 sun
+              , rect 254 26 4 6 (skyColorAt m.phaseIx 26)
+              ]
+            , List.concat
+                (List.map
+                    (\k -> [ rect (modBy 316 (k * 37 + 11)) (20 + modBy 34 (k * 23 + 5)) 1 1 hudWhite ])
+                    (range 7))
+            ]
+    else if m.phaseIx == 1 then
+        [ rect 246 24 16 16 sun, rect 242 28 24 8 sun, rect 250 20 8 24 sun ]
+    else
+        [ rect 252 24 10 10 sun ]
+
+
+cloudShapes : Model -> List Shape
+cloudShapes m =
+    if isNight m.phaseIx then
+        []
+    else
+        List.concat
+            (List.map
+                (\k ->
+                    let
+                        -- drift by time + a small bounded lean into the CURRENT
+                        -- curve. NOT the mtnOff accumulator: it wraps at 960 and
+                        -- 960/8 isn't a multiple of 400, so each wrap teleported the
+                        -- whole sky. curve is bounded (±99) and eases smoothly to 0,
+                        -- so no accumulation, no wrap, no jump. (+400 keeps it >= 0.)
+                        x = modBy 400 (k * 150 + m.tick // 24 + 400 - m.curve // 4) - 40
+                        y = 24 + k * 11
+                    in
+                    List.concat
+                        [ clampRX x y 26 6 cloudC
+                        , clampRX (x + 5) (y - 3) 14 3 cloudC
+                        ]
+                )
+                (range 3))
+
+
+-- two parallax mountain ranges. The far ridge drifts at quarter speed; the
+-- near range at half speed. Peak shapes and heights are hashed with the YEAR,
+-- so every new year the horizon is a different range; spring keeps snow caps
+-- on the tallest peaks, winter turns the whole range pale, and at night a
+-- couple of cabin lights glow at the foot of the hills.
+mountainShapes : Model -> List Shape
+mountainShapes m =
+    List.concat
+        [ List.concat
+            (List.map
+                (\k ->
+                    let
+                        -- /4 in mod 560: mtnWrap must be a multiple of 4*560=2240
+                        x = modBy 560 (k * 140 + 960 - m.mtnOff // 4) - 80
+                        h = 6 + modBy 5 (k * 3 + m.year)
+                    in
+                    List.concat
+                        [ clampRX x (horizonY - h) 92 h (farOf m.phaseIx)
+                        , clampRX (x + 22) (horizonY - h - 3) 48 3 (farOf m.phaseIx)
+                        ]
+                )
+                (range 4))
+        , List.concat
+            (List.map (\k -> peakShapes m k) (range 8))
+        ]
+
+
+peakShapes : Model -> Int -> List Shape
+peakShapes m k =
+    let
+        -- /2 in mod 520: mtnWrap must be a multiple of 2*520=1040
+        x = modBy 520 (k * 67 + 960 - m.mtnOff // 2) - 70
+        style = modBy 3 (k * 5 + m.year * 3 + 2)
+        h = 11 + modBy 13 (k * 9 + m.year * 7 + 3)
+        c = mtnOf m.phaseIx
+        tall = h > 17
+        capped = tall && (m.phaseIx == 0 || m.phaseIx == 1 && h > 21)
+        night = isNight m.phaseIx
+        cabin = night && modBy 3 (k * 11 + m.year) == 0
+    in
+    List.concat
+        [ if style == 0 then
+            -- a sharp peak: three narrowing steps
+            List.concat
+                [ clampRX x (horizonY - h * 2 // 3) 36 (h * 2 // 3) c
+                , clampRX (x + 8) (horizonY - h + 3) 20 (h - 3) c
+                , clampRX (x + 14) (horizonY - h) 8 4 (if capped then snowCap else c)
+                ]
+          else if style == 1 then
+            -- a long ridge with a shoulder bump
+            List.concat
+                [ clampRX x (horizonY - h * 2 // 3) 52 (h * 2 // 3) c
+                , clampRX (x + 10) (horizonY - h + 2) 24 (h - 2) c
+                , clampRX (x + 34) (horizonY - h // 2) 14 (h // 2) c
+                , if capped then clampRX (x + 14) (horizonY - h + 2) 14 3 snowCap else []
+                ]
+          else
+            -- twin peaks
+            List.concat
+                [ clampRX x (horizonY - h + 2) 14 (h - 2) c
+                , clampRX (x + 18) (horizonY - h + 5) 12 (h - 5) c
+                , clampRX (x + 2) (horizonY - h) 8 3 (if capped then snowCap else c)
+                , clampRX (x - 6) (horizonY - h // 2) 40 (h // 2) c
+                ]
+        , if cabin then
+            clampRX (x + 20) (horizonY - 3) 2 2 cabinLit
+          else
+            []
+        ]
+
+
+-- --- sprites ---
+
+
+rivalShapes : Model -> Rival -> List Shape
+rivalShapes m r =
+    let
+        rel = r.z - m.camZ
+    in
+    if rel < zNear || rel > viewDist then
+        []
+    else
+        let
+            i = iclamp 0 (nstrips - 1) (nstrips - viewDist // max zNear rel)
+            sc = nstrips - i
+            y = stripY i
+            cw = max 5 (46 * sc // nstrips)
+            ch = max 4 (28 * sc // nstrips)
+            cx = roadCenterPx m.curve i + r.x * halfWPx i // roadHalfW - cw // 2
+            cy = y - ch + stripH
+            lw = max 1 (cw // 5)
+            band = max 1 (ch // 4)
+            night = isNight m.phaseIx
+        in
+        if night && sc < 26 then
+            -- deep in the dark: taillights only
+            [ rect cx (cy + ch - lw) lw lw tailRed
+            , rect (cx + cw - lw) (cy + ch - lw) lw lw tailRed
+            ]
+        else
+            List.concat
+                [ [ rect (cx + 1) (cy + ch - 1) (cw - 2) 2 ink
+                  , rect cx cy cw ch (if night then kindDark r.kind else kindBody r.kind)
+                  , rect cx (cy + ch - band) cw band (kindDark r.kind)
+                  , rect (cx + cw // 5) cy (cw * 3 // 5) (max 1 (ch // 4)) glassC
+                  ]
+                , if cw > 14 && night == False then
+                    [ rect (cx + cw // 4) (cy + ch // 3) (cw // 2) (max 1 (ch // 6)) (kindLite r.kind) ]
+                  else
+                    []
+                , if cw > 9 then
+                    [ rect (cx - 1) (cy + ch - max 2 (ch // 4)) 2 (max 2 (ch // 4)) wheelC
+                    , rect (cx + cw - 1) (cy + ch - max 2 (ch // 4)) 2 (max 2 (ch // 4)) wheelC
+                    ]
+                  else
+                    []
+                , [ rect cx (cy + ch - lw) lw lw tailRed
+                  , rect (cx + cw - lw) (cy + ch - lw) lw lw tailRed
+                  ]
+                ]
+
+
+-- checkered flags across the road at the end of the season
+flagShapes : Model -> List Shape
+flagShapes m =
+    let
+        rel = m.phaseStartZ + phaseLen - m.camZ
+    in
+    if m.mode == Title || rel < zNear || rel > viewDist then
+        []
+    else
+        let
+            i = iclamp 0 (nstrips - 1) (nstrips - viewDist // max zNear rel)
+            sc = nstrips - i
+            y = stripY i
+            cx = roadCenterPx m.curve i
+            hw = halfWPx i
+            poleH = max 3 (16 * sc // nstrips)
+            poleW = max 1 (3 * sc // nstrips)
+            bandH = max 2 (6 * sc // nstrips)
+            cell = max 2 (hw // 4)
+        in
+        List.concat
+            [ clampRX (cx - hw - poleW - 2) (y - poleH) poleW poleH hudWhite
+            , clampRX (cx + hw + 2) (y - poleH) poleW poleH hudWhite
+            , List.concat
+                (List.map
+                    (\k ->
+                        clampRX (cx - hw + k * cell) (y - poleH) cell bandH
+                            (if mod2 k == 0 then ink else hudWhite)
+                    )
+                    (range 8))
+            ]
+
+
+-- The car is drawn around its own centre and the whole sprite ROTATES with the
+-- steer (playerYaw), SNES-style: the nose points into the corner instead of
+-- the car sliding sideways while facing straight up. The rects keep their old
+-- straight-pose pixels at yaw 0. The 1px body `lean` stays on top as chassis
+-- roll. Dust puffs are ground debris, so they stay outside the rotated group.
+playerShapes : Model -> List Shape
+playerShapes m =
+    let
+        cx = 160 + m.playerX * halfWNearPx // roadHalfW
+        y = playerCarY
+        yaw = playerYaw m
+        flash = m.crashT > 0 && mod2 (m.tick // 3) == 0
+        body = if flash then hudRed else bodyWhite
+        -- the body only leans while ACTUALLY rolling: a stopped car holding
+        -- the wheel shouldn't animate a turn it can't make
+        lean =
+            if m.speed <= 0 then 0
+            else if m.playerVx > 8 then 1
+            else if m.playerVx < 0 - 8 then 0 - 1
+            else 0
+        braking = brakeHeld m || m.crashT > 0 || m.countT > 0
+        onGrass = absI m.playerX > grassEdge
+        dust = onGrass && m.speed > 50 && mod2 (m.tick // 3) == 0
+        dustC = if isIce m.phaseIx then dustSnow else dustBrown
+        car =
+            [ rect (0 - 15) 9 30 3 ink
+            , rect (0 - 16) 4 5 7 wheelC
+            , rect 11 4 5 7 wheelC
+            , rect (0 - 16) (0 - 7) 5 6 wheelC
+            , rect 11 (0 - 7) 5 6 wheelC
+            , rect (0 - 15 + lean) (0 - 11) 30 20 body
+            , rect (0 - 15 + lean) 4 30 5 bodyLower
+            , rect (0 - 15 + lean) (0 - 4) 30 4 stripeBlue
+            , rect (0 - 9 + lean) (0 - 10) 18 5 glassC
+            , rect (0 - 7 + lean) (0 - 11) 14 2 hudWhite
+            , rect (0 - 14) 6 6 2 (if braking then tailRed else kindDark 0)
+            , rect 8 6 6 2 (if braking then tailRed else kindDark 0)
+            ]
+    in
+    List.concat
+        [ [ group [ Canvas.Translate cx (y + 11), Canvas.Rotate (Math.degrees yaw) ] car ]
+        , if dust then
+            [ rect (cx - 20) (y + 16) 3 3 dustC
+            , rect (cx + 17) (y + 18) 3 3 dustC
+            ]
+          else
+            []
+        ]
+
+
+-- tyre smoke while the car is sliding (slipT high): pale puffs billowing out
+-- behind the rear wheels, growing and fading as they drift toward the camera.
+smokeShapes : Model -> List Shape
+smokeShapes m =
+    if m.slipT > 26 && m.mode == Race then
+        let
+            cx = 160 + m.playerX * halfWNearPx // roadHalfW
+        in
+        List.concat
+            (List.map
+                (\k ->
+                    let
+                        age = modBy 20 (m.tick + k * 6)        -- 0..19 puff lifetime
+                        side = if mod2 k == 0 then 0 - 18 else 14
+                        drift = if mod2 k == 0 then 0 - age // 2 else age // 2
+                        px = cx + side + drift
+                        py = playerCarY + 16 + age
+                        sz = 3 + age // 4
+                        sh = 235 - age * 5
+                    in
+                    [ rect px py sz sz (rgb sh sh (sh + 4)) ]
+                )
+                (range 8))
+    else
+        []
+
+
+snowShapes : Model -> List Shape
+snowShapes m =
+    if isIce m.phaseIx then
+        List.concat
+            (List.map
+                (\k ->
+                    [ rect (modBy 318 (k * 97 + m.tick // 2 + k * k * 13))
+                        (modBy 198 (k * 61 + m.tick * (1 + mod2 k)))
+                        2 2 hudWhite
+                    ]
+                )
+                (range 9))
+    else
+        []
+
+
+-- --- the start gantry: three red lights come on one by one, then all three
+-- flash GREEN for the GO (no "GO" text: the green lights are the signal) ---
+
+
+gantryShapes : Model -> List Shape
+gantryShapes m =
+    if m.mode == Race && (m.countT > 0 || m.goT > 0) then
+        let
+            green = m.countT == 0
+            col = if green then lightGo else lightOn
+            lit1 = green || m.countT <= 180
+            lit2 = green || m.countT <= 120
+            lit3 = green || m.countT <= 60
+        in
+        [ rect 118 22 84 18 gantryC
+        , rect 126 26 16 10 (if lit1 then col else lightOff)
+        , rect 152 26 16 10 (if lit2 then col else lightOff)
+        , rect 178 26 16 10 (if lit3 then col else lightOff)
+        ]
+    else
+        []
+
+
+-- --- screens ---
+
+
+sceneShapes : Model -> List Shape
+sceneShapes m =
+    List.concat
+        [ skyShapes m
+        , [ rect 0 horizonY gameW (gameH - horizonY) (grassAOf m.phaseIx) ]
+        , roadStrips m
+        , headlightShapes m
+        , sceneryShapes m
+        , flagShapes m
+        , List.concat
+            (List.map (\r -> rivalShapes m r)
+                (List.sortBy (\r -> 0 - r.z) m.rivals))
+        , playerShapes m
+        , smokeShapes m
+        , snowShapes m
+        ]

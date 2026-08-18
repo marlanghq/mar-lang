@@ -1,0 +1,778 @@
+module Sim exposing (..)
+
+-- What one tick and one input do: spawn, rotate with kicks, shift, drop,
+-- hold, lock, score. Pure functions of the model.
+
+import Balance exposing (..)
+import Board exposing (..)
+import Pieces exposing (..)
+import Types exposing (..)
+import Keyboard
+import Sound
+
+
+init : (Model, Cmd Msg)
+init =
+    let
+        start =
+            { phase = Title
+            , w = 900
+            , h = 700
+            , frame = 0
+            , matrix = emptyMatrix
+            , piece = { kind = 1, rot = 0, x = 3, y = 0 }
+            , bag = []
+            , queue = []
+            , hold = 0
+            , held = False
+            , seed = Random.initialSeed 7311
+            , fall = 0
+            , lock = 0
+            , resets = 0
+            , dasL = 0
+            , dasR = 0
+            , softHeld = 0
+            , flashRows = []
+            , flashAt = 0
+            , banner = 0
+            , bannerAt = 0
+            , slam = []
+            , slamAt = 0
+            , score = 0
+            , lines = 0
+            , level = 1
+            , combo = 0
+            , btb = False
+            , levelAt = 0
+            , keys = []
+            , sfx = []
+            , touch = []
+            , padKeys = []
+            , padDown = []
+            , drag = Nothing
+            , best = 0
+            , dev = Nothing
+            }
+    in
+    ( start, Cmd.none )
+
+
+-- Every run starts from a fresh matrix, a refilled bag and level 1. The seed
+-- carries over from the previous run on purpose: replaying gives a different
+-- sequence, which is what a player expects from "again".
+newRun : Model -> Model
+newRun m =
+    let
+        m1 =
+            { m
+                | phase = Playing
+                , matrix = emptyMatrix
+                , bag = []
+                , queue = []
+                , hold = 0
+                , held = False
+                , fall = 0
+                , lock = 0
+                , resets = 0
+                , flashRows = []
+                , flashAt = 0
+                , banner = 0
+                , bannerAt = 0
+                , slam = []
+                , slamAt = 0
+                , score = 0
+                , lines = 0
+                , level = 1
+                , combo = 0
+                , btb = False
+                , levelAt = 0
+
+                -- The finger that pressed DROP on the game-over screen must
+                -- not still be steering when the new run spawns a piece.
+                , drag = Nothing
+                }
+    in
+    spawn (refill (refill m1))
+
+
+-- Takes the head of the queue onto the matrix. A piece that cannot fit where it
+-- spawns is the end of the run: the honest definition of topping out, and the
+-- only place the game ends.
+spawn : Model -> Model
+spawn m =
+    case m.queue of
+        [] ->
+            m
+
+        next :: rest ->
+            let
+                p = spawnAt next
+                m1 =
+                    refill
+                        { m
+                            | piece = p
+                            , queue = rest
+                            , held = False
+                            , fall = 0
+                            , lock = 0
+                            , resets = 0
+                        }
+            in
+            if fits p m1.matrix then
+                m1
+
+            else
+                { m1 | phase = Over, best = max m1.best m1.score, sfx = m1.sfx ++ [ 7 ] }
+
+
+tryRotate : Int -> Model -> Model
+tryRotate dir m =
+    let
+        target = modBy 4 (m.piece.rot + dir)
+
+        candidates =
+            List.map
+                (\k -> { kind = m.piece.kind, rot = target, x = m.piece.x + k.x, y = m.piece.y + k.y })
+                kicks
+
+        landed = List.filter (\p -> fits p m.matrix) candidates
+    in
+    case landed of
+        p :: _ ->
+            touch { m | piece = p, sfx = m.sfx ++ [ 2 ] }
+
+        [] ->
+            m
+
+
+tryShift : Int -> Model -> Model
+tryShift dx m =
+    let
+        moved = { kind = m.piece.kind, rot = m.piece.rot, x = m.piece.x + dx, y = m.piece.y }
+    in
+    if fits moved m.matrix then
+        touch { m | piece = moved, sfx = m.sfx ++ [ 1 ] }
+
+    else
+        m
+
+
+-- Lock delay with a reset budget. Moving a piece that is already resting
+-- restarts the countdown, so you can slide it into place, but only eight
+-- times. The guideline value is fifteen, which combined with a half-second
+-- delay is seven and a half seconds of floor time per piece: enough that a
+-- player never feels time pressure at all.
+touch : Model -> Model
+touch m =
+    if grounded m.piece m.matrix && m.resets < 8 then
+        { m | lock = 0, resets = m.resets + 1 }
+
+    else
+        m
+
+
+grounded : Piece -> List (List Int) -> Bool
+grounded p matrix =
+    not (fits { kind = p.kind, rot = p.rot, x = p.x, y = p.y + 1 } matrix)
+
+
+dropTo : Piece -> List (List Int) -> Piece
+dropTo p matrix =
+    let
+        below = { kind = p.kind, rot = p.rot, x = p.x, y = p.y + 1 }
+    in
+    if fits below matrix then
+        dropTo below matrix
+
+    else
+        p
+
+
+swapHold : Model -> Model
+swapHold m =
+    if m.held then
+        m
+
+    else if m.hold == 0 then
+        let
+            stored = m.piece.kind
+        in
+        case m.queue of
+            next :: rest ->
+                let
+                    m1 = spawn { m | hold = stored, queue = next :: rest }
+                in
+                { m1 | held = True, sfx = m1.sfx ++ [ 2 ] }
+
+            [] ->
+                m
+
+    else
+        let
+            swapped = spawnAt m.hold
+        in
+        if fits swapped m.matrix then
+            { m
+                | hold = m.piece.kind
+                , piece = swapped
+                , held = True
+                , lock = 0
+                , resets = 0
+                , sfx = m.sfx ++ [ 2 ]
+            }
+
+        else
+            m
+
+
+-- --------------------------------------------------------------- locking in
+
+
+-- Scoring follows the shape of the modern rules, in whole points: a clear is
+-- worth more the more rows go at once, a back-to-back four-row clear is worth
+-- half again, and a combo pays per consecutive clear. All of it is integer
+-- arithmetic, so the score is exact: there is no float to drift.
+clearScore : Int -> Int -> Int -> Bool -> Int
+clearScore n level combo btb =
+    let
+        base =
+            case n of
+                1 -> 100
+                2 -> 300
+                3 -> 500
+                _ -> 800
+
+        bonus =
+            if n >= 4 && btb then
+                base // 2
+
+            else
+                0
+    in
+    (base + bonus) * level + (50 * combo * level)
+
+
+lockPiece : Model -> Model
+lockPiece m =
+    let
+        settled = stamp m.piece m.matrix
+        gone = fullRows settled
+        n = List.length gone
+        cells = List.map (\c -> { x = m.piece.x + c.x, y = m.piece.y + c.y }) (shapeOf m.piece.kind m.piece.rot)
+    in
+    if n == 0 then
+        spawn
+            { m
+                | matrix = settled
+                , combo = 0
+                , slam = cells
+                , slamAt = m.frame
+
+                -- A hard drop already sounded the slam, and a slam IS a lock:
+                -- one instant, one sound. Appending the lock on top of it
+                -- played two cues a frame apart for a single event, which is
+                -- what made the landing sound cluttered as well as harsh.
+                , sfx = if List.member 8 m.sfx then m.sfx else m.sfx ++ [ 3 ]
+            }
+
+    else
+        let
+            combo1 = m.combo + 1
+            gained = clearScore n m.level combo1 m.btb
+            lines1 = m.lines + n
+            level1 = 1 + lines1 // 8
+            cue =
+                if n >= 4 then
+                    5
+
+                else
+                    4
+        in
+        { m
+            | matrix = settled
+            , phase = Clearing
+            , flashRows = gone
+            , flashAt = m.frame
+            , banner = List.length gone
+            , bannerAt = m.frame
+            , slam = cells
+            , slamAt = m.frame
+            , score = m.score + gained
+            , lines = lines1
+            , level = level1
+            , combo = combo1
+            , btb = n >= 4
+            , levelAt =
+                if level1 > m.level then
+                    m.frame
+
+                else
+                    m.levelAt
+            , sfx =
+                if level1 > m.level then
+                    m.sfx ++ [ cue, 6 ]
+
+                else
+                    m.sfx ++ [ cue ]
+        }
+
+
+-- A key is down if the KEYBOARD is holding it or a FINGER is on the pad that
+-- stands for it. Merging the two here is what lets delayed auto-shift, soft
+-- drop and every edge-triggered action work identically on both, with no
+-- second code path for touch.
+held : Keyboard.Key -> Model -> Bool
+held key m =
+    List.member key m.keys || List.member key m.touch || List.member key m.padKeys
+
+
+-- WHAT A CONTROLLER SAYS, IN KEYS.
+--
+-- The layout is the console one, because that is the one a player already has
+-- in their hands: the d-pad steers and soft-drops, UP hard-drops, the face
+-- buttons rotate, and the shoulders hold. Nothing here is a new action: each
+-- line names a key this game already understands, which is why the whole pad
+-- costs one function and no new rules.
+--
+-- Both rotations are given two buttons rather than one, because which face
+-- button turns which way is the single thing every falling-block game disagrees
+-- about, and a player who guesses wrong should get a rotation rather than
+-- nothing. UP is a hard drop and the stick's up is NOT: a thumb resting on an
+-- analog stick would slam pieces down all game.
+padKeysOf : { connected : Bool, leftX : Int, leftY : Int, rightX : Int, rightY : Int, down : List Gamepad.Button } -> List Keyboard.Key
+padKeysOf st =
+    let
+        on = \b -> List.member b st.down
+
+        pick = \cond key -> if cond then [ key ] else []
+    in
+    List.concat
+        [ pick (on Gamepad.Left || st.leftX < 0 - padDead) Keyboard.ArrowLeft
+        , pick (on Gamepad.Right || st.leftX > padDead) Keyboard.ArrowRight
+        , pick (on Gamepad.Down || st.leftY > padDead) Keyboard.ArrowDown
+        , pick (on Gamepad.Up) Keyboard.Space
+        , pick (on Gamepad.A || on Gamepad.X) Keyboard.KeyX
+        , pick (on Gamepad.B || on Gamepad.Y) Keyboard.KeyZ
+        , pick (on Gamepad.L1 || on Gamepad.R1 || on Gamepad.L2 || on Gamepad.R2) Keyboard.KeyC
+        , pick (on Gamepad.Start || on Gamepad.Select) Keyboard.Enter
+        ]
+
+
+-- Past the runtime's own deadzone, which already zeroes anything under a
+-- quarter deflection. A stick is a direction here, not a speed: the matrix
+-- moves one cell at a time on its own repeat clock, so there is nothing for a
+-- harder push to make faster.
+padDead : Int
+padDead = 30
+
+
+update : Msg -> Model -> (Model, Cmd Msg)
+update msg model =
+    let
+        m = step msg model
+    in
+    ( { m | sfx = [] }
+    , Cmd.batch (List.map (\c -> Sound.play (cue c)) m.sfx)
+    )
+
+
+step : Msg -> Model -> Model
+step msg m =
+    case msg of
+        Resized w h ->
+            -- A canvas that is not on screen reports zero, and a zero here is
+            -- not a small matrix: it is a DIVISOR of zero two functions later.
+            -- Clamping at the boundary keeps every derived number sane instead
+            -- of hunting for the one place that divides.
+            { m | w = max 1 w, h = max 1 h }
+
+        Tapped _ _ ->
+            case m.phase of
+                Title -> newRun m
+                Over -> newRun m
+                Playing -> m
+                Clearing -> m
+
+        KeysChanged st ->
+            let
+                fresh = List.filter (\k -> not (List.member k m.keys)) st.down
+                m1 = { m | keys = st.down }
+            in
+            List.foldl press m1 fresh
+
+        DeviceChanged d ->
+            { m | dev = Just d }
+
+        PadChanged st ->
+            let
+                now = padKeysOf st
+                fresh = List.filter (\k -> not (List.member k m.padKeys)) now
+            in
+            List.foldl press { m | padKeys = now, padDown = st.down } fresh
+
+        Pointers ps ->
+            -- Every finger on the screen steers the matrix now. There is
+            -- nothing else on it to hit.
+            gesture (layout m) ps m
+
+        Tick ->
+            tick { m | frame = m.frame + 1 }
+
+
+-- Edge-triggered keys: rotation, hard drop, hold and the menus fire once on
+-- the press. Movement and soft drop are held, and are handled in the tick with
+-- their own repeat timing: mixing the two is what makes a game feel either
+-- unresponsive or uncontrollably fast.
+press : Keyboard.Key -> Model -> Model
+press key m =
+    case m.phase of
+        Title ->
+            if key == Keyboard.Space || key == Keyboard.Enter then
+                newRun m
+
+            else
+                m
+
+        Over ->
+            if key == Keyboard.Space || key == Keyboard.Enter then
+                newRun m
+
+            else
+                m
+
+        Clearing ->
+            m
+
+        Playing ->
+            if key == Keyboard.ArrowUp || key == Keyboard.KeyX then
+                tryRotate 1 m
+
+            else if key == Keyboard.KeyZ then
+                tryRotate 3 m
+
+            else if key == Keyboard.Space then
+                let
+                    landed = dropTo m.piece m.matrix
+                    dist = landed.y - m.piece.y
+                in
+                lockPiece { m | piece = landed, score = m.score + dist * 2, sfx = m.sfx ++ [ 8 ] }
+
+            else if key == Keyboard.KeyC || key == Keyboard.ShiftLeft then
+                swapHold m
+
+            else if key == Keyboard.ArrowLeft || key == Keyboard.KeyA then
+                tryShift (-1) { m | dasL = 0 }
+
+            else if key == Keyboard.ArrowRight || key == Keyboard.KeyD then
+                tryShift 1 { m | dasR = 0 }
+
+            else
+                m
+
+
+tick : Model -> Model
+tick m =
+    case m.phase of
+        Title ->
+            m
+
+        Over ->
+            m
+
+        Clearing ->
+            -- The flash reads at fourteen frames: long enough to register as a
+            -- reward, short enough that it never interrupts a fast player.
+            if m.frame - m.flashAt >= 14 then
+                spawn
+                    { m
+                        | matrix = collapse m.flashRows m.matrix
+                        , flashRows = []
+                        , phase = Playing
+                    }
+
+            else
+                m
+
+        Playing ->
+            m
+                |> autoShift
+                |> gravity
+
+
+-- Delayed auto-shift: the first repeat waits ten frames, then a step every
+-- two. The pause is what lets you tap once for one column without the piece
+-- skating away, and the fast repeat afterwards is what makes crossing the
+-- matrix feel instant.
+autoShift : Model -> Model
+autoShift m =
+    let
+        left = held Keyboard.ArrowLeft m || held Keyboard.KeyA m
+        right = held Keyboard.ArrowRight m || held Keyboard.KeyD m
+
+        m1 =
+            if left then
+                let
+                    n = m.dasL + 1
+                in
+                if n >= 10 && modBy 2 n == 0 then
+                    tryShift (-1) { m | dasL = n }
+
+                else
+                    { m | dasL = n }
+
+            else
+                { m | dasL = 0 }
+
+        m2 =
+            if right then
+                let
+                    n = m1.dasR + 1
+                in
+                if n >= 10 && modBy 2 n == 0 then
+                    tryShift 1 { m1 | dasR = n }
+
+                else
+                    { m1 | dasR = n }
+
+            else
+                { m1 | dasR = 0 }
+    in
+    m2
+
+
+gravity : Model -> Model
+gravity m =
+    let
+        soft = held Keyboard.ArrowDown m || held Keyboard.KeyS m
+        every =
+            if soft then
+                2
+
+            else
+                gravityFrames m.level
+
+        m1 = { m | fall = m.fall + 1 }
+    in
+    if grounded m1.piece m1.matrix then
+        if m1.lock + 1 >= 30 then
+            lockPiece m1
+
+        else
+            { m1 | lock = m1.lock + 1 }
+
+    else if m1.fall >= every then
+        let
+            dropped = { kind = m1.piece.kind, rot = m1.piece.rot, x = m1.piece.x, y = m1.piece.y + 1 }
+        in
+        { m1
+            | piece = dropped
+            , fall = 0
+            , lock = 0
+            , score =
+                if soft then
+                    m1.score + 1
+
+                else
+                    m1.score
+        }
+
+    else
+        m1
+
+
+-- --------------------------------------------------------------------- sound
+--
+-- Chip voices, kept short and dry. The clear cues are the only ones with any
+-- length: a reward you cannot hear is not a reward, and everything else has to
+-- stay out of the way of a player dropping four pieces a second.
+
+
+cue : Int -> Sound
+cue n =
+    case n of
+        -- The three sounds you hear constantly are one family, and two things
+        -- decide how they land.
+        --
+        -- WAVE. A square's harmonics fall off as 1/n, so a 220 Hz square puts
+        -- real energy at 660, 1100, 1540, 2200: straight through the band the
+        -- ear is most sensitive to. That is what "shrill" is. A triangle falls
+        -- off as 1/n²: same pitch, a fraction of the bite. Squares are for
+        -- sounds you want to cut through, and move and turn are not those.
+        --
+        -- PITCH. A phone or laptop speaker is a tiny transducer in a tiny box
+        -- and it stops moving air below roughly 300–400 Hz. Anything written
+        -- down there is not "deep", it is absent. So the lock sits at 340 and
+        -- FALLS, which is what gives it weight: the drop is the gesture, not
+        -- the depth.
+        1 -> Sound.volume 15 (Sound.tone Sound.Triangle 300 26)
+        2 -> Sound.volume 18 (Sound.tone Sound.Triangle 400 30)
+
+        -- The lock is the one that has to be PRESENT: it is the full stop at
+        -- the end of every piece, and a full stop you cannot hear leaves the
+        -- sentence hanging.
+        3 -> Sound.volume 30 (Sound.sweep (-90) (Sound.tone Sound.Triangle 340 55))
+        4 -> Sound.volume 44 (Sound.sweep 180 (Sound.tone Sound.Triangle 440 190))
+        5 ->
+            -- Four rows at once: a real chord, four voices of the SAME length,
+            -- because voices of different lengths drift apart on a loop and
+            -- the habit is worth keeping even where it cannot bite.
+            Sound.volume 52
+                (Sound.chord
+                    [ Sound.tone Sound.Triangle (Sound.a 4) 420
+                    , Sound.tone Sound.Triangle (Sound.c 5) 420
+                    , Sound.tone Sound.Triangle (Sound.e 5) 420
+                    , Sound.tone Sound.Triangle (Sound.a 5) 420
+                    ]
+                )
+
+        6 -> Sound.volume 46 (Sound.arp [ 0, 4, 7, 12 ] (Sound.tone Sound.Square (Sound.c 5) 260))
+        7 -> Sound.volume 50 (Sound.sweep (-260) (Sound.tone Sound.Triangle 380 700))
+        -- The slam. Noise was the wrong family here for the same reason it
+        -- was wrong on the lock: it is broadband, so it dumps energy across
+        -- the whole 2–6 kHz band the ear is sharpest in, and ninety
+        -- milliseconds of that on every hard drop is the harshest thing in
+        -- the game. An impact is a PITCH falling fast: the speed of the drop
+        -- is what reads as force, not the hiss.
+        _ -> Sound.volume 26 (Sound.sweep (-140) (Sound.tone Sound.Triangle 380 60))
+
+
+-- ------------------------------------------------------------------ touch
+--
+-- The matrix is the controller.
+--
+-- A key is binary; a thumb has a POSITION. So movement here is positional:
+-- drag anywhere on the matrix and the piece tracks the thumb, one column per
+-- cell of travel, measured from wherever the finger landed. A button can only
+-- say "left" and then make you wait for auto-repeat to say it again; a drag
+-- says "four columns left" in one motion, and says it without your hand
+-- parked over the piece you are aiming.
+--
+-- Two actions stay on buttons, and only two: hold and hard drop. They are the
+-- ones that COMMIT: the drop especially, which ends the piece where it
+-- stands. Hanging a hard drop off a downward flick is the classic mistake of
+-- the genre on touch, because a flick is a soft drop with a speed threshold,
+-- and a speed threshold on a finger is a coin toss. So: continuous, frequent
+-- and about precision goes on the matrix; discrete, rare and irreversible
+-- goes on a target you have to mean to hit.
+--
+-- The button half still goes through the KEY the keyboard would send, which
+-- is what lets hold, hard drop and soft drop work on a finger with no second
+-- implementation. Movement and rotation deliberately do NOT: a column is not
+-- a keypress, and routing it through one would drag delayed auto-shift along
+-- with it and fight the thumb.
+
+
+-- A finger that lands on the matrix anchors itself, and from then on the
+-- piece is asked to be wherever the thumb has travelled to. A finger that
+-- lifts having barely moved was never a drag: it was a tap, and a tap turns
+-- the piece.
+gesture : Layout -> List Pointer -> Model -> Model
+gesture lay free m =
+    if m.phase /= Playing then
+        { m | drag = Nothing }
+
+    else
+        case m.drag of
+            Nothing ->
+                case free of
+                    p :: _ ->
+                        { m
+                            | drag =
+                                Just
+                                    { id = p.id
+                                    , x0 = p.x
+                                    , y0 = p.y
+                                    , px0 = m.piece.x
+                                    , travel = 0
+                                    , multi = List.length free > 1
+                                    , fired = False
+                                    }
+                        }
+
+                    [] ->
+                        m
+
+            Just d ->
+                case List.filter (\p -> p.id == d.id) free of
+                    p :: _ ->
+                        dragTo lay d p (List.length free > 1) m
+
+                    [] ->
+                        lifted lay d m
+
+
+dragTo : Layout -> Drag -> Pointer -> Bool -> Model -> Model
+dragTo lay d p second m =
+    let
+        dx = p.x - d.x0
+        dy = p.y - d.y0
+
+        moved = { d | travel = max d.travel (max (abs dx) (abs dy)), multi = d.multi || second }
+
+        -- A swipe is DISTANCE and DIRECTION, never speed. Two cells of travel,
+        -- and twice as much of it vertical as horizontal, so the arc a thumb
+        -- makes while sliding sideways can never be mistaken for one. The same
+        -- finger path always does the same thing, which is the whole reason
+        -- these are not flicks.
+        far = lay.cell * 2
+        vertical = abs dy > abs dx * 2
+    in
+    if not d.fired && vertical && dy > far then
+        { m | drag = Just { moved | fired = True } }
+            |> press Keyboard.Space
+
+    else if not d.fired && vertical && dy < -far then
+        { m | drag = Just { moved | fired = True } }
+            |> press Keyboard.KeyC
+
+    else if d.fired then
+        -- Spent. The piece it was steering is gone or put away; anything more
+        -- from this finger belongs to no one until it lifts.
+        { m | drag = Just moved }
+
+    else
+        let
+            want = d.px0 + dx // lay.cell
+            m1 = shiftTo want m
+        in
+        if m1.piece.x == want then
+            { m1 | drag = Just moved }
+
+        else
+            -- The wall or the stack refused part of the move. Re-anchor on
+            -- where the piece actually got to, so it keeps following the thumb
+            -- from here instead of snapping across when the way clears.
+            { m1 | drag = Just { moved | x0 = p.x, px0 = m1.piece.x } }
+
+
+-- Walks the whole way in one frame and stops where the matrix stops it. One
+-- column per frame would lag a fast thumb, and a thumb that outruns the piece
+-- is the thing that makes touch controls feel like a suggestion.
+shiftTo : Int -> Model -> Model
+shiftTo want m =
+    if want == m.piece.x then
+        m
+
+    else
+        let
+            m1 = tryShift (if want > m.piece.x then 1 else -1) m
+        in
+        if m1.piece.x == m.piece.x then
+            m
+
+        else
+            shiftTo want m1
+
+
+-- The tap slop is a third of a cell: enough to forgive the wobble every real
+-- finger has, far short of a deliberate slide.
+lifted : Layout -> Drag -> Model -> Model
+lifted lay d m =
+    let
+        m1 = { m | drag = Nothing }
+    in
+    if not d.fired && d.travel * 3 < lay.cell then
+        press (if d.multi then Keyboard.KeyZ else Keyboard.ArrowUp) m1
+
+    else
+        m1

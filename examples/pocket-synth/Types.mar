@@ -1,0 +1,81 @@
+module Types exposing (..)
+
+-- The patch a sound is made of, the presets that ship with it, and the model
+-- the panel edits. Held apart from behaviour so every other module can import
+-- the vocabulary without importing the machine.
+
+import Keyboard
+
+
+
+
+
+
+
+
+iclamp : Int -> Int -> Int -> Int
+iclamp lo hi n =
+    max lo (min hi n)
+
+
+
+
+type alias Patch =
+    { wave : Int        -- 0 square, 1 triangle, 2 sawtooth, 3 noise
+    , duty : Int        -- square pulse width %, 5..95
+    , oct : Int         -- keyboard transpose, -2..2
+    , det : Int         -- ensemble detune, 0..30 (per-mille of pitch)
+    , sub : Bool        -- sub-octave triangle layer
+    , len : Int         -- note length ms, 80..1600 (arp on: also the step speed)
+    , bend : Int        -- pitch bend %, -90..90 (0 = none)
+    , vibD : Int        -- LFO depth in cents, 0..80
+    , vibR : Int        -- LFO rate in Hz, 1..12
+    , arp : Int         -- 0 off, 1 up-maj, 2 up-min, 3 up/down, 4 octaves, 5 maj7
+    , vol : Int         -- 10..80
+    , struck : Bool     -- True: hammer-struck (piano), bright attack + a body that decays
+    , sustain : Bool    -- True: sounds while HELD (loop); False: rings once then decays (piano)
+    , glide : Bool      -- True: ONE monophonic voice that slides between notes (see glideActive)
+    , lowCut : Int      -- Sound.lowCut Hz, 0 = off: trims rumble below it
+    , highCut : Int     -- Sound.highCut Hz, 0 = off, trims fizz above it: the patch's TONE
+    }
+
+
+type alias Preset =
+    { name : String, patch : Patch }
+
+
+
+
+type alias Pointer =
+    { id : Int, x : Int, y : Int }
+
+
+-- No "current preset" field. Which preset is lit is DERIVED from the patch
+-- (selectedPreset), so the row cannot claim GRAND while the patch is something
+-- else. Tapping a preset only loads its values; the moment you change one, the
+-- lit button goes out on its own and the panel is simply showing a patch that
+-- belongs to nobody.
+type alias Model =
+    { w : Int
+    , h : Int
+    , patch : Patch
+    , keys : List Keyboard.Key   -- keys held on the computer keyboard (the mirror)
+    , pointers : List Pointer    -- every finger on the canvas (the mirror): one
+                                 -- note per finger over a key = polyphony, and a
+                                 -- finger sliding bends its own note = glissando
+    , dragCtl : Int              -- slider being dragged, -1 = none
+    , glideTo : Int              -- which held note GLIDE follows, -1 = none (see retarget)
+    }
+
+
+type Msg
+    = Resized Int Int
+    | Tapped Int Int
+    | Dragged Int Int
+    | Released Int Int
+    | KeysChanged { down : List Keyboard.Key }
+    | PointersChanged (List Pointer)
+
+
+type alias Rect2 =
+    { x : Int, y : Int, w : Int, h : Int }

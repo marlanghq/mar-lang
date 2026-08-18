@@ -1,0 +1,138 @@
+module Types exposing (..)
+
+-- The vocabulary of the race: what mode we are in, what a rival is, what the
+-- model holds. No behaviour, so anything may import it.
+
+
+
+
+
+type Mode
+    = Title
+    | Race
+    | Over
+
+
+type Cue
+    = CueLight
+    | CueGo
+    | CueCrash
+    | CueSkid
+    | CueWhoosh
+    | CueScreech
+    | CueCheck
+    | CueYear
+    | CueBeep
+    | CueOver
+
+
+type alias Rival =
+    { z : Int                -- absolute world z
+    , x : Int                -- lane offset, world units (-720..720)
+    , spd : Int              -- world units per tick (x2 scale, see step)
+    , kind : Int             -- 0..2 body colour
+    , counted : Bool         -- already counted as passed
+    }
+
+
+type alias Model =
+    { w : Int
+    , h : Int
+    , mode : Mode
+    , tick : Int
+    , seed : Random.Seed
+    , year : Int
+    , phaseIx : Int
+    , camZ : Int
+    , phaseStartZ : Int
+    , timeLeft : Int         -- ms
+    , countT : Int           -- start-light countdown ticks (0 = racing)
+    , rev : Int              -- neutral rev on the grid (0..100), follows the throttle blip
+    , goT : Int              -- ticks the green "GO" lights stay lit after the start
+    , speed : Int
+    , playerX : Int          -- world units
+    , playerVx : Int
+    , leftK : Bool
+    , rightK : Bool
+    , gasK : Bool
+    , brakeK : Bool
+    , keysDown : List Keyboard.Key   -- whole held set (Keyboard.watch); diffed for press edges
+    , padLeft : Bool
+    , padRight : Bool
+    , padGas : Bool
+    , padBrake : Bool
+    , padX : Int             -- analog stick -100..100
+    , padDown : List Gamepad.Button  -- whole held set (Gamepad.watch); diffed for press edges
+    , touching : Bool        -- a finger is on the steer pad
+    , touchX : Int           -- world-space steer target while touching
+    , tGas : Bool            -- touch: gas pedal held
+    , tBrake : Bool          -- touch: brake pedal held
+    , dev : Maybe Device     -- live device capabilities (Device.watch); pads show on touch-only hardware
+    , curve : Int            -- current bend (-99..99)
+    , curveTarget : Int
+    , nextCurveAt : Int      -- camZ at which to roll a new bend
+    , nextSpawnAt : Int
+    , rivals : List Rival
+    , passed : Int
+    , crashT : Int           -- ticks of post-crash flash / immunity
+    , slipT : Int            -- grip-slip timer: rises while fast in a sharp curve
+    , mtnOff : Int           -- mountain parallax offset (px, wraps)
+    , bannerT : Int
+    , bannerTop : String
+    , bannerBot : String
+    , lastWarnSec : Int
+    , muted : Bool
+    , sfx : List Cue
+    }
+
+
+
+
+type Msg
+    = Resized Int Int
+    | Tick
+    | Tapped Int Int
+    | Dragged Int Int
+    | Released Int Int
+    | KeysChanged { down : List Keyboard.Key }
+    | PadChanged { connected : Bool, leftX : Int, leftY : Int, rightX : Int, rightY : Int, down : List Gamepad.Button }
+    | DeviceChanged Device
+
+
+-- --- touch controls: analog STEER pad (left) + GAS / BRAKE pedals (right) ---
+-- The runtime gives us one (x,y) stream per finger but no pointer id, so we route
+-- each touch by WHERE it lands: a press/drag in a pad sets that control. Two
+-- thumbs work because they sit in different zones. A release clears whichever
+-- HALF of the screen it lifted from (each thumb owns a half → unambiguous in
+-- practice). Steering is DECOUPLED from the throttle: you can turn while
+-- coasting or braking.
+--
+-- The pads live in SCREEN space, in the LETTERBOX around the picture, never
+-- on top of the game. Wide side bezels (landscape phone) put the steer pad in
+-- the left bezel and the pedals in the right one; a tall bottom bezel
+-- (portrait) puts a control row under the picture; only when the window has
+-- no spare room (small desktop window) do compact pads fall back onto the
+-- picture's lower corners.
+
+
+type alias PRect =
+    { x : Int, y : Int, w : Int, h : Int }
+
+
+
+
+type alias Layout =
+    { scale : Int, ox : Int, oy : Int }
+
+
+-- Per-strip geometry (screen y, world-z, half-width, i squared) is a pure
+-- function of the strip INDEX, it carries no model state, so the whole
+-- 64-entry table is built ONCE at load rather than recomputing stripY / zOf /
+-- halfWPx / i*i for every strip every frame (zOf and halfWPx each cost a
+-- divide; that was ~128 divides a frame doing identical work). The road loop
+-- maps over this table; only the two model-dependent bits (band from camZ, the
+-- bend from curve) are computed per frame. Model-independent, so it's safe as a
+-- top-level value (nstrips is defined far above; stripY/zOf/halfWPx are
+-- functions, immune to the top-level eval-order trap).
+type alias StripCell =
+    { y : Int, z : Int, hw : Int, isq : Int }

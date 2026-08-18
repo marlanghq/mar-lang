@@ -1,0 +1,297 @@
+module Balance exposing (..)
+
+-- Every tuned number: the fixed-point unit, the frame rate, how deep the tube
+-- goes, how fast each foe climbs, how often you may fire, how long the attract
+-- mode runs.
+
+import Types exposing (..)
+
+
+
+
+
+-- Everything scaled lives in units of `one`. A "unit vector" is 1024 long, a
+-- depth of `zFar` is the far end of the well, and a multiply-then-divide by
+-- `one` is how any two scaled numbers combine.
+one : Int
+one = 1024
+
+
+fps : Int
+fps = 60
+
+
+-- A web is a rim: a list of points in web space, where the radius is `webR`.
+-- Consecutive points bound a LANE, which is the whole coordinate system of
+-- the game: every enemy and every shot lives in some lane at some depth.
+--
+-- A closed web wraps (lane N-1 borders lane 0) and you can walk it forever;
+-- an open one has two ends you cannot walk past. That difference is one
+-- boolean here and it changes how a level plays more than the shape does.
+
+
+webR : Int
+webR = 1000
+
+
+-- `camD` is how far the eye sits from the rim, in the same units as depth.
+-- Small values give a violent, wide-angle well; large ones flatten it toward
+-- an orthographic ring. This number is the single biggest lever on how the
+-- game feels, which is why it is named and not inlined.
+--
+-- It started at 340, which put the far end at a quarter of the rim's size and
+-- made the well read as a shallow dish rather than a shaft. At 200 the far
+-- end is a sixth, the lane walls converge hard, and there is visibly a long
+-- way for something to come from, which is the point, because that distance
+-- is the only warning the game gives you.
+
+
+camD : Int
+camD = 200
+
+
+zFar : Int
+zFar = 1000
+
+
+-- ON THE RIM.
+--
+-- Something that gets all the way up does NOT end your run on the spot. It
+-- takes the rim and comes along it for you, which is the best thing in this
+-- game to watch and the thing you actually play against, and it costs a life
+-- only if it reaches you.
+--
+-- What that needs, and what it did not have, is an ending. A rim-walker moves
+-- slower than you do, so a player who keeps running is never caught; and you
+-- cannot shoot one either, because a shot goes down the lane you are standing
+-- in and standing in its lane is how you die. So it sat there, immortal, and
+-- a level only clears when the well is empty: the round could not end. I fixed
+-- that by making arrival itself fatal, which did stop the deadlock and threw
+-- away the chase to do it.
+--
+-- The fuse is what lets both be true. It has a few seconds up here and then it
+-- burns out, so the well always empties on its own and the chase is still a
+-- chase. Running away works. Standing still is what costs you.
+rimStay : Int
+rimStay = 260
+
+
+-- Frames per lane while it walks the rim. Four times your own, so getting
+-- clear is meant to work.
+rimPeriod : Int
+rimPeriod = 16
+
+
+-- Depth at which a thing counts as having arrived.
+rimDepth : Int
+rimDepth = 24
+
+
+
+
+-- HOLDING FIRES, AND THE CEILING IS EIGHT.
+--
+-- Which is the arcade's answer, and it is a better one than a slow trigger.
+-- There, holding the button fires continuously and you get eight shots in the
+-- air, no more; players who know the game tap instead, not because tapping is
+-- faster but because holding empties the allowance and leaves you with nothing
+-- in hand when something surfaces on top of you. The limit is a QUANTITY you
+-- are spending, not a speed you are waiting on.
+--
+-- So both are here. Holding gives you a steady stream off `fireEvery`; a tap
+-- fires the instant you press, so a fast finger still beats the stream and
+-- runs into the ceiling instead. `held` reads the keyboard and the touch pad
+-- through the same list, so there is one rule and not one per device: the
+-- two used to disagree, with the pad auto-firing off the global frame counter
+-- and the key firing only on the press edge.
+maxShots : Int
+maxShots = 8
+
+
+-- Frames between shots while the button is DOWN. A shot clears the well in
+-- about 22 frames, so this is roughly two in flight at a time: a stream, but
+-- one you can still see the end of.
+fireEvery : Int
+fireEvery = 12
+
+
+shotSpeed : Int
+shotSpeed = 46
+
+
+-- Holding a direction walks the rim at a fixed rate. The rate is in FRAMES
+-- per lane rather than lanes per frame so it is the same on every web: a
+-- sixteen-lane ring and a twelve-lane one take the same time to cross a lane,
+-- not the same time to cross the whole shape.
+walkFrames : Int
+walkFrames = 4
+
+
+-- Frames per lane at the slowest and fastest the stick will go. The slow end
+-- is deliberately slower than the keyboard: a key has one speed and you pick
+-- your moment, while a stick lets you creep one lane over without committing,
+-- which is the thing a pair of buttons could never do.
+stickSlow : Int
+stickSlow = 15
+
+
+stickFast : Int
+stickFast = 3
+
+
+
+
+hitRange : Int
+hitRange = 46
+
+
+-- Everything the game asks of you is in these numbers. Deep in the well it
+-- mostly climbs, drifting a lane now and then in a direction of its own that
+-- has nothing to do with you: far enough away to be a shape you can lead, and
+-- slow enough to be worth aiming at. The hunt only starts near the rim, which
+-- is why the last stretch of a lane is the frightening part rather than all
+-- of it. The first two levels have no drift at all: meeting one that comes
+-- straight at you is how you learn what a lane is.
+
+
+foeInk : Kind -> { r : Int, g : Int, b : Int }
+foeInk kind =
+    case kind of
+        Flipper -> { r = 255, g = 80, b = 90 }
+        Tanker -> { r = 255, g = 190, b = 70 }
+
+
+-- The radius an enemy is drawn at, in WELL units, through both factors like
+-- everything else. The explosion reads off this too, so the two can never
+-- drift apart.
+foeR : Int
+foeR = 109
+
+
+-- HOW BIG A KILL IS.
+--
+-- Sized off `foeR` rather than off a number of its own, because a burst is the
+-- thing that died coming apart: it has to read against the SHAPE, not against
+-- the screen. Left to its own numbers it drifted to nearly nine times the
+-- creature by the end of its life, which is not an explosion, it is a wipe:
+-- the burst covered the lanes either side of it, so you could not see what was
+-- climbing next in the exact moment you had just made room to look.
+--
+-- It starts INSIDE the outline and tops out near four times it. Both ends
+-- matter: starting smaller than the shape is what makes the first frame look
+-- like the creature bursting rather than a circle appearing over it.
+sparkR0 : Int
+sparkR0 = foeR * 55 // 100
+
+
+sparkGrow : Int
+sparkGrow = 16
+
+
+-- How long the well takes to cross is the difficulty dial. Three units a
+-- frame is about five and a half seconds at the start: long enough to pick
+-- which lane deserves the shot, short enough that ignoring one costs you.
+foeSpeed : Kind -> Int -> Int
+foeSpeed kind level =
+    case kind of
+        Flipper -> 3 + level // 4
+        -- slower, because the threat is not that it arrives, it is what it
+        -- leaves behind when it does not
+        Tanker -> 2 + level // 5
+
+
+-- Where the well changes character. Past this the flipping is fast, aimless
+-- and far away; inside it the flipping is slow, aimed at you, and worth
+-- reading. The threat near the rim is that it ARRIVES, not that it is
+-- unpredictable, so the last stretch is deliberately the calm one.
+huntDepth : Int
+huntDepth = 300
+
+
+
+
+-- How many the level sends, how many can be in the well at once, and how
+-- often one arrives. Three numbers, and between them they are the entire
+-- difficulty curve.
+quota : Int -> Int
+quota level =
+    10 + level * 2
+
+
+-- How many may be in the well at once. One fewer than it was through the
+-- early levels, where the well filling up is what makes a shape unreadable
+-- before you have learned it; the ceiling means the late game is unchanged.
+waveSize : Int -> Int
+waveSize level =
+    min 10 (3 + level)
+
+
+-- The title screen is the game playing itself, which is what an arcade
+-- cabinet did with the minute nobody was holding it: a demo pilot walks the
+-- rim and shoots, on a well that changes shape every few seconds so you see
+-- there is more than one. It costs almost nothing because every part of it
+-- already exists, same tick, same enemy, same camera, with the keyboard
+-- swapped for a small pilot and lives swapped for nothing at all.
+--
+-- It also means the camera on the title moves for exactly the reason it moves
+-- in play: someone is walking.
+
+
+attractWebFrames : Int
+attractWebFrames = 60 * 7
+
+
+-- The pilot walks to whatever is closest to getting out, and shoots it.
+--
+-- It fires when it is ON the target's lane, not on a timer, and that is the
+-- whole difference between a demo that looks like someone playing and one
+-- that looks like someone walking into things. Firing by clock sends the
+-- shots down whichever lane the claw is crossing at the time, so the enemy it
+-- is walking toward arrives untouched and bursts on top of it, which is
+-- exactly what it looked like.
+--
+-- There was also a slow cadence here, put in when the attract well kept going
+-- empty. That was the wrong fix for the wrong cause: the well emptied because
+-- the level's quota ran out, which `attractStep` tops up now. The slow pilot
+-- outlived the problem it was invented for, and left a demo that could not
+-- defend itself.
+attractFireEvery : Int
+attractFireEvery = 10
+
+
+-- The dive. `camZ` walks from zero to past the far end and the perspective
+-- does the rest: the rim swells past the edges of the screen, the far end
+-- rushes up, and the next web is waiting on the other side. It is the one
+-- moment the camera gets to show what it is.
+warpSpeed : Int
+warpSpeed = 13
+
+
+skyCount : Int
+skyCount = 120
+
+
+-- A star's life measured in depth, and how much of it goes by each frame. The
+-- cycle overshoots `zFar` on purpose: a star that stopped at the rim would
+-- wink out mid-screen, so it keeps coming until it is past the edge.
+skyCycle : Int
+skyCycle = 1200
+
+
+skySpeed : Int
+skySpeed = 5
+
+
+skyFade : Int
+skyFade = 300
+
+
+-- Frames between one ring of the web going out and the next, and frames for
+-- one of them to fade. Sixteen lanes is eight rings from the far side, so the
+-- whole sweep runs about 70 frames.
+outStep : Int
+outStep = 6
+
+
+outFade : Int
+outFade = 22

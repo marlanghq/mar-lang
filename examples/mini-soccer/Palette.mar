@@ -1,0 +1,103 @@
+module Palette exposing (..)
+
+-- The Master System palette: bright kits over low-contrast mowed grass.
+
+import Canvas exposing ( rgb )
+
+
+
+
+grassA : Color                    -- pitch stripe A (lighter mow)
+grassA = rgb 56 132 52
+
+
+grassB : Color                    -- pitch stripe B (darker mow)
+grassB = rgb 46 116 44
+
+
+shadowC : Color                   -- flat drop shadow under a sprite / the ball
+shadowC = rgb 34 92 36
+
+
+lineWhite : Color
+lineWhite = rgb 232 240 224
+
+
+ink : Color                       -- near-black sprite + text outline
+ink = rgb 18 18 26
+
+
+netGray : Color
+netGray = rgb 178 190 178
+
+
+netLine : Color
+netLine = rgb 120 138 120
+
+
+blueKit : Color
+blueKit = rgb 48 96 232
+
+
+blueTrim : Color
+blueTrim = rgb 24 52 160
+
+
+redKit : Color
+redKit = rgb 228 56 48
+
+
+redTrim : Color
+redTrim = rgb 152 28 24
+
+
+gkAmber : Color                   -- blue team's keeper
+gkAmber = rgb 240 200 40
+
+
+gkTeal : Color                    -- red team's keeper
+gkTeal = rgb 32 196 140
+
+
+skinC : Color
+skinC = rgb 248 200 152
+
+
+skinShade : Color                 -- shaded side of skin (face / arms)
+skinShade = rgb 214 158 116
+
+
+ballWhite : Color
+ballWhite = rgb 248 248 236
+
+
+ballInk : Color
+ballInk = rgb 24 24 32
+
+
+hudAmber : Color                  -- pixel HUD + title text
+hudAmber = rgb 248 216 72
+
+
+hudGlow1 : Color                  -- title shimmer, mid
+hudGlow1 = rgb 255 236 128
+
+
+hudGlow2 : Color                  -- title shimmer, bright
+hudGlow2 = rgb 255 250 200
+
+
+hudDim : Color
+hudDim = rgb 150 156 116
+
+
+panelBlack : Color
+panelBlack = rgb 16 16 24
+
+
+btnBg : Color                     -- touch-control fill: a slate that stands out on the dark bezel
+btnBg = rgb 56 62 82
+
+
+bgBorder : Color                  -- letterbox bezel around the playfield
+bgBorder = rgb 8 12 16

@@ -1,0 +1,498 @@
+module Panel exposing (..)
+
+-- Where every control physically IS: the rows of the panel, the sliders, the
+-- toggles and the two octaves of keys. One module owns the geometry, so
+-- drawing a control and hit-testing a touch can never disagree about where it
+-- sits -- they read the same rectangle.
+
+import Types exposing (..)
+import Keyboard
+
+
+-- Reflow: everything hangs off w/h. Rows: header, presets, panel, keyboard.
+
+
+-- the title bar is decoration, and on a landscape phone (~338px of viewport)
+-- it costs a seventh of the whole screen while the keyboard starves. Drop it
+-- there: the live preset is already spelled out, highlighted, in the preset
+-- row right below. Portrait has the room, so it keeps the title.
+headerH : Model -> Int
+headerH m =
+    if isShort m then 0 else 42
+
+
+-- iPhone-14 landscape (~390 tall) is "short": collapse the preset grid to one
+-- wide row so the keyboard still fits on screen. Portrait (~844) keeps two rows.
+isShort : Model -> Bool
+isShort m =
+    m.h < 520
+
+
+-- a phone in PORTRAIT is narrow: the panel's three columns are ~110px each,
+-- far too tight for the OCT / SUB / ARP button row (which needs ~190px). On a
+-- narrow screen that row moves to its own full-width line under the columns,
+-- where 366px is plenty. Without this the SUB button is clipped by the screen
+-- edge and ARP is drawn entirely off-canvas.
+isNarrow : Model -> Bool
+isNarrow m =
+    m.w < 520
+
+
+presetCols : Model -> Int
+presetCols m =
+    if isShort m then 12 else 6
+
+
+-- Preset buttons are 34 tall on a 40 pitch (was 40 on 46). They are labels you
+-- tap, not primary actions, and the height they give back goes to the keyboard.
+presetRowH : Model -> Int
+presetRowH m =
+    if isShort m then 40 else 88
+
+
+-- panel control rows are tighter on a short screen, to claw back vertical space
+-- for the keyboard (landscape phones have very little height to spare).
+panelRowH : Model -> Int
+panelRowH m =
+    if isShort m then 33 else 36
+
+
+panelH : Model -> Int
+panelH m =
+    -- narrow needs no extra height: its button row sits one row lower but the
+    -- wide layout's 168 already reaches past it.
+    if isShort m then 130 else 168
+
+
+-- the panel ends here; the keyboard gets whatever vertical space is left. On a
+-- short screen the panel packs tight and the bottom gaps shrink, so even iOS
+-- Safari's ~338px landscape viewport leaves a usable keyboard.
+panelBottom : Model -> Int
+panelBottom m =
+    headerH m + presetRowH m + panelH m + (if isShort m then 8 else 18)
+
+
+-- keyboard height: fill the leftover space, but CAP it so 14 narrow keys never
+-- stretch into tall slivers (the portrait problem), and floor it so they stay
+-- tappable (landscape). The cap is an ASPECT ratio, so it has to suit the
+-- narrowest case: on a phone a white key is only ~26px wide, where 9x that was
+-- a 9:1 sliver. 6x is about a real piano's proportion. On a wide screen `avail`
+-- binds first, so this changes nothing there.
+keyH : Model -> Int
+keyH m =
+    let
+        avail = m.h - panelBottom m - (if isShort m then 10 else 14)
+    in
+    max 72 (min avail (whiteW m * 6))
+
+
+-- the keyboard sits on the BOTTOM edge, under the thumbs. Capping the height
+-- leaves slack on a tall portrait screen, and hanging the keys straight under
+-- the panel would spend all of it as dead space below them.
+kbTop : Model -> Int
+kbTop m =
+    max (panelBottom m) (m.h - keyH m - (if isShort m then 10 else 14))
+
+
+inR : Int -> Int -> Rect2 -> Bool
+inR px py r =
+    px >= r.x && px <= r.x + r.w && py >= r.y && py <= r.y + r.h
+
+
+presetRect : Model -> Int -> Rect2
+presetRect m i =
+    let
+        cols = presetCols m
+        gap = 6
+        row = i // cols
+        col = i - row * cols
+        cw = (m.w - 24 - gap * (cols - 1)) // cols
+        x = 12 + col * (cw + gap)
+        y = headerH m + 8 + row * 40
+    in
+    { x = x, y = y, w = cw, h = 34 }
+
+
+-- panel geometry: three columns of controls
+colX : Model -> Int -> Int
+colX m c =
+    12 + c * ((m.w - 24) // 3 + 4)
+
+
+colW : Model -> Int
+colW m =
+    (m.w - 24) // 3 - 8
+
+
+-- sliders (id: 0 pulse, 1 ensemble, 2 length, 3 bend, 4 lfo depth, 5 lfo rate, 6 volume)
+sliderRect : Model -> Int -> Rect2
+sliderRect m id =
+    let
+        y0 = headerH m + presetRowH m + 10
+        rowH = panelRowH m
+    in
+    if id == 0 then { x = colX m 0 + 8, y = y0 + rowH + 26, w = colW m - 16, h = 22 }
+    else if id == 1 then { x = colX m 0 + 8, y = y0 + rowH * 2 + 26, w = colW m - 16, h = 22 }
+    else if id == 2 then { x = colX m 1 + 8, y = y0 + 26, w = colW m - 16, h = 22 }
+    else if id == 3 then { x = colX m 1 + 8, y = y0 + rowH + 26, w = colW m - 16, h = 22 }
+    else if id == 4 then { x = colX m 2 + 8, y = y0 + 26, w = colW m - 16, h = 22 }
+    else if id == 5 then { x = colX m 2 + 8, y = y0 + rowH + 26, w = colW m - 16, h = 22 }
+    else { x = colX m 1 + 8, y = y0 + rowH * 2 + 26, w = colW m - 16, h = 22 }
+
+
+sliderRange : Int -> { lo : Int, hi : Int }
+sliderRange id =
+    if id == 0 then { lo = 5, hi = 95 }
+    else if id == 1 then { lo = 0, hi = 30 }
+    else if id == 2 then { lo = 80, hi = 1600 }
+    else if id == 3 then { lo = 0 - 90, hi = 90 }
+    else if id == 4 then { lo = 0, hi = 80 }
+    else if id == 5 then { lo = 1, hi = 12 }
+    else { lo = 10, hi = 80 }
+
+
+sliderGet : Patch -> Int -> Int
+sliderGet p id =
+    if id == 0 then p.duty
+    else if id == 1 then p.det
+    else if id == 2 then p.len
+    else if id == 3 then p.bend
+    else if id == 4 then p.vibD
+    else if id == 5 then p.vibR
+    else p.vol
+
+
+sliderSet : Int -> Int -> Patch -> Patch
+sliderSet id v p =
+    if id == 0 then { p | duty = v }
+    else if id == 1 then { p | det = v }
+    else if id == 2 then { p | len = v }
+    else if id == 3 then { p | bend = v }
+    else if id == 4 then { p | vibD = v }
+    else if id == 5 then { p | vibR = v }
+    else { p | vol = v }
+
+
+sliderName : Int -> String
+sliderName id =
+    if id == 0 then "PULSE"
+    else if id == 1 then "ENSEMBLE"
+    else if id == 2 then "LENGTH"
+    else if id == 3 then "BEND"
+    else if id == 4 then "LFO DEPTH"
+    else if id == 5 then "LFO RATE"
+    else "VOLUME"
+
+
+sliderIds : List Int
+sliderIds =
+    [ 0, 1, 2, 3, 4, 5, 6 ]
+
+
+-- Which sliders actually reach the sound right now. One that moves, changes its
+-- number, and changes nothing is the panel lying, so the dead ones are drawn dim
+-- and ignore taps.
+--
+-- The three gaps are not the same kind of gap, and it is worth keeping them
+-- straight:
+--
+--   PULSE off a square wave  - CANNOT work. Pulse width is the on/off ratio of a
+--     square's cycle; a triangle or a sawtooth has no such thing to set. Nothing
+--     to wire, now or ever.
+--   Anything under ARP       - STRUCTURAL. The arpeggiator replaces the note with
+--     a run of short steps, so the modifiers that shape ONE note have no note to
+--     shape. SUB is the exception and is wired (see buildNote).
+--   The LFO under STRUCK     - a DECISION. Sound.vibrato wobbles the PITCH, and a
+--     struck note with a wobbling pitch reads as warped tape, not as an electric
+--     piano. The Rhodes sound people expect is TREMOLO, amplitude, not pitch:
+--     which the Sound module does not have. Rather than wire an effect that is
+--     not the one this control implies, it stays off here.
+sliderActive : Patch -> Int -> Bool
+sliderActive p id =
+    if id == 0 then p.wave == 0
+    else if id == 1 then p.arp == 0
+    else if id == 3 then p.arp == 0
+    else if id == 4 then p.arp == 0 && p.struck == False
+    else if id == 5 then p.arp == 0 && p.struck == False
+    else True
+
+
+-- VOICE: what the note DOES over time. Two independent switches in the patch:
+-- `struck` picks the synthesis (hammered layers that decay, or a plain
+-- oscillator) and `sustain` picks the lifetime (loops while held, or rings once)
+--, but a player hears one decision, so they ride one button.
+--
+-- They rode NO button until now, and that was the bug: a preset could set them,
+-- the panel could not, so GRAND (struck, rings once) and ORGAN (plain, held)
+-- were islands. No sequence of taps got you from one to the other. A preset has
+-- to be a place you could have walked to yourself, or it is not a preset, it is
+-- a mode.
+--
+-- Encoded 2*struck + sustain, so all four combinations are reachable, including
+-- the one no preset uses (hammered AND held = a note that re-strikes while you
+-- hold it, a mandolin roll).
+voiceMode : Patch -> Int
+voiceMode p =
+    (if p.struck then 2 else 0) + (if p.sustain then 1 else 0)
+
+
+-- The label offers only what the current mode can actually do.
+--
+-- With the arpeggiator on, buildNote never reads `struck`: the run of steps
+-- REPLACES the note that flag would have shaped. Only the sustain half survives,
+-- because it is read somewhere else entirely (heldSound picks Sound.loop or
+-- Sound.once around whatever buildNote returned). So four labels would collapse
+-- to two behaviours: PLUCK and STRUCK would sound identical, HELD and ROLL too.
+--
+-- Rather than let the button lie, it offers two states there. Nothing is blocked
+-- and nothing is lost: `struck` keeps its stored value, quietly, and comes back
+-- the moment ARP goes off, so trying an arpeggio does not cost you the hammer
+-- you had picked.
+voiceLabel : Patch -> String
+voiceLabel p =
+    if p.arp > 0 then
+        if p.sustain then "HELD" else "PLUCK"
+
+    else if p.struck then
+        if p.sustain then "ROLL" else "STRUCK"
+
+    else if p.sustain then
+        "HELD"
+
+    else
+        "PLUCK"
+
+
+-- Tapping VOICE: the full four-way cycle normally, and just the sustain flip
+-- while the arpeggiator is on: the two states the label is showing.
+nextVoice : Patch -> Patch
+nextVoice p =
+    if p.arp > 0 then
+        { p | sustain = p.sustain == False }
+
+    else
+        setVoiceMode (if voiceMode p >= 3 then 0 else voiceMode p + 1) p
+
+
+setVoiceMode : Int -> Patch -> Patch
+setVoiceMode mode p =
+    { p | struck = mode >= 2, sustain = mode == 1 || mode == 3 }
+
+
+-- wave buttons live in column 0, row 0
+waveRect : Model -> Int -> Rect2
+waveRect m i =
+    let
+        y0 = headerH m + presetRowH m + 10
+        bw = (colW m - 8 - 18) // 4
+    in
+    { x = colX m 0 + 8 + i * (bw + 6), y = y0 + 2, w = bw, h = 26 }
+
+
+-- octave / sub / arp buttons live in column 2, bottom row (aligned with row 2)
+octRowY : Model -> Int
+octRowY m =
+    if isNarrow m then
+        -- its own line, below all three columns
+        headerH m + presetRowH m + 10 + panelRowH m * 3 + 16
+    else
+        headerH m + presetRowH m + 10 + panelRowH m * 2 + 28
+
+
+octDownRect : Model -> Rect2
+octDownRect m =
+    if isNarrow m then { x = 12, y = octRowY m, w = 40, h = 26 }
+    else { x = colX m 2 + 8, y = octRowY m, w = 34, h = 26 }
+
+
+octUpRect : Model -> Rect2
+octUpRect m =
+    if isNarrow m then { x = 12 + 44, y = octRowY m, w = 40, h = 26 }
+    else { x = colX m 2 + 8 + 38, y = octRowY m, w = 34, h = 26 }
+
+
+subRect : Model -> Rect2
+subRect m =
+    if isNarrow m then { x = 12 + 88, y = octRowY m, w = 46, h = 26 }
+    else { x = colX m 2 + 8 + 86, y = octRowY m, w = 44, h = 26 }
+
+
+voiceRect : Model -> Rect2
+voiceRect m =
+    if isNarrow m then { x = 12 + 138, y = octRowY m, w = 62, h = 26 }
+    else { x = colX m 2 + 8 + 138, y = octRowY m, w = 68, h = 26 }
+
+
+glideRect : Model -> Rect2
+glideRect m =
+    if isNarrow m then { x = 12 + 204, y = octRowY m, w = 52, h = 26 }
+    else { x = colX m 2 + 8 + 214, y = octRowY m, w = 52, h = 26 }
+
+
+-- ARP takes whatever is left of the row, so its label always has room.
+arpRect : Model -> Rect2
+arpRect m =
+    if isNarrow m then { x = 12 + 260, y = octRowY m, w = max 52 (m.w - 12 - (12 + 260)), h = 26 }
+    else { x = colX m 2 + 8 + 270, y = octRowY m, w = max 52 (colW m - 286), h = 26 }
+
+
+-- 14 white keys (C3..B4). Black keys sit on the boundary between whites.
+
+
+whiteSemis : List Int
+whiteSemis =
+    [ 0, 2, 4, 5, 7, 9, 11, 12, 14, 16, 17, 19, 21, 23 ]
+
+
+-- black key: (semitone, index of the white key to its LEFT)
+blackSemis : List { semi : Int, after : Int }
+blackSemis =
+    [ { semi = 1, after = 0 }
+    , { semi = 3, after = 1 }
+    , { semi = 6, after = 3 }
+    , { semi = 8, after = 4 }
+    , { semi = 10, after = 5 }
+    , { semi = 13, after = 7 }
+    , { semi = 15, after = 8 }
+    , { semi = 18, after = 10 }
+    , { semi = 20, after = 11 }
+    , { semi = 22, after = 12 }
+    ]
+
+
+-- On a narrow phone the keyboard drops to ONE octave: 7 white keys at ~52px
+-- instead of 14 at ~26px. Half a fingertip is not a key. Nothing becomes
+-- unreachable, because OCT -/+ already transposes the whole instrument (and
+-- the computer keyboard still spans both octaves on a machine that has one).
+whiteCount : Model -> Int
+whiteCount m =
+    if isNarrow m then 7 else 14
+
+
+visibleWhites : Model -> List Int
+visibleWhites m =
+    List.take (whiteCount m) whiteSemis
+
+
+visibleBlacks : Model -> List { semi : Int, after : Int }
+visibleBlacks m =
+    if isNarrow m then List.take 5 blackSemis else blackSemis
+
+
+whiteW : Model -> Int
+whiteW m =
+    (m.w - 24) // whiteCount m
+
+
+whiteRect : Model -> Int -> Rect2
+whiteRect m i =
+    let
+        top = kbTop m
+    in
+    { x = 12 + i * whiteW m, y = top, w = whiteW m - 2, h = keyH m }
+
+
+-- Black keys are NOT centred on the seam between two whites, which is where a
+-- quick drawing puts them. On a real piano they sit inside their GROUP: C#/D#
+-- share the three whites C-D-E, F#/G#/A# share the four of F-G-A-B: spaced so
+-- the white "tails" left between them all come out the SAME width. That evenness
+-- is the comb the eye recognises as a piano.
+--
+-- Centring on the seam made the tails here alternate 64 and 41 px: C, E, F and B
+-- fat, D, G and A thin, a 56% swing. On a real keyboard the tails land within a
+-- millimetre of each other AND within a millimetre of the black key itself
+-- (~14.4mm and ~13.2mm against a 13.7mm key), which is why the pattern reads as
+-- regular even though the black keys are not evenly spaced.
+--
+-- For a group of n whites carrying n-1 blacks, the k-th black starts at
+--     (k+1) * (n*ww - (n-1)*bw) / n  +  k*bw
+-- from the group's left edge. The multiply happens BEFORE the divide so the
+-- integer rounding does not pile up and leave the last tail short.
+blackRect : Model -> Int -> Rect2
+blackRect m after =
+    let
+        ww = whiteW m
+
+        -- 55% of a white key's width, 52% of its length. A real piano sits at
+        -- ~58% and ~60%, but drawn flat, no bevel, no shadow to slim them:
+        -- black keys read heavier than those numbers suggest, so a touch under
+        -- the acoustic ratio on both axes is what looks right on screen.
+        bw = ww * 55 // 100
+
+        -- where this key falls: which octave, and which of the five slots
+        -- (0 C#, 1 D#, 3 F#, 4 G#, 5 A#)
+        oct = after // 7
+        pos = after - oct * 7
+
+        inCDE = pos <= 1
+        n = if inCDE then 3 else 4
+        k = if inCDE then pos else pos - 3
+
+        groupFirstWhite = oct * 7 + (if inCDE then 0 else 3)
+        groupX = 12 + groupFirstWhite * ww
+    in
+    { x = groupX + ((k + 1) * (n * ww - (n - 1) * bw)) // n + k * bw
+    , y = kbTop m
+    , w = bw
+    , h = keyH m * 52 // 100
+    }
+
+
+-- which key a canvas point lands on (black keys first: they sit on top)
+keyAt : Model -> Int -> Int -> Int
+keyAt m x y =
+    let
+        black =
+            List.head
+                (List.filter (\b -> inR x y (blackRect m b.after)) (visibleBlacks m))
+    in
+    case black of
+        Just b ->
+            b.semi
+
+        Nothing ->
+            let
+                white =
+                    List.head
+                        (List.filter
+                            (\i -> inR x y (whiteRect m i))
+                            (List.range 0 (whiteCount m - 1)))
+            in
+            case white of
+                Just i ->
+                    Maybe.withDefault (0 - 1) (List.head (List.drop i (visibleWhites m)))
+
+                Nothing ->
+                    0 - 1
+
+
+
+
+semiOfKey : Keyboard.Key -> Int
+semiOfKey k =
+    case k of
+        Keyboard.KeyZ -> 0
+        Keyboard.KeyS -> 1
+        Keyboard.KeyX -> 2
+        Keyboard.KeyD -> 3
+        Keyboard.KeyC -> 4
+        Keyboard.KeyV -> 5
+        Keyboard.KeyG -> 6
+        Keyboard.KeyB -> 7
+        Keyboard.KeyH -> 8
+        Keyboard.KeyN -> 9
+        Keyboard.KeyJ -> 10
+        Keyboard.KeyM -> 11
+        Keyboard.KeyQ -> 12
+        Keyboard.Digit2 -> 13
+        Keyboard.KeyW -> 14
+        Keyboard.Digit3 -> 15
+        Keyboard.KeyE -> 16
+        Keyboard.KeyR -> 17
+        Keyboard.Digit5 -> 18
+        Keyboard.KeyT -> 19
+        Keyboard.Digit6 -> 20
+        Keyboard.KeyY -> 21
+        Keyboard.Digit7 -> 22
+        Keyboard.KeyU -> 23
+        _ -> 0 - 1

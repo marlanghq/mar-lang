@@ -1,0 +1,33 @@
+module Camera exposing (..)
+
+-- The projection: a depth becomes a scale, a point on the rim becomes a point
+-- on screen. Everything drawn goes through this.
+
+import Balance exposing (..)
+import Geometry exposing (..)
+import Types exposing (..)
+
+
+-- The perspective factor at depth z: `one` at the rim, shrinking toward the
+-- far end. Everything the projection does is this one hyperbola.
+depthK : Cam -> Int -> Int
+depthK cam z =
+    let
+        d = z - cam.camZ
+    in
+    one * camD // max 40 (camD + d)
+
+
+-- Project a web-space point at depth z onto the screen. The point slides from
+-- its rim position toward the vanishing point as it recedes.
+project : Cam -> Pt -> Int -> Pt
+project cam p z =
+    let
+        k = depthK cam z
+        r = rotate cam.spin p
+        vx = cam.vx
+        vy = cam.vy
+    in
+    { x = cam.cx + (vx + (r.x - vx) * k // one) * cam.scale // one
+    , y = cam.cy + (vy + (r.y - vy) * k // one) * cam.scale // one
+    }

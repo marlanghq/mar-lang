@@ -1,0 +1,297 @@
+module Screens exposing (..)
+
+-- Everything that is not the shooting: title, story, stage intro, stage
+-- clear, death, game over and the ending.
+
+
+import Balance exposing (..)
+import Draw exposing (..)
+import Font exposing (..)
+import Sim exposing (..)
+import Stages exposing (..)
+import Types exposing (..)
+import Canvas exposing ( circle, rect, rgb, triangle )
+
+
+
+
+titleShapes : Model -> List Shape
+titleShapes m =
+    let
+        blink = modBy 60 m.tick < 36
+        bob = if modBy 2 (m.tick // 20) == 0 then 0 else 2
+        stars =
+            List.concat
+                (List.map
+                    (\i ->
+                        [ rect (modBy gameW (i * 89)) (modBy gameH (i * 53 + m.tick // 8)) 2 2 (rgb 120 130 160) ])
+                    (List.range 0 17))
+        touch =
+            case m.dev of
+                Just d -> Device.touchOnly d
+                Nothing -> False
+    in
+    List.concat
+        [ [ rect 0 0 gameW gameH (rgb 14 16 34) ]
+        , stars
+        , -- andes silhouette
+          [ triangle 0 200 90 200 40 150 (rgb 30 34 56)
+          , triangle 60 200 180 200 120 138 (rgb 24 28 48)
+          , triangle 150 200 270 200 210 148 (rgb 30 34 56)
+          , triangle 240 200 340 200 300 156 (rgb 24 28 48)
+          , rect 0 198 gameW 42 (rgb 18 20 38)
+          ]
+        , pixTextC 163 43 4 (rgb 40 24 30) "STAR"
+        , pixTextC 160 40 4 (rgb 240 190 70) "STAR"
+        , pixTextC 163 73 4 (rgb 40 24 30) "CONDOR"
+        , pixTextC 160 70 4 (rgb 235 240 248) "CONDOR"
+        , pixTextC 160 104 1 (rgb 130 140 170) "AN A.L.A.S. MISSION OVER LATIN AMERICA"
+        , -- the Condor, bobbing over the peaks
+          [ triangle 148 (167 + bob) 158 (159 + bob) 158 (167 + bob) (rgb 205 214 228)
+          , triangle 172 (167 + bob) 162 (159 + bob) 162 (167 + bob) (rgb 205 214 228)
+          , rect 148 (165 + bob) 3 2 (rgb 240 190 70)
+          , rect 169 (165 + bob) 3 2 (rgb 240 190 70)
+          , triangle 153 (169 + bob) 158 (165 + bob) 158 (169 + bob) (rgb 160 170 188)
+          , triangle 167 (169 + bob) 162 (165 + bob) 162 (169 + bob) (rgb 160 170 188)
+          , rect 158 (156 + bob) 4 13 (rgb 235 240 248)
+          , triangle 158 (156 + bob) 162 (156 + bob) 160 (151 + bob) (rgb 235 240 248)
+          , rect 159 (153 + bob) 2 3 (rgb 230 60 80)
+          , rect 159 (158 + bob) 2 4 (rgb 70 140 255)
+          , triangle 155 (169 + bob) 158 (169 + bob) 157 (174 + bob) (rgb 255 170 40)
+          , triangle 162 (169 + bob) 165 (169 + bob) 163 (174 + bob) (rgb 255 170 40)
+          ]
+        , if blink then
+            pixTextC 160 214 1 (rgb 235 238 245)
+                (if touch then "TAP TO FLY" else "PRESS SPACE TO FLY")
+          else
+            []
+        , pixTextC 160 228 1 (rgb 96 104 130)
+            (if touch then "DRAG TO MOVE. POP PINATAS FOR POWER." else "ARROWS MOVE. SPACE FIRES. M MUTES.")
+        , if m.hi > 0 then pixTextC 160 128 1 (rgb 240 190 70) ("HI " ++ String.fromInt m.hi) else []
+        , muteIcon m
+        ]
+
+
+-- the opening crawl: the premise the ending pays off
+storyShapes : Model -> List Shape
+storyShapes m =
+    let
+        showLine = \at ln y -> if m.st >= at then pixTextC 160 y 1 (rgb 210 214 226) ln else []
+    in
+    List.concat
+        [ [ rect 0 0 gameW gameH (rgb 8 8 16)
+          , rect 0 52 gameW 2 (rgb 240 190 70)
+          , rect 0 186 gameW 2 (rgb 240 190 70)
+          ]
+        , pixTextC 160 30 2 (rgb 240 190 70) "THE STORY"
+        , showLine 20 "WAR MACHINES OF A FORGOTTEN CENTURY" 70
+        , showLine 20 "ARE WAKING OVER LATIN AMERICA." 82
+        , showLine 60 "TWENTY NATIONS POOLED THEIR ENGINEERS" 104
+        , showLine 60 "INTO A.L.A.S. AND BUILT ONE DEFENDER." 116
+        , showLine 110 "YOU FLY THE CONDOR." 140
+        , showLine 110 "SILENCE THE MACHINES. SPARE THE LAND." 152
+        , if m.st >= holdFor Story && modBy 2 (m.st // 15) == 0 then
+            pixTextC 160 208 1 (rgb 240 190 70) "PRESS FIRE"
+          else
+            []
+        , muteIcon m
+        ]
+
+
+introShapes : Model -> List Shape
+introShapes m =
+    let
+        th = theme m.stage
+    in
+    List.concat
+        [ [ rect 0 0 gameW gameH (rgb 10 10 18)
+          , rect 0 90 gameW 60 th.skyB
+          , rect 0 148 gameW 4 th.acc
+          , rect 0 88 gameW 2 th.acc
+          ]
+        , pixTextC 160 60 2 (rgb 235 238 245) ("STAGE " ++ String.fromInt m.stage)
+        , pixTextC 160 98 1 (rgb 250 235 200) (stagePlace m.stage)
+        , pixTextC 160 114 1 (rgb 196 200 214) (stageDesc1 m.stage)
+        , pixTextC 160 126 1 (rgb 196 200 214) (stageDesc2 m.stage)
+        , -- no timer: the stage waits for the pilot, once the card is read
+          if m.st >= holdFor Intro && modBy 2 (m.st // 15) == 0 then
+            pixTextC 160 172 1 (rgb 240 190 70) "PRESS FIRE TO LAUNCH"
+          else
+            []
+        , muteIcon m
+        ]
+
+
+clearShapes : Model -> List Shape
+clearShapes m =
+    List.concat
+        [ bgShapes m
+        , shipShapes m
+        , [ rect 36 76 248 92 (rgb 10 12 22)
+          , rect 36 76 248 2 (rgb 240 190 70)
+          , rect 36 166 248 2 (rgb 240 190 70)
+          ]
+        , pixTextC 160 88 2 (rgb 240 190 70) "STAGE CLEAR!"
+        , pixTextC 160 112 1 (rgb 235 238 245) ("BONUS " ++ String.fromInt (1500 + m.stage * 500))
+        , pixTextC 160 128 1 (rgb 196 200 214) (stageClear m.stage)
+        , pixTextC 160 142 1 (rgb 130 140 170)
+            (if m.stage >= 10 then "ONE FLIGHT REMAINS..." else "THE CONDOR FLIES ON")
+        , if m.st >= holdFor Clear && modBy 2 (m.st // 15) == 0 then
+            pixTextC 160 178 1 (rgb 240 190 70) "PRESS FIRE"
+          else
+            []
+        , muteIcon m
+        ]
+
+
+-- the story beat after each guardian falls: one hopeful line per region
+stageClear : Int -> String
+stageClear s =
+    case s of
+        1 -> "THE RIVERS RUN FREE. ON TO THE FALLS."
+        2 -> "THE TURBINES SPIN FOR THE CITIES AGAIN."
+        3 -> "THE PAMPAS HARVEST IS SAFE."
+        4 -> "THE GLACIERS SLEEP IN PEACE."
+        5 -> "THE TELESCOPES SEE THE STARS AGAIN."
+        6 -> "THE SALT MIRROR REFLECTS ONLY SKY."
+        7 -> "THE OLD STONES STAND UNBROKEN."
+        8 -> "THE ISLANDS BELONG TO THE CREATURES."
+        9 -> "THE LOCKS OPEN. TRADE FLOWS AGAIN."
+        _ -> "THE LAST MACHINE AWAITS ITS NEW HEART."
+
+
+overShapes : Model -> List Shape
+overShapes m =
+    List.concat
+        [ bgShapes m
+        , [ rect 40 84 240 78 (rgb 10 10 16)
+          , rect 40 84 240 2 (rgb 235 90 80)
+          ]
+        , pixTextC 160 98 2 (rgb 235 90 80) "GAME OVER"
+        , pixTextC 160 122 1 (rgb 235 238 245) ("SCORE " ++ String.fromInt m.score)
+        , pixTextC 160 134 1 (rgb 240 190 70) ("HI " ++ String.fromInt m.hi)
+        , if m.st >= holdFor Over && modBy 2 (m.st // 15) == 0 then
+            pixTextC 160 150 1 (rgb 130 140 170) "PRESS FIRE TO CONTINUE"
+          else
+            []
+        , muteIcon m
+        ]
+
+
+-- the boss's fall: the field is clear, the machine burns and blows apart
+bossFallShapes : Model -> List Shape
+bossFallShapes m =
+    List.concat
+        [ bgShapes m
+        , if modBy 2 (m.st // 4) == 0 then bossShapes m else []
+        , shipShapes m
+        , partShapes m
+        , hudShapes m
+        ]
+
+
+-- the ship's death: a flash, an expanding fireball, debris, then quiet
+dyingShapes : Model -> List Shape
+dyingShapes m =
+    List.concat
+        [ bgShapes m
+        , foeShapes m
+        , wallShapes m
+        , if m.st < 22 then shipShapes m else []
+        , if m.st < 18 then [ circle m.px m.py (6 + m.st * 3) (rgb 255 220 150) ] else []
+        , if m.st >= 6 && m.st < 26 then [ circle m.px m.py (m.st * 3 - 14) (rgb 150 50 34) ] else []
+        , partShapes m
+        , hudShapes m
+        ]
+
+
+-- the finale: sunrise over the continent, the Condor flies home
+endingShapes : Model -> List Shape
+endingShapes m =
+    let
+        t = m.st
+        sun = iclamp 0 70 (t // 6)
+        shipX = modBy (gameW + 120) (t * 2) - 60
+        lines =
+            [ { at = 80, s = "THE RELIC CORE POWERS DOWN." }
+            , { at = 220, s = "THE OLD MACHINE IS NOT DESTROYED." }
+            , { at = 360, s = "A.L.A.S. REWIRES IT TO WATCH THE WEATHER." }
+            , { at = 500, s = "NOW IT WARNS THE HARVESTS AND THE PORTS." }
+            , { at = 660, s = "FROM PATAGONIA TO THE RIO GRANDE" }
+            , { at = 740, s = "THE LIGHTS STAY ON. THE SKY IS OURS." }
+            , { at = 900, s = "ONE SKY. MANY NATIONS. ONE CONDOR." }
+            ]
+        fw =
+            if t > 600 then
+                List.concat
+                    (List.map
+                        (\i ->
+                            let
+                                cx = 40 + modBy 240 (i * 97 + t // 40 * 53)
+                                cy = 30 + modBy 70 (i * 61)
+                                r = modBy 40 (t + i * 17) // 3
+                            in
+                            if r < 10 then
+                                [ circle cx cy r (starColor (modBy 5 i)) ]
+                            else
+                                []
+                        )
+                        (List.range 0 5))
+            else
+                []
+    in
+    List.concat
+        [ [ rect 0 0 gameW 80 (rgb 40 20 60)
+          , rect 0 80 gameW 60 (rgb 120 50 70)
+          , rect 0 140 gameW 40 (rgb 214 120 60)
+          , circle 160 (150 - sun) 18 (rgb 255 220 120)
+          ]
+        , -- the continent, stylized and proud
+          [ rect 0 180 gameW 60 (rgb 16 34 40)
+          , triangle 60 180 130 180 95 150 (rgb 22 46 50)
+          , triangle 110 180 230 180 170 142 (rgb 18 40 46)
+          , triangle 210 180 300 180 255 152 (rgb 22 46 50)
+          , rect 120 196 12 3 (rgb 255 220 120)
+          , rect 200 206 12 3 (rgb 255 220 120)
+          , rect 70 214 12 3 (rgb 255 220 120)
+          , rect 250 190 12 3 (rgb 255 220 120)
+          ]
+        , fw
+        , -- the Condor crossing home
+          [ triangle (shipX - 11) 121 (shipX - 1) 113 (shipX - 1) 121 (rgb 235 240 248)
+          , triangle (shipX + 11) 121 (shipX + 1) 113 (shipX + 1) 121 (rgb 235 240 248)
+          , rect (shipX - 11) 119 3 2 (rgb 240 190 70)
+          , rect (shipX + 8) 119 3 2 (rgb 240 190 70)
+          , rect (shipX - 2) 109 4 13 (rgb 235 240 248)
+          , triangle (shipX - 2) 109 (shipX + 2) 109 shipX 104 (rgb 235 240 248)
+          , rect (shipX - 1) 112 2 4 (rgb 70 140 255)
+          , triangle (shipX - 4) 122 (shipX - 1) 122 (shipX - 2) 127 (rgb 255 170 40)
+          , triangle (shipX + 1) 122 (shipX + 4) 122 (shipX + 3) 127 (rgb 255 170 40)
+          ]
+        , List.concat
+            (List.map
+                (\ln -> if t > ln.at && t < ln.at + 200 then pixTextC 160 54 1 (rgb 250 240 220) ln.s else [])
+                lines)
+        , if t > 1000 then pixTextC 160 90 2 (rgb 240 190 70) "THE END" else []
+        , if t > 1100 && modBy 2 (m.tick // 20) == 0 then
+            pixTextC 160 226 1 (rgb 130 140 170) "PRESS FIRE"
+          else
+            []
+        , muteIcon m
+        ]
+
+
+playShapes : Model -> List Shape
+playShapes m =
+    List.concat
+        [ bgShapes m
+        , wallShapes m
+        , starShapes m
+        , foeShapes m
+        , bossShapes m
+        , bulShapes m
+        , shotShapes m
+        , shipShapes m
+        , partShapes m
+        , hudShapes m
+        ]

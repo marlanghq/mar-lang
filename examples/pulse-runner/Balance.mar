@@ -1,0 +1,111 @@
+module Balance exposing (..)
+
+-- The logical screen, the beat grid, and every tuned constant. The beat grid
+-- is the important one: physics and music are both derived from it, which is
+-- why a jump can land on a note. Also holds the letterbox layout, because
+-- where the screen sits is geometry, not drawing.
+
+import Types exposing (..)
+
+
+
+
+
+
+gameW : Int
+gameW = 400                -- 2:1 stage: fills an 18:9 phone edge-to-edge, same
+                           -- on every device (fixed camera; more track shown,
+                           -- but the same amount on all screens so difficulty
+                           -- is device-independent: you still jump on the beat)
+
+
+gameH : Int
+gameH = 200
+
+
+fps : Int
+fps = 60
+
+
+-- Ticks ride requestAnimationFrame (vsync-locked, ~16.7 ms at 60 Hz), so
+-- 30 ticks = ~500 ms = one beat at 120 BPM. The square moves 2 px/tick, so a
+-- beat is 60 px and a sixteenth note is 15 px. The jump impulse is tuned so
+-- a full hop lasts ~29 ticks: one hop = one beat, holding jump makes the
+-- square hop on the kick.
+
+
+spd : Int
+spd = 2                   -- px per tick, constant: this game never slows down
+
+
+fp : Int
+fp = 16                   -- fixed-point scale for vertical physics
+
+
+grav : Int
+grav = 4                  -- gravity, fp per tick^2
+
+
+jumpV : Int
+jumpV = 60                -- jump impulse, fp per tick (hop = ~1 beat, 26 px high)
+
+
+pw : Int
+pw = 13                   -- the square's side
+
+
+groundY : Int
+groundY = 164             -- ground surface y
+
+
+unitPx : Int
+unitPx = 15               -- one sixteenth note, in px
+
+
+beatPx : Int
+beatPx = 60               -- one beat, in px (4 sixteenths)
+
+
+loopPx : Int
+loopPx = 1920             -- one music loop = 32 beats: checkpoints live here
+
+
+finishX : Int
+finishX = 17280           -- 288 beats = 9 loops
+
+
+playerScreenX : Int
+playerScreenX = 70        -- the square stays here; the world scrolls
+
+
+
+
+
+
+iclamp : Int -> Int -> Int -> Int
+iclamp lo hi v = max lo (min hi v)
+
+
+range : Int -> List Int
+range n =
+    List.indexedMap (\i _ -> i) (List.repeat n 0)
+
+
+
+
+type alias Layout =
+    { scale : Int
+    , ox : Int
+    , oy : Int
+    }
+
+
+layout : Model -> Layout
+layout model =
+    let
+        s = max 60 (min (model.w * 100 // gameW) (model.h * 100 // gameH))
+    in
+    { scale = s
+    , ox = (model.w - gameW * s // 100) // 2
+    , oy = (model.h - gameH * s // 100) // 2
+    }

@@ -1,0 +1,199 @@
+module Screens exposing (..)
+
+-- Everything that is not the crawl: title, intro, barrow cleared, death, and
+-- the ending.
+
+
+import Balance exposing (..)
+import Barrows exposing (..)
+import Font exposing (..)
+import Sim exposing (..)
+import Types exposing (..)
+import Canvas exposing ( rect, rgb )
+
+
+
+
+panel : Int -> Int -> Int -> Int -> List Shape
+panel x y w h =
+    [ rect x y w h (rgb 12 12 18)
+    , rect x y w 2 (rgb 120 110 140)
+    , rect x (y + h - 2) w 2 (rgb 120 110 140)
+    , rect x y 2 h (rgb 120 110 140)
+    , rect (x + w - 2) y 2 h (rgb 120 110 140)
+    ]
+
+
+titleShapes : Model -> List Shape
+titleShapes m =
+    let
+        pulse = modBy 4 (m.tick // 24)
+        fog =
+            List.concat
+                (List.indexedMap
+                    (\i _ ->
+                        [ rect 0 (30 + i * 26) 320 14 (rgb (12 + i * 3 + pulse) (12 + i * 3) (18 + i * 4 + pulse)) ])
+                    (List.repeat 5 0))
+        blink = modBy 210 (m.tick + 60) < 14
+        eyes =
+            if blink then
+                []
+            else
+                [ rect 236 64 3 3 (rgb 120 230 255)
+                , rect 243 64 3 3 (rgb 120 230 255)
+                ]
+        selY = if m.sel == 0 then 118 else 142
+        -- the hint follows the hardware, not a past input: touch pads on a
+        -- phone, keys on a desktop, decided from Device.touchOnly.
+        controlsHint =
+            if padsWanted m.dev then
+                "LEFT STICK MOVE. RIGHT STICK LOOK."
+            else
+                "WASD MOVE. ARROWS TURN. SPACE THROW. M MUTE."
+        descendHint =
+            if padsWanted m.dev then "TAP TO DESCEND" else "ENTER TO DESCEND"
+    in
+    List.concat
+        [ [ rect 0 0 320 200 (rgb 7 7 11) ]
+        , fog
+        , [ rect 0 172 320 28 (rgb 16 15 20) ]
+        , eyes
+        , pixTextC 160 26 4 (rgb 226 196 120) "MYRKHEIM"
+        , pixTextC 160 52 1 (rgb 150 150 170) "THE DAWN RUNE IS STOLEN. THE SUN WAITS ON YOU."
+        , pixTextC 160 70 1 (rgb 110 116 136) "A BARROW CRAWL BY THE MAR LANGUAGE"
+        , panel 70 112 180 22
+        , panel 70 136 180 22
+        , pixTextC 160 118 1 (if m.sel == 0 then rgb 240 230 200 else rgb 130 130 148) "SAGA - RESTART AT EACH BARROW"
+        , pixTextC 160 142 1 (if m.sel == 1 then rgb 240 230 200 else rgb 130 130 148) "EINHERJAR - ONE LIFE. VALHALLA."
+        , [ rect 56 (selY + 2) 6 6 (rgb 226 196 120) ]
+        , pixTextC 160 168 1 (rgb 120 126 146) controlsHint
+        , pixTextC 160 180 1 (rgb 96 100 120) descendHint
+        ]
+
+
+introShapes : Model -> List Shape
+introShapes m =
+    List.concat
+        [ [ rect 0 0 320 200 (rgb 5 5 8) ]
+        , pixTextC 160 66 1 (rgb 130 130 150) ("BARROW " ++ String.fromInt (m.barrow + 1) ++ " OF " ++ String.fromInt barrowCount)
+        , pixTextC 160 84 2 (rgb 226 196 120) (barrowName m.barrow)
+        , pixTextC 160 112 1 (rgb 140 140 160) (barrowLine m.barrow)
+        , if m.modeT > 40 then pixTextC 160 150 1 (rgb 96 100 120) (if padsWanted m.dev then "TAP" else "ANY KEY") else []
+        ]
+
+
+statLines : Model -> List Shape
+statLines m =
+    let
+        secs = m.timeT // 60
+        clock = String.fromInt (secs // 60) ++ ":" ++ (if modBy 60 secs < 10 then "0" else "") ++ String.fromInt (modBy 60 secs)
+    in
+    List.concat
+        [ pixTextC 160 106 1 (rgb 200 196 180) ("TIME " ++ clock)
+        , pixTextC 160 118 1 (rgb 232 190 70) ("GOLD " ++ String.fromInt (m.gold - m.snapGold))
+        , pixTextC 160 130 1 (rgb 190 90 90) ("SLAIN " ++ String.fromInt (m.kills - m.snapKills))
+        ]
+
+
+clearedShapes : Model -> List Shape
+clearedShapes m =
+    List.concat
+        [ panel 54 62 212 104
+        , pixTextC 160 72 2 (rgb 226 196 120) "WAYSTONE REACHED"
+        , pixTextC 160 92 1 (rgb 140 140 160) (barrowName m.barrow ++ " FALLS SILENT")
+        , statLines m
+        , pixTextC 160 144 1 (rgb 150 130 180)
+            ("SECRETS " ++ String.fromInt m.secretsFound ++ "/" ++ String.fromInt m.secretsTotal)
+        , if m.modeT > 20 then pixTextC 160 156 1 (rgb 96 100 120) "ANY KEY - DEEPER" else []
+        ]
+
+
+-- the death moment: the world stays in view while the dark closes over it
+-- SLOWLY, like eyelids sliding shut from above and below, ~3.2s to meet,
+-- a thin sliver of blood-red light at each lid's edge, and only on full
+-- black does the barrow pronounce its verdict. The long dying groan plays
+-- the whole time the eyes are closing. Color and shape carry the weight;
+-- the frame itself never shakes or tilts.
+dieShapes : Model -> List Shape
+dieShapes m =
+    let
+        -- each lid grows to 100px (half the 200-tall screen) over 190 ticks
+        -- (~3.2s at 60fps): the deliberate, heavy slide of eyes giving up
+        lid = min 100 (m.modeT * 100 // 190)
+    in
+    List.concat
+        [ [ rect 0 0 320 (max 1 lid) (rgb 6 4 5) ]
+        , [ rect 0 (200 - lid) 320 (max 1 lid) (rgb 6 4 5) ]
+        , if lid < 100 then
+            [ rect 0 lid 320 2 (rgb 150 20 22)
+            , rect 0 (198 - lid) 320 2 (rgb 150 20 22)
+            ]
+          else
+            []
+        -- the eyes shut at 190; hold on pure black until 240 (a ~0.8s
+        -- beat of silence) BEFORE the barrow pronounces its verdict
+        , if m.modeT >= 240 then deadShapes m else []
+        ]
+
+
+-- a scrap of barrow-lore shown on death: a different one each time,
+-- teaching a mechanic the player may have missed. Keyed off run stats so
+-- it stays fixed while the death screen is up but varies between deaths.
+-- Two short lines so each fits inside the panel (the pixel font has no
+-- comma, so these break their clauses on periods).
+deathHint : Model -> { a : String, b : String }
+deathHint m =
+    case modBy 6 (m.kills * 3 + m.barrow * 7 + m.gold + m.secretsFound) of
+        0 -> { a = "CRACKED WALLS HIDE SECRET ROOMS.", b = "STRIKE ONE TO SMASH THROUGH." }
+        1 -> { a = "THE VOLVA BLINKS ACROSS THE ROOM.", b = "WATCH WHERE SHE REAPPEARS. STRIKE FAST." }
+        2 -> { a = "SHIELD-MAIDENS BLOCK HEAD-ON.", b = "HIT DURING THEIR WINDUP OR BURN THEM." }
+        3 -> { a = "LOST IN THE DARK?", b = "THE MINIMAP TOP-RIGHT SHOWS THE WAY." }
+        4 -> { a = "ARCHERS LOOSE ARROWS FROM AFAR.", b = "CLOSE THE GAP OR DUCK BEHIND A WALL." }
+        _ -> { a = "VARGS HUNT IN PACKS.", b = "YOU HEAR THEM BARK BEFORE THEY POUNCE." }
+
+
+deadShapes : Model -> List Shape
+deadShapes m =
+    let
+        hint = deathHint m
+    in
+    List.concat
+        [ panel 30 58 260 112
+        , pixTextC 160 70 2 (rgb 200 60 60) (if m.hardcore then "VALHALLA AWAITS" else "THE BARROW KEEPS YOU")
+        , pixTextC 160 92 1 (rgb 150 140 150)
+            (if m.hardcore then "A GOOD DEATH. THE RUNE STAYS LOST." else "THE DEAD ARE PATIENT. TRY AGAIN.")
+        , pixTextC 160 114 1 (rgb 150 146 120) hint.a
+        , pixTextC 160 124 1 (rgb 150 146 120) hint.b
+        , if canDismiss m then
+            pixTextC 160 152 1 (rgb 96 100 120) (if m.hardcore then "ANY KEY - TITLE" else "ANY KEY - RISE AGAIN")
+          else
+            []
+        ]
+
+
+wonShapes : Model -> List Shape
+wonShapes m =
+    let
+        show = m.modeT > 110
+    in
+    List.concat
+        [ pixTextC 160 40 2 (rgb 250 236 170) "THE DAWN RUNE IS HOME"
+        , if show then
+            List.concat
+                [ panel 44 92 232 76
+                , pixTextC 160 100 1 (rgb 120 116 106) "THE SUN ROSE. THE BIRDS PRETENDED"
+                , pixTextC 160 110 1 (rgb 120 116 106) "NOTHING HAD HAPPENED."
+                , statLines2 m
+                , pixTextC 160 156 1 (rgb 130 126 116) "ANY KEY - TITLE"
+                ]
+          else
+            []
+        ]
+
+
+statLines2 : Model -> List Shape
+statLines2 m =
+    List.concat
+        [ pixTextC 160 126 1 (rgb 90 86 80) ("GOLD " ++ String.fromInt m.gold)
+        , pixTextC 160 138 1 (rgb 90 86 80) ("SLAIN " ++ String.fromInt m.kills ++ (if m.hardcore then " - EINHERJAR" else ""))
+        ]

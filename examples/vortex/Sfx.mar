@@ -1,0 +1,167 @@
+module Sfx exposing (..)
+
+-- The sounds, pitched by how far down the tube the event happened.
+
+import Balance exposing (..)
+import Types exposing (..)
+import Sound
+
+
+
+
+-- THE LEVEL-CLEAR DIVE.
+--
+-- The warp runs `zFar + camD` at `warpSpeed`, which is 92 frames: a second
+-- and a half. It used to get 300 milliseconds of sound: a beep that had
+-- finished while you were still falling, and then silence for the rest of the
+-- best-looking move in the game.
+--
+-- This one runs the whole way and is built like the thing it is scoring. Four
+-- voices, each summing to the same 1500ms so nothing straggles: the tube as a
+-- rush that keeps steepening, wind past the mouth of it, a figure climbing
+-- out over the top, and a low note landing at the bottom.
+--
+-- Modifiers belong to a VOICE: `sequence` and `chord` are structure and
+-- nothing else, so the volume and the shaping go on each tone rather than on
+-- the list holding them.
+-- TURNED DOWN, AND THE REASON IS THAT VOICES SUM. Each of the four here was
+-- set at a level that sounds right on its own, 24, 12, 26, 30, and a chord
+-- plays them at once, so what arrives is closer to their total than to any one
+-- of them, and the level change came out shouting next to a kill at 22. Every
+-- voice came down by about the same fraction, which keeps the balance between
+-- them and only moves the whole thing.
+clearNote : Int -> Int -> Sound
+clearNote hz ms =
+    Sound.volume 16 (Sound.duty 25 (Sound.tone Sound.Square hz ms))
+
+
+clearCue : Sound
+clearCue =
+    Sound.chord
+        [ -- The tube. Flat for a beat, then a climb that keeps steepening,
+          -- which is the curve the camera is riding: `holdPitch` is the
+          -- moment before the floor drops out.
+          Sound.volume 15
+            (Sound.attack 40
+                (Sound.lowCut 90
+                    (Sound.holdPitch 240
+                        (Sound.sweep 1500 (Sound.tone Sound.Sawtooth 140 1500)))))
+
+        , -- Wind past the mouth of the well. Quiet on purpose: it is the
+          -- texture that makes the sweep sound like travel and not like a
+          -- test tone.
+          Sound.volume 8
+            (Sound.highCut 2400
+                (Sound.sweep 2000 (Sound.tone Sound.Noise 260 1500)))
+
+        , -- The fanfare: a major triad walking up two octaves and arriving on
+          -- a held note that shimmers. It starts late, so the first thing you
+          -- hear is the fall and the tune is what comes out of it.
+          Sound.sequence
+            [ Sound.rest 300
+            , clearNote (Sound.e 4) 110
+            , clearNote (Sound.gs 4) 110
+            , clearNote (Sound.b 4) 110
+            , clearNote (Sound.e 5) 110
+            , clearNote (Sound.gs 5) 110
+            , clearNote (Sound.b 5) 110
+            , Sound.volume 17
+                (Sound.arp [ Sound.gs 6, Sound.b 6 ]
+                    (Sound.duty 25 (Sound.tone Sound.Square (Sound.e 6) 540)))
+            ]
+
+        , -- And a low note under the arrival, so the landing has a floor.
+          Sound.sequence
+            [ Sound.rest 1180
+            , Sound.volume 19
+                (Sound.release 200 (Sound.tone Sound.Triangle (Sound.e 3) 320))
+            ]
+        ]
+
+
+-- How far away a kill was, 0 at your feet and 100 at the far end. Every part
+-- of the kill sound reads off this one number.
+farness : Int -> Int
+farness z =
+    clamp 0 100 (z * 100 // zFar)
+
+
+-- The body of a kill: a burst, not a note. Noise instead of a square is the
+-- whole difference between a pop and a beep, and the high cut takes off what
+-- fizz is left. Mixed at 22 down to 14 so it sits above the shot (15) and well
+-- under your own death (44): the reward should be louder than the action that
+-- earns it and quieter than losing.
+hitPop : Int -> Sound
+hitPop f =
+    Sound.volume (22 - f * 8 // 100)
+        (Sound.attack 2
+            (Sound.release 18
+                (Sound.highCut 2600
+                    (Sound.sweep (140 + f * 120 // 100)
+                        (Sound.tone Sound.Noise (300 + f * 320 // 100) (80 - f * 35 // 100))))))
+
+
+cue : Cue -> Sound
+cue c =
+    case c of
+        CFire ->
+            -- This one plays five times a second now that holding the button
+            -- fires, so it is the sound you hear most and the one that had to
+            -- stop asking for attention. Three things were making it nag:
+            --
+            --   * it swept UP, 880 to 1400. A rise reads as an alert: it is
+            --     what a warning does, and a discharge should be leaving you,
+            --     not arriving. Down is the whole difference.
+            --   * a square at that pitch is all odd harmonics, which is the
+            --     buzz. Triangle says the same thing without the fizz, and a
+            --     high cut takes off what is left.
+            --   * and it was mixed at 22, louder than it has any business
+            --     being next to a hit at 30. The reward should be louder than
+            --     the action that earns it.
+            Sound.volume 15
+                (Sound.attack 4
+                    (Sound.release 30
+                        (Sound.highCut 3200
+                            (Sound.sweep 420 (Sound.tone Sound.Triangle 900 55)))))
+
+        -- A KILL SOUNDS LIKE WHERE IT HAPPENED, AND LIKE WHAT DIED.
+        --
+        -- It used to be one sound, always: a square at 520 mixed at 30, which
+        -- is louder than anything in the game except your own death, and all
+        -- odd harmonics, the same buzz already taken off the shot. And being
+        -- one sound is what made it repetitive. Not the timbre: the IDENTITY.
+        -- `cue` is a pure function of the tag, so two kills a second apart were
+        -- the same bytes.
+        --
+        -- The fix is not a die roll. The kill already knows the depth it
+        -- happened at, so the variation comes from the world: something taken
+        -- at the far end is a short high tick, quiet because it was far; the
+        -- same thing at your feet is lower, longer and fuller. Two kills at
+        -- different depths stop sounding alike, and the difference MEANS
+        -- something, which a random detune never could.
+        CHit Flipper z ->
+            hitPop (farness z)
+
+        -- The tanker gets the same pop with a second voice under it. Killing
+        -- one is not the same event as killing a flipper: it splits, so the
+        -- news is worse, and the ear should hear that before the eye finds the
+        -- two halves.
+        CHit Tanker z ->
+            let
+                f = farness z
+            in
+            Sound.chord
+                [ hitPop f
+                , Sound.volume (16 - f * 6 // 100)
+                    (Sound.attack 3
+                        (Sound.release 40
+                            (Sound.lowCut 60
+                                (Sound.sweep (70 + f * 40 // 100)
+                                    (Sound.tone Sound.Triangle (150 + f * 90 // 100) (170 - f * 60 // 100))))))
+                ]
+
+        CDie ->
+            Sound.volume 44 (Sound.sweep 60 (Sound.tone Sound.Noise 400 420))
+
+        CClear ->
+            clearCue

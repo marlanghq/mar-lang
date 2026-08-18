@@ -1,0 +1,171 @@
+module Waves exposing (..)
+
+-- The spawn tables. A wave is a deterministic function of the stage tick, so
+-- the same stage plays the same way every time -- which is what makes it
+-- learnable rather than random.
+
+import Balance exposing (..)
+import Types exposing (..)
+
+
+
+
+mkF : Int -> Int -> Int -> Int -> Int -> Int -> Int -> Int -> Int -> Int -> Foe
+mkF kind mv x y ax ay ph vx vy gift =
+    { kind = kind, mv = mv, x = x * fp, y = y * fp, ax = ax * fp, ay = ay * fp
+    , ph = ph, vx = vx, vy = vy, hp = foeHp kind, t = 0, gift = gift, hurtT = 0 }
+
+
+mkFoe : Int -> Int -> Int -> Int -> Int -> Int -> Foe
+mkFoe kind x y vx vy gift =
+    mkF kind 0 x y 0 0 0 vx vy gift
+
+
+foeHp : Int -> Int
+foeHp kind =
+    if kind == 2 then 4
+    else if kind == 4 then 3
+    else if kind == 3 then 3
+    else 1
+
+
+ev : Int -> Int -> Int -> Int -> WaveEv
+ev t f x k =
+    { t = t, f = f, x = x, k = k }
+
+
+-- THE BATTLE PLAN: every stage flies a fixed, readable schedule of
+-- formations (nothing random). f: 0 V-of-five escort, 1 sine wave from the
+-- left, 2 snake weaving down a lane, 3 diver pincer, 4 SHOOTING RING that
+-- orbits while it sinks, 5 lone floater, 6 pinata (k = gift), 7 zig pair,
+-- 8 barrier row (x = the gap), 9 galaga loop-and-dive squadron, 10 sine
+-- wave from the right. Higher stages get extra squadrons.
+stageWaves : Int -> List WaveEv
+stageWaves s =
+    List.concat
+        [ -- act one: meet every dance move
+          [ ev 100 0 110 0
+          , ev 250 1 0 0
+          , ev 400 4 110 0
+          , ev 540 2 70 0
+          , ev 680 9 50 0
+          , ev 830 6 160 (modBy 3 s + 1)
+          , ev 950 10 0 0
+          , ev 1080 4 210 0
+          , ev 1120 8 90 0
+          ]
+        , if s >= 2 then [ ev 560 2 250 0, ev 1020 5 40 0 ] else []
+        , -- act two: pairs and crossfire, the heart pinata
+          [ ev 1300 3 0 0
+          , ev 1450 2 160 0
+          , ev 1550 9 230 0
+          , ev 1660 6 200 4
+          , ev 1800 8 230 0
+          , ev 1900 4 80 0
+          , ev 2000 10 0 0
+          , ev 2120 0 160 0
+          , ev 2300 8 60 0
+          ]
+        , if s >= 2 then [ ev 1360 1 0 0, ev 2200 5 280 0 ] else []
+        , if s >= 3 then [ ev 1520 7 0 0 ] else []
+        , if s >= 5 then [ ev 1905 4 240 0 ] else []
+        , -- act three: the storm
+          [ ev 2450 2 50 0
+          , ev 2455 2 270 0
+          , ev 2560 9 160 0
+          , ev 2650 1 0 0
+          , ev 2790 4 160 0
+          , ev 2840 6 120 0
+          , ev 2960 8 160 0
+          , ev 3050 3 0 0
+          , ev 3220 4 110 0
+          , ev 3300 9 90 0
+          , ev 3400 1 0 0
+          , ev 3440 0 160 0
+          ]
+        , if s >= 2 then [ ev 3120 5 160 0 ] else []
+        , if s >= 3 then [ ev 2700 10 0 0, ev 3500 7 0 0 ] else []
+        , if s >= 5 then [ ev 3140 2 160 0, ev 3360 8 250 0 ] else []
+        , if s >= 7 then [ ev 460 9 250 0, ev 1980 2 110 0, ev 2620 7 0 0, ev 3225 4 210 0 ] else []
+        ]
+
+
+-- turn one formation event into its squadron
+formFoes : Int -> Int -> Int -> List Foe
+formFoes f x k =
+    if f == 0 then
+        -- V of five: wingmates trail the leader, straight escort
+        List.map
+            (\i ->
+                let
+                    o = if i == 0 then 0 else if i == 1 then 0 - 24 else if i == 2 then 24 else if i == 3 then 0 - 48 else 48
+                in
+                mkF 0 0 (x + o) (0 - 12 - absI o * 2 // 3) 0 0 0 0 20 0)
+            (List.range 0 4)
+    else if f == 1 then
+        -- sine wave: a file of four surfs across from the left, guns ticking
+        List.map (\i -> mkF 0 1 (0 - 14 - i * 24) 60 0 60 (0 - i * 40) 26 6 20) (List.range 0 3)
+    else if f == 10 then
+        -- sine wave from the right
+        List.map (\i -> mkF 0 1 (334 + i * 24) 60 0 60 (i * 40) (0 - 26) 6 20) (List.range 0 3)
+    else if f == 2 then
+        -- snake: five weave down a lane nose-to-tail
+        List.map (\i -> mkF 0 4 x (0 - 12 - i * 24) x 0 (0 - i * 45) 0 22 26) (List.range 0 4)
+    else if f == 3 then
+        -- diver pincer from both shoulders
+        [ mkFoe 1 40 (0 - 12) 0 16 0
+        , mkFoe 1 70 (0 - 34) 0 16 0
+        , mkFoe 1 280 (0 - 12) 0 16 0
+        , mkFoe 1 250 (0 - 34) 0 16 0
+        ]
+    else if f == 4 then
+        -- THE RING: six orbit a sinking anchor and rain aimed fire
+        List.map (\i -> mkF 0 2 x (0 - 30) x (0 - 30) (i * 60) 4 7 30) (List.range 0 5)
+    else if f == 9 then
+        -- galaga squadron: file in, loop the loop, then dive
+        List.map (\i -> mkF 0 3 (x + i * 26) (0 - 16 - i * 24) (x + i * 26) 88 (52 + i * 16) 0 24 0) (List.range 0 3)
+    else if f == 5 then
+        [ mkFoe 2 x (0 - 14) 0 14 0 ]
+    else if f == 6 then
+        [ mkFoe 4 x (0 - 14) 8 10 k ]
+    else if f == 7 then
+        [ mkFoe 3 (0 - 8) 40 26 12 0
+        , mkFoe 3 328 90 (0 - 26) 12 0
+        ]
+    else
+        []
+
+
+-- a barrier row: two stone slabs with a 68px gap to thread
+wallRow : WaveEv -> List Wall
+wallRow e =
+    [ { x = 0, y = (0 - 8) * fp, w = max 0 (e.x - 34) }
+    , { x = e.x + 34, y = (0 - 8) * fp, w = max 0 (gameW - (e.x + 34)) }
+    ]
+
+
+spawnFoes : Model -> Model
+spawnFoes m =
+    if m.st >= stageTicks then
+        m
+    else
+        let
+            evs = List.filter (\e -> e.t == m.st) (stageWaves m.stage)
+            news =
+                List.concat
+                    (List.map
+                        (\e -> if e.f == 8 || List.length m.foes > 22 then [] else formFoes e.f e.x e.k)
+                        evs)
+            nwalls = List.concat (List.map wallRow (List.filter (\e -> e.f == 8) evs))
+        in
+        { m | foes = List.concat [ m.foes, news ], walls = List.concat [ m.walls, nwalls ] }
+
+
+aimedShot : Int -> Int -> Int -> Int -> Int -> Shot
+aimedShot x y tx ty spd =
+    let
+        dx = tx - x
+        dy = ty - y
+        d = max 1 (octd dx dy)
+    in
+    { x = x, y = y, vx = dx * spd // d, vy = dy * spd // d }

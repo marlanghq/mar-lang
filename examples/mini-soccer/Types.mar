@@ -1,0 +1,135 @@
+module Types exposing (..)
+
+-- What a match is made of: teams, roles, the ball, the players, the phase,
+-- and the model. No behaviour, so anything may import it.
+
+
+
+
+
+type Team
+    = Blue
+    | Red
+
+
+type Role
+    = Field
+    | Keeper
+
+
+type Dir
+    = Up | Down | Left | Right
+
+
+type Phase
+    = Title          -- attract screen / menu
+    | Warmup         -- teams walking on to their positions (no ball yet)
+    | Set            -- everyone in place, a short beat before the ball drops
+    | Playing        -- live match
+    | Break          -- frozen banner (GOAL! / HALF TIME) before a restart
+    | Full           -- full time
+
+
+-- which direction keys are held right now. A set (not one Dir) so two at once
+-- is a diagonal, fed the same way by arrows and WASD.
+type alias Held =
+    { up : Bool, down : Bool, left : Bool, right : Bool }
+
+
+noHeld : Held
+noHeld =
+    { up = False, down = False, left = False, right = False }
+
+
+type alias Vec =
+    { x : Int, y : Int }
+
+
+type alias Player =
+    { id : Int
+    , team : Team
+    , role : Role
+    , x : Int
+    , y : Int
+    , fx : Int            -- facing unit x (-1 / 0 / 1); drives dribble + shot dir
+    , fy : Int            -- facing unit y
+    , homeX : Int         -- formation home (support / defensive anchor)
+    , homeY : Int
+    , moving : Bool       -- did the player move this tick? drives the run cycle
+    , slide : Int         -- ticks left in a sliding tackle (0 = not sliding)
+    , sx : Int            -- sub-pixel movement remainder (x), so speed is even
+    , sy : Int            -- sub-pixel movement remainder (y) in every direction
+    }
+
+
+type alias Ball =
+    { x : Int
+    , y : Int
+    , vx : Int
+    , vy : Int
+    , owner : Int         -- player id, or -1 when loose
+    , lock : Int          -- ticks during which the ball can't change hands
+    }
+
+
+type alias Model =
+    { w : Int
+    , h : Int
+    , phase : Phase
+    , players : List Player
+    , ball : Ball
+    , controlled : Int    -- id of the blue player you steer right now
+    , held : Held
+    , keysDown : List Keyboard.Key   -- live keyboard mirror (Keyboard.watch)
+    , padBtns : List Gamepad.Button  -- live gamepad button mirror (Gamepad.watch)
+    , stickX : Int                   -- left analog stick x, -100..100
+    , stickY : Int                   -- left analog stick y, -100..100
+    , blue : Int          -- score
+    , red : Int
+    , clock : Int         -- match ticks remaining
+    , flash : Int         -- >0 holds a Break banner (goal / half time)
+    , flashText : String
+    , cool : Int          -- your action debounce (kick / tackle / slide)
+    , animTick : Int
+    , half : Int          -- 1 or 2 (so half time triggers once)
+    , nextKick : Team     -- who restarts once the current Warmup ends
+    , entering : Bool     -- next Warmup is a walk-on from the sides (vs a return)
+    , padOn : Bool        -- a steering touch is down on the fixed d-pad
+    , intro : Int         -- free-running counter for the title-screen animation
+    , sfx : List Cue      -- sound cues raised this update, drained by `emit`
+    , muted : Bool        -- player toggled all sound off (persists across matches)
+    , scorer : Team       -- who scored the goal now being celebrated (tints confetti)
+    , passTo : Int        -- during a kickoff, the id the ball is being rolled to (-1 = none)
+    , warm : Int          -- warm-up clock: gates the staggered sideline walk-on (one player per wave)
+    , paused : Bool       -- match paused (Start / Esc): sim frozen and all sound muted
+    }
+
+
+
+
+type Msg
+    = Resized Int Int
+    | Tick
+    | Tapped Int Int
+    | Dragged Int Int
+    | Released Int Int
+    | KeysChanged { down : List Keyboard.Key }
+    | PadChanged { connected : Bool, leftX : Int, leftY : Int, rightX : Int, rightY : Int, down : List Gamepad.Button }
+
+
+
+
+-- One-shot effects are raised as Cue tags during update (so the model never
+-- holds opaque Sound values), then `emit` turns them into Sound.play commands.
+type Cue
+    = CuKick        -- the ball is struck
+    | CuWhistle     -- kickoff
+    | CuStart       -- you pressed start on a menu
+    | CuGoal        -- GOAAAL
+    | CuTackle      -- a slide tackle connects
+    | CuUnmute      -- a confirm blip when you turn sound back on
+    | CuWin         -- full time, you won
+    | CuLose        -- full time, you lost
+    | CuHalf        -- half time (a spoken-ish "half time")
+    | CuTimeLow     -- a countdown blip in each of the last 10 seconds
+    | CuFinalWhistle -- full time: the long referee's whistle that ends the match

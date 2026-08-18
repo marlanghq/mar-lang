@@ -1,0 +1,155 @@
+module Types exposing (..)
+
+-- Everything in the sky: the mode, the foes, the walls, the bullets, the
+-- sparks and the model. No behaviour, so anything may import it.
+
+
+
+
+
+type Mode
+    = Title
+    | Story                  -- the opening: why the Condor flies
+    | Intro
+    | Play
+    | BossFall               -- the boss's death sequence (chained explosions)
+    | Dying                  -- the ship's death sequence before game over
+    | Clear
+    | Over
+    | Ending
+
+
+type Cue
+    = CBeat Int
+    | CMel Int Int           -- one melody beat: two eighth notes (hz; 0 = rest)
+    | CShot Int              -- weapon index
+    | CHit                   -- the boss took a hit
+    | CHitFoe                -- a tough enemy took a hit (damage feedback)
+    | CBoomK Int             -- an enemy died: explosion varies by kind
+    | CBigBoom
+    | CShipBoom              -- the player's ship goes down
+    | CStar
+    | CHeal
+    | CHurt
+    | CWarn
+    | CTurbineCharge
+    | CTurbineBeam
+    | CJIntro
+    | CJClear
+    | CJOver
+    | CJEnd
+    | CBlip
+
+
+type Msg
+    = Resized Int Int
+    | Tick
+    | Tapped Int Int
+    | Dragged Int Int
+    | Released Int Int
+    | KeysChanged { down : List Keyboard.Key }
+    | PadChanged { connected : Bool, leftX : Int, leftY : Int, rightX : Int, rightY : Int, down : List Gamepad.Button }
+    | DeviceChanged Device
+
+
+-- kinds: 0 drone (sway), 1 diver, 2 floater (shoots), 3 zig (bouncer),
+-- 4 pinata (carries the star kind in `gift`)
+-- movement modes (mv): 0 = by kind (straight/diver/floater/zig/pinata),
+-- 1 = sine wave crossing the screen, 2 = ring orbit around a sinking
+-- anchor, 3 = galaga loop then dive, 4 = snake weaving down a lane.
+-- For mv 1/2/4 `gift` doubles as amplitude/radius in px; ph is the phase.
+type alias Foe =
+    { kind : Int
+    , mv : Int
+    , x : Int, y : Int          -- fixed-point
+    , ax : Int, ay : Int        -- anchor / baseline (fixed-point)
+    , ph : Int
+    , vx : Int, vy : Int
+    , hp : Int
+    , t : Int
+    , gift : Int                -- pinata star kind / path amplitude
+    , hurtT : Int               -- white damage-flash ticks
+    }
+
+
+-- a scrolling stone barrier segment; rows leave one gap to fly through
+type alias Wall =
+    { x : Int, y : Int, w : Int }   -- x/w in px, y in fixed-point
+
+
+-- one entry of a stage's battle plan
+type alias WaveEv =
+    { t : Int, f : Int, x : Int, k : Int }
+
+
+type alias Bul =
+    { x : Int, y : Int, vx : Int, vy : Int, w : Int, t : Int }
+
+
+type alias Shot =
+    { x : Int, y : Int, vx : Int, vy : Int }
+
+
+-- star kinds: 0 gold power, 1 blue beam, 2 red spread, 3 green wave, 4 heart
+type alias Star =
+    { x : Int, y : Int, kind : Int, t : Int }
+
+
+type alias Part =
+    { x : Int, y : Int, vx : Int, vy : Int, t : Int, k : Int }
+
+
+type alias BossS =
+    { hp : Int, mx : Int, x : Int, y : Int, t : Int, ph : Int }
+
+
+type alias Model =
+    { w : Int
+    , h : Int
+    , mode : Mode
+    , stage : Int             -- 1..10
+    , tick : Int              -- global clock (menus blink)
+    , st : Int                -- ticks inside the current mode
+    , seed : Random.Seed
+    , px : Int, py : Int      -- player, plain pixels
+    , kU : Bool, kD : Bool, kL : Bool, kR : Bool
+    , firing : Bool
+    , fireT : Int
+    , padX : Int, padY : Int
+    , keysDown : List Keyboard.Key       -- raw held set (keyboard mirror)
+    , padDown : List Gamepad.Button      -- raw held set (gamepad mirror)
+    , dragOn : Bool
+    , ltx : Int, lty : Int    -- last touch point (logical px)
+    , weapon : Int            -- 0 beam, 1 spread, 2 wave
+    , power : Int             -- 1..3
+    , energy : Int            -- 0..5 hull energy (hits drain it, hearts heal)
+    , score : Int
+    , hi : Int
+    , buls : List Bul
+    , shots : List Shot
+    , foes : List Foe
+    , stars : List Star
+    , parts : List Part
+    , walls : List Wall
+    , boss : Maybe BossS
+    , invulnT : Int
+    , paused : Bool
+    , muted : Bool
+    , dev : Maybe Device
+    , sfx : List Cue
+    }
+
+
+type alias Theme =
+    { skyA : Color, skyB : Color, skyC : Color
+    , far : Color, farD : Color
+    , mid : Color, midD : Color
+    , det : Color
+    , acc : Color
+    }
+
+
+
+
+type alias Layout =
+    { scale : Int, ox : Int, oy : Int }

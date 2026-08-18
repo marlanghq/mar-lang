@@ -1,0 +1,1480 @@
+module Sim exposing (..)
+
+-- One tick of the match: input, movement, the CPU's decisions, tackles,
+-- possession, goals -- and the walk-on, the kickoff and the restart after a
+-- goal, which are phases of the same state machine rather than a separate
+-- thing. Pure functions of the model.
+
+
+import Pitch exposing (..)
+import Roster exposing (..)
+import Screens exposing (..)
+import Sfx exposing (..)
+import Types exposing (..)
+
+
+-- 8-way held from an offset off the d-pad centre (deadzone, the same held the keys set).
+heldFrom : Int -> Int -> Held
+heldFrom dx dy =
+    { up = dy < 0 - joyDead
+    , down = dy > joyDead
+    , left = dx < 0 - joyDead
+    , right = dx > joyDead
+    }
+
+
+-- press: starting on the d-pad steers; the right-side buttons fire an action.
+touchDown : Model -> Int -> Int -> Model
+touchDown model x y =
+    let
+        a = controlAnchors model (pitchLayout model)
+    in
+    if inDpad model x y then
+        { model | padOn = True, held = heldFrom (x - a.dpad.x) (y - a.dpad.y) }
+    else if inCircle x y a.kick btnR then
+        doAction model
+    else if inCircle x y a.slide btnR then
+        startSlide model
+    else if inCircle x y a.switch btnR then
+        switchPlayer model
+    else
+        model
+
+
+-- drag: while a steering touch is down, keep re-reading the direction off the FIXED
+-- d-pad centre: the finger can slide beyond the pad and still steer.
+touchDrag : Model -> Int -> Int -> Model
+touchDrag model x y =
+    if model.padOn then
+        let
+            c = dpadCenter model
+        in
+        { model | held = heldFrom (x - c.x) (y - c.y) }
+    else
+        model
+
+
+-- release: lifting a left-side touch ends steering (right-side lifts are button
+-- releases and leave steering alone).
+touchUp : Model -> Int -> Int -> Model
+touchUp model x y =
+    if model.padOn && x * 2 < model.w then
+        { model | padOn = False, held = noHeld }
+    else
+        model
+
+
+
+
+-- Action keys sit on the right hand's home row (J K L) so they pair with WASD
+-- movement on the left, comfortable to hold a direction and tap an action.
+-- L is shoot / steal (it reads as the natural "kick" key), K is the slide, and
+-- J switches player. Changed from J-shoot after it kept feeling like L should kick.
+isAction : Keyboard.Key -> Bool
+isAction key =
+    case key of
+        Keyboard.KeyL -> True
+        _ -> False
+
+
+isSwitch : Keyboard.Key -> Bool
+isSwitch key =
+    case key of
+        Keyboard.KeyJ -> True
+        _ -> False
+
+
+isSlide : Keyboard.Key -> Bool
+isSlide key =
+    case key of
+        Keyboard.KeyK -> True
+        _ -> False
+
+
+-- M toggles sound on/off from the keyboard (the tap target is the speaker icon).
+isMute : Keyboard.Key -> Bool
+isMute key =
+    case key of
+        Keyboard.KeyM -> True
+        _ -> False
+
+
+-- Enter / Esc (or Start on a pad) pause the match.
+isPause : Keyboard.Key -> Bool
+isPause key =
+    case key of
+        Keyboard.Enter -> True
+        Keyboard.Escape -> True
+        _ -> False
+
+
+
+
+stickDead : Int
+stickDead = 35           -- analog-stick threshold (of 100) before a direction registers
+
+
+freshModel : Int -> Int -> Model
+freshModel w h =
+    { w = w
+    , h = h
+    , phase = Title
+    , players = kickoffPlayers
+    , ball = centerBall
+    , controlled = 0
+    , held = noHeld
+    , keysDown = []
+    , padBtns = []
+    , stickX = 0
+    , stickY = 0
+    , blue = 0
+    , red = 0
+    , clock = matchTicks
+    , flash = 0
+    , flashText = ""
+    , cool = 0
+    , animTick = 0
+    , half = 1
+    , nextKick = Blue
+    , entering = False
+    , padOn = False
+    , intro = 0
+    , sfx = []
+    , muted = False
+    , scorer = Blue
+    , passTo = noOwner
+    , warm = 0
+    , paused = False
+    }
+
+
+-- carry the mute preference across a reset (freshModel starts unmuted, but the
+-- toggle should survive starting a new match or returning to the title).
+keepMute : Model -> Model -> Model
+keepMute src fresh =
+    { fresh | muted = src.muted }
+
+
+init : (Model, Cmd Msg)
+init =
+    ( freshModel 900 600, Cmd.none )
+
+
+-- from the title: line the teams up off the sides and start the walk-on. The
+-- ball only appears once everyone is in position (see warmupTick / kickOff).
+startMatch : Model -> Model
+startMatch model =
+    let
+        m = freshModel model.w model.h
+        sided = placeAtSides m
+    in
+    -- Blue kicks off; you already steer the receiver (not the taker) so the arrow
+    -- sits on the right player through the walk-on, not just once play starts.
+    -- entering = True so the kickoff walk-on is the single-file procession
+    -- (entryWalk), not a straight trot to formation (returnWalk).
+    { sided | phase = Warmup, nextKick = Blue, controlled = kickoffReceiver Blue sided.players, muted = model.muted, entering = True }
+
+
+-- what Space / a tap does off the pitch: start from the title, or return to the
+-- title from full time. (Ignored mid-match, warm-up, or celebration.)
+advanceFromScreen : Model -> Model
+advanceFromScreen model =
+    case model.phase of
+        -- Play the start jingle and hold on the menu for a beat (startHold), so
+        -- the sound rings out before the pitch appears. The countdown runs in the
+        -- Title branch of stepGame; guard against a double press restarting it.
+        Title -> if model.flash > 0 then model else cue CuStart { model | flash = startHold }
+        -- back to the title from full time: no start jingle (that plays only when
+        -- you START a match, and it felt wrong going the other way). But first hold
+        -- for fullLock ticks (flash), so a shot mashed as the whistle blew does not
+        -- skip the result screen; the prompt appears only once the lock lapses.
+        Full -> if model.flash > 0 then model else keepMute model (freshModel model.w model.h)
+        _ -> model
+
+
+update : Msg -> Model -> (Model, Cmd Msg)
+update msg model =
+    case msg of
+        Resized w h ->
+            ( { model | w = w, h = h }, Cmd.none )
+
+        Tick ->
+            if model.paused then ( model, Cmd.none ) else emit (stepGame model)
+
+        Tapped x y ->
+            -- the mute toggle sits above everything, in every phase, and a tap on
+            -- it never doubles as "start" or an action button.
+            if inMuteButton model x y then
+                emit (toggleMute model)
+            else
+                case model.phase of
+                    Playing -> emit (touchDown model x y)
+                    _ -> emit (advanceFromScreen model)
+
+        Dragged x y ->
+            ( if model.phase == Playing then touchDrag model x y else model, Cmd.none )
+
+        Released x y ->
+            ( if model.phase == Playing then touchUp model x y else model, Cmd.none )
+
+        -- Keyboard MIRROR: the whole held set arrives on every change. Movement
+        -- keys become held state (dirHeld); every key that JUST went down (diffed
+        -- against the previous set) fires its discrete on-down action once.
+        KeysChanged st ->
+            let
+                justPressed = List.filter (\k -> List.member k model.keysDown == False) st.down
+                m1 = { model | keysDown = st.down }
+                m2 = { m1 | held = dirHeld m1 }
+            in
+            emit (List.foldl applyKeyPress m2 justPressed)
+
+        -- Gamepad MIRROR: one snapshot carries connection + both sticks + the held
+        -- button set. Left stick + d-pad become held state; buttons that JUST went
+        -- down fire their discrete on-down action once.
+        PadChanged p ->
+            let
+                justPressed = List.filter (\b -> List.member b model.padBtns == False) p.down
+                m1 = { model | padBtns = p.down, stickX = p.leftX, stickY = p.leftY }
+                m2 = { m1 | held = dirHeld m1 }
+            in
+            emit (List.foldl applyPadPress m2 justPressed)
+
+
+-- Recompute the held-direction record from the live input mirrors: keyboard
+-- direction keys + gamepad d-pad + left analog stick (deadzone stickDead). One
+-- source at a time in practice; combining lets them coexist. The on-screen
+-- touch d-pad writes model.held directly (see touchDown / touchDrag / touchUp).
+dirHeld : Model -> Held
+dirHeld m =
+    { up = List.member Keyboard.ArrowUp m.keysDown || List.member Keyboard.KeyW m.keysDown || List.member Gamepad.Up m.padBtns || m.stickY < 0 - stickDead
+    , down = List.member Keyboard.ArrowDown m.keysDown || List.member Keyboard.KeyS m.keysDown || List.member Gamepad.Down m.padBtns || m.stickY > stickDead
+    , left = List.member Keyboard.ArrowLeft m.keysDown || List.member Keyboard.KeyA m.keysDown || List.member Gamepad.Left m.padBtns || m.stickX < 0 - stickDead
+    , right = List.member Keyboard.ArrowRight m.keysDown || List.member Keyboard.KeyD m.keysDown || List.member Gamepad.Right m.padBtns || m.stickX > stickDead
+    }
+
+
+-- Discrete on-DOWN actions for a key that JUST went down (the edge is derived by
+-- the caller diffing the set). Mirrors the old KeyDown routing: mute (any phase),
+-- pause (Playing only), else the play-phase actions L=shoot / K=slide / J=switch,
+-- or off the pitch ANY key advances. Direction keys fall through: held is
+-- recomputed by dirHeld. The model is the fold accumulator; each key is an element.
+applyKeyPress : Keyboard.Key -> Model -> Model
+applyKeyPress key model =
+    if isMute key then
+        toggleMute model
+    else if isPause key && model.phase == Playing then
+        togglePause model
+    else
+        case model.phase of
+            Playing ->
+                if model.paused then model
+                else if isAction key then doAction model
+                else if isSlide key then startSlide model
+                else if isSwitch key then switchPlayer model
+                else model
+
+            -- off the pitch (title / full time) ANY key advances.
+            _ -> advanceFromScreen model
+
+
+-- Shift: cycle control through the blue outfielders in order of nearness to the
+-- ball. First press → nearest, press again → next-nearest, and so on (wrapping).
+-- Control never switches on its own (see pickControlled); this is how you pick a
+-- chaser when you're defending.
+switchPlayer : Model -> Model
+switchPlayer model =
+    let
+        b = model.ball
+        blues = List.filter (\p -> p.team == Blue && p.role == Field) model.players
+        ranked = List.map (\p -> p.id) (List.sortBy (\p -> d2 p.x p.y b.x b.y) blues)
+    in
+    { model | controlled = nextInCycle model.controlled ranked }
+
+
+-- the id after `current` in `ids`, wrapping to the front; falls back to the
+-- first id when `current` isn't in the list.
+nextInCycle : Int -> List Int -> Int
+nextInCycle current ids =
+    let
+        first = Maybe.withDefault current (List.head ids)
+        step =
+            \x acc ->
+                if acc.set then acc
+                else if acc.armed then { result = x, armed = False, set = True }
+                else if x == current then { result = acc.result, armed = True, set = False }
+                else acc
+        r = List.foldl step { result = first, armed = False, set = False } ids
+    in
+    r.result
+
+
+-- X: a sliding tackle ("carrinho") with the player you control, lunges in the
+-- direction you're holding (or facing), reaching much farther than a standing
+-- tackle, but the `cool` lockout means a miss leaves you recovering. Only fires
+-- when you're chasing (not carrying the ball) and not already committed.
+startSlide : Model -> Model
+startSlide model =
+    if model.cool > 0 then
+        model
+    else
+        case playerById model.controlled model.players of
+            Just p ->
+                if p.slide == 0 && model.ball.owner /= p.id then
+                    let
+                        h = model.held
+                        dx = boolInt h.right - boolInt h.left
+                        dy = boolInt h.down - boolInt h.up
+                        held = dx /= 0 || dy /= 0
+                        fx2 = if held then dx else p.fx
+                        fy2 = if held then dy else p.fy
+                    in
+                    { model
+                        | players = setPlayer p.id (\q -> { q | slide = slideTicks, fx = fx2, fy = fy2 }) model.players
+                        , cool = slideTicks + slideRecover
+                    }
+                else
+                    model
+
+            Nothing ->
+                model
+
+
+-- Discrete on-DOWN actions for a gamepad button that JUST went down. Mirrors the
+-- old PadDown routing: Start pauses (Playing); off the pitch ANY button advances;
+-- in play A=shoot/tackle, B/X=slide, Y/L1/R1=switch. The d-pad falls through: held
+-- is recomputed by dirHeld. The model is the fold accumulator; each button is an element.
+applyPadPress : Gamepad.Button -> Model -> Model
+applyPadPress btn model =
+    if btn == Gamepad.Start && model.phase == Playing then
+        togglePause model
+    else
+        case model.phase of
+            Playing ->
+                if model.paused then
+                    model
+                else
+                    case btn of
+                        Gamepad.A -> doAction model
+                        Gamepad.B -> startSlide model
+                        Gamepad.X -> startSlide model
+                        Gamepad.Y -> switchPlayer model
+                        Gamepad.L1 -> switchPlayer model
+                        Gamepad.R1 -> switchPlayer model
+                        _ -> model
+
+            -- off the pitch (title / full time) ANY button advances.
+            _ -> advanceFromScreen model
+
+
+-- Space / Enter: shoot if you own the ball, otherwise try to tackle. `cool`
+-- debounces the button so a held key or auto-repeat can't machine-gun it.
+doAction : Model -> Model
+doAction model =
+    if model.cool > 0 then
+        model
+    else
+        let
+            b = model.ball
+        in
+        if b.owner == model.controlled then
+            case playerById model.controlled model.players of
+                Just p ->
+                    let
+                        fx = if p.fx == 0 && p.fy == 0 then attackDirX p.team else p.fx
+                        -- a shot struck near the goal carries a bit more (extra zip to
+                        -- beat the keeper from close range); from distance it's normal.
+                        pow = if absI (foeGoalX model p.team - p.x) < shootBoostRange then kickPow + shootBoost else kickPow
+                    in
+                    { model
+                        | ball = { b | owner = noOwner, vx = fx * pow, vy = p.fy * pow, lock = 8 }
+                        , cool = 12
+                        , sfx = CuKick :: model.sfx
+                    }
+
+                Nothing ->
+                    model
+        else if b.lock == 0 then
+            case playerById model.controlled model.players of
+                Just p ->
+                    if d2 p.x p.y b.x b.y <= tackleR2 then
+                        { model
+                            | ball = { b | owner = model.controlled, vx = 0, vy = 0, lock = pickGrace }
+                            , cool = 10
+                        }
+                    else
+                        { model | cool = 6 }
+
+                Nothing ->
+                    model
+        else
+            model
+
+
+-- one simulation step. flash pauses everything; a spent clock ends the match.
+stepGame : Model -> Model
+stepGame model =
+    case model.phase of
+        Title -> titleTick model
+        Warmup -> warmupTick model
+        Set -> setTick model
+        Break -> breakTick model
+        Playing -> playTick model
+        -- full time: no simulation, just run the animation clocks (intro drives the
+        -- confetti/gloom, animTick the blink). intro grows unbounded here on purpose
+        -- (reset by freshModel) so the falling pieces don't jump.
+        Full -> { model | intro = model.intro + 1, flash = max 0 (model.flash - 1), animTick = nextAnim model.animTick }
+
+
+-- attract screen. `flash` counts down only after you press start (advanceFromScreen
+-- sets it): the shimmer keeps animating until it lapses, then the walk-on begins.
+titleTick : Model -> Model
+titleTick model =
+    if model.flash > 0 then
+        if model.flash <= 1 then startMatch model
+        else { model | flash = model.flash - 1, intro = nextIntro model.intro }
+    else
+        { model | intro = nextIntro model.intro }
+
+
+nextIntro : Int -> Int
+nextIntro n =
+    if n + 1 >= introCycle then 0 else n + 1
+
+
+-- teams trot to position; once everyone has arrived, hold a Set beat (below)
+-- before the ball drops, so play does not start the instant they line up.
+warmupTick : Model -> Model
+warmupTick model =
+    let
+        walked = List.map (walkOn model) model.players
+    in
+    if List.all (atTarget model.nextKick) walked then
+        -- the ball appears AT the kicking forward's foot the moment he arrives at
+        -- the centre (not on the abstract centre spot, which then jumped to his foot
+        -- at kick-off). It sits there in full view while the teams wait for the whistle.
+        let
+            ball =
+                case playerById (kickoffForwardId model.nextKick) walked of
+                    Just p -> ballAtFoot p
+                    Nothing -> centerBall
+        in
+        -- clear `moving` on everyone as they settle into formation: the player who
+        -- arrived on THIS tick still carries moving=True (it stepped to reach home),
+        -- and an up-walk (fy<0) would freeze him showing the back of his head. A
+        -- standing player must face us (eyes), so the whole line looks ready.
+        { model | players = List.map (\p -> { p | moving = False }) walked, phase = Set, flash = setPause, flashText = "", ball = ball }
+    else
+        { model | players = walked, animTick = nextAnim model.animTick, warm = model.warm + 1 }
+
+
+-- everyone is in place: hold a beat, blow the whistle partway through the hold,
+-- then (a short gap later) drop the ball and kick off - so the peep and the actual
+-- restart are not simultaneous.
+setTick : Model -> Model
+setTick model =
+    if model.flash > 0 then
+        let
+            held = { model | flash = model.flash - 1, animTick = nextAnim model.animTick }
+        in
+        if model.flash == whistleLead then cue CuWhistle held else held
+    else
+        kickOff model.nextKick model
+
+
+-- hold the banner (GOAL! / HALF TIME); when it clears, send the teams to Warmup.
+-- `entering` = walk on from the sides (half time); otherwise trot back from
+-- wherever they froze (after a goal).
+breakTick : Model -> Model
+breakTick model =
+    if model.flash > 0 then
+        { model | flash = model.flash - 1, animTick = nextAnim model.animTick }
+    else
+        let
+            m = if model.entering then placeAtSides model else model
+        in
+        { m | phase = Warmup }
+
+
+-- one live-match tick: full time, then half time, then the simulation.
+playTick : Model -> Model
+playTick model =
+    if model.clock <= 0 then
+        -- final whistle: play the win or lose jingle (a draw gets neither).
+        let
+            endCue =
+                if model.blue > model.red then [ CuWin ]
+                else if model.red > model.blue then [ CuLose ]
+                else []
+        in
+        -- flash locks input on the end screen for fullLock ticks (the prompt stays
+        -- hidden until it lapses), so a shot you were mashing as the whistle blew
+        -- cannot instantly skip the result and start a new match.
+        { model | phase = Full, flash = fullLock, sfx = List.concat [ [ CuFinalWhistle ], endCue, model.sfx ] }
+    else if model.half == 1 && model.clock <= matchTicks // 2 then
+        { model
+            | phase = Break
+            , flash = breakTicks
+            , flashText = "HALF TIME"
+            , players = freezeMotion model.players
+            , half = 2
+            , nextKick = Red
+            , entering = True
+            , held = noHeld
+            , sfx = CuHalf :: model.sfx
+        }
+    else
+        let
+            ctrl = pickControlled model
+            movedPlayers = List.map (movePlayer model ctrl) model.players
+            newClock = model.clock - 1
+            -- a countdown blip on each of the last 10 whole seconds before the NEXT
+            -- boundary: half time (first half) or full time (second). The clock runs
+            -- continuously across both halves, so we measure the gap to that boundary
+            -- rather than always to zero: that lands the ticks at 45' too, not only 90'.
+            periodEnd = if model.half == 1 then matchTicks // 2 else 0
+            toEnd = newClock - periodEnd
+            lowBeep = if toEnd > 0 && toEnd <= 10 * fps && imodP toEnd fps == 0 then [ CuTimeLow ] else []
+            m1 =
+                { model
+                    | players = movedPlayers
+                    , controlled = ctrl
+                    , clock = newClock
+                    , cool = max 0 (model.cool - 1)
+                    , sfx = List.concat [ lowBeep, model.sfx ]
+                }
+        in
+        if m1.passTo >= 0 then
+            -- kickoff pass in flight: ONLY the deterministic delivery runs (no ball
+            -- physics, tackles, shots or goals), so it can't be intercepted or overshot.
+            let
+                k = kickoffStep m1
+            in
+            { k | animTick = nextAnim m1.animTick }
+        else
+            let
+                m2 = { m1 | ball = updateBall m1 }
+                m2p = cpuPass m2
+                m3 = cpuShoot m2p
+                m3s = slideTackles m3
+                m4 = autoTackle m3s
+                m5 = resolvePossession m4
+                m6 = resolveGoal m5
+            in
+            { m6 | animTick = nextAnim m6.animTick }
+
+
+-- Which blue player you steer. Control follows the ball ONLY when a blue
+-- outfielder actually has it (you always steer the carrier). Otherwise it
+-- STAYS on whoever you last chose: the game never yanks control away from you
+-- mid-play. Press Shift to hand control to the blue player nearest the ball.
+pickControlled : Model -> Int
+pickControlled model =
+    let
+        b = model.ball
+    in
+    if b.owner >= 0 && teamOf b.owner model.players == Just Blue && roleOf b.owner model.players == Just Field then
+        b.owner
+    else
+        model.controlled
+
+
+-- ----- moving one player -----
+
+
+movePlayer : Model -> Int -> Player -> Player
+movePlayer model ctrl p =
+    if p.slide > 0 then
+        slideStep model p
+    else if p.slide < 0 then
+        -- face-down after a whiffed slide: lie there getting up (immobile) until it clears
+        { p | slide = p.slide + 1, moving = False }
+    else if p.id == ctrl then
+        moveHuman model p
+    else if p.role == Keeper then
+        moveKeeper model p
+    else if cpuShouldSlide model p then
+        startCpuSlide model p
+    else
+        moveField model p
+
+
+-- a sliding player lunges on; when the slide runs out WITHOUT having won the ball,
+-- he tumbles and is slow to get up (slide goes negative for slideDownTicks), so a
+-- missed carrinho has a real cost. A slide that won the ball (he now owns it) gets
+-- up clean.
+slideStep : Model -> Player -> Player
+slideStep model p =
+    let
+        m = slideMove p
+    in
+    if m.slide == 0 && model.ball.owner /= p.id then
+        { m | slide = 0 - slideDownTicks }
+    else
+        m
+
+
+-- a sliding player keeps going in its facing direction (a committed lunge) and
+-- counts the slide down; normal control + AI are suspended until it ends.
+slideMove : Player -> Player
+slideMove p =
+    { p
+        | x = clampPX (p.x + p.fx * slideSpeed)
+        , y = clampPY (p.y + p.fy * slideSpeed)
+        , slide = p.slide - 1
+        , moving = True
+    }
+
+
+moveHuman : Model -> Player -> Player
+moveHuman model p =
+    let
+        h = model.held
+        hx = boolInt h.right - boolInt h.left
+        hy = boolInt h.down - boolInt h.up
+        -- accumulate sub-pixel movement: a diagonal step is diagSub per axis
+        -- (≈1.9px) vs cardSub straight (2px), so speed is even in all directions.
+        per = if hx /= 0 && hy /= 0 then diagSub else cardSub
+        tx = p.sx + hx * per
+        ty = p.sy + hy * per
+        dxp = tx // subPx
+        dyp = ty // subPx
+        moving = hx /= 0 || hy /= 0
+    in
+    { p
+        | x = clampPX (p.x + dxp)
+        , y = clampPY (p.y + dyp)
+        , sx = tx - dxp * subPx
+        , sy = ty - dyp * subPx
+        , fx = if moving then hx else p.fx
+        , fy = if moving then hy else p.fy
+        , moving = moving
+    }
+
+
+-- A keeper only shadows the ball while it's on HIS half; otherwise he holds the
+-- middle of his goal. That stops the two keepers from mirroring each other up
+-- and down the pitch (they used to both track ball.y, so they moved in sync).
+moveKeeper : Model -> Player -> Player
+moveKeeper model p =
+    let
+        b = model.ball
+        -- this keeper's OWN goal, mirrored to the far side in the 2nd half. onMyHalf
+        -- and `incoming` derive from which side gx is on, so they flip with it.
+        base = if p.team == Blue then pitchL + 16 else pitchR - 16
+        gx = if model.half == 2 then fieldW - base else base
+        onMyHalf = if gx < midX then b.x < midX else b.x > midX
+        -- a loose ball heading toward THIS goal is a shot: a left goal (gx < midX) is
+        -- threatened by a ball travelling left (vx < 0); a right goal is the mirror.
+        incoming = b.owner == noOwner && (if gx < midX then b.vx < 0 else b.vx > 0)
+        -- meet the shot at the goal line: follow its trajectory to gx and stand
+        -- where it will cross, so a diagonal shot is caught instead of chased late.
+        -- BUT only commit to the corner once the ball is within keeperReact; from
+        -- range the keeper only tracks the ball's current line, so a hard shot to
+        -- the far corner arrives before it can get across (a save loop can't form).
+        ticks = if absI b.vx == 0 then 0 else absI (gx - b.x) // absI b.vx
+        predY = b.y + b.vy * ticks
+        near = absI (gx - b.x) < keeperReact
+        target =
+            if incoming && near then iclamp (goalTop + 2) (goalBot - 2) predY
+            else if onMyHalf then iclamp (goalTop + 6) (goalBot - 6) b.y
+            else midY
+        ny = approach p.y target keeperSpeed
+    in
+    { p | x = gx, y = ny, fx = atkDir model p.team, fy = 0, moving = ny /= p.y }
+
+
+moveField : Model -> Player -> Player
+moveField model p =
+    let
+        b = model.ball
+        -- a SECOND defender joins the press, but only when the ball is loose or
+        -- with the other team AND has entered this team's own half. Otherwise
+        -- just the single nearest chases, so the team never collapses onto the
+        -- ball. This gives real pressure in defence without the old swarm.
+        -- own half is behind the way this team attacks (flips at half time).
+        onOwnHalf = if atkDir model p.team > 0 then b.x < midX else b.x > midX
+        threatened = teamOf b.owner model.players /= Just p.team && onOwnHalf
+    in
+    if b.owner == p.id then
+        stepToward p (foeGoalX model p.team) midY cpuSpeed cpuDiag
+    else if teamNearestField p.team model.players b == p.id then
+        -- the nearest chaser on the team WITHOUT the ball goes for it at the normal
+        -- pace (no speed boost: it made keeping the ball too hard).
+        stepToward p b.x b.y cpuSpeed cpuDiag
+    else if threatened && secondNearestField p.team model.players b == p.id then
+        -- the SECOND presser COVERS instead of diving onto the ball (which stacked
+        -- the two chasers on one spot): it holds a step goal-side of the ball, so
+        -- the pair stay apart and screen a wider area to win it back.
+        let
+            c = coverSpot model p
+        in
+        stepToward p c.x c.y cpuSpeed cpuDiag
+    else
+        let
+            t = supportSpot model p
+        in
+        stepToward p t.x t.y cpuSpeed cpuDiag
+
+
+-- Where the SECOND presser goes when its team hunts the ball back: NOT the ball
+-- itself (that put two defenders on one pixel), but a spot a stride goal-side of
+-- it, shaded back toward the central channel. So one player closes the carrier
+-- while this one guards the space behind and to the side - they hold a real gap
+-- between them and together cover a wider slice of the pitch.
+coverSpot : Model -> Player -> Vec
+coverSpot model p =
+    let
+        b = model.ball
+        gx = b.x - atkDir model p.team * coverGap    -- drop goal-side of the ball
+        gy = b.y + (midY - b.y) // 2                  -- ease back toward the middle to cover the lane
+    in
+    { x = iclamp (pitchL + 24) (pitchR - 24) gx
+    , y = iclamp (pitchT + 22) (pitchB - 22) gy
+    }
+
+
+-- Where a non-chasing outfielder goes. Only the single nearest team-mate chases
+-- the ball (see moveField); everyone else HOLDS FORMATION so the team stays
+-- spread instead of swarming. The whole line swings with possession: forwards
+-- push HIGH to support an attack and track back into a shell (retranca) on
+-- defence, while the deep holder stays back as a safety. Each player also drifts
+-- slowly around his zone (osc) so the shape is alive, not a set of fixed pegs.
+supportSpot : Model -> Player -> Vec
+supportSpot model p =
+    let
+        b = model.ball
+        attacking = teamOf b.owner model.players == Just p.team
+        -- a "forward" home sits ahead of the deep holder (relative to midfield);
+        -- true for the two wide players, false for the lone deep man.
+        isForward = atkDir model p.team * (p.homeX - midX) > (0 - 80)
+        base =
+            if attacking && isForward then
+                -- OFF-BALL FORWARD: run into the OPPOSITE channel from the ball and
+                -- push level-or-ahead of it toward goal, so the carrier always has a
+                -- far-side outlet for a pass (attack up top -> this one peels low, and
+                -- vice versa). A slight bias to the player's own home lane splits the
+                -- two forwards (one high, one low) instead of both crowding one side.
+                { x = iclamp (pitchL + 40) (pitchR - 40) (b.x + atkDir model p.team * 52)
+                , y = iclamp (pitchT + 30) (pitchB - 30) (midY + isign (midY - b.y) * 64 + (p.homeY - midY) // 4)
+                }
+            else
+                -- horizontal swing: forwards commit up in attack / drop deep in
+                -- defence; the holder makes a smaller move either way (a safety).
+                let
+                    adv =
+                        if attacking then
+                            if isForward then atkDir model p.team * 150 else atkDir model p.team * 55
+                        else
+                            if isForward then atkDir model p.team * (0 - 95) else atkDir model p.team * (0 - 50)
+                in
+                { x = p.homeX + adv, y = p.homeY + (b.y - p.homeY) // 4 }
+        -- shove away from any player crowding this spot, so nobody stacks up
+        sp = spread model p
+        -- a slow personal wander so nobody stands on an exact pixel
+        wx = osc model.clock (p.id * 37) 16
+        wy = osc model.clock (p.id * 37 + 90) 13
+    in
+    { x = iclamp (pitchL + 30) (pitchR - 30) (base.x + sp.x + wx)
+    , y = iclamp (pitchT + 22) (pitchB - 22) (base.y + sp.y + wy)
+    }
+
+
+-- a "separation" nudge: sum a push away from every OTHER player within spaceR2,
+-- so support players spread out instead of piling onto the same spot. Capped so a
+-- crowded cluster can't fling anyone across the pitch.
+spread : Model -> Player -> Vec
+spread model p =
+    let
+        step = \q acc ->
+            if q.id /= p.id && d2 p.x p.y q.x q.y < spaceR2 then
+                { x = acc.x + isign (p.x - q.x) * spacePush
+                , y = acc.y + isign (p.y - q.y) * spacePush
+                }
+            else
+                acc
+        raw = List.foldl step { x = 0, y = 0 } model.players
+    in
+    { x = iclamp (0 - spaceMax) spaceMax raw.x
+    , y = iclamp (0 - spaceMax) spaceMax raw.y
+    }
+
+
+-- Move a player toward (tx, ty). Cardinal moves use spCard; a diagonal (both
+-- axes want to move) uses spDiag on EACH axis: same rule the human obeys, so
+-- the AI's diagonal run is no faster than yours.
+stepToward : Player -> Int -> Int -> Int -> Int -> Player
+stepToward p tx ty spCard spDiag =
+    let
+        wantX = isign (tx - p.x)
+        wantY = isign (ty - p.y)
+        sp = if wantX /= 0 && wantY /= 0 then spDiag else spCard
+        nx = approach p.x tx sp
+        ny = approach p.y ty sp
+        dx = isign (nx - p.x)
+        dy = isign (ny - p.y)
+        moving = dx /= 0 || dy /= 0
+    in
+    { p
+        | x = clampPX nx
+        , y = clampPY ny
+        , fx = if moving then dx else p.fx
+        , fy = if moving then dy else p.fy
+        , moving = moving
+    }
+
+
+-- ----- the ball -----
+
+
+updateBall : Model -> Ball
+updateBall model =
+    let
+        b = model.ball
+    in
+    if b.owner >= 0 then
+        dribble model b
+    else
+        loose model b
+
+
+dribble : Model -> Ball -> Ball
+dribble model b =
+    case playerById b.owner model.players of
+        Just p ->
+            let
+                fx = if p.fx == 0 && p.fy == 0 then attackDirX p.team else p.fx
+            in
+            { b
+                | x = p.x + fx * dribbleAhead
+                , y = p.y + p.fy * dribbleAhead
+                , vx = 0
+                , vy = 0
+                , lock = max 0 (b.lock - 1)
+            }
+
+        Nothing ->
+            { b | owner = noOwner }
+
+
+loose : Model -> Ball -> Ball
+loose model b =
+    let
+        nx = b.x + b.vx
+        ny = b.y + b.vy
+        inMouthNow = inMouth ny
+        -- top / bottom rebound
+        vyWall =
+            if ny < pitchT then (0 - b.vy) * 3 // 4
+            else if ny > pitchB then (0 - b.vy) * 3 // 4
+            else b.vy
+        yClamped = iclamp pitchT pitchB ny
+        -- left / right: pass through the mouth (a goal), otherwise rebound
+        offSide = (nx < pitchL || nx > pitchR) && inMouthNow == False
+        vxWall = if offSide then (0 - b.vx) * 3 // 4 else b.vx
+        xKept = if inMouthNow then nx else iclamp pitchL pitchR nx
+        fvx = vxWall * 15 // 16
+        fvy = vyWall * 15 // 16
+        moved =
+            { b
+                | x = xKept
+                , y = yClamped
+                , vx = if absI fvx < 1 then 0 else fvx
+                , vy = if absI fvy < 1 then 0 else fvy
+                , lock = max 0 (b.lock - 1)
+            }
+    in
+    keeperClears model moved
+
+
+-- both keepers get a chance to punch a loose ball away from their own goal.
+keeperClears : Model -> Ball -> Ball
+keeperClears model b =
+    let
+        b1 = keeperClear (keeperOf Blue model.players) 1 b
+    in
+    keeperClear (keeperOf Red model.players) (0 - 1) b1
+
+
+keeperClear : Maybe Player -> Int -> Ball -> Ball
+keeperClear mk2 dir b =
+    case mk2 of
+        Just k ->
+            -- lock == 0 gate: the clear sets lock = 8, so the ball then flies
+            -- free for 8 ticks instead of being re-grabbed every frame (the
+            -- catch radius is wider than one tick of travel, which otherwise
+            -- pins the ball to the keeper forever).
+            if b.owner == noOwner && b.lock == 0 && d2 k.x k.y b.x b.y <= catchR2 then
+                -- boot it out toward a wing (away from the central striker who just
+                -- shot), not straight back down his throat - so a save turns into a
+                -- counter instead of feeding another shot.
+                { b
+                    | vx = dir * clearPow
+                    , vy = (if k.y < midY then 0 - 1 else 1) * 7
+                    , x = k.x + dir * 10
+                    , y = k.y
+                    , lock = 8
+                }
+            else
+                b
+
+        Nothing ->
+            b
+
+
+-- a red carrier that has reached the final third lets fly at the blue goal,
+-- aiming for a top / bottom corner (alternating) rather than straight down the
+-- middle, so the keeper actually has to guess, and the shots aren't monotonous.
+cpuShoot : Model -> Model
+cpuShoot model =
+    let
+        b = model.ball
+    in
+    if b.owner >= 0 && teamOf b.owner model.players == Just Red then
+        case playerById b.owner model.players of
+            Just p ->
+                let
+                    -- Red's attack direction + the goal it's aiming at, THIS half. In
+                    -- the 2nd half everything mirrors, so Red shoots toward the right.
+                    sdir = atkDir model Red
+                    close = if model.half == 2 then p.x >= fieldW - shootX else p.x <= shootX
+                in
+                if close then
+                    let
+                        -- aim a WIDE corner, alternating top/bottom over time so
+                        -- consecutive shots differ (the reaction-limited keeper can't
+                        -- just camp one spot).
+                        corner = if mod2 (model.clock // 19) == 0 then goalTop + 6 else goalBot - 6
+                        -- a REAL aimed diagonal, fired at full power like your own shot:
+                        -- vy is scaled by the run to goal so the ball lands ON the
+                        -- corner (steep from close, shallow from far). Fired from close
+                        -- that steepness beats the keeper the way your close diagonals
+                        -- do - so BOTH keepers concede good corners, fairly.
+                        gline = foeGoalX model Red - sdir * 16
+                        run = max 46 (absI (p.x - gline))
+                        vy = iclamp (0 - 9) 9 ((corner - p.y) * kickPow // run)
+                    in
+                    { model
+                        | ball = { b | owner = noOwner, vx = sdir * kickPow, vy = vy, lock = 8 }
+                        , sfx = CuKick :: model.sfx
+                    }
+                else
+                    model
+
+            Nothing ->
+                model
+    else
+        model
+
+
+-- The best Red team-mate to pass to: a field player clearly AHEAD toward the
+-- attacking goal (a forward ball, never square or back), the most advanced one.
+-- Nothing if nobody is ahead, then the carrier just keeps dribbling.
+bestPassTarget : Model -> Player -> Int -> Maybe Player
+bestPassTarget model p sdir =
+    let
+        ahead =
+            \t -> t.team == Red && t.role == Field && t.id /= p.id && sdir * (t.x - p.x) > passLead
+        farther =
+            \t acc ->
+                case acc of
+                    Just best ->
+                        if sdir * t.x > sdir * best.x then Just t else acc
+
+                    Nothing ->
+                        Just t
+    in
+    List.foldl farther Nothing (List.filter ahead model.players)
+
+
+-- Whether a Red carrier lays the ball off this tick instead of dribbling on: when a
+-- Blue defender has closed it down (escape the press) OR, now and then, just to move
+-- the ball around. Deterministic (clock + id, no RNG) so it replays under time-travel.
+cpuShouldPass : Model -> Player -> Bool
+cpuShouldPass model p =
+    let
+        pressed =
+            List.any (\d -> d.team == Blue && d.role == Field && d2 d.x d.y p.x p.y < passPressR2) model.players
+    in
+    pressed || imodP (model.clock + p.id * 13) passEvery == 0
+
+
+-- CPU passing. A Red carrier that ISN'T in shooting range will sometimes roll the
+-- ball forward to a team-mate upfield instead of dribbling all the way in. The pass
+-- is a real loose ball (owner cleared, so it has pace + friction and a Blue can read
+-- the lane and pick it off). Runs just before cpuShoot; if it fires, the ball is
+-- loose so cpuShoot's `owner >= 0` guard skips it. Near goal it never passes: it
+-- leaves the finish to cpuShoot.
+cpuPass : Model -> Model
+cpuPass model =
+    let
+        b = model.ball
+    in
+    if b.owner >= 0 && teamOf b.owner model.players == Just Red then
+        case playerById b.owner model.players of
+            Just p ->
+                let
+                    sdir = atkDir model Red
+                    close = if model.half == 2 then p.x >= fieldW - shootX else p.x <= shootX
+                in
+                if close then
+                    model
+                else
+                    case bestPassTarget model p sdir of
+                        Just t ->
+                            if cpuShouldPass model p then
+                                let
+                                    dx = t.x - p.x
+                                    dy = t.y - p.y
+                                    dd = max 1 (max (absI dx) (absI dy))
+                                in
+                                { model
+                                    | ball = { b | owner = noOwner, vx = dx * cpuPassPow // dd, vy = dy * cpuPassPow // dd, lock = 8 }
+                                    , sfx = CuKick :: model.sfx
+                                }
+
+                            else
+                                model
+
+                        Nothing ->
+                            model
+
+            Nothing ->
+                model
+    else
+        model
+
+
+-- a player mid-slide that reaches the ball wins it: as long as the ball is up
+-- for grabs (not inside a grace window). This is the payoff for a carrinho.
+slideTackles : Model -> Model
+slideTackles model =
+    let
+        b = model.ball
+    in
+    if b.lock > 0 then
+        model
+    else
+        case slidingWinner b model.players of
+            Just pid ->
+                { model | ball = { b | owner = pid, vx = 0, vy = 0, lock = pickGrace }, sfx = CuTackle :: model.sfx }
+
+            Nothing ->
+                model
+
+
+slidingWinner : Ball -> List Player -> Maybe Int
+slidingWinner b players =
+    let
+        cands = List.filter (\p -> p.slide > 0 && p.id /= b.owner && d2 p.x p.y b.x b.y <= slideReach2) players
+    in
+    nearestIdOf b cands
+
+
+-- the CPU presses: a red outfielder in range robs a blue carrier. (You steal
+-- back with the button, so possession stays a contest of timing.)
+autoTackle : Model -> Model
+autoTackle model =
+    let
+        b = model.ball
+    in
+    if b.owner >= 0 && b.lock == 0 && teamOf b.owner model.players == Just Blue then
+        case nearestPresser Red b model.players of
+            Just rid ->
+                { model | ball = { b | owner = rid, vx = 0, vy = 0, lock = tackleGrace } }
+
+            Nothing ->
+                model
+    else
+        model
+
+
+-- the CPU's carrinho: the nearest red chaser, when a blue player is carrying the
+-- ball just OUTSIDE standing-steal range, sometimes lunges into a sliding tackle
+-- to win it back (the payoff is handled by slideTackles, same as your own slide).
+-- Deterministic (tick + id) so it replays under time-travel; gated so at most one
+-- red slides at a time and it's an occasional gamble, not a constant sweep.
+cpuSlideTrigger2 : Int
+cpuSlideTrigger2 = 1444          -- 38^2: a red presser this close to a blue carrier may slide
+
+
+cpuShouldSlide : Model -> Player -> Bool
+cpuShouldSlide model p =
+    let
+        b = model.ball
+        dist2 = d2 p.x p.y b.x b.y
+    in
+    p.team == Red
+        && p.role == Field
+        && b.owner >= 0
+        && b.lock == 0
+        && teamOf b.owner model.players == Just Blue
+        && dist2 > pressR2
+        && dist2 <= cpuSlideTrigger2
+        && nearestRedFieldId b model.players == Just p.id
+        && noRedSliding model.players
+        && imodP (model.animTick + p.id * 23) 48 == 0
+
+
+noRedSliding : List Player -> Bool
+noRedSliding players =
+    List.all (\q -> q.team /= Red || q.slide == 0) players
+
+
+nearestRedFieldId : Ball -> List Player -> Maybe Int
+nearestRedFieldId b players =
+    nearestIdOf b (List.filter (\p -> p.team == Red && p.role == Field) players)
+
+
+-- commit to the lunge: face straight at the ball and run the slide clock.
+startCpuSlide : Model -> Player -> Player
+startCpuSlide model p =
+    let
+        b = model.ball
+    in
+    { p | slide = slideTicks, fx = isign (b.x - p.x), fy = isign (b.y - p.y), moving = True }
+
+
+-- a slow enough loose ball is collected by the nearest outfielder in range.
+resolvePossession : Model -> Model
+resolvePossession model =
+    let
+        b = model.ball
+    in
+    if b.owner == noOwner && b.lock == 0 && (b.vx * b.vx + b.vy * b.vy) <= collectMax then
+        case nearestFieldInRange b model.players of
+            Just pid ->
+                { model | ball = { b | owner = pid, vx = 0, vy = 0, lock = pickGrace } }
+
+            Nothing ->
+                model
+    else
+        model
+
+
+-- a loose ball across a goal line, inside the mouth, is a goal.
+resolveGoal : Model -> Model
+resolveGoal model =
+    let
+        b = model.ball
+        -- who scores in the LEFT / RIGHT goal swaps at half time (each team is now
+        -- attacking the other end).
+        leftScorer = if model.half == 2 then Blue else Red
+        rightScorer = if model.half == 2 then Red else Blue
+    in
+    if b.owner == noOwner && b.x <= pitchL && inMouth b.y then
+        afterGoal model leftScorer
+    else if b.owner == noOwner && b.x >= pitchR && inMouth b.y then
+        afterGoal model rightScorer
+    else
+        model
+
+
+kickoffForwardId : Team -> Int
+kickoffForwardId team =
+    if team == Blue then 0 else 4
+
+
+-- queue both teams just off the touchlines at the halfway line: blue above the
+-- top line, red below the bottom line: single file (entry index 0 = keeper at
+-- the front, then the field players stacked behind, partly off-screen). Each trots
+-- on when its wave is released (see warmupTick / walkOn), so the two teams file on
+-- one player at a time. The ball is parked away; `warm` restarts the entry clock.
+placeAtSides : Model -> Model
+placeAtSides model =
+    let
+        -- 2nd half: mirror the whole formation to the other end (homes flip about
+        -- midX); the entry sidelines stay put (blue enters top, red enters bottom).
+        flip = model.half == 2
+        roster =
+            if flip then List.map (\p -> { p | homeX = fieldW - p.homeX }) kickoffPlayers
+            else kickoffPlayers
+    in
+    { model
+        | players = List.map queueStart roster
+        , ball = hiddenBall
+        , controlled = 0
+        , held = noHeld
+        , warm = 0
+    }
+
+
+-- where a player waits before its wave is released: stacked at the tunnel mouth
+-- just off its team's touchline at the halfway line (blue up top, red at the
+-- bottom), off-screen, facing the pitch. Released one at a time (walkOn), so the
+-- team files on in single file down the centre lane.
+queueStart : Player -> Player
+queueStart p =
+    let
+        face = if p.team == Blue then 1 else 0 - 1
+    in
+    { p | x = midX, y = tunnelYFor p.team, fx = 0, fy = face, moving = False, slide = 0, sx = 0, sy = 0 }
+
+
+-- the walk-on order within a team (0 = first on): the keeper leads (longest trek),
+-- the field players follow, and the kicking team's taker, who stays on the centre
+-- spot to pass: comes on LAST. The two teams share each wave (one blue, one red).
+entryIndex : Team -> Player -> Int
+entryIndex kicker p =
+    if p.role == Keeper then
+        0
+    else if p.team == kicker && p.id == kickoffForwardId kicker then
+        3
+    else if p.team == kicker then
+        if p.team == Blue then p.id else p.id - 4
+    else
+        if p.team == Blue then p.id + 1 else p.id - 3
+
+
+-- flip pause; clear held so the player doesn't drift when play resumes.
+togglePause : Model -> Model
+togglePause model =
+    { model | paused = model.paused == False, held = noHeld }
+
+
+-- the walk-on is a slow, single-file march down the centre lane to a muster spot
+-- near halfway; each player then peels off to its position (see entryWalk).
+
+
+entrySpeed : Int
+entrySpeed = 2           -- px/tick during the ceremonial walk-on (a steady walk; marchTicks tracks this)
+
+
+entryWave : Int
+entryWave = 50           -- warm-up ticks between successive players setting off (also their spacing down the line)
+
+
+tunnelYBlue : Int
+tunnelYBlue = pitchT - 56     -- off-screen above the top touchline
+
+
+tunnelYRed : Int
+tunnelYRed = pitchB + 56      -- off-screen below the bottom touchline
+
+
+musterYBlue : Int
+musterYBlue = 180             -- the blue line files up to a bit short of the centre spot, then peels off to formation
+
+
+musterYRed : Int
+musterYRed = 220              -- the red line files up to a bit short of the centre spot (mirrored below)
+
+
+marchTicks : Int
+marchTicks = (musterYBlue - tunnelYBlue) // entrySpeed + 10    -- march time + a beat at the muster before dispersing
+
+
+tunnelYFor : Team -> Int
+tunnelYFor team = if team == Blue then tunnelYBlue else tunnelYRed
+
+
+musterYFor : Team -> Int
+musterYFor team = if team == Blue then musterYBlue else musterYRed
+
+
+-- during Warmup a player heads to its formation spot (the kicking team's forward
+-- goes to the centre, so the ball lands at his feet). A post-goal RETURN is a
+-- straight trot back at once; a sideline WALK-ON is the slow single-file procession.
+walkOn : Model -> Player -> Player
+walkOn model p =
+    if model.entering then entryWalk model p else returnWalk model p
+
+
+-- straight back to the formation spot (or the centre, for the taker).
+returnWalk : Model -> Player -> Player
+returnWalk model p =
+    stepToPos p (formX model.nextKick p) (formY model.nextKick p) warmupSpeed
+
+
+-- the ceremonial walk-on: wait your turn, file down the centre lane to the muster
+-- spot near halfway (single file, slow), then peel off to your position (still slow).
+entryWalk : Model -> Player -> Player
+entryWalk model p =
+    let
+        start = entryIndex model.nextKick p * entryWave
+    in
+    if model.warm < start then
+        { p | moving = False }
+    else if model.warm < start + marchTicks then
+        stepToPos p midX (musterYFor p.team) entrySpeed
+    else
+        stepToPos p (formX model.nextKick p) (formY model.nextKick p) entrySpeed
+
+
+formX : Team -> Player -> Int
+formX kicker p = if p.id == kickoffForwardId kicker then midX else p.homeX
+
+
+formY : Team -> Player -> Int
+formY kicker p = if p.id == kickoffForwardId kicker then midY else p.homeY
+
+
+-- one step toward (tx,ty) at `speed` per axis, updating facing + moving.
+stepToPos : Player -> Int -> Int -> Int -> Player
+stepToPos p tx ty speed =
+    let
+        nx = approach p.x tx speed
+        ny = approach p.y ty speed
+        dx = isign (nx - p.x)
+        dy = isign (ny - p.y)
+    in
+    { p
+        | x = nx
+        , y = ny
+        , fx = if dx /= 0 then dx else p.fx
+        , fy = if dy /= 0 then dy else p.fy
+        , moving = nx /= p.x || ny /= p.y
+    }
+
+
+atTarget : Team -> Player -> Bool
+atTarget kicker p =
+    if p.id == kickoffForwardId kicker then
+        p.x == midX && p.y == midY
+    else
+        p.x == p.homeX && p.y == p.homeY
+
+
+-- who you steer at a kickoff. In real football the taker can't just dribble off -
+-- his first touch must go to a team-mate - so the CPU takes it at the centre and
+-- passes; YOU control the RECEIVER (the team-mate it's rolled to), ready to carry it
+-- forward. When defending, you steer the blue outfielder whose formation home is
+-- nearest the centre, so control starts near the ball, not out on a wing.
+kickoffControlled : Team -> List Player -> Int
+kickoffControlled kicker players =
+    if kicker == Blue then
+        kickoffReceiver Blue players
+    else
+        nearestHomeBlue players
+
+
+-- the team-mate the kickoff is passed to: the field player (NOT the taker) whose
+-- formation home sits nearest the centre - a natural short outlet. Home-based, so
+-- it's the same pick whether computed on the walk-back or at kick-off (no arrow hop).
+kickoffReceiver : Team -> List Player -> Int
+kickoffReceiver kicker players =
+    let
+        fwd = kickoffForwardId kicker
+        cands = List.filter (\p -> p.team == kicker && p.role == Field && p.id /= fwd) players
+        step =
+            \p acc ->
+                let
+                    d = d2 p.homeX p.homeY midX midY
+                in
+                if d < acc.d then { id = p.id, d = d } else acc
+        best = List.foldl step { id = fwd, d = 2000000000 } cands
+    in
+    best.id
+
+
+nearestHomeBlue : List Player -> Int
+nearestHomeBlue players =
+    let
+        cands = List.filter (\p -> p.team == Blue && p.role == Field) players
+        step =
+            \p acc ->
+                let
+                    d = d2 p.homeX p.homeY midX midY
+                in
+                if d < acc.d then { id = p.id, d = d } else acc
+        best = List.foldl step { id = 0, d = 2000000000 } cands
+    in
+    best.id
+
+
+-- the ball at a player's foot, EXACTLY where `dribble` holds it, so giving him the
+-- ball never makes it jump. Used at kickoff: it appears at the forward's foot the
+-- moment he reaches the centre (Set), and stays put when play goes live.
+ballAtFoot : Player -> Ball
+ballAtFoot p =
+    let
+        fx = if p.fx == 0 && p.fy == 0 then attackDirX p.team else p.fx
+    in
+    { x = p.x + fx * dribbleAhead, y = p.y + p.fy * dribbleAhead, vx = 0, vy = 0, owner = p.id, lock = pickGrace }
+
+
+-- the kickoff ball: sitting loose at the taker's foot, about to be rolled to the
+-- receiver by kickoffStep. Starts at the foot so it doesn't jump from the Set frame.
+kickoffBall : List Player -> Int -> Ball
+kickoffBall players fwdId =
+    case playerById fwdId players of
+        Just f ->
+            let
+                base = ballAtFoot f
+            in
+            { base | owner = noOwner }
+
+        Nothing ->
+            centerBall
+
+
+-- Deterministic kickoff pass. Each tick it rolls the loose ball a steady step toward
+-- the receiver (model.passTo) and, once it reaches him, he collects it AT HIS FOOT
+-- and the pass ends (passTo cleared). It homes on his CURRENT position, so the ball
+-- ALWAYS ends up at the selected player's foot - a clean simulated kickoff pass,
+-- never intercepted, never overshot. (playTick runs this while passTo >= 0 and skips
+-- all other ball logic, so nothing else can touch the ball mid-pass.)
+kickoffStep : Model -> Model
+kickoffStep model =
+    case playerById model.passTo model.players of
+        Just r ->
+            let
+                b = model.ball
+            in
+            if d2 b.x b.y r.x r.y <= passArrive2 then
+                { model | ball = ballAtFoot r, passTo = noOwner }
+            else
+                let
+                    dx = r.x - b.x
+                    dy = r.y - b.y
+                    dd = max 1 (max (absI dx) (absI dy))
+                in
+                { model | ball = { b | x = b.x + dx * passPow // dd, y = b.y + dy * passPow // dd, vx = 0, vy = 0, owner = noOwner } }
+
+        Nothing ->
+            { model | passTo = noOwner }
+
+
+-- Warmup done: put the ball at the taker's foot and go live. He immediately rolls it
+-- to a team-mate (the kickoff pass, delivered by kickoffStep) - you control the
+-- receiver. Clears transient slide / sub-pixel state so play starts clean.
+kickOff : Team -> Model -> Model
+kickOff kicker model =
+    let
+        cleaned = List.map (\p -> { p | slide = 0, moving = False, sx = 0, sy = 0 }) model.players
+    in
+    { model
+        | phase = Playing
+        , players = cleaned
+        , ball = kickoffBall cleaned (kickoffForwardId kicker)
+        , controlled = kickoffControlled kicker cleaned
+        , passTo = kickoffReceiver kicker cleaned
+        , held = noHeld
+        , cool = 0
+        , entering = False
+    }
+
+
+afterGoal : Model -> Team -> Model
+afterGoal model scorer =
+    let
+        scored =
+            case scorer of
+                Blue -> { model | blue = model.blue + 1 }
+                Red -> { model | red = model.red + 1 }
+    in
+    -- freeze for the GOAL! banner (players stay put), then the team that
+    -- conceded trots back and restarts (breakTick, then Warmup, then kickOff).
+    -- Pick who you'll steer NOW, so the arrow is already on the right player
+    -- through the celebration instead of jumping when play resumes.
+    { scored
+        | phase = Break
+        , flash = goalFlash
+        , flashText = "GOAL!"
+        , players = freezeMotion model.players
+        , nextKick = otherTeam scorer
+        , controlled = kickoffControlled (otherTeam scorer) model.players
+        , entering = False
+        , held = noHeld
+        , sfx = CuGoal :: model.sfx
+        , scorer = scorer
+    }

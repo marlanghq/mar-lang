@@ -1,0 +1,347 @@
+module World exposing (..)
+
+-- Turning a character map into a world: parse the cells, place the actors and
+-- the items, and answer the questions the sim asks of the grid -- what is
+-- here, can I stand, is there line of sight.
+
+import Balance exposing (..)
+import Barrows exposing (..)
+import Types exposing (..)
+
+
+solidCode : Char -> Int
+solidCode ch =
+    case ch of
+        '#' -> 1
+        '%' -> 2
+        'T' -> 3
+        'd' -> 4
+        'D' -> 5
+        'C' -> 6
+        _ -> 0
+
+
+parseCells : List String -> List Cell
+parseCells rows =
+    List.concat
+        (List.indexedMap
+            (\y row ->
+                List.indexedMap (\x ch -> { x = x, y = y, ch = ch }) (String.toList row))
+            rows)
+
+
+emptyWorld : World
+emptyWorld =
+    { pairs = [], doors = [], actors = [], items = [], piles = [], sx = 2048, sy = 2048 }
+
+
+maxHpOf : Int -> Int
+maxHpOf kind =
+    case kind of
+        0 -> 4          -- draugr: the workhorse melee, one more pip now
+        1 -> 5          -- wraith: the caster hangs back, so give it teeth
+        2 -> 30         -- the Jarl: a longer boss fight
+        3 -> 3          -- varg: still glassy, but no longer one-shot
+        4 -> 6          -- skjaldmaer: her shield already stalls you; tankier
+        6 -> 5          -- draug-archer: the ranged bowman (new)
+        _ -> 8          -- volva: the elite blinker, tankiest
+
+
+actorFor : Int -> Int -> Int -> Actor
+actorFor kind cx cy =
+    { kind = kind
+    , x = cx * k1 + 512
+    , y = cy * k1 + 512
+    , hp = maxHpOf kind
+    , st = ASleep
+    , sdir = 1
+    , fT = 0
+    , bt = 40 + modBy 80 (cx * 7 + cy * 13)
+    , idx = 0
+    }
+
+
+itemFor : Int -> Int -> Int -> Item
+itemFor kind cx cy =
+    { kind = kind, x = cx * k1 + 512, y = cy * k1 + 512, taken = False }
+
+
+buildWorld : List String -> World
+buildWorld rows =
+    let
+        step =
+            \c acc ->
+                let
+                    code = solidCode c.ch
+                    key = c.y * 24 + c.x
+                in
+                if code > 0 then
+                    let
+                        acc2 = { acc | pairs = (key, code) :: acc.pairs }
+                    in
+                    if code == 4 || code == 5 then
+                        { acc2 | doors = { cx = c.x, cy = c.y, rune = code == 5, openT = 0 - 1 } :: acc2.doors }
+                    else
+                        acc2
+                else
+                    case c.ch of
+                        'P' -> { acc | sx = c.x * k1 + 512, sy = c.y * k1 + 512 }
+                        'E' -> { acc | actors = actorFor 0 c.x c.y :: acc.actors }
+                        'W' -> { acc | actors = actorFor 1 c.x c.y :: acc.actors }
+                        'J' -> { acc | actors = actorFor 2 c.x c.y :: acc.actors }
+                        'v' -> { acc | actors = actorFor 3 c.x c.y :: acc.actors }
+                        'k' -> { acc | actors = actorFor 4 c.x c.y :: acc.actors }
+                        'q' -> { acc | actors = actorFor 5 c.x c.y :: acc.actors }
+                        'y' -> { acc | actors = actorFor 6 c.x c.y :: acc.actors }
+                        'R' -> { acc | items = itemFor 0 c.x c.y :: acc.items }
+                        'H' -> { acc | items = itemFor 1 c.x c.y :: acc.items }
+                        'G' -> { acc | items = itemFor 2 c.x c.y :: acc.items }
+                        'X' -> { acc | items = itemFor 3 c.x c.y :: acc.items }
+                        'o' -> { acc | items = itemFor 4 c.x c.y :: acc.items }
+                        'x' -> { acc | items = itemFor 5 c.x c.y :: acc.items }
+                        'f' -> { acc | items = itemFor 6 c.x c.y :: acc.items }
+                        'a' -> { acc | items = itemFor 7 c.x c.y :: acc.items }
+                        'A' -> { acc | items = itemFor 8 c.x c.y :: acc.items }
+                        'u' -> { acc | items = itemFor 9 c.x c.y :: acc.items }
+                        'b' -> { acc | items = itemFor 10 c.x c.y :: acc.items }
+                        'p' -> { acc | piles = { x = c.x * k1 + 512, y = c.y * k1 + 512, big = False } :: acc.piles }
+                        _ -> acc
+    in
+    List.foldl step emptyWorld (parseCells rows)
+
+
+-- (re)enter a barrow: fresh world, fresh actors, score snapshot for Saga
+initBarrow : Int -> Model -> Model
+initBarrow b model =
+    let
+        w = buildWorld (mapFor b)
+    in
+    { model
+        | mode = Intro
+        , modeT = 0
+        , barrow = b
+        , px = w.sx
+        , py = w.sy
+        , heading = spawnHeading b
+        , cool = 0
+        , hp = 6
+        , invulnT = 0
+        , hurtT = 0
+        , hasRune = False
+        , runeBlink = 0
+        , pickMsg = ""
+        , pickT = 0
+        , timeT = 0
+        , snapGold = model.gold
+        , snapKills = model.kills
+        , snapArrows = model.arrows
+        , snapAxes = model.axes
+        , snapFlasks = model.flasks
+        , snapArmor = model.armor
+        , secretsFound = 0
+        , secretsTotal =
+            List.length (List.filter (\c -> c.ch == 'C') (parseCells (mapFor b)))
+        , items =
+            List.filter
+                (\it -> (it.kind == 9 && model.hasSpear) == False && (it.kind == 10 && model.hasBow) == False)
+                w.items
+        , pbolts = []
+        , booms = []
+        , grid = Dict.fromList w.pairs
+        , mapRuns = computeRuns (Dict.fromList w.pairs)
+        , doors = w.doors
+        , actors = List.indexedMap (\i a -> { a | idx = i }) w.actors
+        , bolts = []
+        , piles = w.piles
+        , gibs = []
+        , jarlS1 = False
+        , jarlS2 = False
+        , combatT = 0
+        , lockT = 0
+        , kF = False
+        , kB = False
+        , kSL = False
+        , kSR = False
+        , kTL = False
+        , kTR = False
+        , fireHeld = False
+        , fireQ = False
+        , padA = False
+        , padMove = Nothing
+        , moveId = Nothing
+        , padTurn = Nothing
+        , turnId = Nothing
+        , lookId = Nothing
+        , lookX = 0
+        , turnQ = 0
+        , fireId = Nothing
+        , ptrIds = []
+        , sfx = CStart :: model.sfx
+    }
+
+
+initModel : Model
+initModel =
+    { mode = Title
+    , modeT = 0
+    , hardcore = False
+    , sel = 0
+    , barrow = 0
+    , tick = 0
+    , seed = Random.initialSeed 20260707
+    , w = 960
+    , h = 600
+    , px = 2048
+    , py = 2048
+    , heading = 0
+    , cool = 0
+    , hp = 6
+    , invulnT = 0
+    , hurtT = 0
+    , hasRune = False
+    , runeBlink = 0
+    , pickMsg = ""
+    , pickT = 0
+    , gold = 0
+    , kills = 0
+    , timeT = 0
+    , snapGold = 0
+    , snapKills = 0
+    , weapon = 0
+    , hasSpear = False
+    , hasBow = False
+    , arrows = 0
+    , axes = 0
+    , flasks = 0
+    , armor = 0
+    , secretsFound = 0
+    , secretsTotal = 0
+    , mapRuns = []
+    , snapArrows = 0
+    , snapAxes = 0
+    , snapFlasks = 0
+    , snapArmor = 0
+    , grid = Dict.fromList []
+    , doors = []
+    , actors = []
+    , bolts = []
+    , pbolts = []
+    , booms = []
+    , items = []
+    , piles = []
+    , gibs = []
+    , jarlS1 = False
+    , jarlS2 = False
+    , combatT = 0
+    , lockT = 0
+    , kF = False
+    , kB = False
+    , kSL = False
+    , kSR = False
+    , kTL = False
+    , kTR = False
+    , fireHeld = False
+    , fireQ = False
+    , padA = False
+    , padX = 0
+    , padY = 0
+    , padRX = 0
+    , keysDown = []
+    , padDown = []
+    , padMove = Nothing
+    , moveId = Nothing
+    , padTurn = Nothing
+    , turnId = Nothing
+    , lookId = Nothing
+    , lookX = 0
+    , turnQ = 0
+    , fireId = Nothing
+    , ptrIds = []
+    , dev = Nothing
+    , muted = False
+    , sfx = []
+    }
+
+
+init : (Model, Cmd Msg)
+init =
+    ( initModel, Cmd.none )
+
+
+
+
+cellAt : Dict Int Int -> Int -> Int -> Int
+cellAt grid cx cy =
+    if cx < 0 || cx > 23 || cy < 0 || cy > 23 then
+        1
+    else
+        Dict.get (cy * 24 + cx) grid |> Maybe.withDefault 0
+
+
+-- the minimap pre-bakes each row of solid cells into horizontal runs so
+-- drawing it costs ~100 rects, not 576. Doors are skipped here (drawn
+-- separately in their own color) and cracked walls look like plain stone,
+-- so secrets stay secret. Recomputed only when the grid actually changes
+-- (barrow start, a door opening, a wall shattering)
+computeRuns : Dict Int Int -> List { x : Int, y : Int, w : Int }
+computeRuns grid =
+    List.concatMap (\y -> rowRuns grid y 0 Nothing []) (range 24)
+
+
+rowRuns : Dict Int Int -> Int -> Int -> Maybe Int -> List { x : Int, y : Int, w : Int } -> List { x : Int, y : Int, w : Int }
+rowRuns grid y x open acc =
+    let
+        code = cellAt grid x y
+        solid = x < 24 && code > 0 && code /= 4 && code /= 5
+    in
+    if x >= 24 then
+        case open of
+            Just x0 -> { x = x0, y = y, w = x - x0 } :: acc
+            Nothing -> acc
+    else
+        case open of
+            Just x0 ->
+                if solid then
+                    rowRuns grid y (x + 1) open acc
+                else
+                    rowRuns grid y (x + 1) Nothing ({ x = x0, y = y, w = x - x0 } :: acc)
+
+            Nothing ->
+                if solid then
+                    rowRuns grid y (x + 1) (Just x) acc
+                else
+                    rowRuns grid y (x + 1) Nothing acc
+
+
+solidAtPt : Dict Int Int -> Int -> Int -> Bool
+solidAtPt grid x y =
+    cellAt grid (x // k1) (y // k1) > 0
+
+
+canStand : Dict Int Int -> Int -> Int -> Bool
+canStand grid x y =
+    (solidAtPt grid (x - playerR) (y - playerR)
+        || solidAtPt grid (x + playerR) (y - playerR)
+        || solidAtPt grid (x - playerR) (y + playerR)
+        || solidAtPt grid (x + playerR) (y + playerR))
+        == False
+
+
+-- straight-line sight test, sampled every ~quarter cell. Cheap and good
+-- enough for AI; the renderer never uses this (it has real rays)
+losClear : Dict Int Int -> Int -> Int -> Int -> Int -> Bool
+losClear grid ax ay bx by =
+    let
+        n = iclamp 1 48 (octDist (bx - ax) (by - ay) // 224)
+    in
+    losStep grid ax ay bx by n 1
+
+
+losStep : Dict Int Int -> Int -> Int -> Int -> Int -> Int -> Int -> Bool
+losStep grid ax ay bx by n i =
+    if i >= n then
+        True
+    else if solidAtPt grid (ax + (bx - ax) * i // n) (ay + (by - ay) * i // n) then
+        False
+    else
+        losStep grid ax ay bx by n (i + 1)

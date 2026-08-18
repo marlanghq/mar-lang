@@ -1,0 +1,168 @@
+module Controls exposing (..)
+
+-- What a touch or a key does to the patch: pick a preset, drag a slider,
+-- toggle a wave, press a note.
+
+import Panel exposing (..)
+import Presets exposing (..)
+import Synth exposing (..)
+import Types exposing (..)
+
+
+
+
+update : Msg -> Model -> (Model, Cmd Msg)
+update msg model =
+    case msg of
+        Resized w h ->
+            ( { model | w = w, h = h }, Cmd.none )
+
+        Tapped x y ->
+            press x y model
+
+        Dragged x y ->
+            -- only the panel sliders care about drags now; the musical keys are
+            -- driven by the pointer mirror (a finger sliding across keys bends
+            -- its own note there, per finger: no code needed here).
+            --
+            -- onDrag carries no finger id, so EVERY moving finger arrives here.
+            -- Without the zone test, a finger resting on a key would drive
+            -- whatever slider the OTHER hand grabbed. Panel drags live above the
+            -- keyboard; anything at or below kbTop is a key, not a knob.
+            if model.dragCtl >= 0 && y < kbTop model then
+                ( dragSlider model.dragCtl x model, Cmd.none )
+            else
+                ( model, Cmd.none )
+
+        Released _ _ ->
+            -- a finger lifting is NOT enough to end a slider drag: onRelease has
+            -- no id either, so the key hand lifting would cancel the knob hand's
+            -- drag. The mirror ends it instead (see PointersChanged). Notes stop
+            -- on their own: a lifted finger just leaves the mirror.
+            ( model, Cmd.none )
+
+        KeysChanged st ->
+            let
+                next = { model | keys = st.down }
+            in
+            ( { next | glideTo = retarget model next }, Cmd.none )
+
+        PointersChanged ps ->
+            -- recompute the drag from the WHOLE snapshot, the mirror's own rule:
+            -- the drag is over exactly when no finger is left on the panel.
+            let
+                onPanel = List.filter (\pt -> pt.y < kbTop model) ps
+
+                next =
+                    { model
+                        | pointers = ps
+                        , dragCtl = if List.isEmpty onPanel then 0 - 1 else model.dragCtl
+                    }
+            in
+            ( { next | glideTo = retarget model next }, Cmd.none )
+
+
+-- a tap: keyboard first, then panel controls
+press : Int -> Int -> Model -> (Model, Cmd Msg)
+press x y model =
+    let
+        k = keyAt model x y
+    in
+    if k >= 0 then
+        -- a key tap: the pointer mirror (watchPointers) already sounds it, so
+        -- there is nothing to do here: panel taps and key taps stay separate.
+        ( model, Cmd.none )
+    else
+        case tappedPreset model x y of
+            Just i ->
+                -- switch patch silently; the sound only plays when a key is pressed
+                ( { model | patch = (presetAt i).patch }
+                , Cmd.none
+                )
+
+            Nothing ->
+                pressPanel x y model
+
+
+-- Which preset the panel is ON, DERIVED: a preset is selected exactly while the
+-- patch still equals it, index or -1. The Model used to STORE this, and that is
+-- what made the row lie: the stored index stayed lit through every slider move,
+-- so the panel claimed GRAND while the patch was somewhere else entirely.
+-- Derived, a single edit un-lights it and tapping the preset again re-lights it,
+-- with nothing to keep in sync. The field is gone: it existed only to be shown,
+-- and once the display is computed there is nothing left for it to do.
+selectedPreset : Model -> Int
+selectedPreset model =
+    case
+        List.head
+            (List.filter
+                (\i -> (presetAt i).patch == model.patch)
+                (List.range 0 (List.length presets - 1)))
+    of
+        Just i -> i
+        Nothing -> 0 - 1
+
+
+tappedPreset : Model -> Int -> Int -> Maybe Int
+tappedPreset model x y =
+    List.head
+        (List.filter
+            (\i -> inR x y (presetRect model i))
+            (List.range 0 (List.length presets - 1)))
+
+
+pressPanel : Int -> Int -> Model -> (Model, Cmd Msg)
+pressPanel x y model =
+    let
+        wave =
+            List.head
+                (List.filter (\i -> inR x y (waveRect model i)) (List.range 0 3))
+
+        -- a dimmed slider is not a target: tapping it must not jump its value to
+        -- where the finger landed, or the panel would still be editing something
+        -- that does nothing
+        slider =
+            List.head
+                (List.filter
+                    (\id -> sliderActive model.patch id && inR x y (sliderRect model id))
+                    sliderIds)
+
+        p = model.patch
+    in
+    case wave of
+        Just wv ->
+            ( { model | patch = { p | wave = wv } }, Cmd.none )
+
+        Nothing ->
+            case slider of
+                Just id ->
+                    ( dragSlider id x { model | dragCtl = id }, Cmd.none )
+
+                Nothing ->
+                    if inR x y (octDownRect model) then
+                        ( { model | patch = { p | oct = max (0 - 2) (p.oct - 1) } }, Cmd.none )
+                    else if inR x y (octUpRect model) then
+                        ( { model | patch = { p | oct = min 2 (p.oct + 1) } }, Cmd.none )
+                    else if inR x y (subRect model) then
+                        ( { model | patch = { p | sub = p.sub == False } }, Cmd.none )
+                    else if inR x y (voiceRect model) then
+                        ( { model | patch = nextVoice p }, Cmd.none )
+                    else if inR x y (glideRect model) then
+                        if glideReachable p then
+                            ( { model | patch = { p | glide = p.glide == False } }, Cmd.none )
+                        else
+                            ( model, Cmd.none )
+                    else if inR x y (arpRect model) then
+                        ( { model | patch = { p | arp = if p.arp >= 5 then 0 else p.arp + 1 } }, Cmd.none )
+                    else
+                        ( model, Cmd.none )
+
+
+dragSlider : Int -> Int -> Model -> Model
+dragSlider id x model =
+    let
+        r = sliderRect model id
+        rng = sliderRange id
+        v = rng.lo + (iclamp r.x (r.x + r.w) x - r.x) * (rng.hi - rng.lo) // max 1 r.w
+    in
+    { model | patch = sliderSet id v model.patch }

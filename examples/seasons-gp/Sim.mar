@@ -1,0 +1,667 @@
+module Sim exposing (..)
+
+-- One tick of the race: throttle, brake, steer, grip, curve, rivals,
+-- collisions, checkpoints and the clock. Pure functions of the model.
+
+import Balance exposing (..)
+import Seasons exposing (..)
+import Sfx exposing (..)
+import Types exposing (..)
+
+
+freshModel : Model
+freshModel =
+    { w = 800
+    , h = 500
+    , mode = Title
+    , tick = 0
+    , seed = Random.initialSeed 20261
+    , year = 1
+    , phaseIx = 0
+    , camZ = 0
+    , phaseStartZ = 0
+    , timeLeft = 0
+    , countT = 0
+    , rev = 0
+    , goT = 0
+    , speed = 0
+    , playerX = 0
+    , playerVx = 0
+    , leftK = False
+    , rightK = False
+    , gasK = False
+    , brakeK = False
+    , keysDown = []
+    , padLeft = False
+    , padRight = False
+    , padGas = False
+    , padBrake = False
+    , padX = 0
+    , padDown = []
+    , touching = False
+    , touchX = 0
+    , tGas = False
+    , tBrake = False
+    , dev = Nothing
+    , curve = 14
+    , curveTarget = 14
+    , nextCurveAt = 4000
+    , nextSpawnAt = 6000
+    , rivals = []
+    , passed = 0
+    , crashT = 0
+    , slipT = 0
+    , mtnOff = 0
+    , bannerT = 0
+    , bannerTop = ""
+    , bannerBot = ""
+    , lastWarnSec = 99
+    , muted = False
+    , sfx = []
+    }
+
+
+init : (Model, Cmd Msg)
+init =
+    ( freshModel, Cmd.none )
+
+
+update : Msg -> Model -> (Model, Cmd Msg)
+update msg model =
+    case msg of
+        Resized w h ->
+            ( { model | w = w, h = h }, Cmd.none )
+
+        Tick ->
+            case model.mode of
+                Race -> emit (stepRace model)
+                Title -> ( { model | tick = model.tick + 1, camZ = model.camZ + 36 }, Cmd.none )
+                Over -> ( { model | tick = model.tick + 1 }, Cmd.none )
+
+        Tapped x y ->
+            if inMuteZone model x y then
+                toggleMute model
+            else
+                case model.mode of
+                    Race -> ( applyTouch model x y, Cmd.none )
+                    -- The pads are gated on Device.touchOnly (see
+                    -- touchControlsShapes), so on a phone they're already on
+                    -- screen the moment the race begins: no provisional flag,
+                    -- and a desktop mouse click never summons them.
+                    _ -> emit (startRace model)
+
+        Dragged x y ->
+            if model.mode == Race then
+                ( applyTouch model x y, Cmd.none )
+            else
+                ( model, Cmd.none )
+
+        Released x y ->
+            ( releaseTouch model x y, Cmd.none )
+
+        KeysChanged st ->
+            let
+                held = \k -> List.member k st.down
+                pressed = \k -> held k && (List.member k model.keysDown == False)
+                -- steering / throttle are HELD state: rebuild the bools from the
+                -- whole set on every change (a key leaving the set releases it, so
+                -- KeyUp is gone). keysDown is stored to diff for the press edges.
+                m1 =
+                    { model
+                        | keysDown = st.down
+                        , leftK = held Keyboard.ArrowLeft || held Keyboard.KeyA
+                        , rightK = held Keyboard.ArrowRight || held Keyboard.KeyD
+                        , gasK = held Keyboard.ArrowUp || held Keyboard.KeyW || held Keyboard.Space
+                        , brakeK = held Keyboard.ArrowDown || held Keyboard.KeyS
+                    }
+                -- M mutes on the press edge, any mode (never re-fires while held)
+                (m2, muteCmd) =
+                    if pressed Keyboard.KeyM then toggleMute m1 else ( m1, Cmd.none )
+                -- Enter / Space start the race on the press edge, off the track
+                (m3, startCmd) =
+                    if m2.mode /= Race && (pressed Keyboard.Enter || pressed Keyboard.Space) then
+                        emit (startRace m2)
+                    else
+                        ( m2, Cmd.none )
+            in
+            ( m3, Cmd.batch [ muteCmd, startCmd ] )
+
+        PadChanged p ->
+            let
+                held = \b -> List.member b p.down
+                pressed = \b -> held b && (List.member b model.padDown == False)
+                -- d-pad + face buttons are HELD state; the left stick X is the
+                -- analog steer (-100..100, same deadzone read downstream).
+                m1 =
+                    { model
+                        | padDown = p.down
+                        , padX = p.leftX
+                        , padLeft = held Gamepad.Left
+                        , padRight = held Gamepad.Right
+                        , padGas = held Gamepad.A || held Gamepad.X
+                        , padBrake = held Gamepad.B
+                    }
+            in
+            -- Start / A launch the race on the press edge, off the track
+            if m1.mode /= Race && (pressed Gamepad.Start || pressed Gamepad.A) then
+                emit (startRace m1)
+            else
+                ( m1, Cmd.none )
+
+        DeviceChanged d ->
+            ( { model | dev = Just d }, Cmd.none )
+
+
+inR : Int -> Int -> PRect -> Bool
+inR px py r =
+    px >= r.x && px <= r.x + r.w && py >= r.y && py <= r.y + r.h
+
+
+padRects : Model -> { steer : PRect, gas : PRect, brake : PRect }
+padRects m =
+    let
+        lay = layout m
+        gh = gameH * lay.scale // 100
+        sideW = lay.ox
+        botH = m.h - (lay.oy + gh)
+        botY = lay.oy + gh
+    in
+    if sideW >= 100 then
+        -- landscape: the lower part of each side bezel. Gas sits at the
+        -- bottom (where the right thumb rests), brake right above it.
+        -- A 28px OUTER margin keeps both pads off the phone's very edge
+        -- (holding the rim is awkward); the inner edges stay where they were.
+        let
+            pw = sideW - 40
+            py = max (lay.oy + gh // 2) (m.h - 280)
+            ph = m.h - py - 16
+        in
+        { steer = { x = 28, y = py, w = pw, h = ph }
+        , gas = { x = m.w - sideW + 12, y = py + ph // 2 + 6, w = pw, h = ph // 2 - 6 }
+        , brake = { x = m.w - sideW + 12, y = py, w = pw, h = ph // 2 - 12 }
+        }
+    else if botH >= 100 then
+        -- portrait: a control row anchored to the BOTTOM of the screen (where
+        -- the thumbs rest), under the raised picture: steer on the left,
+        -- brake then gas on the right. Sizes are CAPPED in absolute pixels
+        -- (a tablet's huge bottom bezel must not inflate the pedals into
+        -- billboards); pedals anchor to the right EDGE so thumbs always
+        -- find them regardless of screen width.
+        let
+            ph = min 150 (botH - 24)
+            py = m.h - ph - 12
+            half = m.w // 2
+            sw = min 340 (half - 40)
+            pw = min 165 (half // 2 - 20)
+        in
+        { steer = { x = 28, y = py, w = sw, h = ph }
+        , gas = { x = m.w - 28 - pw, y = py, w = pw, h = ph }
+        , brake = { x = m.w - 28 - pw - 10 - pw, y = py, w = pw, h = ph }
+        }
+    else
+        -- no bezel worth using (tablet landscape: the picture fills the
+        -- screen). Compact FIXED-SIZE pads overlaid on the picture's bottom
+        -- corners, in screen coordinates, never scaled by the stage (a 3.7x
+        -- iPad scale once inflated these into half-screen slabs).
+        let
+            ph = 92
+            py = m.h - ph - 16
+            sw = min 300 (m.w * 30 // 100)
+            pw = 96
+        in
+        { steer = { x = 16, y = py, w = sw, h = ph }
+        , gas = { x = m.w - 16 - pw, y = py, w = pw, h = ph }
+        , brake = { x = m.w - 16 - pw - 8 - pw, y = py, w = pw, h = ph }
+        }
+
+
+-- pad x -> world steer target: pad centre = straight, edges = full lock
+steerFromPad : Int -> PRect -> Int
+steerFromPad x r =
+    iclamp (0 - 1200) 1200 ((x - r.x - r.w // 2) * 2400 // max 1 r.w)
+
+
+applyTouch : Model -> Int -> Int -> Model
+applyTouch model x y =
+    let
+        r = padRects model
+    in
+    if inR x y r.steer then
+        { model | touching = True, touchX = steerFromPad x r.steer }
+    else if inR x y r.gas then
+        { model | tGas = True, tBrake = False }
+    else if inR x y r.brake then
+        { model | tBrake = True, tGas = False }
+    else
+        model
+
+
+releaseTouch : Model -> Int -> Int -> Model
+releaseTouch model x y =
+    if x < model.w // 2 then
+        { model | touching = False }
+    else
+        { model | tGas = False, tBrake = False }
+
+
+inMuteZone : Model -> Int -> Int -> Bool
+inMuteZone model x y =
+    let
+        lay = layout model
+        lx = (x - lay.ox) * 100 // max 1 lay.scale
+        ly = (y - lay.oy) * 100 // max 1 lay.scale
+    in
+    lx > 292 && ly < 20
+
+
+toggleMute : Model -> (Model, Cmd Msg)
+toggleMute model =
+    let
+        m2 = model.muted == False
+    in
+    ( { model | muted = m2 }, Sound.setMuted m2 )
+
+
+startRace : Model -> Model
+startRace model =
+    { model
+        | mode = Race
+        , year = 1
+        , phaseIx = 0
+        , camZ = 0
+        , phaseStartZ = 0
+        , timeLeft = budgetMs 1
+        , countT = countStart
+        , rev = 0
+        , speed = 0
+        , playerX = 0
+        , playerVx = 0
+        , touching = False
+        , tGas = False
+        , tBrake = False
+        , curve = 0
+        , curveTarget = 0
+        , nextCurveAt = 3000
+        , nextSpawnAt = 5000
+        , rivals = []
+        , passed = 0
+        , crashT = 0
+        , slipT = 0
+        , mtnOff = 0
+        , bannerT = 100
+        , bannerTop = "SPRING"
+        , bannerBot = "YEAR 1"
+        , lastWarnSec = 99
+        , seed = Random.initialSeed (model.tick * 7919 + 13)
+        , sfx = []
+    }
+
+
+-- drain queued cues into play commands (sounds never live in the model, so the
+-- dev-dock time travel keeps working)
+emit : Model -> (Model, Cmd Msg)
+emit model =
+    if List.length model.sfx == 0 then
+        ( model, Cmd.none )
+    else
+        ( { model | sfx = [] }
+        , Cmd.batch (List.map (\c -> Sound.play (cueSound c)) model.sfx)
+        )
+
+
+
+
+stepRace : Model -> Model
+stepRace model =
+    if model.countT > 0 then
+        stepCountdown model
+    else
+        model
+            |> stepSpeed
+            |> stepSteer
+            |> stepWorld
+            |> stepCurve
+            |> stepGrip
+            |> stepRivals
+            |> stepCollide
+            |> stepCheckpoint
+            |> stepClock
+
+
+-- the start gantry: three red lights come on one second apart, then lights
+-- out: GO. The car is held on the grid (engine idling) and the clock waits.
+stepCountdown : Model -> Model
+stepCountdown m =
+    let
+        c2 = m.countT - 1
+        cues =
+            if c2 == 180 || c2 == 120 || c2 == 60 then
+                CueLight :: m.sfx
+            else if c2 == 0 then
+                CueGo :: m.sfx
+            else
+                m.sfx
+    in
+    { m
+        | countT = c2
+        , tick = m.tick + 1
+        , goT = if c2 == 0 then 55 else m.goT
+        , rev = if gasHeld m then min 100 (m.rev + 6) else max 0 (m.rev - 5)
+        , bannerT = max 0 (m.bannerT - 1)
+        , sfx = cues
+    }
+
+
+gasHeld : Model -> Bool
+gasHeld m =
+    m.gasK || m.padGas || m.tGas
+
+
+brakeHeld : Model -> Bool
+brakeHeld m =
+    m.brakeK || m.padBrake || m.tBrake
+
+
+stepSpeed : Model -> Model
+stepSpeed m =
+    let
+        -- how far the car's outer edge has crossed onto the grass (0 = fully on
+        -- the road). The drag grows with it, so clipping the verge with a wheel
+        -- costs a little and burying the car in the grass costs a lot.
+        offEdge = absI m.playerX - grassEdge
+        onGrass = offEdge > 0
+        s1 =
+            if brakeHeld m then
+                max 0 (m.speed - brakeDecel)
+            else if gasHeld m then
+                min maxSpeed (m.speed + accel)
+            else
+                max 0 (m.speed - coastDecel)
+        drag = min 8 (2 + offEdge // 60)
+        s2 =
+            if m.crashT > 40 then crashSpeed
+            else if onGrass && s1 > 65 then max 65 (s1 - drag)
+            else s1
+        skid =
+            onGrass && s2 > 55 && mod2 (m.tick // 4) == 0
+    in
+    { m
+        | speed = s2
+        , sfx = if skid then CueSkid :: m.sfx else m.sfx
+    }
+
+
+-- steering: keys/d-pad are full lock, the stick is analog, touch chases the
+-- finger. The curve throws the car toward the outside (drift) - hard enough that
+-- a bend needs real counter-steer, unlike a straight. In WINTER the wheel answers
+-- more slowly (ice), so you have to turn in earlier - but the curve does NOT
+-- throw any harder than dry (that combo was brutal). Losing grip (smoke) commits
+-- the car to the corner: steering to the opposite side barely bites and it washes
+-- further out.
+stepSteer : Model -> Model
+stepSteer m =
+    let
+        keyDir =
+            (if m.leftK || m.padLeft then 0 - 1 else 0)
+                + (if m.rightK || m.padRight then 1 else 0)
+        stickV =
+            if absI m.padX > 24 then m.padX * steerMax // 100 else 0
+        target0 =
+            if m.touching then
+                iclamp (0 - steerMax) steerMax ((m.touchX - m.playerX) // 8)
+            else if keyDir /= 0 then
+                keyDir * steerMax
+            else
+                stickV
+        sliding = m.slipT > 26
+        -- under slip, steering AGAINST the bend (target and curve opposite signs)
+        -- loses most of its authority - you can't just flick out of the slide
+        target =
+            if sliding && target0 * m.curve < 0 then target0 * 2 // 5 else target0
+        ease = if isIce m.phaseIx then 9 else 3
+        vx = m.playerVx + (target - m.playerVx) // ease
+        -- steering authority follows speed: ZERO when stopped (you can't turn a
+        -- parked car), rising fast then saturating near 94 at top speed. It's
+        -- hyperbolic, not linear: low speeds already steer well, but there's
+        -- always some influence and no motion means no turn.
+        eff = 118 * m.speed // (m.speed + 60)
+        -- smaller divisor = the curve flings harder; a slide (smoke) drops grip
+        -- another notch so it washes toward the outside. NOT stronger in winter:
+        -- the ice penalty is the laggy wheel (ease) alone; doubling both was brutal
+        fling = 5 - (if sliding then 1 else 0)
+        drift = (0 - m.curve) * m.speed // (fling * 180)
+        px = iclamp (0 - 1350) 1350 (m.playerX + vx * eff // 100 + drift)
+    in
+    { m | playerVx = vx, playerX = px }
+
+
+stepWorld : Model -> Model
+stepWorld m =
+    let
+        dz = m.speed // 2
+    in
+    { m
+        | tick = m.tick + 1
+        , camZ = m.camZ + dz
+        , mtnOff = modBy mtnWrap (m.mtnOff + m.curve * dz // 900 + mtnWrap)
+        , crashT = max 0 (m.crashT - 1)
+        , bannerT = max 0 (m.bannerT - 1)
+        , goT = max 0 (m.goT - 1)
+    }
+
+
+stepCurve : Model -> Model
+stepCurve m =
+    let
+        -- the road bends toward its target 2 units/tick: fast enough that even a
+        -- tight target is reached before the segment ends (so sharp curves bite)
+        c =
+            if m.curve < m.curveTarget then min m.curveTarget (m.curve + 2)
+            else if m.curve > m.curveTarget then max m.curveTarget (m.curve - 2)
+            else m.curve
+    in
+    if m.camZ >= m.nextCurveAt then
+        let
+            (s2, roll) = rnd m.seed 100
+            (s3, mag) = rnd s2 (curveMax m.year)
+            (s4, sharpRoll) = rnd s3 100
+            (s5, len) = rnd s4 9000
+            -- ~18% of turns are TIGHT (target near the ±99 clamp); the rest gentle
+            sharp = sharpRoll >= 82
+            baseMag = if sharp then 74 + mag // 3 else 24 + mag // 2
+            tgt =
+                if roll < 34 then 0
+                else if roll < 67 then 0 - baseMag
+                else baseMag
+        in
+        { m | curve = c, curveTarget = iclamp (0 - 99) 99 tgt, nextCurveAt = m.camZ + 5000 + len, seed = s5 }
+    else
+        { m | curve = c }
+
+
+-- Grip: hold a sharp curve at high speed and the tyres start to slide, the slip
+-- timer ramps up; past a threshold it squeals (CueScreech) and puffs smoke (see
+-- smokeShapes). While the tyres are scrubbing it also bleeds a little speed each
+-- tick, which eases you back under the slide threshold (self-correcting) so you
+-- can't just hold the throttle through it. It decays fast once you straighten out.
+stepGrip : Model -> Model
+stepGrip m =
+    let
+        sliding = absI m.curve > 52 && m.speed > 165
+        slipT2 = if sliding then min 100 (m.slipT + 3) else max 0 (m.slipT - 5)
+        screeching = slipT2 > 26
+        screech = screeching && modBy 14 m.tick == 0
+        speed2 = if screeching then max 0 (m.speed - (1 + slipT2 // 100)) else m.speed
+    in
+    { m
+        | slipT = slipT2
+        , speed = speed2
+        , sfx = if screech then CueScreech :: m.sfx else m.sfx
+    }
+
+
+stepRivals : Model -> Model
+stepRivals m =
+    let
+        moved =
+            List.map
+                (\r ->
+                    let
+                        rel = r.z - m.camZ
+                        close = m.speed - r.spd
+                        -- ease the final APPROACH only. Closing z is constant, but the
+                        -- 1/z projection makes a near rival ahead BALLOON, so while
+                        -- you're gaining (close > 0) and the rival is still AHEAD of the
+                        -- pass line, damp the closing (down to ~45% right at the pass) so
+                        -- it glides in instead of rushing. The moment it's level or behind
+                        -- (rel <= passPlane) it drops back at its natural speed: without
+                        -- the rel > passPlane guard a rival you just overtook recedes at
+                        -- <half speed, so it clings to your tail and clips you from
+                        -- behind. Far rivals keep full speed; smooth at the edge.
+                        near = iclamp 0 100 ((rel - passPlane) * 100 // 940)
+                        damp = 45 + near * 55 // 100
+                        rivDz =
+                            if close > 0 && rel > passPlane && rel < passPlane + 940 then
+                                m.speed // 2 - close * damp // 200
+                            else
+                                r.spd // 2
+                    in
+                    { r | z = r.z + rivDz }
+                )
+                m.rivals
+        kept =
+            List.filter (\r -> r.z > m.camZ - 2600 && r.z < m.camZ + viewDist + 4000) moved
+        -- count the CROSSINGS this tick, at the PLAYER's plane (camZ+passPlane),
+        -- not the camera, so the pass registers the instant a rival draws level
+        -- with you: the whoosh fires right then. (Culling must never un-count a
+        -- pass; a crash can still let a rival repass, which counts back down.)
+        line = m.camZ + passPlane
+        crossedFwd =
+            List.length (List.filter (\r -> r.counted == False && r.z < line) kept)
+        crossedBack =
+            List.length (List.filter (\r -> r.counted && r.z > line) kept)
+        counted =
+            List.map
+                (\r ->
+                    if r.counted == False && r.z < line then { r | counted = True }
+                    else if r.counted && r.z > line then { r | counted = False }
+                    else r
+                )
+                kept
+        delta = crossedFwd - crossedBack
+        -- passing a car at speed earns a doppler whoosh
+        sfx2 = if crossedFwd > 0 && m.speed > 150 then CueWhoosh :: m.sfx else m.sfx
+    in
+    if m.camZ >= m.nextSpawnAt && List.length counted < 8 then
+        let
+            (s2, laneIx) = rnd m.seed 5
+            (s3, jitter) = rnd s2 240
+            (s4, dspd) = rnd s3 34
+            (s5, kind) = rnd s4 3
+            (s6, gap) = rnd s5 900
+            lane = (laneIx - 2) * 350 + jitter - 120
+            -- never stack a fresh rival beside one still near the spawn
+            -- horizon: two abreast at speed would be an unavoidable wall
+            nearSpawn =
+                List.head (List.filter (\r -> r.z > m.camZ + viewDist - 3200) counted)
+            lane2 =
+                case nearSpawn of
+                    Nothing -> lane
+                    Just r ->
+                        if r.x > 0 then 0 - (300 + jitter) else 300 + jitter
+            rival =
+                { z = m.camZ + viewDist
+                , x = iclamp (0 - 720) 720 lane2
+                , spd = rivalBase m.year + dspd + (if isNight m.phaseIx then 10 else 0)
+                , kind = kind
+                , counted = False
+                }
+        in
+        { m
+            | rivals = rival :: counted
+            , passed = max 0 (m.passed + delta)
+            , nextSpawnAt = m.camZ + spawnGapBase m.year m.phaseIx + gap
+            , seed = s6
+            , sfx = sfx2
+        }
+    else
+        { m | rivals = counted, passed = max 0 (m.passed + delta), sfx = sfx2 }
+
+
+-- a rival crossing our nose while overlapping our lane = crash: the speed dies
+-- (no lives, just lost seconds), the rival is shoved ahead, the car flashes
+-- for a moment (colour only: the screen never shakes) and you are briefly
+-- immune.
+stepCollide : Model -> Model
+stepCollide m =
+    if m.crashT > 0 then
+        m
+    else
+        let
+            hit =
+                List.filter
+                    (\r ->
+                        r.z - m.camZ > 60 && r.z - m.camZ < 400
+                            && absI (r.x - m.playerX) < 320
+                    )
+                    m.rivals
+        in
+        case List.head hit of
+            Nothing ->
+                m
+
+            Just r ->
+                -- both cars lose speed and the one you hit is nudged just a
+                -- little ahead (a bump, not flung away) and slowed to a crawl,
+                -- so it stays in view while you recover and re-pass it.
+                { m
+                    | speed = crashSpeed
+                    , crashT = 50
+                    , rivals =
+                        List.map
+                            (\q ->
+                                if q.z == r.z && q.x == r.x then
+                                    { q | z = q.z + 180, spd = min q.spd 48 }
+                                else
+                                    q
+                            )
+                            m.rivals
+                    , sfx = CueCrash :: m.sfx
+                }
+
+
+stepCheckpoint : Model -> Model
+stepCheckpoint m =
+    if m.camZ - m.phaseStartZ >= phaseLen then
+        let
+            nextIx = modBy seasonCount (m.phaseIx + 1)
+            wrapped = nextIx == 0
+            year2 = if wrapped then m.year + 1 else m.year
+        in
+        { m
+            | phaseIx = nextIx
+            , year = year2
+            , phaseStartZ = m.camZ
+            , timeLeft = budgetMs year2
+            , bannerT = 120
+            , bannerTop = if wrapped then "YEAR " ++ String.fromInt year2 else "CHECKPOINT!"
+            , bannerBot = seasonName nextIx
+            , lastWarnSec = 99
+            , sfx = (if wrapped then CueYear else CueCheck) :: m.sfx
+        }
+    else
+        m
+
+
+stepClock : Model -> Model
+stepClock m =
+    let
+        t2 = m.timeLeft - (1000 // fps)
+        sec = (t2 + 999) // 1000
+    in
+    if t2 <= 0 then
+        { m | timeLeft = 0, mode = Over, sfx = CueOver :: m.sfx }
+    else if sec <= 10 && sec < m.lastWarnSec then
+        { m | timeLeft = t2, lastWarnSec = sec, sfx = CueBeep :: m.sfx }
+    else
+        { m | timeLeft = t2 }

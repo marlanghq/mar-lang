@@ -1,0 +1,145 @@
+module Pieces exposing (..)
+
+-- The seven pieces as data: their shapes at each rotation, their colours, the
+-- wall kicks they may try, and the bag they are drawn from. Adding a piece is
+-- adding rows here.
+
+import Types exposing (..)
+import Canvas exposing ( rgb )
+import Random
+
+
+shapeOf : Int -> Int -> List Cell
+shapeOf kind rot =
+    let
+        r = modBy 4 rot
+    in
+    case kind of
+        1 ->
+            case r of
+                0 -> [ { x = 0, y = 1 }, { x = 1, y = 1 }, { x = 2, y = 1 }, { x = 3, y = 1 } ]
+                1 -> [ { x = 2, y = 0 }, { x = 2, y = 1 }, { x = 2, y = 2 }, { x = 2, y = 3 } ]
+                2 -> [ { x = 0, y = 2 }, { x = 1, y = 2 }, { x = 2, y = 2 }, { x = 3, y = 2 } ]
+                _ -> [ { x = 1, y = 0 }, { x = 1, y = 1 }, { x = 1, y = 2 }, { x = 1, y = 3 } ]
+
+        2 ->
+            case r of
+                0 -> [ { x = 0, y = 0 }, { x = 0, y = 1 }, { x = 1, y = 1 }, { x = 2, y = 1 } ]
+                1 -> [ { x = 1, y = 0 }, { x = 2, y = 0 }, { x = 1, y = 1 }, { x = 1, y = 2 } ]
+                2 -> [ { x = 0, y = 1 }, { x = 1, y = 1 }, { x = 2, y = 1 }, { x = 2, y = 2 } ]
+                _ -> [ { x = 1, y = 0 }, { x = 1, y = 1 }, { x = 0, y = 2 }, { x = 1, y = 2 } ]
+
+        3 ->
+            case r of
+                0 -> [ { x = 2, y = 0 }, { x = 0, y = 1 }, { x = 1, y = 1 }, { x = 2, y = 1 } ]
+                1 -> [ { x = 1, y = 0 }, { x = 1, y = 1 }, { x = 1, y = 2 }, { x = 2, y = 2 } ]
+                2 -> [ { x = 0, y = 1 }, { x = 1, y = 1 }, { x = 2, y = 1 }, { x = 0, y = 2 } ]
+                _ -> [ { x = 0, y = 0 }, { x = 1, y = 0 }, { x = 1, y = 1 }, { x = 1, y = 2 } ]
+
+        4 ->
+            [ { x = 1, y = 0 }, { x = 2, y = 0 }, { x = 1, y = 1 }, { x = 2, y = 1 } ]
+
+        5 ->
+            case r of
+                0 -> [ { x = 1, y = 0 }, { x = 2, y = 0 }, { x = 0, y = 1 }, { x = 1, y = 1 } ]
+                1 -> [ { x = 1, y = 0 }, { x = 1, y = 1 }, { x = 2, y = 1 }, { x = 2, y = 2 } ]
+                2 -> [ { x = 1, y = 1 }, { x = 2, y = 1 }, { x = 0, y = 2 }, { x = 1, y = 2 } ]
+                _ -> [ { x = 0, y = 0 }, { x = 0, y = 1 }, { x = 1, y = 1 }, { x = 1, y = 2 } ]
+
+        6 ->
+            case r of
+                0 -> [ { x = 1, y = 0 }, { x = 0, y = 1 }, { x = 1, y = 1 }, { x = 2, y = 1 } ]
+                1 -> [ { x = 1, y = 0 }, { x = 1, y = 1 }, { x = 2, y = 1 }, { x = 1, y = 2 } ]
+                2 -> [ { x = 0, y = 1 }, { x = 1, y = 1 }, { x = 2, y = 1 }, { x = 1, y = 2 } ]
+                _ -> [ { x = 1, y = 0 }, { x = 0, y = 1 }, { x = 1, y = 1 }, { x = 1, y = 2 } ]
+
+        _ ->
+            case r of
+                0 -> [ { x = 0, y = 0 }, { x = 1, y = 0 }, { x = 1, y = 1 }, { x = 2, y = 1 } ]
+                1 -> [ { x = 2, y = 0 }, { x = 1, y = 1 }, { x = 2, y = 1 }, { x = 1, y = 2 } ]
+                2 -> [ { x = 0, y = 1 }, { x = 1, y = 1 }, { x = 1, y = 2 }, { x = 2, y = 2 } ]
+                _ -> [ { x = 1, y = 0 }, { x = 0, y = 1 }, { x = 1, y = 1 }, { x = 0, y = 2 } ]
+
+
+-- A glazed-tile palette rather than the usual neon: close enough in value that
+-- the matrix reads as one surface, far enough apart in hue that a piece is
+-- identifiable at a glance while it falls.
+inkOf : Int -> Color
+inkOf kind =
+    case kind of
+        1 -> rgb 86 200 199
+        2 -> rgb 92 128 214
+        3 -> rgb 224 150 66
+        4 -> rgb 226 196 84
+        5 -> rgb 122 194 108
+        6 -> rgb 168 116 210
+        _ -> rgb 219 96 106
+
+
+-- Wall kicks. The full standard table is five offsets per rotation pair and
+-- forty lines of data; this shortlist covers the moves players actually feel:
+-- nudging off a wall, off a neighbour, and the floor kick that makes a piece
+-- rotate out of a well instead of refusing.
+kicks : List Cell
+kicks =
+    [ { x = 0, y = 0 }
+    , { x = -1, y = 0 }
+    , { x = 1, y = 0 }
+    , { x = -2, y = 0 }
+    , { x = 2, y = 0 }
+    , { x = 0, y = -1 }
+    , { x = -1, y = -1 }
+    , { x = 1, y = -1 }
+    ]
+
+
+-- ------------------------------------------------------------------- the bag
+--
+-- A 7-bag: every seven pieces contains each kind exactly once, shuffled. This
+-- is the single rule that makes the game feel fair: pure random gives real
+-- droughts, and a player who waited eleven pieces for a line piece blames the
+-- game, correctly.
+
+
+shuffle : List Int -> Random.Seed -> (List Int, Random.Seed)
+shuffle items seed =
+    case items of
+        [] ->
+            ( [], seed )
+
+        _ ->
+            let
+                n = List.length items
+                (pick, seed1) = Random.step (Random.int 0 (n - 1)) seed
+                taken = List.take 1 (List.drop pick items)
+                rest = List.take pick items ++ List.drop (pick + 1) items
+                (tail, seed2) = shuffle rest seed1
+            in
+            ( taken ++ tail, seed2 )
+
+
+-- Tops the preview queue up to five, drawing a fresh shuffled bag whenever it
+-- runs dry.
+refill : Model -> Model
+refill m =
+    if List.length m.queue >= 5 then
+        m
+
+    else
+        case m.bag of
+            [] ->
+                let
+                    (fresh, seed1) = shuffle [ 1, 2, 3, 4, 5, 6, 7 ] m.seed
+                in
+                refill { m | bag = fresh, seed = seed1 }
+
+            next :: rest ->
+                refill { m | bag = rest, queue = m.queue ++ [ next ] }
+
+
+-- ------------------------------------------------------------------- pieces
+
+
+spawnAt : Int -> Piece
+spawnAt kind =
+    { kind = kind, rot = 0, x = 3, y = -1 }

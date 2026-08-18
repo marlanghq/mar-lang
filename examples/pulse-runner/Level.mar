@@ -1,0 +1,192 @@
+module Level exposing (..)
+
+-- The level as data -- the beats you jump on -- and the geometry precomputed
+-- from it: spike boxes, block rects, ground segments, checkpoints. Nothing
+-- here changes at run time, so it is computed once and read forever.
+
+import Balance exposing (..)
+import Types exposing (..)
+
+
+-- SIX loops of 32 beats; jump-beat B -> single at 4B+2, pit at 4B+1, block
+-- mount at 4B+3, on-block hop spike at 4B+2 (lift 1), doubles at 4B+1.
+-- The difficulty ramps with the music: loop 1 teaches hopping on the kick;
+-- loop 2 adds platforms and pits; loop 3 runs 4-beat chains; loop 4 mixes
+-- everything; loop 5 packs the same tricks tighter (double-hop block rides,
+-- back-to-back chains); loop 6 is the gauntlet: doubles into pits and a
+-- FIVE-beat chain. Checkpoint flags sit at beats 32/64/96/128/160: loop
+-- boundaries, which is what keeps respawns on beat. The whole thing is
+-- completable jumping ONLY on beats: proven offline by sim.mjs in this
+-- directory (`node sim.mjs`; re-run it whenever obs or the physics
+-- constants change). When in doubt, trust the kick.
+
+
+obs : List Ob
+obs =
+    [ -- loop 1: singles on the kick (jump-beats 8, 12, 16, 20, 23, 24, 28)
+      Spk 34 0, Spk 50 0, Spk 66 0, Spk 82 0, Spk 94 0, Spk 98 0, Spk 114 0
+
+      -- loop 2: platforms and pits
+    , Blk 139 12 1, Spk 146 1          -- mount on 34, hop the spike on 36
+    , Gap 161 2                        -- 40
+    , Spk 174 0, Spk 178 0             -- 43-44 chain
+    , Spk 186 0                        -- 46
+    , Spk 193 0, Spk 194 0             -- 48: first double (a hair early!)
+    , Spk 210 0                        -- 52
+    , Gap 217 2                        -- 54
+    , Spk 226 0, Spk 230 0, Spk 234 0  -- 56-57-58 chain
+    , Spk 246 0                        -- 61
+
+      -- loop 3: beat chains
+    , Spk 266 0                        -- 66
+    , Gap 273 2                        -- 68
+    , Spk 282 0, Spk 286 0, Spk 290 0, Spk 294 0   -- 70-73 four-chain
+    , Blk 307 12 1, Spk 314 1          -- mount on 76, hop on 78
+    , Spk 330 0                        -- 82
+    , Gap 337 2                        -- 84
+    , Spk 345 0, Spk 346 0             -- 86 double
+    , Spk 354 0, Spk 358 0, Spk 362 0, Spk 366 0   -- 88-91 four-chain
+    , Spk 378 0                        -- 94
+
+      -- loop 4: the finale
+    , Spk 394 0                        -- 98
+    , Gap 401 2                        -- 100
+    , Spk 410 0, Spk 414 0, Spk 418 0  -- 102-104 chain
+    , Spk 425 0, Spk 426 0             -- 106 double
+    , Blk 435 16 1, Spk 442 1, Spk 450 1  -- mount 108, hops 110 and 112
+    , Spk 465 0, Spk 466 0             -- 116 double
+    , Gap 473 2                        -- 118
+    , Spk 482 0, Spk 486 0, Spk 490 0  -- 120-122 chain
+    , Spk 498 0                        -- 124
+
+      -- loop 5: everything again, tighter
+    , Spk 522 0                        -- 130
+    , Spk 529 0, Spk 530 0             -- 132 double
+    , Gap 537 2                        -- 134
+    , Spk 546 0, Spk 550 0, Spk 554 0  -- 136-138 chain
+    , Spk 565 0, Spk 566 0             -- 141 double
+    , Blk 579 16 1, Spk 586 1, Spk 594 1  -- mount 144, hops 146 and 148
+    , Spk 601 0, Spk 602 0             -- 150 double right off the block
+    , Gap 609 2                        -- 152
+    , Spk 618 0, Spk 622 0, Spk 626 0  -- 154-156 chain
+    , Spk 634 0                        -- 158
+
+      -- loop 6: the gauntlet
+    , Spk 649 0, Spk 650 0             -- 162 double
+    , Gap 657 2                        -- 164
+    , Spk 665 0, Spk 666 0             -- 166 double
+    , Spk 674 0, Spk 678 0, Spk 682 0, Spk 686 0, Spk 690 0   -- 168-172 FIVE-chain
+    , Spk 701 0, Spk 702 0             -- 175 double
+    , Blk 715 20 1, Spk 722 1, Spk 730 1  -- long ride: mount 178, hops 180 and 182
+    , Gap 745 2                        -- 186
+    , Spk 754 0, Spk 758 0, Spk 762 0  -- 188-190 closing chain
+
+      -- loop 7: the crossing, back-to-back pits and a SIX-chain
+    , Spk 777 0, Spk 778 0             -- 194 double
+    , Gap 785 2                        -- 196
+    , Gap 793 2                        -- 198: second pit one breath later
+    , Spk 802 0, Spk 806 0, Spk 810 0, Spk 814 0, Spk 818 0, Spk 822 0   -- 200-205 SIX-chain
+    , Spk 833 0, Spk 834 0             -- 208 double
+    , Spk 842 0                        -- 210
+    , Blk 851 16 1, Spk 858 1, Spk 866 1  -- mount 212, hops 214 and 216
+    , Spk 877 0, Spk 878 0             -- 219 double
+    , Spk 886 0, Spk 890 0, Spk 894 0  -- 221-223 closing chain
+
+      -- loop 8: the high road, a LONG ride with three hops
+    , Spk 906 0                        -- 226
+    , Spk 913 0, Spk 914 0             -- 228 double
+    , Gap 921 2                        -- 230
+    , Blk 931 28 1, Spk 938 1, Spk 946 1, Spk 954 1  -- mount 232, hops 234, 236, 238
+    , Spk 965 0, Spk 966 0             -- 241 double right off the dismount
+    , Gap 973 2                        -- 243
+    , Spk 982 0, Spk 986 0, Spk 990 0, Spk 994 0, Spk 998 0   -- 245-249 FIVE-chain
+    , Spk 1009 0, Spk 1010 0           -- 252 double
+    , Spk 1018 0                       -- 254
+
+      -- loop 9: the storm home, SEVEN-chain, pit sandwich, final sprint
+    , Spk 1033 0, Spk 1034 0           -- 258 double
+    , Spk 1042 0, Spk 1046 0, Spk 1050 0, Spk 1054 0, Spk 1058 0, Spk 1062 0, Spk 1066 0   -- 260-266 SEVEN-chain
+    , Gap 1077 2                       -- 269
+    , Spk 1085 0, Spk 1086 0           -- 271 double
+    , Gap 1093 2                       -- 273: pit sandwich
+    , Spk 1101 0, Spk 1102 0           -- 275 double straight into the mount
+    , Blk 1107 20 1, Spk 1114 1, Spk 1122 1  -- mount 276, hops 278 and 280
+    , Spk 1133 0, Spk 1134 0           -- 283 double
+    , Spk 1142 0, Spk 1146 0, Spk 1150 0  -- 285-287: land the last jump ON the finish line
+    ]
+
+
+
+
+type alias Box =
+    { x0 : Int, x1 : Int, y0 : Int, y1 : Int }
+
+
+type alias BlockR =
+    { x : Int, w : Int, top : Int }
+
+
+type alias Seg =
+    { x0 : Int, x1 : Int }
+
+
+-- spike KILL boxes are inset from the drawn triangle (4 px each side, 5 px
+-- off the tip) so grazing a corner feels fair: same trick the original used
+spikeBoxes : List Box
+spikeBoxes =
+    List.concat
+        (List.map
+            (\o ->
+                case o of
+                    Spk u lift ->
+                        let
+                            x = u * unitPx
+                            top = groundY - lift * unitPx - unitPx
+                        in
+                        [ { x0 = x + 4, x1 = x + 11, y0 = top + 5, y1 = top + 15 } ]
+
+                    _ ->
+                        []
+            )
+            obs)
+
+
+blockRects : List BlockR
+blockRects =
+    List.concat
+        (List.map
+            (\o ->
+                case o of
+                    Blk u w h ->
+                        [ { x = u * unitPx, w = w * unitPx, top = groundY - h * unitPx } ]
+
+                    _ ->
+                        []
+            )
+            obs)
+
+
+-- ground segments = everything except the pits (gaps come sorted in `obs`)
+groundSegs : List Seg
+groundSegs =
+    let
+        walk =
+            List.foldl
+                (\o acc ->
+                    case o of
+                        Gap u w ->
+                            { cur = (u + w) * unitPx
+                            , segs = List.concat [ acc.segs, [ { x0 = acc.cur, x1 = u * unitPx } ] ]
+                            }
+
+                        _ ->
+                            acc
+                )
+                { cur = 0 - 600, segs = [] }
+                obs
+    in
+    List.concat [ walk.segs, [ { x0 = walk.cur, x1 = finishX + 900 } ] ]
+
+
+cpX : Int -> Int
+cpX i = i * loopPx

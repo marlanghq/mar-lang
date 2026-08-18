@@ -1,0 +1,50 @@
+module Lanes exposing (..)
+
+-- The lanes a web is divided into, and how the player steps between them.
+
+import Geometry exposing (..)
+import Types exposing (..)
+
+
+-- Turn a rim into its lanes. A closed web gets one more lane than an open one
+-- with the same points, because the last point joins back to the first.
+lanesOf : Web -> List Lane
+lanesOf web =
+    let
+        pts = web.rim
+        n = List.length pts
+        at =
+            \i ->
+                case List.head (List.drop (modBy n i) pts) of
+                    Just p -> p
+                    Nothing -> { x = 0, y = 0 }
+
+        count =
+            if web.closed then n else n - 1
+    in
+    List.map
+        (\i ->
+            let
+                a = at i
+                b = at (i + 1)
+            in
+            { a = a, b = b, mid = midpoint a b }
+        )
+        (List.range 0 (count - 1))
+
+
+laneAt : List Lane -> Int -> Lane
+laneAt lanes i =
+    case List.head (List.drop (max 0 i) lanes) of
+        Just l -> l
+        Nothing -> { a = { x = 0, y = 0 }, b = { x = 0, y = 0 }, mid = { x = 0, y = 0 } }
+
+
+-- Walking the rim. On a closed web the ends join; on an open one you stop.
+stepLane : Bool -> Int -> Int -> Int -> Int
+stepLane closed count lane dir =
+    if closed then
+        modBy (max 1 count) (lane + dir)
+
+    else
+        clamp 0 (count - 1) (lane + dir)

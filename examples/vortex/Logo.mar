@@ -1,0 +1,168 @@
+module Logo exposing (..)
+
+-- The wordmark, drawn as strokes that fly in and land. Self-contained.
+
+import Balance exposing (..)
+import Camera exposing (..)
+import Geometry exposing (..)
+import Types exposing (..)
+
+
+-- The title is STAGED, in three beats: the letters arrive on an empty well,
+-- the screen holds while you read them, and only then does the game start
+-- playing itself. Running the logo and the demo together made one beat out of
+-- two, and the logo was the half that lost: six letters flying in over a
+-- firefight is six letters nobody looks at.
+--
+-- The wait is a wait, not an intermission: the well and the sky are up and
+-- lit the whole time, so the first beat is already the game's picture, just
+-- without anything happening in it yet.
+--
+-- Title is entered once, at load, and `newRun` leaves for good, so `phaseT`
+-- here is a clock that starts when the program does. Which is what makes a
+-- one-shot opening a comparison rather than a state machine.
+attractStart : Int
+attractStart = logoLands + 50
+
+
+-- Frames between one letter setting off and the next, and frames for one
+-- letter to make the trip. The staging below reads its cue off these two
+-- rather than off a number typed twice, so the beat cannot drift away from
+-- the animation it is waiting for.
+-- Frames for a line to fade up, and how long the verdict holds the screen
+-- alone before the numbers follow it. Short on purpose: the title screen is
+-- somewhere you linger and this is somewhere you want to leave.
+overFade : Int
+overFade = 14
+
+
+overHold : Int
+overHold = 18
+
+
+logoStagger : Int
+logoStagger = 7
+
+
+logoTravel : Int
+logoTravel = 40
+
+
+-- Six letters as polylines in a 100x100 box, drawn with the same `seg` the
+-- web is drawn with, because a bitmap font next to a vector game looks
+-- borrowed. They arrive out of the vanishing point on a stagger, which is
+-- the one move this game already knows how to make.
+
+
+logoStrokes : Int -> List (List Pt)
+logoStrokes i =
+    case i of
+        0 ->
+            -- V
+            [ [ { x = 0, y = 0 }, { x = 50, y = 100 }, { x = 100, y = 0 } ] ]
+
+        1 ->
+            -- O
+            [ [ { x = 22, y = 0 }, { x = 78, y = 0 }, { x = 100, y = 26 }
+              , { x = 100, y = 74 }, { x = 78, y = 100 }, { x = 22, y = 100 }
+              , { x = 0, y = 74 }, { x = 0, y = 26 }, { x = 22, y = 0 }
+              ]
+            ]
+
+        2 ->
+            -- R
+            [ [ { x = 0, y = 100 }, { x = 0, y = 0 }, { x = 66, y = 0 }
+              , { x = 96, y = 26 }, { x = 66, y = 52 }, { x = 0, y = 52 }
+              ]
+            , [ { x = 52, y = 52 }, { x = 100, y = 100 } ]
+            ]
+
+        3 ->
+            -- T
+            [ [ { x = 0, y = 0 }, { x = 100, y = 0 } ]
+            , [ { x = 50, y = 0 }, { x = 50, y = 100 } ]
+            ]
+
+        4 ->
+            -- E
+            [ [ { x = 100, y = 0 }, { x = 0, y = 0 }, { x = 0, y = 100 }, { x = 100, y = 100 } ]
+            , [ { x = 0, y = 52 }, { x = 72, y = 52 } ]
+            ]
+
+        _ ->
+            -- X
+            [ [ { x = 0, y = 0 }, { x = 100, y = 100 } ]
+            , [ { x = 100, y = 0 }, { x = 0, y = 100 } ]
+            ]
+
+
+-- The frame the last of the six is home.
+logoLands : Int
+logoLands = 5 * logoStagger + logoTravel
+
+
+-- Colour cycling rather than motion: the letters hold still once they land
+-- and shift hue on a beat, which is where this genre's title screens have
+-- always lived.
+logoInk : Int -> Int -> { r : Int, g : Int, b : Int }
+logoInk i frame =
+    let
+        phase = modBy 256 (frame * 2 + i * 26)
+        wave = \o -> 128 + sinB (modBy 256 (phase + o)) * 110 // one
+    in
+    { r = clamp 40 255 (wave 0)
+    , g = clamp 40 255 (wave 85)
+    , b = clamp 90 255 (wave 170)
+    }
+
+
+logoShapes : Model -> Cam -> List Shape
+logoShapes m cam =
+    let
+        -- the letters come from where the well goes
+        van = project cam { x = 0, y = 0 } zFar
+
+        cell = clamp 24 54 (m.w // 15)
+        gap = cell * 5 // 4
+        left = m.w // 2 - (gap * 5 + cell) // 2
+        top = m.h // 6
+    in
+    List.concatMap
+        (\i ->
+            let
+                -- each letter has its own arrival, staggered, and once it is
+                -- home it stays home
+                p = clamp 0 100 ((m.phaseT - i * logoStagger) * 100 // logoTravel)
+                hx = left + gap * i
+                x = van.x + (hx - van.x) * p // 100
+                y = van.y + (top - van.y) * p // 100
+                size = cell * p // 100
+                ink = logoInk i m.frame
+                w = max 1 (size // 12)
+            in
+            if size < 3 then
+                []
+
+            else
+                List.concatMap
+                    (\stroke -> polyline stroke x y size w ink)
+                    (logoStrokes i)
+        )
+        (List.range 0 5)
+
+
+-- Draw a stroke of the letter box scaled into place.
+polyline : List Pt -> Int -> Int -> Int -> Int -> { r : Int, g : Int, b : Int } -> List Shape
+polyline pts x y size w ink =
+    let
+        at = \q -> { x = x + q.x * size // 100, y = y + q.y * size // 100 }
+    in
+    List.concat
+        (List.indexedMap
+            (\i q ->
+                case List.head (List.drop (i + 1) pts) of
+                    Just r -> seg (at q) (at r) w ink 100
+                    Nothing -> []
+            )
+            pts
+        )

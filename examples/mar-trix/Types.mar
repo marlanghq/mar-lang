@@ -1,0 +1,181 @@
+module Types exposing (..)
+
+-- The vocabulary: a cell, a piece, a drag, the phase the game is in, and the
+-- model itself.
+
+import Keyboard
+import Random
+
+
+-- ------------------------------------------------------------------- pieces
+--
+-- Seven kinds, four rotations each, written out as literal cell offsets in a
+-- 4x4 box rather than derived by rotating an array. Rotation tables are how
+-- every good implementation of this genre does it: the derived version is
+-- shorter and gets the I piece and the O piece subtly wrong, and "subtly
+-- wrong rotation" is the difference between a game that feels right and one
+-- that feels off in a way players cannot name.
+
+
+type alias Cell =
+    { x : Int
+    , y : Int
+    }
+
+
+-- --------------------------------------------------------------------- model
+
+
+type Phase
+    = Title
+    | Playing
+    | Clearing
+    | Over
+
+
+type alias Piece =
+    { kind : Int
+    , rot  : Int
+    , x    : Int
+    , y    : Int
+    }
+
+
+type alias Pointer =
+    { id : Int
+    , x  : Int
+    , y  : Int
+    }
+
+
+-- What a finger on the matrix remembers. `px0` is the column the piece was in
+-- when the finger landed: every frame after that the piece is asked for
+-- `px0 + travelled columns`, so the piece stays pinned to the thumb instead of
+-- accumulating error. `travel` is what separates a drag from a tap, and
+-- `multi` records that a second finger joined, which is the counter-rotate.
+type alias Drag =
+    { id     : Int
+    , x0     : Int
+    , y0     : Int
+    , px0    : Int
+    , travel : Int
+    , multi  : Bool
+
+    -- A vertical swipe fires ONCE and then the finger is spent, so a thumb
+    -- that keeps sliding after the piece has already slammed does not slam
+    -- the next one too.
+    , fired  : Bool
+    }
+
+
+type alias Model =
+    { phase : Phase
+    , w     : Int
+    , h     : Int
+    , frame : Int
+
+    -- The matrix is rows of colour indexes, row 0 at the top. 0 is empty.
+    , matrix : List (List Int)
+    , piece : Piece
+    , bag   : List Int
+    , queue : List Int
+    , hold  : Int
+    , held  : Bool
+    , seed  : Random.Seed
+
+    -- Gravity and lock are frame counters, never clocks.
+    , fall     : Int
+    , lock     : Int
+    , resets   : Int
+    , dasL     : Int
+    , dasR     : Int
+    , softHeld : Int
+
+    -- Line-clear animation: which rows are lighting up, and how far along.
+    , flashRows : List Int
+    , flashAt   : Int
+
+    -- The banner is NOT the flash. The row collapse is over in fourteen
+    -- frames, right for the animation, far too short to read a word in, and
+    -- driving the banner off `flashRows` meant it vanished with the rows. So
+    -- it carries its own count and its own clock.
+    , banner   : Int
+    , bannerAt : Int
+
+    -- The best score this SESSION. Nothing is stored anywhere, so a reload
+    -- starts it over, which is the honest behaviour for a game with no
+    -- account and no server, and better than a "record" that quietly is not
+    -- one.
+    , best : Int
+
+    -- The cells of the piece that just slammed, lit for a few frames.
+    , slam   : List Cell
+    , slamAt : Int
+
+    , score  : Int
+    , lines  : Int
+    , level  : Int
+    , combo  : Int
+    , btb    : Bool
+    , levelAt : Int
+
+    , keys : List Keyboard.Key
+    , sfx  : List Int
+
+    -- Touch: the pads a finger is currently holding, expressed as the very
+    -- same keys the keyboard sends, and the live device record that decides
+    -- whether pads are drawn at all.
+    , touch : List Keyboard.Key
+
+    -- Controller: the SAME trick again. A pad snapshot is translated into the
+    -- keys it stands for and stored here, so delayed auto-shift, soft drop and
+    -- every edge-triggered action work on a controller without one line of
+    -- code knowing a controller exists. Three input devices, one vocabulary.
+    , padKeys : List Keyboard.Key
+    , padDown : List Gamepad.Button
+
+    -- The finger currently steering the piece, if any.
+    , drag : Maybe Drag
+
+    , dev : Maybe Device
+    }
+
+
+-- ----------------------------------------------------------------- messages
+
+
+type Msg
+    = Tick
+    | KeysChanged { down : List Keyboard.Key }
+    | Resized Int Int
+    | Tapped Int Int
+    | Pointers (List { id : Int, x : Int, y : Int })
+    | DeviceChanged Device
+    | PadChanged { connected : Bool, leftX : Int, leftY : Int, rightX : Int, rightY : Int, down : List Gamepad.Button }
+
+
+-- ---------------------------------------------------------------------- view
+
+
+type alias Layout =
+    { cell : Int
+    , bx   : Int
+    , by   : Int
+    , bw   : Int
+    , bh   : Int
+
+    -- Portrait puts everything in a strip ABOVE the matrix. Landscape has
+    -- width to burn, so it opens into two columns, one either side.
+    , stack : Bool
+
+    -- Where the side columns live in landscape. In portrait they are unused
+    -- and the strip spans `sx0 .. sx0 + sw`.
+    , lx : Int
+    , rx : Int
+    , col : Int
+    , sx0 : Int
+    , sw  : Int
+
+    -- Touch device: no keyboard, so the help text names gestures.
+    , handheld : Bool
+    }

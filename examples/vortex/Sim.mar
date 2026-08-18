@@ -1,0 +1,891 @@
+module Sim exposing (..)
+
+-- One tick: read the stick or the pad, walk the rim, fire, move the foes,
+-- collide, spawn the next wave, clear the level, and fly the attract-mode
+-- pilot. Pure functions of the model.
+
+import Balance exposing (..)
+import Geometry exposing (..)
+import Lanes exposing (..)
+import Logo exposing (..)
+import Sfx exposing (..)
+import Types exposing (..)
+import Web exposing (..)
+import Keyboard
+
+
+held : Keyboard.Key -> Model -> Bool
+held key m =
+    List.member key m.keys || List.member key m.touch
+
+
+zonesOf : Model -> Zones
+zonesOf m =
+    let
+        band = clamp 92 190 (min m.w m.h * 28 // 100)
+        top = m.h - band
+        split = m.w * 58 // 100
+        mid = top + band // 2
+        railW = 2 * stickRange m
+        fireR = clamp 28 50 (min m.w m.h * 9 // 100)
+    in
+    { walk = { x = 0, y = top, w = split, h = band }
+    , fire = { x = split, y = top, w = m.w - split, h = band }
+    , rail = { x = (split - railW) // 2, y = mid - 3, w = railW, h = 6 }
+    , fireX = split + (m.w - split) // 2
+    , fireY = mid
+    , fireR = fireR
+    }
+
+
+inside : { id : Int, x : Int, y : Int } -> Rect -> Bool
+inside p r =
+    p.x >= r.x && p.x < r.x + r.w && p.y >= r.y && p.y < r.y + r.h
+
+
+-- Fold this frame's pointers into the walking thumb and the firing one.
+--
+-- `watchPointers` is a MIRROR of what is currently down, not a stream of
+-- events, so "the thumb let go" is a pointer that stopped being in the list
+-- and the stick simply goes away. The origin is kept from the frame the thumb
+-- arrived, which is what makes the control relative.
+readTouch : Model -> List { id : Int, x : Int, y : Int } -> Model
+readTouch m ps =
+    let
+        z = zonesOf m
+        walking = List.head (List.filter (\p -> inside p z.walk) ps)
+    in
+    { m
+        | touch =
+            if List.any (\p -> inside p z.fire) ps then
+                [ Keyboard.Space ]
+
+            else
+                []
+        , stick =
+            case walking of
+                Nothing ->
+                    Nothing
+
+                Just p ->
+                    case m.stick of
+                        Just s -> Just { s | x = p.x, y = p.y }
+                        Nothing -> Just { ox = p.x, oy = p.y, x = p.x, y = p.y }
+    }
+
+
+-- How far the stick is pushed, in pixels, positive to the right. Zero inside
+-- the dead zone or with no thumb down.
+stickPush : Model -> Int
+stickPush m =
+    case m.stick of
+        Nothing ->
+            0
+
+        Just s ->
+            let
+                d = clamp (0 - stickRange m) (stickRange m) (s.x - s.ox)
+            in
+            if abs d < stickDead then
+                0
+
+            else
+                d
+
+
+-- A finger has no key-down edge the way a keyboard does: `press` only ever
+-- sees KeysChanged, so holding the fire pad did precisely nothing. That was
+-- the whole of "not playable on a phone": you could walk and never shoot.
+--
+-- It repeats rather than firing once per tap, because a shot cap already
+-- limits the rate and tapping eight times a second is not a thing thumbs do.
+press : Keyboard.Key -> Model -> Model
+press key m =
+    case m.phase of
+        Title ->
+            if starts key then newRun m else m
+
+        Over ->
+            if starts key then newRun m else m
+
+        Playing ->
+            if fires key then fire m else m
+
+        Dying ->
+            m
+
+        Warping ->
+            m
+
+
+-- ANY key starts a run. A screen whose only job is to be dismissed should not
+-- have a secret handshake: it used to take Enter or Space, the caption named
+-- only Enter, and everything else did nothing at all with no way to know why.
+-- `press` already dispatches per phase, so this widening cannot reach the keys
+-- that steer during play.
+starts : Keyboard.Key -> Bool
+starts _ =
+    True
+
+
+fires : Keyboard.Key -> Bool
+fires key =
+    key == Keyboard.Space || key == Keyboard.KeyZ
+
+
+-- A tube shooter is the one genre that was BUILT for a knob: the arcade
+-- cabinet had a spinner and nothing else, and Tempest 2000 shipped its own
+-- rotary controller whose encoder is wired straight into the pad's left and
+-- right. So a controller here is not a second-class port of the keyboard, it
+-- is closer to the original than either of the other two inputs.
+--
+-- It goes through the SAME places the other inputs do rather than getting its
+-- own paths: the d-pad joins the walk as a digital direction, the left stick
+-- joins it as an analog one, and any face or shoulder button is the trigger.
+-- Nothing here decides what firing or walking means, it only says which
+-- hardware is asking.
+
+
+-- Any button starts a run, matching `starts` on the keyboard: a screen whose
+-- job is to be dismissed takes whatever the player happens to press.
+padPress : Gamepad.Button -> Model -> Model
+padPress btn m =
+    case m.phase of
+        Title ->
+            newRun m
+
+        Over ->
+            newRun m
+
+        Playing ->
+            if padFires btn then fire m else m
+
+        Dying ->
+            m
+
+        Warping ->
+            m
+
+
+-- Every face button and every shoulder is fire. There is one verb in this
+-- game, so there is no button left over to mean something else, and a player
+-- who guesses wrong is right anyway.
+padFires : Gamepad.Button -> Bool
+padFires btn =
+    btn == Gamepad.A || btn == Gamepad.B || btn == Gamepad.X || btn == Gamepad.Y
+        || btn == Gamepad.L1 || btn == Gamepad.R1
+        || btn == Gamepad.L2 || btn == Gamepad.R2
+
+
+padHolding : Model -> Bool
+padHolding m =
+    List.any padFires m.padDown
+
+
+-- The d-pad, digital: one lane per `walkFrames`, exactly like a key.
+padDir : Model -> Int
+padDir m =
+    if List.member Gamepad.Left m.padDown then
+        0 - 1
+
+    else if List.member Gamepad.Right m.padDown then
+        1
+
+    else
+        0
+
+
+-- How far the left stick is pushed, 0..100, past the runtime's own deadzone.
+-- The mirror already zeroes anything under a quarter deflection, so the live
+-- range is 25..100 and this stretches it back over the whole ramp: otherwise
+-- the gentlest push you can even express would already be a third of the way
+-- to full speed.
+padLock : Int -> Int
+padLock tilt =
+    clamp 0 100 ((abs tilt - 25) * 100 // 75)
+
+
+-- Pixels of deflection that mean full speed, and the slop at the middle where
+-- nothing happens at all. Without the dead zone the claw creeps whenever a
+-- resting thumb breathes.
+stickRange : Model -> Int
+stickRange m =
+    clamp 56 120 (min m.w m.h * 20 // 100)
+
+
+stickDead : Int
+stickDead = 10
+
+
+
+
+init : (Model, Cmd Msg)
+init =
+    ( enterLevel 0 fresh, Cmd.none )
+
+
+fresh : Model
+fresh =
+    let
+        web = webFor 0
+        lanes = lanesOf web
+    in
+    { w = 960
+    , h = 600
+    , frame = 0
+    , phase = Title
+    , level = 0
+    , web = web
+    , lanes = lanes
+    , laneCount = List.length lanes
+    , lane = 0
+    , walk = 0
+    , cool = 0
+    , shots = []
+    , foes = []
+    , sparks = []
+    , score = 0
+    , lives = 3
+    , spin = 0
+    , leanX = 0
+    , leanY = 0
+    , camZ = 0
+    , phaseT = 0
+    , left = 0
+    , spawn = 60
+    , seed = Random.initialSeed 20260804
+    , keys = []
+    , touch = []
+    , stick = Nothing
+    , padTilt = 0
+    , padDown = []
+    , pads = False
+    , sfx = []
+    }
+
+
+-- Start a level: new shape, new lanes, claw back on the web.
+enterLevel : Int -> Model -> Model
+enterLevel level m =
+    let
+        web = webFor level
+        lanes = lanesOf web
+        count = List.length lanes
+        -- Every level gets its own orientation so the same sixteen shapes do
+        -- not all arrive square-on. But that only makes sense for a CLOSED
+        -- web: a ring has no ends, so any angle is as good as another. An
+        -- open one has two, and where they are is part of what the shape
+        -- means: a wall you can be cornered against is a wall along the
+        -- BOTTOM, and left on the keyboard has to mean left on the screen.
+        -- Spun 104 degrees, the flat level became a near-vertical cliff you
+        -- climbed sideways, which is the one thing it must never be.
+        spin = if web.closed then modBy 256 (level * 37) else 0
+        start = modBy (max 1 count) (count // 4)
+        anchor = rotate spin (laneAt lanes start).mid
+    in
+    { m
+        | level = level
+        , web = web
+        , lanes = lanes
+        , spin = spin
+        , laneCount = count
+        , lane = start
+        -- snapped, not eased: arriving on a new web is not the player
+        -- walking, so the camera should already be where it belongs
+        , leanX = 0 - anchor.x * 34 // 100
+        , leanY = 0 - anchor.y * 34 // 100
+        , shots = []
+        , foes = []
+        , camZ = 0
+        , phase = if m.phase == Title then Title else Playing
+        , phaseT = 0
+        , left = quota level
+        , spawn = 60
+    }
+
+
+update : Msg -> Model -> (Model, Cmd Msg)
+update msg model =
+    let
+        m = step msg model
+    in
+    ( { m | sfx = [] }
+    , Cmd.batch (List.map (\c -> Sound.play (cue c)) m.sfx)
+    )
+
+
+step : Msg -> Model -> Model
+step msg m =
+    case msg of
+        Resized w h ->
+            { m | w = max 1 w, h = max 1 h }
+
+        Tapped _ _ ->
+            case m.phase of
+                Title -> newRun m
+                Over -> newRun m
+                Playing -> m
+                Dying -> m
+                Warping -> m
+
+        KeysChanged st ->
+            let
+                fresher = List.filter (\k -> not (List.member k m.keys)) st.down
+            in
+            List.foldl press { m | keys = st.down } fresher
+
+        Pointers ps ->
+            readTouch m ps
+
+        DeviceChanged d ->
+            { m | pads = Device.touchOnly d }
+
+        -- The pad arrives as a whole snapshot, same as the keyboard, so it gets
+        -- the same treatment: store the held set, and fold the press EDGE over
+        -- the buttons that were not down last time. That is what makes a tap
+        -- fire instantly and a button on the title screen start a run, without
+        -- either rule being written twice.
+        PadChanged st ->
+            let
+                fresher = List.filter (\b -> not (List.member b m.padDown)) st.down
+            in
+            List.foldl padPress { m | padDown = st.down, padTilt = st.leftX } fresher
+
+        Tick ->
+            tick { m | frame = m.frame + 1 }
+
+
+newRun : Model -> Model
+newRun m =
+    enterLevel 0 { m | score = 0, lives = 3, phase = Playing, sparks = [] }
+
+
+fire : Model -> Model
+fire m =
+    if List.length m.shots >= maxShots then
+        m
+
+    else
+        { m
+            | shots = { lane = m.lane, z = 0 } :: m.shots
+            , cool = fireEvery
+            , sfx = CFire :: m.sfx
+        }
+
+
+-- One shot per `fireEvery` while the button is held, on either device.
+holdFire : Model -> Model
+holdFire m =
+    if m.cool <= 0 && (held Keyboard.Space m || held Keyboard.KeyZ m || padHolding m) then
+        fire m
+
+    else
+        { m | cool = max 0 (m.cool - 1) }
+
+
+moveShots : Model -> Model
+moveShots m =
+    { m | shots = List.filter (\s -> s.z < zFar) (List.map (\s -> { s | z = s.z + shotSpeed }) m.shots) }
+
+
+
+
+tick : Model -> Model
+tick m =
+    case m.phase of
+        Title ->
+            attractStep m
+
+        Over ->
+            -- Nothing moves. The eye used to back out of the well here, and
+            -- that was the frame going somewhere the player did not send it,
+            -- which is the one thing this camera has never done. Everything
+            -- that happens now happens to the web and to the sky.
+            { m | phaseT = m.phaseT + 1 }
+
+        Playing ->
+            { m | phaseT = m.phaseT + 1 }
+                |> walkStep
+                |> holdFire
+                |> moveShots
+                |> moveFoes
+                |> collide
+                |> spawnStep
+                |> ageSparks
+                |> leanStep
+                |> clearCheck
+
+        Dying ->
+            let
+                t = m.phaseT + 1
+            in
+            if t > 80 then
+                if m.lives <= 0 then
+                    { m | phase = Over, phaseT = 0 }
+
+                else
+                    enterLevel m.level m
+
+            else
+                ageSparks { m | phaseT = t }
+
+        Warping ->
+            warpStep (moveShots (ageSparks m))
+
+
+walkStep : Model -> Model
+walkStep m =
+    let
+        keyDir =
+            if held Keyboard.ArrowLeft m || held Keyboard.KeyA m then
+                0 - 1
+
+            else if held Keyboard.ArrowRight m || held Keyboard.KeyD m then
+                1
+
+            else
+                0
+
+        push = stickPush m
+
+        hat = padDir m
+
+        tilt = m.padTilt
+
+        -- Four ways to ask for the same thing, in the order you would be
+        -- holding them: a key, then the d-pad, then either analog control.
+        -- They are not summed: whichever one is live wins outright, so a
+        -- controller left resting against something cannot fight a hand on
+        -- the keyboard.
+        dir =
+            if keyDir /= 0 then
+                keyDir
+
+            else if hat /= 0 then
+                hat
+
+            else if tilt /= 0 then
+                if tilt < 0 then 0 - 1 else 1
+
+            else if push < 0 then
+                0 - 1
+
+            else if push > 0 then
+                1
+
+            else
+                0
+
+        -- A key is a key: one lane every `walkFrames`, always. So is a d-pad,
+        -- for the same reason: a switch has one position. Both analog
+        -- controls ramp instead, and how far you push is how fast you go.
+        period =
+            if keyDir /= 0 || hat /= 0 then
+                walkFrames
+
+            else if tilt /= 0 then
+                stickSlow - (stickSlow - stickFast) * padLock tilt // 100
+
+            else if push == 0 then
+                walkFrames
+
+            else
+                let
+                    span = max 1 (stickRange m - stickDead)
+                    lock = clamp 0 100 ((abs push - stickDead) * 100 // span)
+                in
+                stickSlow - (stickSlow - stickFast) * lock // 100
+
+    in
+    if dir == 0 then
+        { m | walk = 0 }
+
+    else if m.walk > 0 then
+        { m | walk = m.walk - 1 }
+
+    else
+        { m | lane = stepLane m.web.closed m.laneCount m.lane dir, walk = period }
+
+
+-- The camera moves when YOU move, and at no other time.
+--
+-- This used to advance `phaseT` too, on the grounds that it ran once a frame.
+-- So did `attractStep`, and on the title screen both ran, so the phase clock
+-- went up by TWO every frame and only ever held even values by the time a
+-- frame ended, and odd ones when the pilot read it. Every `modBy n phaseT`
+-- in the attract was therefore testing a number that could never be zero:
+-- the demo could not fire, the web changed twice as fast as `attractWebFrames`
+-- says, and the death pause lasted half of what `Dying` asks for. One stray
+-- increment, three symptoms, none of which looked like a clock. A step named
+-- for the lean now does the lean, and each phase advances its own clock once.
+--
+-- What actually moves in a tube shooter is the LEAN: the far end pushing
+-- away from wherever you are standing, and that is a function of your
+-- position, so it stops dead when you do. It is eased rather than snapped
+-- because the claw jumps a whole lane at a time; following that instantly
+-- would make the well twitch once per step.
+leanStep : Model -> Model
+leanStep m =
+    let
+        anchor = rotate m.spin (laneAt m.lanes m.lane).mid
+        pull = 34
+        tx = 0 - anchor.x * pull // 100
+        ty = 0 - anchor.y * pull // 100
+    in
+    { m
+        | leanX = m.leanX + (tx - m.leanX) // 8
+        , leanY = m.leanY + (ty - m.leanY) // 8
+    }
+
+
+-- `rim` holds the frames of stay left, and this while it is still climbing.
+-- One field with two readings, but they are the same fact: how much of its
+-- welcome is left, and "not yet", and a separate flag would be a second thing
+-- to keep in step with it.
+climbing : Int
+climbing = 0 - 1
+
+
+pointsFor : Kind -> Int
+pointsFor kind =
+    case kind of
+        Flipper -> 150
+        Tanker -> 100
+
+
+-- Move everything, then drop whatever burned out on the rim. `rim` reaching
+-- zero is the end of a stay and nothing else can produce it: a climber sits at
+-- `climbing`, which is below zero, so this test cannot fire on the way up.
+moveFoes : Model -> Model
+moveFoes m =
+    { m | foes = List.filter (\f -> f.rim /= 0) (List.map (\f -> moveFoe m f) m.foes) }
+
+
+moveFoe : Model -> Foe -> Foe
+moveFoe m f =
+    let
+        z = max 0 (f.z - foeSpeed f.kind m.level)
+        t = f.t + 1
+        nearRim = z < huntDepth
+        -- Two cadences, and the deep one must always be the quicker of the
+        -- two or the whole arrangement below stops meaning anything. It is
+        -- also the one that has to ARRIVE gently: levels one and two have no
+        -- deep flipping at all, so whatever number this starts at is a step
+        -- change the player feels on level three and nowhere else. It used to
+        -- start at 46 and that step was far too big: the well went from still
+        -- to busy in one level. Starting at 76 and tightening five frames a
+        -- level puts level three back near the old feel and still reaches a
+        -- properly frantic floor by the time anyone gets there.
+        period =
+            if nearRim then
+                max 66 (96 - m.level * 3)
+
+            else
+                max 34 (86 - m.level * 5)
+    in
+    if f.rim >= 0 then
+        -- Up here it does not climb any more. It walks the rim toward you and
+        -- its welcome runs out, and both kinds do it: a tanker that made the
+        -- trip has earned the same right to come and get you.
+        { f
+            | rim = f.rim - 1
+            , t = t
+            , lane =
+                if modBy rimPeriod t == 0 then
+                    towardPlayer m f.lane
+
+                else
+                    f.lane
+        }
+
+    else if z <= rimDepth then
+        -- It made it. It takes the rim and starts its stay.
+        { f | z = 0, rim = rimStay, t = 0 }
+
+    else if f.kind == Tanker then
+        -- while it is in the well it only ever climbs
+        { f | z = z, t = t }
+
+    else if t < period then
+        { f | z = z, t = t }
+
+    else if nearRim then
+        -- IT STILL HUNTS UP HERE, IT JUST STOPS BEING QUICK ABOUT IT.
+        --
+        -- This used to be the fast half, and that was the mistake. A creature
+        -- that re-aims every third of a second inside the last stretch of the
+        -- well is not something you dodge, it is something you guess: you
+        -- commit to a lane, it corrects, and the correction lands before you
+        -- have finished stepping. Losing to that reads as unfair, because it
+        -- is: the game asked for a decision and then took the decision back.
+        --
+        -- Slow it down here and the same move becomes a threat you can
+        -- answer. It will come for you, about once every second and a half,
+        -- so the lane it is in is worth reading and the step you take away
+        -- from it is worth taking.
+        { f | z = z, t = 0, lane = towardPlayer m f.lane }
+
+    else if m.level < 2 then
+        { f | z = z, t = 0 }
+
+    else
+        -- DEEP DOWN IS WHERE THE MOVEMENT LIVES NOW.
+        --
+        -- Fast, and in a direction of its own rather than toward you. Far away
+        -- the flipping costs you nothing to watch, which is exactly why it
+        -- belongs here: it fills the well with motion, it spreads the wave
+        -- across the whole web instead of letting every creature converge on
+        -- the one lane you happen to be standing in, and by the time any of it
+        -- is close enough to matter it has already settled.
+        { f | z = z, t = 0, lane = stepLane m.web.closed m.laneCount f.lane f.dir }
+
+
+-- One lane closer to the claw, the short way round.
+towardPlayer : Model -> Int -> Int
+towardPlayer m lane =
+    towardLane m m.lane lane
+
+
+towardLane : Model -> Int -> Int -> Int
+towardLane m target lane =
+    if lane == target then
+        lane
+
+    else
+        let
+            n = max 1 m.laneCount
+            ahead = modBy n (target - lane)
+            behind = modBy n (lane - target)
+            dir =
+                if not m.web.closed then
+                    if target > lane then 1 else 0 - 1
+
+                else if ahead <= behind then
+                    1
+
+                else
+                    0 - 1
+        in
+        stepLane m.web.closed m.laneCount lane dir
+
+
+collide : Model -> Model
+collide m =
+    let
+        hit = \s f -> f.lane == s.lane && abs (f.z - s.z) < hitRange
+
+        struck = List.filter (\f -> List.any (\s -> hit s f) m.shots) m.foes
+        survivors = List.filter (\f -> not (List.any (\s -> hit s f) m.shots)) m.foes
+        spent = List.filter (\s -> List.any (\f -> hit s f) m.foes) m.shots
+        halves = List.concatMap (\f -> splitOf m f) struck
+
+        -- It costs a life when it REACHES you, not when it reaches the rim.
+        -- Something that surfaced somewhere else is a thing walking the rim
+        -- toward you on a fuse (see `rimStay`), which is a fight; killing you
+        -- for it landing anywhere at all was a scoreboard.
+        --
+        -- Read from `survivors` and not from `m.foes`, so a shot that lands on
+        -- the same frame still saves you: you killed it, so it never arrived.
+        caught = List.any (\f -> f.lane == m.lane && f.z <= rimDepth) survivors
+    in
+    if caught then
+        { m
+            | phase = Dying
+            , phaseT = 0
+            , lives = m.lives - 1
+            , sparks = { p = (laneAt m.lanes m.lane).mid, z = 0, t = 0, ink = { r = 255, g = 255, b = 255 } } :: m.sparks
+            , sfx = CDie :: m.sfx
+        }
+
+    else
+        { m
+            | foes = survivors ++ halves
+            , shots = List.filter (\s -> not (List.member s spent)) m.shots
+            , score = m.score + List.sum (List.map (\f -> pointsFor f.kind) struck)
+            , sparks = List.map (\f -> foeSpark m f) struck ++ m.sparks
+            -- One cue per KILL rather than one per volley: the sound is about
+            -- the creature now, so a shot that takes two of them at different
+            -- depths has to say so twice.
+            , sfx = List.map (\f -> CHit f.kind f.z) struck ++ m.sfx
+        }
+
+
+-- A tanker is two enemies wearing one coat. They come out at the depth it
+-- died at, one lane to each side, already moving apart, which is what makes
+-- WHEN you shoot it the only interesting thing about it.
+splitOf : Model -> Foe -> List Foe
+splitOf m f =
+    if f.kind /= Tanker then
+        []
+
+    else
+        [ { kind = Flipper, lane = stepLane m.web.closed m.laneCount f.lane 1, z = f.z, t = 0, dir = 1, rim = climbing }
+        , { kind = Flipper, lane = stepLane m.web.closed m.laneCount f.lane (0 - 1), z = f.z, t = 0, dir = 0 - 1, rim = climbing }
+        ]
+
+
+-- An explosion belongs where the thing that made it was standing, which means
+-- it needs the DEPTH as well as the lane. Without it every kill flashes at the
+-- near rim no matter how far down the well it happened.
+foeSpark : Model -> Foe -> Spark
+foeSpark m f =
+    { p = (laneAt m.lanes f.lane).mid
+    , z = f.z
+    , t = 0
+    , ink = foeInk f.kind
+    }
+
+
+ageSparks : Model -> Model
+ageSparks m =
+    { m | sparks = List.filter (\s -> s.t < 24) (List.map (\s -> { s | t = s.t + 1 }) m.sparks) }
+
+
+-- The first two levels are pure flippers: you learn the lane before you learn
+-- the choice. After that a quarter of what arrives is a tanker, rising to a
+-- third: enough that every wave has one, never so many that the well is
+-- mostly things waiting to become other things.
+kindFor : Int -> Int -> Kind
+kindFor level roll =
+    if level < 2 then
+        Flipper
+
+    else if roll < min 34 (22 + level * 2) then
+        Tanker
+
+    else
+        Flipper
+
+
+spawnStep : Model -> Model
+spawnStep m =
+    if m.spawn > 0 then
+        { m | spawn = m.spawn - 1 }
+
+    else if m.left <= 0 then
+        m
+
+    else if List.length m.foes >= waveSize m.level then
+        { m | spawn = 20 }
+
+    else
+        let
+            (laneRoll, s1) = Random.step (Random.int 0 (max 1 m.laneCount - 1)) m.seed
+            (dirRoll, s2) = Random.step (Random.int 0 1) s1
+            (kindRoll, s3) = Random.step (Random.int 0 99) s2
+        in
+        { m
+            | seed = s3
+            , left = m.left - 1
+            , spawn = max 18 (70 - m.level * 3)
+            , foes =
+                { kind = kindFor m.level kindRoll
+                , lane = laneRoll
+                , z = zFar
+                , t = 0
+                , dir = if dirRoll == 0 then 1 else 0 - 1
+                , rim = climbing
+                }
+                    :: m.foes
+        }
+
+
+
+
+-- A level ends when its quota has been sent and killed, not on a timer. That
+-- is what makes a web feel like a place with a population rather than a tap.
+clearCheck : Model -> Model
+clearCheck m =
+    if m.left <= 0 && List.isEmpty m.foes then
+        { m | phase = Warping, phaseT = 0, camZ = 0, shots = [], sfx = CClear :: m.sfx }
+
+    else
+        m
+
+
+warpStep : Model -> Model
+warpStep m =
+    let
+        camZ = m.camZ + warpSpeed
+    in
+    if camZ >= zFar + camD then
+        enterLevel (m.level + 1) { m | score = m.score + 100 }
+
+    else
+        { m | phaseT = m.phaseT + 1, camZ = camZ }
+
+
+attractStep : Model -> Model
+attractStep m =
+    let
+        n = m.phaseT + 1
+    in
+    if modBy attractWebFrames n == 0 then
+        let
+            next = enterLevel (m.level + 1) m
+        in
+        { next | phase = Title, phaseT = n }
+
+    else if n < attractStart then
+        -- The logo's beat. Nothing is spawned, nothing walks, and the camera
+        -- holds still for exactly the reason it holds still in play: nobody
+        -- is moving.
+        { m | phaseT = n }
+
+    else
+        -- The attract screen never runs dry. In play, a level sends its quota
+        -- and stops, and the quiet at the end is part of the shape of a
+        -- level. On the title that same quiet is just an empty tube with
+        -- nobody looking at it, so the quota is topped straight back up.
+        { m | phaseT = n, left = max m.left 4 }
+            |> attractPilot
+            |> moveShots
+            |> moveFoes
+            |> attractCollide
+            |> spawnStep
+            |> ageSparks
+            |> leanStep
+
+
+attractPilot : Model -> Model
+attractPilot m =
+    let
+        target =
+            case List.sortBy .z m.foes of
+                f :: _ -> f.lane
+                [] -> m.lane
+
+        aimed = m.lane == target
+    in
+    { m
+        | lane = if m.walk > 0 then m.lane else towardLane m target m.lane
+        , walk = if m.walk > 0 then m.walk - 1 else walkFrames
+        , shots =
+            if aimed && modBy attractFireEvery m.phaseT == 0 && List.length m.shots < maxShots then
+                { lane = m.lane, z = 0 } :: m.shots
+
+            else
+                m.shots
+    }
+
+
+-- The same collision as the game, minus the part that costs a life: anything
+-- that reaches the rim simply bursts and is gone.
+attractCollide : Model -> Model
+attractCollide m =
+    let
+        hit = \s f -> f.lane == s.lane && abs (f.z - s.z) < hitRange
+        reached = \f -> f.lane == m.lane && f.z <= rimDepth
+        gone = List.filter (\f -> List.any (\s -> hit s f) m.shots || reached f) m.foes
+    in
+    { m
+        -- Same rules as the real thing, minus the part that costs a life:
+        -- something that reaches the pilot simply bursts. Rim-walkers that
+        -- reach anywhere ELSE stay and hunt, exactly as they do in play, and
+        -- their own fuse takes them off.
+        | foes =
+            List.filter (\f -> not (List.any (\s -> hit s f) m.shots) && not (reached f)) m.foes
+                ++ List.concatMap (\f -> splitOf m f) (List.filter (\f -> List.any (\s -> hit s f) m.shots) m.foes)
+        , shots = List.filter (\s -> not (List.any (\f -> hit s f) m.foes)) m.shots
+        , sparks = List.map (\f -> foeSpark m f) gone ++ m.sparks
+    }

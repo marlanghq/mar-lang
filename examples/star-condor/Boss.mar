@@ -1,0 +1,358 @@
+module Boss exposing (..)
+
+-- The ten bosses' behaviour: the cycle each one runs, when it charges, when
+-- it opens, and when it is vulnerable.
+
+import Balance exposing (..)
+import Types exposing (..)
+import Waves exposing (..)
+
+
+
+
+wardenCycle : BossS -> Int
+wardenCycle boss =
+    modBy 240 boss.t
+
+
+wardenCharging : BossS -> Bool
+wardenCharging boss =
+    let cycle = wardenCycle boss
+    in cycle >= 72 && cycle < 140
+
+
+-- The core is exposed twice per 240-tick cycle: while the mega-flow charges
+-- (risky, the beam is coming) and while it recovers afterwards (the safe
+-- punish). The recovery window was 176-206, which with the core's small
+-- hitbox left the core open 37% of the cycle and turned stage 2 into a
+-- ~70s grind against an 82-hp wall, three times the length of stage 1's
+-- boss. The punish now runs to 236: 49% open, and the extra room lands on
+-- the SAFE window rather than the charge, so you are not paid for standing
+-- under a beam that is about to fire.
+--
+-- The charge window still starts at 82, not earlier: gateShift ramps the
+-- gates open across ticks 72-81 and only then locks at 10, so opening the
+-- core sooner would make the gates jump mid-animation.
+wardenVulnerable : BossS -> Bool
+wardenVulnerable boss =
+    let cycle = wardenCycle boss
+    in (cycle >= 82 && cycle < 140) || (cycle >= 176 && cycle < 236)
+
+
+wardenBeamActive : BossS -> Bool
+wardenBeamActive boss =
+    let cycle = wardenCycle boss
+    in cycle >= 140 && cycle < 176
+
+
+bossCycleAt : Int -> Int -> Int
+bossCycleAt stage ticks =
+    let span =
+            case stage of
+                1 -> 180
+                2 -> 240
+                3 -> 168
+                4 -> 190
+                5 -> 210
+                6 -> 180
+                7 -> 220
+                8 -> 200
+                9 -> 190
+                _ -> 240
+    in
+    modBy span ticks
+
+
+radialShots : Int -> Int -> Int -> Int -> Int -> Int -> List Shot
+radialShots x y first step count speed =
+    List.map
+        (\i ->
+            let angle = modBy 360 (first + i * step)
+            in
+            { x = x, y = y
+            , vx = dirX angle * speed // 1024
+            , vy = dirY angle * speed // 1024
+            })
+        (List.range 0 (count - 1))
+
+
+tortoiseOpen : BossS -> Bool
+tortoiseOpen boss =
+    let cycle = bossCycleAt 8 boss.t
+    in (cycle >= 36 && cycle < 94) || (boss.ph == 2 && cycle >= 142 && cycle < 176)
+
+
+stepBoss : Model -> Model
+stepBoss m =
+    case m.boss of
+        Nothing ->
+            if m.st == stageTicks then
+                { m | sfx = CWarn :: m.sfx }
+            else if m.st == bossTick then
+                let
+                    hp = 50 + m.stage * 16 + (if m.stage == 10 then 60 else 0)
+                in
+                { m
+                    | boss = Just { hp = hp, mx = hp, x = 160 * fp, y = (0 - 40) * fp, t = 0, ph = 1 }
+                    , sfx = CWarn :: m.sfx
+                }
+            else
+                m
+
+        Just b ->
+            let
+                t2 = b.t + 1
+                targY = 52 * fp
+                ph2 = if b.hp * 2 < b.mx then 2 else b.ph
+                px = m.px * fp
+                py = m.py * fp
+                cycle = bossCycleAt m.stage t2
+                waveX = 160 * fp + dirX (modBy 360 (t2 * 2)) * (if ph2 == 2 then 100 else 82) * fp // 1024
+                slowX = 160 * fp + dirX (modBy 360 t2) * 58 * fp // 1024
+                desiredX =
+                    case m.stage of
+                        1 -> waveX
+                        2 -> if cycle < 72 then px else b.x
+                        3 -> slowX
+                        4 -> 160 * fp + dirX (modBy 360 (t2 * 2)) * 108 * fp // 1024
+                        5 -> if cycle < 76 then px else b.x
+                        6 -> 160 * fp
+                        7 -> 160 * fp + dirX (modBy 360 t2) * 36 * fp // 1024
+                        8 -> 160 * fp + dirX (modBy 360 (t2 * 2)) * 92 * fp // 1024
+                        9 -> 160 * fp + dirX (modBy 360 t2) * 30 * fp // 1024
+                        _ -> 160 * fp + dirX (modBy 360 (t2 * 3)) * (if ph2 == 2 then 82 else 58) * fp // 1024
+                moveX = if m.stage == 2 || m.stage == 5 then (if ph2 == 2 then 26 else 19) else if m.stage == 4 then 42 else 28
+                nx = approach b.x desiredX moveX
+                diveY =
+                    if cycle >= 60 && cycle < 100 then (52 + (cycle - 60) * 2) * fp
+                    else if cycle >= 100 && cycle < 140 then (132 - (cycle - 100) * 2) * fp
+                    else targY
+                desiredY = if m.stage == 4 then diveY else if m.stage == 9 then (52 + dirY (modBy 360 (t2 * 2)) * 16 // 1024) * fp else targY
+                ny = if b.y < targY then min targY (b.y + 30) else approach b.y desiredY (if m.stage == 4 then 60 else 22)
+                b2 = { b | t = t2, x = iclamp 48 (gameW * fp - 48) nx, y = ny, ph = ph2 }
+                ready = b2.y >= 46 * fp && b.t > 30
+                left = b2.x - 30 * fp
+                right = b2.x + 30 * fp
+                gap = 26 + modBy 10 (b2.t // 10)
+                twinL = b2.x - gap * fp
+                twinR = b2.x + gap * fp
+                armAngle = modBy 360 (b2.t * 3)
+                armX = b2.x + dirX armAngle * 30 * fp // 1024
+                armY = b2.y + dirY armAngle * 30 * fp // 1024
+                bossShots =
+                    if ready == False then []
+                    else
+                        case m.stage of
+                            1 ->
+                                List.concat
+                                    [ if cycle == 20 then
+                                        [ aimedShot (b2.x + 34 * fp) b2.y px py 32
+                                        , aimedShot (b2.x + 34 * fp) b2.y (px - 34 * fp) py 32
+                                        , aimedShot (b2.x + 34 * fp) b2.y (px + 34 * fp) py 32
+                                        ]
+                                      else []
+                                    , if cycle >= 62 && cycle < 98 && modBy 7 cycle == 0 then
+                                        [ aimedShot (b2.x + (if modBy 2 cycle == 0 then 22 else 0 - 22) * fp) b2.y px py 34 ]
+                                      else []
+                                    , if b2.ph == 2 && cycle == 124 then radialShots b2.x b2.y t2 45 8 28 else []
+                                    ]
+
+                            2 ->
+                                let auxY = b2.y + 7 * fp
+                                    leftAux = b2.x - 46 * fp
+                                    rightAux = b2.x + 46 * fp
+                                in
+                                List.concat
+                                    [ if cycle == 14 then [ aimedShot leftAux auxY px py 30 ] else []
+                                    , if cycle == 38 then [ aimedShot rightAux auxY px py 30 ] else []
+                                    , if b2.ph == 2 && cycle == 26 then
+                                        [ aimedShot leftAux auxY (px + 24 * fp) py 32
+                                        , aimedShot rightAux auxY (px - 24 * fp) py 32
+                                        ]
+                                      else []
+                                    , if cycle == 206 then
+                                        [ aimedShot leftAux auxY (px - 30 * fp) py 31
+                                        , aimedShot rightAux auxY (px + 30 * fp) py 31
+                                        ]
+                                      else []
+                                    , if b2.ph == 2 && cycle == 226 then
+                                        [ aimedShot leftAux auxY px py 34
+                                        , aimedShot rightAux auxY px py 34
+                                        ]
+                                      else []
+                                    ]
+
+                            3 ->
+                                List.concat
+                                    [ if cycle == 20 then radialShots left b2.y 55 18 5 30 else []
+                                    , if cycle == 44 then radialShots right b2.y 107 18 5 30 else []
+                                    , if cycle == 68 then [ aimedShot left b2.y px py 34, aimedShot right b2.y px py 34 ] else []
+                                    , if cycle == 104 || cycle == 118 || cycle == 132 then
+                                        [ { x = left, y = b2.y, vx = (0 - 16), vy = 30 }
+                                        , { x = right, y = b2.y, vx = 16, vy = 30 }
+                                        ]
+                                      else []
+                                    , if b2.ph == 2 && cycle == 150 then radialShots b2.x b2.y 15 30 12 30 else []
+                                    ]
+
+                            4 ->
+                                List.concat
+                                    [ if cycle == 30 then
+                                        [ aimedShot left b2.y (px - 44 * fp) py 32
+                                        , aimedShot left b2.y px py 32
+                                        , aimedShot right b2.y px py 32
+                                        , aimedShot right b2.y (px + 44 * fp) py 32
+                                        ]
+                                      else []
+                                    , if cycle >= 70 && cycle < 126 && modBy 14 cycle == 0 then
+                                        [ { x = left, y = b2.y, vx = (0 - 18), vy = 36 }
+                                        , { x = right, y = b2.y, vx = 18, vy = 36 }
+                                        ]
+                                      else []
+                                    , if b2.ph == 2 && cycle == 154 then radialShots b2.x b2.y 15 30 12 34 else []
+                                    ]
+
+                            5 ->
+                                let podA = modBy 360 (cycle * 3)
+                                    podX = b2.x + dirX podA * 34 * fp // 1024
+                                    podY = b2.y + dirY podA * 24 * fp // 1024
+                                in
+                                List.concat
+                                    [ if cycle == 30 || cycle == 50 || cycle == 70 then [ aimedShot podX podY px py 36 ] else []
+                                    , if cycle == 102 then radialShots b2.x b2.y 55 10 8 33 else []
+                                    , if cycle == 126 then radialShots b2.x b2.y 95 10 8 33 else []
+                                    , if b2.ph == 2 && (cycle == 154 || cycle == 168 || cycle == 182) then
+                                        [ aimedShot podX podY (px - 26 * fp) py 38
+                                        , aimedShot (2 * b2.x - podX) (2 * b2.y - podY) (px + 26 * fp) py 38
+                                        ]
+                                      else []
+                                    ]
+
+                            6 ->
+                                List.concat
+                                    [ if cycle == 20 then
+                                        [ aimedShot twinL b2.y (px + 36 * fp) py 34
+                                        , aimedShot twinR b2.y (px - 36 * fp) py 34
+                                        ]
+                                      else []
+                                    , if cycle == 56 then List.concat [ radialShots twinL b2.y 55 18 5 30, radialShots twinR b2.y 107 18 5 30 ] else []
+                                    , if cycle == 96 then
+                                        [ { x = twinL, y = b2.y, vx = 0 - 12, vy = 35 }
+                                        , { x = twinL, y = b2.y, vx = 12, vy = 35 }
+                                        , { x = twinR, y = b2.y, vx = 0 - 12, vy = 35 }
+                                        , { x = twinR, y = b2.y, vx = 12, vy = 35 }
+                                        ]
+                                      else []
+                                    , if b2.ph == 2 && cycle == 136 then List.concat [ radialShots twinL b2.y 15 60 6 32, radialShots twinR b2.y 45 60 6 32 ] else []
+                                    ]
+
+                            7 ->
+                                List.concat
+                                    [ if cycle == 28 || cycle == 48 || cycle == 68 then radialShots b2.x b2.y (t2 * 4) 90 4 32 else []
+                                    , if cycle == 120 then
+                                        [ aimedShot (b2.x - 6 * fp) (b2.y - 6 * fp) (px - 34 * fp) py 36
+                                        , aimedShot (b2.x + 6 * fp) (b2.y - 6 * fp) (px + 34 * fp) py 36
+                                        ]
+                                      else []
+                                    , if b2.ph == 2 && cycle == 184 then radialShots b2.x b2.y 15 30 12 34 else []
+                                    ]
+
+                            8 ->
+                                List.concat
+                                    [ if tortoiseOpen b2 && (cycle == 48 || cycle == 64 || cycle == 80 || cycle == 152 || cycle == 166) then
+                                        [ aimedShot b2.x (b2.y + 25 * fp) px py 36 ]
+                                      else []
+                                    , if cycle == 112 then radialShots b2.x b2.y t2 45 8 32 else []
+                                    , if b2.ph == 2 && cycle == 128 then
+                                        [ { x = b2.x - 18 * fp, y = b2.y, vx = 28, vy = 30 }
+                                        , { x = b2.x + 18 * fp, y = b2.y, vx = 0 - 28, vy = 30 }
+                                        ]
+                                      else []
+                                    ]
+
+                            9 ->
+                                List.concat
+                                    [ if cycle == 20 || cycle == 42 || cycle == 64 || cycle == 86 then [ aimedShot armX armY px py 35 ] else []
+                                    , if cycle == 116 then
+                                        List.concat
+                                            [ [ aimedShot (b2.x - 30 * fp) b2.y (px - 48 * fp) py 36
+                                              , aimedShot (b2.x + 30 * fp) b2.y (px + 48 * fp) py 36
+                                              ]
+                                            , radialShots b2.x b2.y 45 90 4 30
+                                            ]
+                                      else []
+                                    , if b2.ph == 2 && cycle >= 138 && cycle < 178 && modBy 10 cycle == 8 then [ aimedShot armX armY px py 40 ] else []
+                                    ]
+
+                            _ ->
+                                let podA = modBy 360 (cycle * 4)
+                                    podX = b2.x + dirX podA * 34 * fp // 1024
+                                    podY = b2.y + dirY podA * 30 * fp // 1024
+                                in
+                                if b2.ph == 1 then
+                                    List.concat
+                                        [ if cycle == 24 || cycle == 48 || cycle == 72 || cycle == 96 then [ aimedShot podX podY px py 38 ] else []
+                                        , if cycle == 132 then radialShots b2.x b2.y 15 30 12 34 else []
+                                        , if cycle == 180 then
+                                            [ aimedShot (b2.x - 34 * fp) b2.y (px + 40 * fp) py 40
+                                            , aimedShot (b2.x + 34 * fp) b2.y (px - 40 * fp) py 40
+                                            ]
+                                          else []
+                                        ]
+                                else
+                                    List.concat
+                                        [ if cycle == 20 || cycle == 100 then radialShots b2.x b2.y (cycle + t2) 20 18 35 else []
+                                        , if cycle == 58 || cycle == 74 || cycle == 90 then
+                                            [ aimedShot podX podY (px - 45 * fp) py 42
+                                            , aimedShot (2 * b2.x - podX) (2 * b2.y - podY) px py 42
+                                            , aimedShot b2.x b2.y (px + 45 * fp) py 42
+                                            ]
+                                          else []
+                                        , if cycle == 154 then radialShots b2.x b2.y 10 30 12 40 else []
+                                        , if cycle == 202 then [ aimedShot b2.x b2.y px py 48 ] else []
+                                        ]
+                gapX = iclamp 48 272 (m.px + if modBy 2 cycle == 0 then 18 else 0 - 18)
+                newWalls =
+                    if m.stage == 7 && (cycle == 92 || (b2.ph == 2 && cycle == 164)) then
+                        [ { x = 0, y = (0 - 8) * fp, w = max 0 (gapX - 36) }
+                        , { x = gapX + 36, y = (0 - 8) * fp, w = max 0 (gameW - gapX - 36) }
+                        ]
+                    else if m.stage == 9 && b2.ph == 2 && cycle == 104 then
+                        [ { x = 0, y = (0 - 8) * fp, w = 64 }
+                        , { x = 112, y = (0 - 8) * fp, w = 96 }
+                        , { x = 256, y = (0 - 8) * fp, w = 64 }
+                        ]
+                    else []
+                bossCue =
+                    if m.stage == 2 && ready && cycle == 72 then [ CTurbineCharge ]
+                    else if m.stage == 2 && ready && cycle == 140 then [ CTurbineBeam ]
+                    else []
+            in
+            { m
+                | boss = Just b2
+                , shots = if List.length m.shots > 44 then m.shots else List.concat [ m.shots, bossShots ]
+                , walls = List.concat [ m.walls, newWalls ]
+                , sfx = List.concat [ bossCue, m.sfx ]
+            }
+
+
+-- direction table in 15-degree steps (cos * 1024): fine enough for the
+-- rings, loops and snakes the squadrons fly
+dirX : Int -> Int
+dirX a =
+    let
+        k = modBy 24 (a // 15)
+    in
+    if k == 0 then 1024 else if k == 1 then 989 else if k == 2 then 887
+    else if k == 3 then 724 else if k == 4 then 512 else if k == 5 then 265
+    else if k == 6 then 0 else if k == 7 then 0 - 265 else if k == 8 then 0 - 512
+    else if k == 9 then 0 - 724 else if k == 10 then 0 - 887 else if k == 11 then 0 - 989
+    else if k == 12 then 0 - 1024 else if k == 13 then 0 - 989 else if k == 14 then 0 - 887
+    else if k == 15 then 0 - 724 else if k == 16 then 0 - 512 else if k == 17 then 0 - 265
+    else if k == 18 then 0 else if k == 19 then 265 else if k == 20 then 512
+    else if k == 21 then 724 else if k == 22 then 887 else 989
+
+
+dirY : Int -> Int
+dirY a =
+    dirX (a + 270)

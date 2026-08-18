@@ -1,0 +1,153 @@
+module Geometry exposing (..)
+
+-- Fixed-point trig and the point arithmetic built on it. Angles are indices
+-- into a table shared by all three runtimes, so a rotation means the same
+-- thing everywhere -- no host float ever enters the game.
+
+import Balance exposing (..)
+import Types exposing (..)
+import Canvas exposing ( rgba, triangle )
+
+
+
+
+-- sin and cos of a BRAD angle: 256 brads to the turn, result scaled by
+-- `one`. Math.turns takes brads directly, and Math.sin answers on a scale
+-- of 1000, so the only work here is moving to the game's scale.
+--
+-- This used to be a hand-pasted quarter-wave table walked with List.drop,
+-- because the language had no trig. It has since; the table is gone.
+sinB : Int -> Int
+sinB a =
+    Math.sin (Math.turns a) * one // 1000
+
+
+cosB : Int -> Int
+cosB a =
+    Math.cos (Math.turns a) * one // 1000
+
+
+-- Integer square root by Newton's method. Used for line thickness: a line
+-- needs a perpendicular of a known length, and that is the only place in the
+-- game that needs a magnitude rather than an angle.
+isqrt : Int -> Int
+isqrt n =
+    if n <= 0 then
+        0
+
+    else
+        isqrtStep n (max 1 (n // 2)) 20
+
+
+isqrtStep : Int -> Int -> Int -> Int
+isqrtStep n guess fuel =
+    let
+        next = (guess + n // guess) // 2
+    in
+    if fuel <= 0 || next >= guess then
+        guess
+
+    else
+        isqrtStep n next (fuel - 1)
+
+
+-- A point on the unit circle at brad angle a, scaled to radius r.
+polar : Int -> Int -> Pt
+polar a r =
+    { x = cosB a * r // one
+    , y = sinB a * r // one
+    }
+
+
+-- Rotate a point about the origin by a brad angle. This is how the whole web
+-- spins: one rotation applied to the rim, and every projected thing inherits
+-- it because everything is expressed in rim coordinates.
+rotate : Int -> Pt -> Pt
+rotate a p =
+    let
+        c = cosB a
+        s = sinB a
+    in
+    { x = (p.x * c - p.y * s) // one
+    , y = (p.x * s + p.y * c) // one
+    }
+
+
+midpoint : Pt -> Pt -> Pt
+midpoint a b =
+    { x = (a.x + b.x) // 2
+    , y = (a.y + b.y) // 2
+    }
+
+
+-- Canvas has rectangles, circles and triangles but no line, and a tube
+-- shooter is nothing but lines at arbitrary angles. A line is therefore a
+-- quad, two triangles, built from the perpendicular of its own direction.
+-- That needs a magnitude, which is the one place `isqrt` earns its keep, and
+-- no angle at all.
+--
+-- The perpendicular is computed in FIXED POINT and rounded, and that detail is
+-- the whole function. Done in plain integers, `-dy * halfWidth / length` is
+-- zero for any line more than a couple of pixels long: the width the line
+-- wants is under one pixel per axis, truncation takes it to nothing, and the
+-- two triangles collapse into a line of zero area that draws nothing at all.
+-- Most of the web simply did not appear. Rounding through 8.8 fixes the
+-- common case; the `both zero` fallback covers a line so close to axis
+-- aligned that even the rounded component underflows.
+
+
+-- Round an 8.8 fixed-point number to the nearest whole one, away from zero.
+round8 : Int -> Int
+round8 v =
+    if v >= 0 then
+        (v + 128) // 256
+
+    else
+        0 - ((0 - v + 128) // 256)
+
+
+seg : Pt -> Pt -> Int -> { r : Int, g : Int, b : Int } -> Int -> List Shape
+seg p q w ink alpha =
+    let
+        dx = q.x - p.x
+        dy = q.y - p.y
+        len = max 1 (isqrt (dx * dx + dy * dy))
+        hw = max 1 w
+
+        rx = round8 (0 - dy * hw * 256 // len)
+        ry = round8 (dx * hw * 256 // len)
+
+        -- A line that is very nearly horizontal or vertical gets its
+        -- perpendicular by hand rather than by arithmetic that has run out of
+        -- room.
+        px =
+            if rx == 0 && ry == 0 then
+                (if abs dx >= abs dy then 0 else hw)
+
+            else
+                rx
+
+        py =
+            if rx == 0 && ry == 0 then
+                (if abs dx >= abs dy then hw else 0)
+
+            else
+                ry
+
+        col = rgba ink.r ink.g ink.b alpha
+    in
+    [ triangle (p.x + px) (p.y + py) (p.x - px) (p.y - py) (q.x + px) (q.y + py) col
+    , triangle (q.x + px) (q.y + py) (q.x - px) (q.y - py) (p.x - px) (p.y - py) col
+    ]
+
+
+lerpPt : Pt -> Pt -> Int -> Pt
+lerpPt a b t =
+    { x = a.x + (b.x - a.x) * t // one
+    , y = a.y + (b.y - a.y) * t // one
+    }
+
+
+corner : Int -> Int -> Pt
+corner sides s =
+    polar (s * 256 // sides - 64) webR

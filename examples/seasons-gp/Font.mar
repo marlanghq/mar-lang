@@ -1,0 +1,100 @@
+module Font exposing (..)
+
+-- The 3x5 pixel font, drawn as rects. Knows nothing about racing.
+
+import Balance exposing (..)
+import Canvas exposing ( rect )
+
+
+-- canvas games; Canvas.text would use the system sans and break the retro look)
+
+
+pixText : Int -> Int -> Int -> Color -> String -> List Shape
+pixText x y s color str =
+    List.concat
+        (List.indexedMap
+            (\i ch -> glyphShapes (x + i * 4 * s) y s color ch)
+            (String.toList str))
+
+
+pixTextC : Int -> Int -> Int -> Color -> String -> List Shape
+pixTextC x y s color str =
+    pixText (x - pixW (String.length str) s // 2) y s color str
+
+
+pixTextR : Int -> Int -> Int -> Color -> String -> List Shape
+pixTextR x y s color str =
+    pixText (x - pixW (String.length str) s) y s color str
+
+
+pixW : Int -> Int -> Int
+pixW n s =
+    n * 4 * s - s
+
+
+glyphShapes : Int -> Int -> Int -> Color -> Char -> List Shape
+glyphShapes gx gy s color ch =
+    List.concat
+        (List.indexedMap
+            (\r bits -> rowShapes gx (gy + r * s) s color bits)
+            (glyph ch))
+
+
+rowShapes : Int -> Int -> Int -> Color -> Int -> List Shape
+rowShapes rx ry s color bits =
+    List.concat
+        [ if bitOn bits 4 then [ rect rx ry s s color ] else []
+        , if bitOn bits 2 then [ rect (rx + s) ry s s color ] else []
+        , if bitOn bits 1 then [ rect (rx + 2 * s) ry s s color ] else []
+        ]
+
+
+bitOn : Int -> Int -> Bool
+bitOn bits v =
+    mod2 (bits // v) == 1
+
+
+glyph : Char -> List Int
+glyph ch =
+    case ch of
+        'A' -> [ 7, 5, 7, 5, 5 ]
+        'B' -> [ 6, 5, 6, 5, 6 ]
+        'C' -> [ 7, 4, 4, 4, 7 ]
+        'D' -> [ 6, 5, 5, 5, 6 ]
+        'E' -> [ 7, 4, 7, 4, 7 ]
+        'F' -> [ 7, 4, 7, 4, 4 ]
+        'G' -> [ 7, 4, 5, 5, 7 ]
+        'H' -> [ 5, 5, 7, 5, 5 ]
+        'I' -> [ 7, 2, 2, 2, 7 ]
+        'J' -> [ 1, 1, 1, 5, 7 ]
+        'K' -> [ 5, 6, 4, 6, 5 ]
+        'L' -> [ 4, 4, 4, 4, 7 ]
+        'M' -> [ 5, 7, 7, 5, 5 ]
+        'N' -> [ 5, 7, 7, 7, 5 ]
+        'O' -> [ 7, 5, 5, 5, 7 ]
+        'P' -> [ 7, 5, 7, 4, 4 ]
+        'Q' -> [ 7, 5, 5, 7, 1 ]
+        'R' -> [ 7, 5, 7, 6, 5 ]
+        'S' -> [ 7, 4, 7, 1, 7 ]
+        'T' -> [ 7, 2, 2, 2, 2 ]
+        'U' -> [ 5, 5, 5, 5, 7 ]
+        'V' -> [ 5, 5, 5, 5, 2 ]
+        'W' -> [ 5, 5, 7, 7, 5 ]
+        'X' -> [ 5, 5, 2, 5, 5 ]
+        'Y' -> [ 5, 5, 2, 2, 2 ]
+        'Z' -> [ 7, 1, 2, 4, 7 ]
+        '0' -> [ 7, 5, 5, 5, 7 ]
+        '1' -> [ 2, 6, 2, 2, 7 ]
+        '2' -> [ 7, 1, 7, 4, 7 ]
+        '3' -> [ 7, 1, 7, 1, 7 ]
+        '4' -> [ 5, 5, 7, 1, 1 ]
+        '5' -> [ 7, 4, 7, 1, 7 ]
+        '6' -> [ 7, 4, 7, 5, 7 ]
+        '7' -> [ 7, 1, 2, 2, 2 ]
+        '8' -> [ 7, 5, 7, 5, 7 ]
+        '9' -> [ 7, 5, 7, 1, 7 ]
+        ':' -> [ 0, 2, 0, 2, 0 ]
+        '-' -> [ 0, 0, 7, 0, 0 ]
+        '.' -> [ 0, 0, 0, 0, 2 ]
+        '!' -> [ 2, 2, 2, 0, 2 ]
+        _ -> [ 0, 0, 0, 0, 0 ]

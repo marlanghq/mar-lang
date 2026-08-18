@@ -1,0 +1,880 @@
+module Sim exposing (..)
+
+-- One tick: fly, fire, move everything, collide, die, clear the stage. Pure
+-- functions of the model.
+
+import Balance exposing (..)
+import Boss exposing (..)
+import Music exposing (..)
+import Stages exposing (..)
+import Types exposing (..)
+import Waves exposing (..)
+
+
+
+
+freshModel : Model
+freshModel =
+    { w = 640
+    , h = 480
+    , mode = Title
+    , stage = 1
+    , tick = 0
+    , st = 0
+    , seed = Random.initialSeed 20260713
+    , px = 160
+    , py = 200
+    , kU = False, kD = False, kL = False, kR = False
+    , firing = False
+    , fireT = 0
+    , padX = 0, padY = 0
+    , keysDown = []
+    , padDown = []
+    , dragOn = False
+    , ltx = 0, lty = 0
+    , weapon = 0
+    , power = 1
+    , energy = 5
+    , score = 0
+    , hi = 0
+    , buls = []
+    , shots = []
+    , foes = []
+    , stars = []
+    , parts = []
+    , walls = []
+    , boss = Nothing
+    , invulnT = 0
+    , paused = False
+    , muted = False
+    , dev = Nothing
+    , sfx = []
+    }
+
+
+init : (Model, Cmd Msg)
+init =
+    ( freshModel, Cmd.none )
+
+
+
+
+emit : Model -> (Model, Cmd Msg)
+emit model =
+    if List.length model.sfx == 0 then
+        ( model, Cmd.none )
+    else
+        ( { model | sfx = [] }
+        , Cmd.batch (List.map (\c -> Sound.play (cueSound c)) model.sfx)
+        )
+
+
+-- enter a stage intro (and its jingle)
+toIntro : Int -> Model -> Model
+toIntro s m =
+    { m | mode = Intro, stage = s, st = 0, sfx = CJIntro :: m.sfx }
+
+
+-- start playing the current stage with a clean field
+toPlay : Model -> Model
+toPlay m =
+    { m
+        | mode = Play
+        , st = 0
+        , px = 160
+        , py = 200
+        , buls = []
+        , shots = []
+        , foes = []
+        , stars = []
+        , parts = []
+        , walls = []
+        , boss = Nothing
+        , invulnT = 90
+        , paused = False
+    }
+
+
+startGame : Model -> Model
+startGame m =
+    toIntro 1
+        { m
+            | energy = 5
+            , score = 0
+            , weapon = 0
+            , power = 1
+        }
+
+
+-- reading screens hold the button for a beat first, so nothing skips
+-- before it can be read, and nothing advances without a button press
+holdFor : Mode -> Int
+holdFor mode =
+    case mode of
+        Story -> 170
+        Intro -> 105
+        Clear -> 130
+        Over -> 70
+        Ending -> 300
+        _ -> 0
+
+
+-- one press of "the button" outside Play advances menus
+press : Model -> Model
+press m =
+    if m.st < holdFor m.mode then
+        m
+    else
+        case m.mode of
+            Title -> { m | mode = Story, st = 0, sfx = CBlip :: m.sfx }
+            Story -> startGame m
+            Intro -> toPlay m
+            Clear ->
+                if m.stage >= 10 then
+                    { m | mode = Ending, st = 0, sfx = CJEnd :: m.sfx }
+                else
+                    toIntro (m.stage + 1) m
+            Over -> toPlay { m | energy = 5, power = 1, sfx = CBlip :: m.sfx }
+            Ending -> { m | mode = Title, st = 0 }
+            _ -> m
+
+
+update : Msg -> Model -> (Model, Cmd Msg)
+update msg model =
+    case msg of
+        Resized w h ->
+            ( { model | w = w, h = h }, Cmd.none )
+
+        Tick ->
+            emit (stepMode { model | tick = model.tick + 1 })
+
+        Tapped x y ->
+            if inMuteZone model x y then
+                toggleMute model
+            else
+                let
+                    p = toLogical model x y
+                    m2 = { model | dragOn = True, ltx = p.x, lty = p.y }
+                in
+                emit (press m2)
+
+        Dragged x y ->
+            if model.dragOn && model.mode == Play then
+                let
+                    p = toLogical model x y
+                    dx = p.x - model.ltx
+                    dy = p.y - model.lty
+                in
+                ( { model
+                    | px = iclamp 10 (gameW - 10) (model.px + dx)
+                    , py = iclamp playTop playBot (model.py + dy)
+                    , ltx = p.x
+                    , lty = p.y
+                  }
+                , Cmd.none
+                )
+            else
+                ( model, Cmd.none )
+
+        Released _ _ ->
+            ( { model | dragOn = False }, Cmd.none )
+
+        KeysChanged st ->
+            -- held movement/fire is mirrored wholesale (syncHeld); menu
+            -- advances and the mute toggle fire on the press-edge (keys
+            -- newly in the held set)
+            let
+                pressed = List.filter (\k -> List.member k model.keysDown == False) st.down
+                base = syncHeld { model | keysDown = st.down }
+                stepped = List.foldl applyKeyPress base pressed
+                sounded = emit stepped
+                muteCmd =
+                    if stepped.muted == base.muted then
+                        Cmd.none
+                    else
+                        Sound.setMuted stepped.muted
+            in
+            ( Tuple.first sounded, Cmd.batch [ Tuple.second sounded, muteCmd ] )
+
+        PadChanged p ->
+            -- left stick + d-pad/A mirrored wholesale; Start/A press-edges
+            let
+                pressed = List.filter (\b -> List.member b model.padDown == False) p.down
+                base = syncHeld { model | padDown = p.down, padX = p.leftX, padY = p.leftY }
+                stepped = List.foldl applyPadPress base pressed
+            in
+            emit stepped
+
+        DeviceChanged d ->
+            ( { model | dev = Just d }, Cmd.none )
+
+
+-- recompute the shared held ledger from BOTH device mirrors: keyboard keys
+-- and the gamepad d-pad feed the same movement bools, Space and A the same
+-- fire bool. Releases fall out for free (a key/button just leaves the set).
+syncHeld : Model -> Model
+syncHeld m =
+    let
+        k = \key -> List.member key m.keysDown
+        p = \btn -> List.member btn m.padDown
+    in
+    { m
+        | kU = k Keyboard.ArrowUp || k Keyboard.KeyW || p Gamepad.Up
+        , kD = k Keyboard.ArrowDown || k Keyboard.KeyS || p Gamepad.Down
+        , kL = k Keyboard.ArrowLeft || k Keyboard.KeyA || p Gamepad.Left
+        , kR = k Keyboard.ArrowRight || k Keyboard.KeyD || p Gamepad.Right
+        , firing = k Keyboard.Space || p Gamepad.A
+    }
+
+
+-- keyboard press-edge (folded over newly-held keys; sfx/mute Cmds are
+-- gathered by the caller): M flips mute, Enter pauses during Play, and every
+-- other key advances a menu via press (a no-op during Play). press may queue
+-- a menu blip into sfx, which the caller flushes with emit.
+applyKeyPress : Keyboard.Key -> Model -> Model
+applyKeyPress key m =
+    if key == Keyboard.KeyM then
+        { m | muted = m.muted == False }
+    else if key == Keyboard.Enter && m.mode == Play then
+        { m | paused = m.paused == False }
+    else
+        press m
+
+
+-- gamepad press-edge: Start pauses during Play, Start/A otherwise advance a
+-- menu via press (A's fire is held state, set by syncHeld); the d-pad and any
+-- other button are held-only, no edge.
+applyPadPress : Gamepad.Button -> Model -> Model
+applyPadPress btn m =
+    if btn == Gamepad.Start && m.mode == Play then
+        { m | paused = m.paused == False }
+    else if btn == Gamepad.Start || btn == Gamepad.A then
+        press m
+    else
+        m
+
+
+toggleMute : Model -> (Model, Cmd Msg)
+toggleMute model =
+    let
+        m2 = model.muted == False
+    in
+    ( { model | muted = m2 }, Sound.setMuted m2 )
+
+
+
+
+stepMode : Model -> Model
+stepMode m =
+    case m.mode of
+        Play ->
+            if m.paused then m else stepPlay m
+
+        BossFall ->
+            stepBossFall { m | st = m.st + 1 }
+
+        Dying ->
+            stepDying { m | st = m.st + 1 }
+
+        _ ->
+            -- reading screens never auto-advance; they wait for the button
+            { m | st = m.st + 1 }
+
+
+-- the boss goes down in a chain of explosions before the clear screen
+stepBossFall : Model -> Model
+stepBossFall m =
+    let
+        m1 = stepParts m
+    in
+    case m1.boss of
+        Nothing ->
+            { m1 | mode = Clear, st = 0 }
+
+        Just b ->
+            if m1.st >= 150 then
+                { m1
+                    | boss = Nothing
+                    , mode = Clear
+                    , st = 0
+                    , parts = []
+                    , score = m1.score + 1500 + m1.stage * 500
+                    , hi = max m1.hi (m1.score + 1500 + m1.stage * 500)
+                    , sfx = CBigBoom :: CJClear :: m1.sfx
+                }
+            else if modBy 14 m1.st == 0 then
+                let
+                    ox = modBy 44 (m1.st * 73) - 22
+                    oy = modBy 32 (m1.st * 41) - 16
+                in
+                { m1
+                    | parts = List.concat [ burst (b.x + ox * fp) (b.y + oy * fp) (modBy 3 (m1.st // 14)), m1.parts ]
+                    , sfx = CBoomK (modBy 5 (m1.st // 14)) :: m1.sfx
+                }
+            else
+                m1
+
+
+-- the ship's last moment: staggered blasts, then the game over screen
+stepDying : Model -> Model
+stepDying m =
+    let
+        m1 = stepParts m
+        m2 =
+            if modBy 16 m1.st == 0 && m1.st < 80 then
+                { m1
+                    | parts = List.concat [ burst (m1.px * fp) (m1.py * fp) (modBy 3 (m1.st // 16)), m1.parts ]
+                    , sfx = CBoomK (modBy 5 (m1.st // 16)) :: m1.sfx
+                }
+            else
+                m1
+    in
+    if m2.st >= 130 then
+        { m2 | mode = Over, st = 0, hi = max m2.hi m2.score, sfx = CJOver :: m2.sfx }
+    else
+        m2
+
+
+
+
+stepPlay : Model -> Model
+stepPlay m0 =
+    let
+        m1 = { m0 | st = m0.st + 1, invulnT = max 0 (m0.invulnT - 1) }
+        m2 = movePlayer m1
+        m3 = firePlayer m2
+        m4 = spawnFoes m3
+        m5 = stepFoes m4
+        m6 = stepBoss m5
+        m7 = stepBullets m6
+        m8 = stepShots m7
+        m9 = stepStars m8
+        m10 = stepParts (stepWalls m9)
+        m11 = collideBullets m10
+        m12 = collidePlayer m11
+        m13 = musicTick m12
+    in
+    afterPlay m13
+
+
+movePlayer : Model -> Model
+movePlayer m =
+    let
+        kx = (if m.kR then 2 else 0) - (if m.kL then 2 else 0)
+        ky = (if m.kD then 2 else 0) - (if m.kU then 2 else 0)
+        sx = if absI m.padX > 25 then m.padX * 2 // 100 else 0
+        sy = if absI m.padY > 25 then m.padY * 2 // 100 else 0
+    in
+    { m
+        | px = iclamp 10 (gameW - 10) (m.px + kx + sx)
+        , py = iclamp playTop playBot (m.py + ky + sy)
+    }
+
+
+-- weapon fire: BEAM straight and fast, SPREAD fans out, WAVE weaves
+firePlayer : Model -> Model
+firePlayer m =
+    let
+        cooled = { m | fireT = max 0 (m.fireT - 1) }
+    in
+    if (cooled.firing || cooled.dragOn) && cooled.fireT == 0 && List.length cooled.buls < 26 then
+        let
+            bx = cooled.px * fp
+            by = (cooled.py - 8) * fp
+            mk = \vx vy -> { x = bx, y = by, vx = vx, vy = vy, w = cooled.weapon, t = 0 }
+            news =
+                if cooled.weapon == 0 then
+                    if cooled.power == 1 then [ mk 0 (0 - 62) ]
+                    else if cooled.power == 2 then [ mk 0 (0 - 66), { x = bx - 6 * fp, y = by, vx = 0, vy = 0 - 66, w = 0, t = 0 } ]
+                    else [ mk 0 (0 - 70), { x = bx - 7 * fp, y = by, vx = 0, vy = 0 - 70, w = 0, t = 0 }, { x = bx + 7 * fp, y = by, vx = 0, vy = 0 - 70, w = 0, t = 0 } ]
+                else if cooled.weapon == 1 then
+                    if cooled.power == 1 then [ mk (0 - 12) (0 - 48), mk 12 (0 - 48) ]
+                    else if cooled.power == 2 then [ mk 0 (0 - 52), mk (0 - 18) (0 - 46), mk 18 (0 - 46) ]
+                    else [ mk 0 (0 - 52), mk (0 - 14) (0 - 48), mk 14 (0 - 48), mk (0 - 28) (0 - 42), mk 28 (0 - 42) ]
+                else
+                    if cooled.power == 1 then [ mk 24 (0 - 54) ]
+                    else if cooled.power == 2 then [ mk 24 (0 - 54), mk (0 - 24) (0 - 54) ]
+                    else [ mk 24 (0 - 56), mk (0 - 24) (0 - 56), mk 0 (0 - 60) ]
+        in
+        { cooled
+            | buls = List.concat [ news, cooled.buls ]
+            , fireT = 18
+            , sfx = CShot cooled.weapon :: cooled.sfx
+        }
+    else
+        cooled
+
+
+stepFoes : Model -> Model
+stepFoes m =
+    let
+        stepOne =
+            \f ->
+                let
+                    t2 = f.t + 1
+                    ht = max 0 (f.hurtT - 1)
+                in
+                if f.mv == 1 then
+                    -- sine wave: surf across the screen on a sinking baseline
+                    { f | t = t2, hurtT = ht
+                        , x = f.x + f.vx
+                        , ay = f.ay + f.vy
+                        , y = f.ay + f.gift * fp * dirY (modBy 360 (t2 * 6 + f.ph)) // 1024 }
+                else if f.mv == 2 then
+                    -- ring: orbit a shared anchor while the whole wheel sinks
+                    let
+                        ang = modBy 360 (t2 * f.vx + f.ph)
+                    in
+                    { f | t = t2, hurtT = ht
+                        , ay = f.ay + f.vy
+                        , x = f.ax + f.gift * fp * dirX ang // 1024
+                        , y = f.ay + f.gift * fp * dirY ang // 1024 }
+                else if f.mv == 3 then
+                    -- galaga: file in, loop the loop, then dive away
+                    if t2 < f.ph then
+                        { f | t = t2, hurtT = ht, y = f.y + 24 }
+                    else if t2 - f.ph < 72 then
+                        let
+                            ang = modBy 360 (270 + (t2 - f.ph) * 5)
+                        in
+                        { f | t = t2, hurtT = ht
+                            , x = f.ax + 26 * fp * dirX ang // 1024
+                            , y = f.ay + 26 * fp * dirY ang // 1024 }
+                    else
+                        { f | t = t2, hurtT = ht, y = f.y + 30 }
+                else if f.mv == 4 then
+                    -- snake: weave down a lane nose-to-tail
+                    { f | t = t2, hurtT = ht
+                        , y = f.y + f.vy
+                        , x = f.ax + f.gift * fp * dirX (modBy 360 (t2 * 8 + f.ph)) // 1024 }
+                else if f.kind == 0 then
+                    -- plain escort: holds its slot, drifts straight down
+                    { f | t = t2, hurtT = ht, x = f.x + f.vx, y = f.y + f.vy }
+                else if f.kind == 1 then
+                    -- diver: slow entry, then one committed dive at the player
+                    if f.y < 56 * fp then
+                        { f | t = t2, hurtT = ht, y = f.y + 18 }
+                    else
+                        let
+                            dx = m.px * fp - f.x
+                        in
+                        { f | t = t2, hurtT = ht, y = f.y + 42, x = f.x + iclamp (0 - 20) 20 (dx // 34) }
+                else if f.kind == 2 then
+                    -- floater: sink to a perch, hover and volley, leave late
+                    if f.y < 62 * fp then
+                        { f | t = t2, hurtT = ht, y = f.y + 14 }
+                    else if t2 > 520 then
+                        { f | t = t2, hurtT = ht, y = f.y + 16 }
+                    else
+                        { f | t = t2, hurtT = ht, x = f.x + (if modBy 2 (t2 // 52) == 0 then 8 else 0 - 8) }
+                else if f.kind == 3 then
+                    -- zig: bounce off the side walls
+                    let
+                        nx = f.x + f.vx
+                        bounce = nx < 8 * fp || nx > (gameW - 8) * fp
+                    in
+                    { f | t = t2, hurtT = ht, x = if bounce then f.x else nx
+                        , vx = if bounce then 0 - f.vx else f.vx
+                        , y = f.y + f.vy }
+                else
+                    -- pinata: gentle sway, slow fall
+                    { f | t = t2, hurtT = ht, y = f.y + f.vy
+                        , x = f.x + (if modBy 2 (t2 // 40) == 0 then f.vx else 0 - f.vx) }
+
+        moved = List.map stepOne m.foes
+        kept =
+            List.filter
+                (\f ->
+                    f.y < (gameH + 20) * fp
+                        && f.y > (0 - 140) * fp
+                        && f.x > (0 - 60) * fp
+                        && f.x < (gameW + 60) * fp)
+                moved
+
+        onScreen = \f -> f.y > 4 * fp && f.x > 4 * fp && f.x < (gameW - 4) * fp
+
+        -- the crossfire: floaters volley (3-way fan from stage 4), rings
+        -- rain staggered aimed orbs, sine surfers pot-shot mid-flight, and
+        -- galaga divers fire one parting shot out of the loop
+        newShots =
+            if List.length m.shots > 44 then
+                []
+            else
+                List.concat
+                    [ List.concat
+                        (List.map
+                            (\f ->
+                                if m.stage >= 4 then
+                                    [ aimedShot f.x f.y (m.px * fp) (m.py * fp) 30
+                                    , aimedShot f.x f.y ((m.px - 44) * fp) (m.py * fp) 30
+                                    , aimedShot f.x f.y ((m.px + 44) * fp) (m.py * fp) 30
+                                    ]
+                                else
+                                    [ aimedShot f.x f.y (m.px * fp) (m.py * fp) 30 ]
+                            )
+                            (List.filter (\f -> f.kind == 2 && f.y >= 62 * fp && modBy 84 f.t == 60) kept))
+                    , List.map
+                        (\f -> aimedShot f.x f.y (m.px * fp) (m.py * fp) 30)
+                        (List.filter (\f -> f.mv == 2 && onScreen f && modBy 100 (f.t + f.ph) == 80) kept)
+                    , List.map
+                        (\f -> aimedShot f.x f.y (m.px * fp) (m.py * fp) 28)
+                        (List.filter (\f -> f.mv == 1 && onScreen f && modBy 140 (f.t + absI f.ph) == 90) kept)
+                    , List.map
+                        (\f -> aimedShot f.x f.y (m.px * fp) (m.py * fp) 34)
+                        (List.filter (\f -> f.mv == 3 && f.t - f.ph == 76) kept)
+                    ]
+    in
+    { m | foes = kept, shots = List.concat [ m.shots, newShots ] }
+
+
+
+
+stepBullets : Model -> Model
+stepBullets m =
+    let
+        stepped =
+            List.map
+                (\b ->
+                    let
+                        -- WAVE bullets weave: flip sideways speed on a period
+                        nvx = if b.w == 2 && modBy 12 b.t == 11 then 0 - b.vx else b.vx
+                    in
+                    { b | x = b.x + nvx, y = b.y + b.vy, vx = nvx, t = b.t + 1 }
+                )
+                m.buls
+        -- barriers eat player fire: shoot through the gap or reposition
+        inWall =
+            \b ->
+                List.any
+                    (\w -> b.x // fp > w.x && b.x // fp < w.x + w.w && absI (b.y // fp - (w.y // fp + 7)) < 9)
+                    m.walls
+    in
+    { m | buls = List.filter (\b -> b.y > (0 - 12) * fp && b.x > (0 - 12) * fp && b.x < (gameW + 12) * fp && inWall b == False) stepped }
+
+
+stepWalls : Model -> Model
+stepWalls m =
+    let
+        moved = List.map (\w -> { w | y = w.y + 12 }) m.walls
+    in
+    { m | walls = List.filter (\w -> w.y < (gameH + 6) * fp) moved }
+
+
+stepShots : Model -> Model
+stepShots m =
+    let
+        ricochet =
+            case m.boss of
+                Just _ -> m.stage == 8
+                Nothing -> False
+        stepOne =
+            \s ->
+                let nx = s.x + s.vx
+                    bounce = ricochet && (nx < 8 * fp || nx > (gameW - 8) * fp)
+                in
+                { s
+                    | x = if bounce then s.x - s.vx else nx
+                    , y = s.y + s.vy
+                    , vx = if bounce then 0 - s.vx else s.vx
+                }
+        stepped = List.map stepOne m.shots
+    in
+    { m | shots = List.filter (\s -> s.y < (gameH + 12) * fp && s.y > (0 - 20) * fp && s.x > (0 - 20) * fp && s.x < (gameW + 20) * fp) stepped }
+
+
+stepStars : Model -> Model
+stepStars m =
+    let
+        stepped =
+            List.map
+                (\s ->
+                    { s | t = s.t + 1, y = s.y + 22
+                        , x = s.x + (if modBy 2 (s.t // 26) == 0 then 8 else 0 - 8) })
+                m.stars
+    in
+    { m | stars = List.filter (\s -> s.y < (gameH + 12) * fp) stepped }
+
+
+stepParts : Model -> Model
+stepParts m =
+    let
+        stepped =
+            List.map
+                (\p -> { p | x = p.x + p.vx, y = p.y + p.vy, vy = p.vy + 3, t = p.t + 1 })
+                m.parts
+    in
+    { m | parts = List.filter (\p -> p.t < 26) stepped }
+
+
+burst : Int -> Int -> Int -> List Part
+burst x y k =
+    List.map
+        (\i ->
+            { x = x, y = y
+            , vx = dirX (i * 45) * 40 // 1024
+            , vy = dirY (i * 45) * 40 // 1024 - 20
+            , t = modBy 3 i
+            , k = k
+            })
+        (List.range 0 7)
+
+
+
+
+collideBullets : Model -> Model
+collideBullets m =
+    let
+        -- fold bullets through the foe list: each bullet hits at most one foe
+        hitFoes =
+            List.foldl
+                (\b acc ->
+                    let
+                        hit =
+                            List.foldl
+                                (\f ha ->
+                                    if ha.found == False
+                                        && absI (f.x - b.x) < 11 * fp
+                                        && absI (f.y - b.y) < 11 * fp
+                                        && List.any (\d -> d.x == f.x && d.y == f.y && d.t == f.t) acc.dead == False
+                                    then
+                                        { found = True, foe = Just f }
+                                    else
+                                        ha
+                                )
+                                { found = False, foe = Nothing }
+                                acc.foes
+                    in
+                    case hit.foe of
+                        Just f ->
+                            { acc
+                                | dead = f :: acc.dead
+                                , foes = acc.foes
+                                , spent = b :: acc.spent
+                            }
+
+                        Nothing ->
+                            acc
+                )
+                { foes = m.foes, dead = [], spent = [] }
+                m.buls
+
+        wasSpent = \b -> List.any (\s -> s.x == b.x && s.y == b.y) hitFoes.spent
+        wasHit = \f -> List.any (\d -> d.x == f.x && d.y == f.y && d.t == f.t) hitFoes.dead
+
+        damaged =
+            List.map (\f -> if wasHit f then { f | hp = f.hp - 1, hurtT = 6 } else f) m.foes
+        alive = List.filter (\f -> f.hp > 0) damaged
+        killed = List.filter (\f -> f.hp <= 0) damaged
+
+        -- pinatas drop their star; everything scores
+        drops =
+            List.map
+                (\f -> { x = f.x, y = f.y, kind = f.gift, t = 0 })
+                (List.filter (\f -> f.kind == 4) killed)
+        gained =
+            List.foldl
+                (\f acc -> acc + (if f.kind == 4 then 300 else if f.kind == 2 then 200 else if f.kind == 1 then 150 else 100))
+                0
+                killed
+        booms = List.concat (List.map (\f -> burst f.x f.y 0) killed)
+
+        -- boss damage
+        bossHits =
+            case m.boss of
+                Just b ->
+                    List.filter
+                        (\bl ->
+                            let vulnerable =
+                                    if m.stage == 2 then wardenVulnerable b
+                                    else if m.stage == 8 then tortoiseOpen b
+                                    else True
+                                shapeHit =
+                                    if m.stage == 1 then
+                                        absI (b.x - bl.x) < 48 * fp && absI (b.y - bl.y) < 20 * fp
+                                    else if m.stage == 6 then
+                                        let gap = (26 + modBy 10 (b.t // 10)) * fp
+                                        in
+                                        (absI (b.x - gap - bl.x) < 16 * fp || absI (b.x + gap - bl.x) < 16 * fp)
+                                            && absI (b.y - bl.y) < 16 * fp
+                                    else if m.stage == 8 then
+                                        absI (b.x - bl.x) < 12 * fp && absI (b.y + 25 * fp - bl.y) < 11 * fp
+                                    else
+                                        -- The Warden's core is a small target on
+                                        -- purpose, but 13 was tighter than the
+                                        -- gates look open: shots that visually
+                                        -- entered the core missed. 20 still asks
+                                        -- for real aim (generic bosses are 26)
+                                        -- and lets a spread land more than one.
+                                        absI (b.x - bl.x) < (if m.stage == 2 then 20 * fp else 26 * fp)
+                                            && absI (b.y - bl.y) < (if m.stage == 2 then 16 * fp else 20 * fp)
+                            in
+                            wasSpent bl == False && vulnerable && shapeHit)
+                        m.buls
+
+                Nothing ->
+                    []
+        bossBlocks =
+            case m.boss of
+                Just b ->
+                    if m.stage == 2 && wardenVulnerable b == False then
+                        List.filter
+                            (\bl -> wasSpent bl == False && absI (b.x - bl.x) < 31 * fp && absI (b.y - bl.y) < 22 * fp)
+                            m.buls
+                    else if m.stage == 8 && tortoiseOpen b == False then
+                        List.filter
+                            (\bl -> wasSpent bl == False && absI (b.x - bl.x) < 24 * fp && absI (b.y - bl.y) < 23 * fp)
+                            m.buls
+                    else []
+
+                Nothing ->
+                    []
+        boss2 =
+            case m.boss of
+                Just b -> Just { b | hp = b.hp - List.length bossHits }
+                Nothing -> Nothing
+        spentAll = \b -> wasSpent b || List.any (\h -> h.x == b.x && h.y == b.y) (List.concat [ bossHits, bossBlocks ])
+        shieldSparks = List.concat (List.map (\bl -> burst bl.x bl.y 2) bossBlocks)
+    in
+    { m
+        | foes = alive
+        , buls = List.filter (\b -> spentAll b == False) m.buls
+        , stars = List.concat [ m.stars, drops ]
+        , parts = List.concat [ m.parts, booms, shieldSparks ]
+        , boss = boss2
+        , score = m.score + gained
+        , sfx =
+            List.concat
+                [ List.map (\f -> CBoomK f.kind) killed
+                , if List.any wasHit alive then [ CHitFoe ] else []
+                , if List.length bossBlocks > 0 then [ CHitFoe ] else []
+                , if List.length bossHits > 0 then [ CHit ] else []
+                , m.sfx
+                ]
+    }
+
+
+collidePlayer : Model -> Model
+collidePlayer m =
+    let
+        px = m.px * fp
+        py = m.py * fp
+
+        -- collect stars first (generous radius)
+        got = List.filter (\s -> absI (s.x - px) < 13 * fp && absI (s.y - py) < 13 * fp) m.stars
+        rest = List.filter (\s -> absI (s.x - px) < 13 * fp && absI (s.y - py) < 13 * fp |> (\hitS -> hitS == False)) m.stars
+        m2 =
+            List.foldl
+                (\s acc ->
+                    if s.kind == 0 then
+                        { acc | power = min 3 (acc.power + 1), score = acc.score + 200, sfx = CStar :: acc.sfx }
+                    else if s.kind == 4 then
+                        { acc | energy = min 5 (acc.energy + 1), score = acc.score + 200, sfx = CHeal :: acc.sfx }
+                    else
+                        { acc | weapon = s.kind - 1, score = acc.score + 200, sfx = CStar :: acc.sfx }
+                )
+                { m | stars = rest }
+                got
+
+        -- then the dangerous stuff (small core hitbox: forgiving)
+        shotHit = List.any (\s -> absI (s.x - px) < 6 * fp && absI (s.y - py) < 6 * fp) m2.shots
+        foeHit = List.any (\f -> absI (f.x - px) < 10 * fp && absI (f.y - py) < 10 * fp) m2.foes
+        wallHit = List.any (\w -> m.px + 7 > w.x && m.px - 7 < w.x + w.w && absI (m.py - (w.y // fp + 7)) < 13) m2.walls
+        beamHit =
+            case m2.boss of
+                Just b ->
+                    let bx = b.x // fp
+                        belowEmitter = m2.py > b.y // fp + 18
+                        central = absI (m2.px - bx) < (if b.ph == 2 then 13 else 11)
+                        leftAux = b.ph == 2 && absI (m2.px - (bx - 46)) < 7
+                        rightAux = b.ph == 2 && absI (m2.px - (bx + 46)) < 7
+                    in m2.stage == 2 && wardenBeamActive b && belowEmitter && (central || leftAux || rightAux)
+
+                Nothing ->
+                    False
+        bossBodyHit =
+            case m2.boss of
+                Just b ->
+                    m2.stage == 4
+                        && bossCycleAt 4 b.t >= 60
+                        && bossCycleAt 4 b.t < 140
+                        && absI (b.x // fp - m2.px) < 20
+                        && absI (b.y // fp - m2.py) < 20
+
+                Nothing ->
+                    False
+        hurt = m2.invulnT == 0 && (shotHit || foeHit || wallHit || beamHit || bossBodyHit)
+    in
+    if hurt == False then
+        m2
+    else
+        -- one energy cell down: the ship HOLDS its ground, blinks through a
+        -- grace window, and the nearby volley is swept so it can breathe
+        { m2
+            | energy = m2.energy - 1
+            , invulnT = 100
+            , parts = List.concat [ burst px py 1, m2.parts ]
+            , shots = List.filter (\s -> absI (s.x - px) < 26 * fp && absI (s.y - py) < 26 * fp |> (\h -> h == False)) m2.shots
+            , sfx = CHurt :: m2.sfx
+        }
+
+
+-- fire the soundtrack + settle deaths / clears
+musicTick : Model -> Model
+musicTick m =
+    let
+        beat =
+            if modBy 30 m.st == 0 then
+                let
+                    b = m.st // 30
+                    inBoss = case m.boss of
+                        Just _ -> True
+                        Nothing -> False
+                    bar = modBy 4 (b // 8)
+                    tbl =
+                        if inBoss then
+                            if bar == 2 then bossMelB else bossMelA
+                        else if bar == 2 then
+                            melB m.stage
+                        else
+                            melA m.stage
+                    slot = modBy 8 b * 2
+                in
+                [ CBeat (modBy 1000 b + (if inBoss then 100000 else 0) + m.stage * 1000)
+                , CMel (nthI slot tbl) (nthI (slot + 1) tbl)
+                ]
+            else
+                []
+    in
+    { m | sfx = List.concat [ beat, m.sfx ] }
+
+
+afterPlay : Model -> Model
+afterPlay m =
+    let
+        bossDead =
+            case m.boss of
+                Just b -> b.hp <= 0
+                Nothing -> False
+    in
+    if m.energy <= 0 then
+        -- the ship goes down: hand over to the death sequence
+        { m
+            | mode = Dying
+            , st = 0
+            , buls = []
+            , shots = []
+            , sfx = CShipBoom :: m.sfx
+        }
+    else if bossDead then
+        -- the boss starts its fall: the field clears for the spectacle
+        { m
+            | mode = BossFall
+            , st = 0
+            , buls = []
+            , shots = []
+            , foes = []
+            , stars = []
+            , walls = []
+        }
+    else
+        m

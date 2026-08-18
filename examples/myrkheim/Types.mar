@@ -1,0 +1,290 @@
+module Types exposing (..)
+
+-- Everything in the barrow: the mode, the actors, the doors, the items, the
+-- projectiles and the model, plus the small records the raycaster and the
+-- billboards pass around. No behaviour, so anything may import it.
+
+
+
+
+
+type Mode
+    = Title
+    | Intro
+    | Play
+    | Cleared
+    | Dead
+    | Won
+
+
+type St
+    = ASleep
+    | AChase
+    | AWind Int
+    | ARec Int
+    | ASum Int
+    | ADie Int
+
+
+type Cue
+    = CThrow
+    | CReturn
+    | CHitF
+    | CDieD
+    | CYelp
+    | CGroan
+    | CWhine
+    | CBolt
+    | CDoor
+    | CLocked
+    | CRune
+    | CGold
+    | CHorn
+    | CHurt
+    | CBell
+    | CJarl
+    | CDawn
+    | CStart
+    | CBow
+    | CAxeT
+    | CFuse
+    | CBoom
+    | CClank
+    | CHowl
+    | CSnarl
+    | CBark
+    | CDeathCry
+    | CBlink
+    | CShatter
+    | CSecret
+    | CArmor
+    | CClick
+    | CFanfare
+    | CTriumph
+
+
+type alias Actor =
+    { kind : Int              -- 0 draugr, 1 wraith, 2 jarl, 3 varg, 4 skjald, 5 volva, 6 archer
+    , x : Int
+    , y : Int
+    , hp : Int
+    , st : St
+    , sdir : Int              -- wraith/volva strafe direction
+    , fT : Int                -- hit-flash ticks
+    , bt : Int                -- volva blink cooldown (idle for the others)
+    , idx : Int               -- stable index, staggers AI checks
+    }
+
+
+type alias Door =
+    { cx : Int, cy : Int, rune : Bool, openT : Int }   -- openT -1 shut, >0 draining
+
+
+type alias Item =
+    { kind : Int              -- 0 rune, 1 horn, 2 gold, 3 waystone
+    , x : Int
+    , y : Int
+    , taken : Bool
+    }
+
+
+type alias Pile =
+    { x : Int, y : Int, big : Bool }
+
+
+type alias Bolt =
+    { x : Int, y : Int, vx : Int, vy : Int }
+
+
+-- player-side projectiles: kind 1 arrow, 2 axe, 3 flask, 9 spear tracer
+-- (pure light, no damage: the hit already resolved by hitscan)
+type alias PBolt =
+    { x : Int, y : Int, vx : Int, vy : Int, kind : Int, t : Int }
+
+
+type alias Boom =
+    { x : Int, y : Int, t : Int }
+
+
+type alias Gib =
+    { x : Int, y : Int, vx : Int, vy : Int, t : Int }
+
+
+type alias Model =
+    { mode : Mode
+    , modeT : Int
+    , hardcore : Bool
+    , sel : Int
+    , barrow : Int
+    , tick : Int
+    , seed : Random.Seed
+    , w : Int
+    , h : Int
+    , px : Int
+    , py : Int
+    , heading : Int
+    , cool : Int
+    , hp : Int
+    , invulnT : Int
+    , hurtT : Int
+    , hasRune : Bool
+    , runeBlink : Int
+    , pickMsg : String        -- last item grabbed (discreet on-screen note)
+    , pickT : Int             -- ticks the note lingers
+    , gold : Int
+    , kills : Int
+    , timeT : Int
+    , snapGold : Int
+    , snapKills : Int
+    , weapon : Int
+    , hasSpear : Bool
+    , hasBow : Bool
+    , arrows : Int
+    , axes : Int
+    , flasks : Int
+    , armor : Int
+    , secretsFound : Int
+    , secretsTotal : Int
+    , mapRuns : List { x : Int, y : Int, w : Int }
+    , snapArrows : Int
+    , snapAxes : Int
+    , snapFlasks : Int
+    , snapArmor : Int
+    , grid : Dict Int Int
+    , doors : List Door
+    , actors : List Actor
+    , bolts : List Bolt
+    , pbolts : List PBolt
+    , booms : List Boom
+    , items : List Item
+    , piles : List Pile
+    , gibs : List Gib
+    , jarlS1 : Bool
+    , jarlS2 : Bool
+    , combatT : Int
+    , lockT : Int
+    , kF : Bool
+    , kB : Bool
+    , kSL : Bool
+    , kSR : Bool
+    , kTL : Bool
+    , kTR : Bool
+    , fireHeld : Bool
+    , fireQ : Bool
+    , padA : Bool
+    , padX : Int
+    , padY : Int
+    , padRX : Int                         -- right analog stick X = look/turn
+    , keysDown : List Keyboard.Key        -- held-key mirror (Keyboard.watch)
+    , padDown : List Gamepad.Button       -- held-button mirror (Gamepad.watch)
+    -- Touch, owned by POINTER ID rather than re-decided by geometry every
+    -- event. The old shape asked "which pad is this x,y over?" on every move,
+    -- so a thumb that slid off its 84px box lost the stick and fell into the
+    -- look-anywhere branch, fighting the other thumb; and lifting the look
+    -- finger over the move pad cleared the move. A finger now picks its job
+    -- when it lands and keeps it until it leaves.
+    , moveId : Maybe Int                  -- finger driving the move stick
+    , padMove : Maybe { dx : Int, dy : Int }
+    , turnId : Maybe Int                  -- finger driving the turn stick
+    , padTurn : Maybe { dx : Int, dy : Int }
+    , lookId : Maybe Int                  -- finger swiping to look
+    , lookX : Int                         -- where that finger was last frame
+    , turnQ : Int                         -- turning owed, in turnPerPixel units
+    , fireId : Maybe Int                  -- finger holding ATK
+    , ptrIds : List Int                   -- last snapshot, to spot new fingers
+    , dev : Maybe Device
+    , muted : Bool
+    , sfx : List Cue
+    }
+
+
+type Msg
+    = Tick
+    | Resized Int Int
+    | Tapped Int Int
+    | Pointers (List { id : Int, x : Int, y : Int })
+    | KeysChanged { down : List Keyboard.Key }
+    | PadChanged { connected : Bool, leftX : Int, leftY : Int, rightX : Int, rightY : Int, down : List Gamepad.Button }
+    | DeviceChanged Device
+
+
+
+
+type alias Rgb =
+    { r : Int, g : Int, b : Int }
+
+
+
+
+type alias Cell =
+    { x : Int, y : Int, ch : Char }
+
+
+type alias World =
+    { pairs : List (Int, Int)
+    , doors : List Door
+    , actors : List Actor
+    , items : List Item
+    , piles : List Pile
+    , sx : Int
+    , sy : Int
+    }
+
+
+
+
+type alias Layout =
+    { scale : Int, ox : Int, oy : Int }
+
+
+type alias Pads =
+    { mcx : Int, mcy : Int, tcx : Int, tcy : Int, fx : Int, fy : Int }
+
+
+
+
+type alias Hit =
+    { d : Int, side : Int, code : Int, cx : Int, cy : Int, fr : Int }
+
+
+type alias CastEnv =
+    { grid : Dict Int Int
+    , px : Int
+    , py : Int
+    , dx : Int
+    , dy : Int
+    , plx : Int
+    , ply : Int
+    }
+
+
+
+
+type alias Spr =
+    { d : Int, shapes : List Shape }
+
+
+type alias WallPal =
+    { carved : Rgb, torch : Rgb, stone : Rgb, doorN : Rgb, doorR : Rgb }
+
+
+
+
+type alias ActAcc =
+    { acs : List Actor
+    , piles : List Pile
+    , newItems : List Item
+    , bolts : List Bolt
+    , cues : List Cue
+    , dmg : Int
+    , seed : Random.Seed
+    , s1 : Bool
+    , s2 : Bool
+    , alert : Bool
+    }
+
+
+
+
+type alias PbAcc =
+    { bs : List PBolt, hits : List { a : Actor, dmg : Int }, boomAt : List Boom, cues : List Cue, cracks : List { cx : Int, cy : Int } }

@@ -1,0 +1,103 @@
+module Board exposing (..)
+
+-- The well as a grid, and the only functions allowed to read or write it:
+-- does a piece fit, stamp it in, which rows are full, collapse them. Keeping
+-- these together is what stops an off-by-one from spreading.
+
+import Balance exposing (..)
+import Pieces exposing (..)
+import Types exposing (..)
+
+
+-- ---------------------------------------------------------------------- init
+
+
+emptyRow : List Int
+emptyRow =
+    List.map (\_ -> 0) (List.range 1 cols)
+
+
+emptyMatrix : List (List Int)
+emptyMatrix =
+    List.map (\_ -> emptyRow) (List.range 1 rows)
+
+
+-- ---------------------------------------------------------------- the matrix
+
+
+rowAt : Int -> List (List Int) -> List Int
+rowAt i matrix =
+    case List.drop i matrix of
+        r :: _ -> r
+        [] -> emptyRow
+
+
+cellAt : Int -> Int -> List (List Int) -> Int
+cellAt x y matrix =
+    if x < 0 || x >= cols || y < 0 || y >= rows then
+        1
+
+    else
+        case List.drop x (rowAt y matrix) of
+            c :: _ -> c
+            [] -> 0
+
+
+-- A piece fits when none of its four cells is off the sides, below the floor,
+-- or on top of settled stone. Cells above the ceiling are allowed: a piece
+-- spawns partly outside and slides in, which is what lets a full stack still
+-- accept one more piece before the run ends.
+fits : Piece -> List (List Int) -> Bool
+fits p matrix =
+    List.all
+        (\c ->
+            let
+                bx = p.x + c.x
+                by = p.y + c.y
+            in
+            bx >= 0 && bx < cols && by < rows && (by < 0 || cellAt bx by matrix == 0)
+        )
+        (shapeOf p.kind p.rot)
+
+
+stamp : Piece -> List (List Int) -> List (List Int)
+stamp p matrix =
+    let
+        cells = List.map (\c -> { x = p.x + c.x, y = p.y + c.y }) (shapeOf p.kind p.rot)
+    in
+    List.indexedMap
+        (\y row ->
+            List.indexedMap
+                (\x c ->
+                    if List.any (\k -> k.x == x && k.y == y) cells then
+                        p.kind
+
+                    else
+                        c
+                )
+                row
+        )
+        matrix
+
+
+fullRows : List (List Int) -> List Int
+fullRows matrix =
+    List.filter
+        (\y -> List.all (\c -> c /= 0) (rowAt y matrix))
+        (List.range 0 (rows - 1))
+
+
+-- Drops everything above the cleared rows down by exactly the number of rows
+-- removed beneath it, and pads the top back out to twenty.
+collapse : List Int -> List (List Int) -> List (List Int)
+collapse gone matrix =
+    let
+        kept =
+            List.filter
+                (\y -> not (List.member y gone))
+                (List.range 0 (rows - 1))
+
+        survivors = List.map (\y -> rowAt y matrix) kept
+        pad = List.map (\_ -> emptyRow) (List.range 1 (List.length gone))
+    in
+    pad ++ survivors

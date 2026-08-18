@@ -1,0 +1,84 @@
+module Raycaster exposing (..)
+
+-- The DDA cast itself: one ray per screen column, in Int fixed point. Give it
+-- a position and a heading and it answers what the column hit and how far
+-- away. Nothing else in the game does this arithmetic.
+
+import Balance exposing (..)
+import Types exposing (..)
+import World exposing (..)
+
+
+castEnv : Model -> CastEnv
+castEnv m =
+    let
+        d = dirAt m.heading
+    in
+    { grid = m.grid
+    , px = m.px
+    , py = m.py
+    , dx = d.x
+    , dy = d.y
+    , plx = (0 - d.y) * fovP // k1
+    , ply = d.x * fovP // k1
+    }
+
+
+-- one ray: classic DDA over the cell grid, everything x1024 fixed point.
+-- t is scaled so crossing one full cell straight-on costs 1024.
+castCol : CastEnv -> Int -> Hit
+castCol env col =
+    let
+        camX = k1 * (2 * col - (nCols - 1)) // (nCols - 1)
+        rdx0 = env.dx + env.plx * camX // k1
+        rdy0 = env.dy + env.ply * camX // k1
+        rdx = if rdx0 == 0 then 1 else rdx0
+        rdy = if rdy0 == 0 then 1 else rdy0
+        mapX = env.px // k1
+        mapY = env.py // k1
+        dltX = absI (1048576 // rdx)
+        dltY = absI (1048576 // rdy)
+        sx = if rdx < 0 then 0 - 1 else 1
+        sy = if rdy < 0 then 0 - 1 else 1
+        sideX = if rdx < 0 then (env.px - mapX * k1) * dltX // k1 else ((mapX + 1) * k1 - env.px) * dltX // k1
+        sideY = if rdy < 0 then (env.py - mapY * k1) * dltY // k1 else ((mapY + 1) * k1 - env.py) * dltY // k1
+    in
+    dda env mapX mapY sideX sideY dltX dltY sx sy rdx rdy 0
+
+
+dda : CastEnv -> Int -> Int -> Int -> Int -> Int -> Int -> Int -> Int -> Int -> Int -> Int -> Hit
+dda env mapX mapY sideX sideY dltX dltY sx sy rdx rdy n =
+    if n > maxDda then
+        { d = farD, side = 0, code = 1, cx = mapX, cy = mapY, fr = 512 }
+    else if sideX < sideY then
+        let
+            mx = mapX + sx
+            code = cellAt env.grid mx mapY
+        in
+        if code > 0 then
+            let
+                d = max 40 sideX
+            in
+            { d = d, side = 0, code = code, cx = mx, cy = mapY, fr = modBy k1 (env.py + rdy * d // k1) }
+        else
+            dda env mx mapY (sideX + dltX) sideY dltX dltY sx sy rdx rdy (n + 1)
+    else
+        let
+            my = mapY + sy
+            code = cellAt env.grid mapX my
+        in
+        if code > 0 then
+            let
+                d = max 40 sideY
+            in
+            { d = d, side = 1, code = code, cx = mapX, cy = my, fr = modBy k1 (env.px + rdx * d // k1) }
+        else
+            dda env mapX my sideX (sideY + dltY) dltX dltY sx sy rdx rdy (n + 1)
+
+
+colDepth : List Hit -> Int -> Int
+colDepth cols c =
+    List.drop c cols
+        |> List.head
+        |> Maybe.map (\h -> h.d)
+        |> Maybe.withDefault farD

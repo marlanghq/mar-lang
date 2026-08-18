@@ -1,0 +1,496 @@
+module Draw exposing (..)
+
+-- The match as pixels: the pitch, the stands, the players, the ball, the HUD
+-- and the on-screen controls.
+
+import Font exposing (..)
+import Palette exposing (..)
+import Pitch exposing (..)
+import Roster exposing (..)
+import Types exposing (..)
+import Canvas exposing ( rect )
+
+
+-- the d-pad + action buttons, drawn in raw screen pixels (outside the scaled pitch)
+-- so they sit fixed in the corners. In PORTRAIT a dark DECK panel first fills the
+-- band below the pitch, so the controls get their own area and never cover play.
+-- Shown through the WHOLE match (walk-on, set, play, goal break) so they don't flicker
+-- in and out at each kickoff, just not on the title or the end screen.
+drawControls : Model -> { scale : Int, ox : Int, oy : Int, portrait : Bool } -> List Shape
+drawControls model lay =
+    if model.phase /= Title && model.phase /= Full then
+        let
+            w = model.w
+            h = model.h
+            a = controlAnchors model lay
+            deck =
+                if lay.portrait then
+                    let
+                        pb = lay.oy + fieldH * lay.scale // 100
+                    in
+                    [ rect 0 pb w (h - pb) panelBlack
+                    , rect 0 pb w 2 hudDim
+                    ]
+                else
+                    []
+        in
+        List.concat
+            [ deck
+            , dpadShape a.dpad.x a.dpad.y joyMax model.held
+            , padButton a.kick 5 "A"
+            , padButton a.slide 4 "X"
+            , padButton a.switch 3 "SW"
+            ]
+    else
+        []
+
+
+-- a fixed d-pad: a dark plus-shaped plate with four directional nubs that light
+-- amber while that direction is held (by touch OR the keys: it mirrors `held`).
+dpadShape : Int -> Int -> Int -> Held -> List Shape
+dpadShape cx cy r held =
+    let
+        t = r * 2 // 5
+        lit =
+            \on -> if on then hudAmber else hudDim
+    in
+    List.concat
+        [ [ rect (cx - t) (cy - r) (2 * t) (2 * r) btnBg
+          , rect (cx - r) (cy - t) (2 * r) (2 * t) btnBg
+          ]
+        , [ rect (cx - t + 2) (cy - r + 3) (2 * t - 4) (r - t - 3) (lit held.up) ]
+        , [ rect (cx - t + 2) (cy + t + 1) (2 * t - 4) (r - t - 3) (lit held.down) ]
+        , [ rect (cx - r + 3) (cy - t + 2) (r - t - 3) (2 * t - 4) (lit held.left) ]
+        , [ rect (cx + t + 1) (cy - t + 2) (r - t - 3) (2 * t - 4) (lit held.right) ]
+        ]
+
+
+-- an action button: a chunky outlined square with a centred pixel label.
+padButton : Vec -> Int -> String -> List Shape
+padButton c s label =
+    List.concat
+        [ outlined (c.x - btnR) (c.y - btnR) (2 * btnR) (2 * btnR) btnBg
+        , pixTextC c.x (c.y - 2 * s) s hudAmber label
+        ]
+
+
+-- Packed terraces above and below the pitch, in the margins the play area does
+-- not use: the TOP stand is the blue team's fans, the BOTTOM stand the red team's.
+-- The spectators bob in a rolling wave; when a team is attacking, ITS crowd bobs
+-- higher, as if on their feet roaring. `stands` is a function of the model, so it
+-- animates and can read who is attacking (and calls helpers freely - not a CAF).
+standColor : Team -> Int -> Color
+standColor team n =
+    let
+        m = n * 13 + 7
+        kit = if team == Blue then blueKit else redKit
+        trim = if team == Blue then blueTrim else redTrim
+    in
+    case m - (m // 6) * 6 of
+        0 -> kit
+        1 -> kit
+        2 -> trim
+        3 -> lineWhite
+        4 -> skinC
+        _ -> hudAmber
+
+
+-- a rolling "wave": each spectator is up (amp) or down (0) by a pattern that crawls
+-- along the terrace. In open play it crawls VERY slowly (clock / 32 = a bob roughly
+-- once a second) so the stands barely stir and never pull the eye off the ball; only
+-- a goal celebration (big amp) waves fast and excited. amp itself is set by crowdAmp.
+crowdBob : Int -> Int -> Int -> Int
+crowdBob col clock amp =
+    let
+        speed = if amp >= 5 then 5 else 32
+    in
+    if mod2 ((col + clock // speed) // 2) == 0 then 0 else amp
+
+
+standRow : Int -> Int -> Team -> Int -> Int -> List Shape
+standRow y seed team amp clock =
+    List.map
+        (\i -> rect (pitchL + 2 + i * 8) (y - crowdBob (i + seed) clock amp) 5 5 (standColor team (i + seed)))
+        (List.range 0 69)
+
+
+standBlock : Int -> Team -> Int -> Int -> List Shape
+standBlock y0 team amp clock =
+    List.concat (List.map (\r -> standRow (y0 + r * 9) (r * 23) team amp clock) (List.range 0 2))
+
+
+-- how lively a team's crowd is. Kept very subtle in open play (it was too busy):
+-- a barely-there sway (1) normally, a touch more (2) while their team has the ball.
+-- On a GOAL, ONLY the team that scored erupts (6); the other end stays calm (1) -
+-- their fans don't celebrate the opponent's goal.
+crowdAmp : Model -> Team -> Int
+crowdAmp model team =
+    if model.phase == Break && model.flashText == "GOAL!" then
+        if team == model.scorer then 6 else 1
+    else if teamOf model.ball.owner model.players == Just team then 2
+    else 1
+
+
+stands : Model -> List Shape
+stands model =
+    List.concat
+        [ [ rect pitchL 0 (pitchR - pitchL) (pitchT - 2) panelBlack
+          , rect pitchL (pitchB + 2) (pitchR - pitchL) (fieldH - pitchB - 2) panelBlack
+          ]
+        , standBlock 15 Blue (crowdAmp model Blue) model.animTick
+        , standBlock (pitchB + 8) Red (crowdAmp model Red) model.animTick
+        ]
+
+
+-- During the sideline walk-on each player marches up from a tunnel OFF the pitch,
+-- so its sprite starts above the top touchline (blue) or below the bottom one (red),
+-- out in the dark bezel. We want them to look like they're EMERGING: only the part
+-- already past the touchline visible. With no clip primitive, we redraw whatever
+-- normally sits off the pitch (the bezel, then the crowd stands) ON TOP of the
+-- players: the off-pitch part of each body is covered and the on-pitch part shows,
+-- so a player rises into view a sliver at a time. Drawn only while `entering`; once
+-- the teams are set it's a no-op (everyone is well inside the pitch by then).
+entryMask : Model -> List Shape
+entryMask model =
+    if model.entering then
+        List.concat
+            [ [ rect pitchL (0 - 220) (pitchR - pitchL) 220 bgBorder     -- bezel above the field
+              , rect pitchL fieldH (pitchR - pitchL) 220 bgBorder        -- bezel below the field
+              ]
+            , stands model                                              -- crowd panels back over the margins
+            ]
+    else
+        []
+
+
+-- The pitch, goals, players and ball for one frame. Everything is built HERE,
+-- inside a function, on purpose: Mar evaluates top-level value bindings eagerly
+-- at load, in file order, so a zero-arg binding that named a helper defined
+-- lower down would read an uninitialised placeholder. Functions capture their
+-- environment lazily, so building the frame in `fieldShapes model` (called only
+-- at render) sidesteps the ordering entirely.
+fieldShapes : Model -> List Shape
+fieldShapes model =
+    let
+        stripes =
+            List.map
+                (\i -> rect (pitchL + i * 40) pitchT 40 (pitchB - pitchT) (if mod2 i == 0 then grassA else grassB))
+                (List.range 0 13)
+        lines =
+            [ rect pitchL pitchT (pitchR - pitchL) 2 lineWhite
+            , rect pitchL (pitchB - 2) (pitchR - pitchL) 2 lineWhite
+            , rect pitchL pitchT 2 (pitchB - pitchT) lineWhite
+            , rect (pitchR - 2) pitchT 2 (pitchB - pitchT) lineWhite
+            , rect (midX - 1) pitchT 2 (pitchB - pitchT) lineWhite
+            ]
+        boxes =
+            [ rect pitchL 130 62 2 lineWhite
+            , rect pitchL 268 62 2 lineWhite
+            , rect (pitchL + 60) 130 2 140 lineWhite
+            , rect (pitchL + 40) (midY - 1) 3 3 lineWhite
+            , rect (pitchR - 62) 130 62 2 lineWhite
+            , rect (pitchR - 62) 268 62 2 lineWhite
+            , rect (pitchR - 62) 130 2 140 lineWhite
+            , rect (pitchR - 43) (midY - 1) 3 3 lineWhite
+            ]
+        goals =
+            List.concat [ goalNet (pitchL - goalDepth) 1, goalNet pitchR (0 - 1) ]
+        -- players + the ball, drawn back-to-front by their y so a nearer sprite
+        -- overlaps a farther one, and a dribbled ball tucks BEHIND its carrier
+        -- when it's on the far side (e.g. running upfield). The ball shows once it's
+        -- on the centre spot (Set: the teams waiting for the whistle) and in play.
+        actors =
+            let
+                -- the "you control this one" arrow only appears once the teams are
+                -- set (Set / Playing); during the walk-on nobody is marked yet.
+                selId = if model.phase == Playing || model.phase == Set then model.controlled else noOwner
+                acts =
+                    List.map (\p -> { depth = p.y, shapes = drawPlayer selId model.animTick p }) model.players
+                withBall =
+                    if model.phase == Playing || model.phase == Set then
+                        List.concat [ acts, [ { depth = model.ball.y, shapes = ballShapes model.animTick model.ball } ] ]
+                    else
+                        acts
+            in
+            List.concat (List.map (\d -> d.shapes) (List.sortBy (\d -> d.depth) withBall))
+    in
+    List.concat
+        [ [ rect 0 0 fieldW fieldH grassB ]
+        , stands model
+        , stripes
+        , lines
+        , boxes
+        , centreRing midX midY
+        , [ rect (midX - 2) (midY - 2) 4 4 lineWhite ]
+        , goals
+        , actors
+        , entryMask model
+        , hud model
+        , flashShapes model
+        , pauseShapes model
+        ]
+
+
+-- a pause screen: black out the pitch (the HUD score/clock stays up top) and show
+-- a big PAUSED with the resume prompt. Only drawn while paused.
+pauseShapes : Model -> List Shape
+pauseShapes model =
+    if model.paused then
+        List.concat
+            [ [ rect pitchL pitchT (pitchR - pitchL) (pitchB - pitchT) panelBlack ]
+            , pixTextC (midX + 3) (midY - 21) 8 ink "PAUSED"
+            , pixTextC midX (midY - 24) 8 hudAmber "PAUSED"
+            , pixTextC midX (midY + 16) 2 hudDim "START OR ESC"
+            ]
+    else
+        []
+
+
+-- the centre circle as a ring of blocky dots: no smooth curve on an 8-bit pitch.
+centreRing : Int -> Int -> List Shape
+centreRing cx cy =
+    [ rect (cx + 44) (cy - 2) 4 4 lineWhite
+    , rect (cx + 41) (cy + 16) 4 4 lineWhite
+    , rect (cx + 31) (cy + 31) 4 4 lineWhite
+    , rect (cx + 16) (cy + 41) 4 4 lineWhite
+    , rect (cx - 2) (cy + 44) 4 4 lineWhite
+    , rect (cx - 20) (cy + 41) 4 4 lineWhite
+    , rect (cx - 35) (cy + 31) 4 4 lineWhite
+    , rect (cx - 45) (cy + 16) 4 4 lineWhite
+    , rect (cx - 48) (cy - 2) 4 4 lineWhite
+    , rect (cx - 45) (cy - 20) 4 4 lineWhite
+    , rect (cx - 35) (cy - 35) 4 4 lineWhite
+    , rect (cx - 20) (cy - 45) 4 4 lineWhite
+    , rect (cx - 2) (cy - 48) 4 4 lineWhite
+    , rect (cx + 16) (cy - 45) 4 4 lineWhite
+    , rect (cx + 31) (cy - 35) 4 4 lineWhite
+    , rect (cx + 41) (cy - 20) 4 4 lineWhite
+    ]
+
+
+-- a goal: net fill + mesh lines + white posts. `dir` = 1 for the left goal
+-- (field-side post on the right of the net box), -1 for the right goal.
+goalNet : Int -> Int -> List Shape
+goalNet gx dir =
+    let
+        postX = if dir == 1 then gx + goalDepth - 2 else gx
+    in
+    [ rect gx goalTop goalDepth (goalBot - goalTop) netGray
+    , rect gx (goalTop + 18) goalDepth 1 netLine
+    , rect gx (goalTop + 36) goalDepth 1 netLine
+    , rect gx (goalTop + 54) goalDepth 1 netLine
+    , rect (gx + 6) goalTop 1 (goalBot - goalTop) netLine
+    , rect (gx + 13) goalTop 1 (goalBot - goalTop) netLine
+    , rect gx (goalTop - 2) goalDepth 2 lineWhite
+    , rect gx goalBot goalDepth 2 lineWhite
+    , rect postX (goalTop - 2) 2 (goalBot - goalTop + 4) lineWhite
+    ]
+
+
+-- a chunky 8-bit footballer, all rects, with a black outline. The player you
+-- control wears a bobbing arrow instead of a highlight ring.
+drawPlayer : Int -> Int -> Player -> List Shape
+drawPlayer ctrl anim p =
+    let
+        cx = p.x
+        kit = kitColor p
+        trim = trimColor p
+        sel = p.id == ctrl
+        -- run cycle: while the player is moving, a 2-frame stride, the legs
+        -- swap length (feet rise + fall), the arms swing opposite, and the
+        -- whole body bobs 1px. Frozen to a neutral stance when standing still.
+        phase = if p.moving then mod2 (anim // 6) else 0
+        y0 = if p.moving && phase == 1 then p.y - 1 else p.y
+        legTop = y0 + 5
+        lLen = if phase == 0 then 4 else 2
+        rLen = if phase == 0 then 2 else 4
+        armTop = y0 - 6
+        aL = armTop + (if phase == 0 then 1 else 0)
+        aR = armTop + (if phase == 0 then 0 else 1)
+        lift = bob anim 16 3
+        -- head detail. We only see his back - all hair, no eyes - while running
+        -- STRAIGHT up (fx == 0 && fy < 0 && moving), so an up-run doesn't look like
+        -- jogging backwards. Walking up on a DIAGONAL (any sideways component) still
+        -- shows the face, as does standing still or moving sideways/down - so the
+        -- entry dispersal (players peeling off to the sides) keeps their eyes visible.
+        faceRects =
+            if p.fx == 0 && p.fy < 0 && p.moving then
+                [ rect (cx - 4) (y0 - 17) 8 5 ink ]
+            else
+                [ rect (cx - 4) (y0 - 17) 8 3 ink
+                , rect (cx + 3) (y0 - 14) 1 4 skinShade
+                , rect (cx - 2) (y0 - 13) 1 2 ink
+                , rect (cx + 1) (y0 - 13) 1 2 ink
+                ]
+    in
+    if p.slide /= 0 then
+        drawSlide sel p
+    else
+        List.concat
+            -- built back-to-front. Shadow stays on the ground (uses p.y, not
+            -- the bobbing y0). The head is a chunky skin block fully ABOVE the
+            -- shirt; the shoulders are wider than the head, so it reads as a
+            -- head on shoulders, never the shirt riding up over the face.
+            [ [ rect (cx - 8) (p.y + 12) 16 3 shadowC ]
+            , if sel then arrow cx (y0 - 29 - lift) else []
+            -- legs (shin + white sock + boot), one longer mid-stride
+            , legCol (cx - 4) legTop lLen
+            , legCol (cx + 1) legTop rLen
+            -- shorts
+            , outlined (cx - 5) (y0 + 2) 10 3 trim
+            -- arms swing at the sides (drawn behind the torso edges)
+            , armCol (cx - 8) aL kit
+            , armCol (cx + 6) aR kit
+            -- shirt: flat kit with a single trim waistband stripe (kept plain
+            -- on purpose: extra highlight/shadow columns made the chest busy)
+            , outlined (cx - 5) (y0 - 8) 10 9 kit
+            , [ rect (cx - 5) (y0 - 1) 10 2 trim ]
+            -- head: skin block, then the face OR the back of the head (faceRects)
+            , outlined (cx - 4) (y0 - 17) 8 8 skinC
+            , faceRects
+            ]
+
+
+-- the sliding-tackle ("carrinho") pose: low to the ground, one boot lunging in
+-- the slide direction, the body reclined behind it with a little dust trail.
+drawSlide : Bool -> Player -> List Shape
+drawSlide sel p =
+    let
+        cx = p.x
+        cy = p.y
+        kit = kitColor p
+        trim = trimColor p
+        dx = if p.fx == 0 then attackDirX p.team else p.fx
+        footX = cx + dx * 9
+        headX = cx - dx * 7
+        dustX = cx - dx * 11
+    in
+    List.concat
+        [ [ rect (cx - 11) (cy + 9) 22 3 shadowC ]        -- long ground shadow
+        , [ rect dustX (cy + 5) 2 2 lineWhite             -- dust kicked up behind
+          , rect (dustX + dx * 3) (cy + 8) 2 2 netGray
+          ]
+        , outlined (cx - 5) (cy - 2) 11 7 kit             -- torso lying low
+        , [ rect (cx - 5) (cy + 3) 11 2 trim ]            -- waistband
+        , [ rect (cx + dx * 3) (cy + 1) 4 3 skinC ]       -- near leg toward the ball
+        , [ rect (footX - 1) cy 3 4 ink ]                 -- extended boot
+        , outlined (headX - 3) (cy - 5) 7 7 skinC         -- head trailing behind
+        , [ rect (headX - 3) (cy - 5) 7 2 ink ]           -- hair
+        , if sel then arrow cx (cy - 20) else []
+        ]
+
+
+-- a rect with a 1px black border: the classic pixel-sprite outline.
+outlined : Int -> Int -> Int -> Int -> Color -> List Shape
+outlined x y w h fill =
+    [ rect (x - 1) (y - 1) (w + 2) (h + 2) ink, rect x y w h fill ]
+
+
+-- a small downward arrow that marks the player you control.
+arrow : Int -> Int -> List Shape
+arrow cx y =
+    [ rect (cx - 4) y 8 2 hudAmber
+    , rect (cx - 3) (y + 2) 6 2 hudAmber
+    , rect (cx - 2) (y + 4) 4 2 hudAmber
+    , rect (cx - 1) (y + 6) 2 2 hudAmber
+    ]
+
+
+-- one leg: shin + a white sock band + a black boot. `len` (varied by the run
+-- cycle) sets how far the leg reaches, so the two feet rise and fall in turn.
+legCol : Int -> Int -> Int -> List Shape
+legCol x top len =
+    [ rect x top 3 len skinC
+    , rect x (top + len) 3 1 lineWhite
+    , rect (x - 1) (top + len + 1) 4 2 ink
+    ]
+
+
+-- one arm: a short kit sleeve over a bare forearm, hanging from `top`.
+armCol : Int -> Int -> Color -> List Shape
+armCol x top kit =
+    [ rect x top 2 2 kit
+    , rect x (top + 2) 2 2 skinC
+    ]
+
+
+kitColor : Player -> Color
+kitColor p =
+    case p.role of
+        Keeper -> if p.team == Blue then gkAmber else gkTeal
+        Field -> if p.team == Blue then blueKit else redKit
+
+
+trimColor : Player -> Color
+trimColor p =
+    case p.role of
+        Keeper -> ink
+        Field -> if p.team == Blue then blueTrim else redTrim
+
+
+-- a blocky ball: a small octagon of white with a black outline and one spot.
+-- The ball is a blocky white octagon. When it's loose and moving, its black
+-- spot orbits the centre (a 4-frame cycle) so it reads as rolling / spinning;
+-- held or at rest, the spot sits dead centre.
+ballShapes : Int -> Ball -> List Shape
+ballShapes anim b =
+    let
+        spinning = b.owner < 0 && (b.vx /= 0 || b.vy /= 0)
+        f = if spinning then mod4 (anim // 3) else 0
+        sx = if f == 1 || f == 2 then b.x else b.x - 1
+        sy = if f == 2 || f == 3 then b.y else b.y - 1
+    in
+    [ rect (b.x - 4) (b.y + 4) 8 2 shadowC
+    , rect (b.x - 3) (b.y - 4) 6 8 ink
+    , rect (b.x - 4) (b.y - 3) 8 6 ink
+    , rect (b.x - 2) (b.y - 3) 4 6 ballWhite
+    , rect (b.x - 3) (b.y - 2) 6 4 ballWhite
+    , rect sx sy 2 2 ballInk
+    ]
+
+
+hud : Model -> List Shape
+hud model =
+    let
+        s = 2
+        ty = 12
+    in
+    List.concat
+        [ [ rect (midX - 96) 4 192 26 panelBlack
+          , rect (midX - 96) 4 192 2 ink
+          , rect (midX - 96) 28 192 2 ink
+          , rect (midX - 86) ty 10 10 blueKit
+          , rect (midX + 76) ty 10 10 redKit
+          ]
+        , pixText (midX - 70) ty s hudAmber (String.fromInt model.blue)
+        , pixTextC midX ty s hudAmber (clockStr model.clock)
+        , pixText (midX + 54) ty s hudAmber (String.fromInt model.red)
+        ]
+
+
+flashShapes : Model -> List Shape
+flashShapes model =
+    if model.flash > 0 then
+        let
+            goal = model.flashText == "GOAL!"
+            s = if goal then 8 else 6
+            lift = bob model.animTick 16 (if goal then 8 else 4)
+            face = if goal then titleGlow model.animTick else hudAmber
+        in
+        List.concat
+            [ pixTextC (midX + 3) (midY - lift + 3) s ink model.flashText
+            , pixTextC midX (midY - lift) s face model.flashText
+            ]
+    else
+        []
+
+
+-- a slow amber shimmer for the title: ramps up and back down through two
+-- brighter shades, an arcade attract-screen glow (no flying ball).
+titleGlow : Int -> Color
+titleGlow t =
+    case mod4 (t // 12) of
+        0 -> hudAmber
+        1 -> hudGlow1
+        2 -> hudGlow2
+        _ -> hudGlow1

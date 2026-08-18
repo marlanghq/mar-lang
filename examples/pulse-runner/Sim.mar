@@ -1,0 +1,407 @@
+module Sim exposing (..)
+
+-- What one tick does: read input, run, jump, land, die, restart. Pure
+-- functions of the model, so the dev dock can travel back through them.
+
+import Balance exposing (..)
+import Level exposing (..)
+import Music exposing (..)
+import Types exposing (..)
+
+
+
+
+freshModel : Model
+freshModel =
+    { w = 640
+    , h = 400
+    , mode = Title
+    , hardcore = True
+    , sel = 0
+    , tick = 0
+    , runT = 0
+    , px = 0
+    , pyBot = groundY * fp
+    , vy = 0
+    , grounded = True
+    , airT = 0
+    , jumpHeld = False
+    , keysDown = []
+    , padDown = []
+    , lastCp = 0
+    , attempts = 1
+    , deathT = 0
+    , deathX = 0
+    , deathY = 0
+    , muted = False
+    , sfx = []
+    }
+
+
+init : (Model, Cmd Msg)
+init =
+    ( freshModel, Cmd.none )
+
+
+
+
+emit : Model -> (Model, Cmd Msg)
+emit model =
+    if List.length model.sfx == 0 then
+        ( model, Cmd.none )
+    else
+        ( { model | sfx = [] }
+        , Cmd.batch (List.map (\c -> Sound.play (cueSound c)) model.sfx)
+        )
+
+
+update : Msg -> Model -> (Model, Cmd Msg)
+update msg model =
+    case msg of
+        Resized w h ->
+            ( { model | w = w, h = h }, Cmd.none )
+
+        Tick ->
+            case model.mode of
+                Run -> emit (stepRun model)
+                Dead -> emit (stepDead model)
+                _ -> ( { model | tick = model.tick + 1 }, Cmd.none )
+
+        Tapped x y ->
+            if inMuteZone model x y then
+                toggleMute model
+            else
+                case model.mode of
+                    Title -> titleTap model x y
+                    Run -> ( { model | jumpHeld = True }, Cmd.none )
+                    Dead -> ( model, Cmd.none )
+                    Win -> ( { model | mode = Title }, Cmd.none )
+
+        Released x y ->
+            ( { model | jumpHeld = False }, Cmd.none )
+
+        KeysChanged st ->
+            -- the jump is a HELD flag (syncHeld mirrors the keyboard + gamepad
+            -- sets, so the physics fires ONE hop per landing while a key is
+            -- down: "hold to keep hopping"). Mute, title selection and the
+            -- win/continue advance fire on the PRESS-EDGE: keys newly in the
+            -- set, so each fires exactly once per real press. A key leaving the
+            -- set just re-derives jumpHeld, so the old KeyUp clear is automatic.
+            let
+                pressed = List.filter (\k -> List.member k model.keysDown == False) st.down
+                base = syncHeld { model | keysDown = st.down }
+            in
+            List.foldl applyKeyPress ( base, Cmd.none ) pressed
+
+        PadChanged p ->
+            -- A's jump is held via syncHeld; A/Start (start / continue) and
+            -- Up/Down (selection) fire on the button press-edge, once per press
+            let
+                pressed = List.filter (\b -> List.member b model.padDown == False) p.down
+                base = syncHeld { model | padDown = p.down }
+            in
+            List.foldl applyPadPress ( base, Cmd.none ) pressed
+
+
+-- the shared HELD ledger: the jump is "held" while any jump key OR the gamepad
+-- A button is in its mirror set. Both device mirrors feed the one flag, so
+-- neither clobbers the other, and a key/button leaving its set re-derives it to
+-- False for free (releases need no handler at all now). Touch
+-- writes jumpHeld directly (onTap / onRelease) and never fires these subs on a
+-- touch device, so it composes cleanly without a separate mirror.
+syncHeld : Model -> Model
+syncHeld m =
+    { m | jumpHeld = List.any isJumpKey m.keysDown || List.member Gamepad.A m.padDown }
+
+
+-- keyboard press-edge (one key newly down). M toggles mute in any mode; on the
+-- title Space/Enter starts and the nav keys move the selection; on the win
+-- screen Space/Enter returns to the title. In Run the jump is HELD (syncHeld),
+-- so a press is a no-op here: this is exactly the old KeyDown, once per press.
+applyKeyPress : Keyboard.Key -> (Model, Cmd Msg) -> (Model, Cmd Msg)
+applyKeyPress key acc =
+    let
+        (m, cmd) = acc
+    in
+    if key == Keyboard.KeyM then
+        let
+            (m2, c2) = toggleMute m
+        in
+        ( m2, Cmd.batch [ cmd, c2 ] )
+    else
+        case m.mode of
+            Title ->
+                if key == Keyboard.Space || key == Keyboard.Enter then
+                    ( startRun m, cmd )
+                else if isTitleNavKey key then
+                    ( { m | sel = 1 - m.sel }, cmd )
+                else
+                    ( m, cmd )
+
+            Run ->
+                ( m, cmd )
+
+            Dead ->
+                ( m, cmd )
+
+            Win ->
+                if key == Keyboard.Space || key == Keyboard.Enter then
+                    ( { m | mode = Title }, cmd )
+                else
+                    ( m, cmd )
+
+
+-- gamepad press-edge (one button newly down). A/Start start (title) or continue
+-- (win); Up/Down move the selection. A's jump is HELD via syncHeld, so there is
+-- no edge action in Run: exactly the old PadDown, once per press.
+applyPadPress : Gamepad.Button -> (Model, Cmd Msg) -> (Model, Cmd Msg)
+applyPadPress btn acc =
+    let
+        (m, cmd) = acc
+    in
+    case m.mode of
+        Title ->
+            if btn == Gamepad.A || btn == Gamepad.Start then
+                ( startRun m, cmd )
+            else if btn == Gamepad.Up || btn == Gamepad.Down then
+                ( { m | sel = 1 - m.sel }, cmd )
+            else
+                ( m, cmd )
+
+        Run ->
+            ( m, cmd )
+
+        Dead ->
+            ( m, cmd )
+
+        Win ->
+            if btn == Gamepad.A || btn == Gamepad.Start then
+                ( { m | mode = Title }, cmd )
+            else
+                ( m, cmd )
+
+
+isJumpKey : Keyboard.Key -> Bool
+isJumpKey key =
+    key == Keyboard.Space || key == Keyboard.ArrowUp || key == Keyboard.KeyW
+
+
+isTitleNavKey : Keyboard.Key -> Bool
+isTitleNavKey key =
+    key == Keyboard.ArrowUp || key == Keyboard.ArrowDown
+        || key == Keyboard.KeyW || key == Keyboard.KeyS
+        || key == Keyboard.ArrowLeft || key == Keyboard.ArrowRight
+
+
+titleTap : Model -> Int -> Int -> (Model, Cmd Msg)
+titleTap model x y =
+    let
+        lay = layout model
+        lx = (x - lay.ox) * 100 // max 1 lay.scale
+        ly = (y - lay.oy) * 100 // max 1 lay.scale
+
+        -- the buttons are centered on gameW/2 (see titleShapes); the hit-test
+        -- must follow them, or a tap on a wide-screen stage misses and the
+        -- game never starts.
+        bx0 = gameW // 2 - 75
+        bx1 = gameW // 2 + 75
+    in
+    if lx >= bx0 && lx <= bx1 && ly >= 104 && ly <= 126 then
+        ( startRun { model | sel = 0 }, Cmd.none )
+    else if lx >= bx0 && lx <= bx1 && ly >= 134 && ly <= 156 then
+        ( startRun { model | sel = 1 }, Cmd.none )
+    else
+        ( model, Cmd.none )
+
+
+startRun : Model -> Model
+startRun m =
+    spawn { m | mode = Run, hardcore = m.sel == 0, lastCp = 0, attempts = 1 }
+
+
+-- back on the grid: spawn points are loop boundaries, so you respawn on
+-- beat. Ticks only fire beats they CROSS, and no tick crosses the spawn
+-- point itself, so seed the spawn beat's groove cue here by hand.
+spawn : Model -> Model
+spawn m =
+    let
+        sx = if m.hardcore then 0 else cpX m.lastCp
+    in
+    { m
+        | mode = Run
+        , px = sx
+        , pyBot = groundY * fp
+        , vy = 0
+        , grounded = True
+        , airT = 0
+        , runT = 0
+        , sfx = CueBeat (sx // beatPx) :: m.sfx
+    }
+
+
+-- one physics tick. The exact same rules were fed to an offline search that
+-- proved the level is completable from the start and from every checkpoint,
+-- so any change here (constants included) needs that check re-run.
+stepRun : Model -> Model
+stepRun m =
+    let
+        px2 = m.px + spd
+        topPx = m.pyBot // fp
+
+        -- still supported? (you can run off an edge and start falling)
+        gEdge = m.grounded && supportedAt px2 topPx
+
+        -- holding jump on the ground fires the hop
+        jumping = gEdge && m.jumpHeld
+        g1 = gEdge && (jumping == False)
+        vy1 =
+            if jumping then 0 - jumpV
+            else if m.grounded then 0
+            else m.vy
+
+        -- integrate + land (only while falling)
+        vy2 = if g1 then 0 else min 120 (vy1 + grav)
+        prevBot = m.pyBot
+        botRaw = if g1 then m.pyBot else m.pyBot + vy2
+        landedTop = if g1 == False && vy2 > 0 then landTop px2 prevBot botRaw else 999
+        g2 = g1 || landedTop < 999
+        bot2 = if landedTop < 999 then landedTop * fp else botRaw
+        vy3 = if landedTop < 999 then 0 else vy2
+
+        -- checkpoints (only meaningful outside hardcore) + finish
+        cpNow = min 8 (px2 // loopPx)
+        gotCp = m.hardcore == False && cpNow > m.lastCp
+
+        -- the world plays the WHOLE soundtrack. Melody: fire the lead cues
+        -- whose position we crossed this very tick: sync with the jump
+        -- moment by construction. Groove: fire one beat of drums/bass every
+        -- beat line we cross, keyed by the world beat, so the arrangement
+        -- tracks the level section and stops/resumes with the game itself.
+        leadCues =
+            List.map (\e -> CueLead e.hz)
+                (List.filter (\e -> e.x == px2) leadEvents)
+        beatCues =
+            if modBy beatPx px2 == 0 && px2 < finishX then
+                [ CueBeat (px2 // beatPx) ]
+            else
+                []
+
+        m2 =
+            { m
+                | runT = m.runT + 1
+                , tick = m.tick + 1
+                , px = px2
+                , pyBot = bot2
+                , vy = vy3
+                , grounded = g2
+                , airT = if g2 then 0 else m.airT + 1
+                , lastCp = if gotCp then cpNow else m.lastCp
+                , sfx =
+                    List.concat
+                        [ leadCues
+                        , beatCues
+                        , if gotCp then [ CueCheck ] else []
+                        , m.sfx
+                        ]
+            }
+    in
+    if deadAt px2 bot2 then
+        { m2
+            | mode = Dead
+            , deathT = 0
+            , deathX = px2
+            , deathY = bot2 // fp
+            , attempts = m.attempts + 1
+            , sfx = CueDeath :: m2.sfx
+        }
+    else if px2 >= finishX then
+        { m2 | mode = Win, sfx = CueWin :: m2.sfx }
+    else
+        m2
+
+
+stepDead : Model -> Model
+stepDead m =
+    if m.deathT >= 50 then
+        spawn m
+    else
+        { m | deathT = m.deathT + 1, tick = m.tick + 1 }
+
+
+-- --- collision queries (mirror the offline feasibility sim exactly) ---
+
+
+supportedAt : Int -> Int -> Bool
+supportedAt px topPx =
+    let
+        onGround =
+            topPx == groundY
+                && List.any (\s -> px + pw > s.x0 && px < s.x1) groundSegs
+        onBlock =
+            List.any (\b -> b.top == topPx && px + pw > b.x && px < b.x + b.w) blockRects
+    in
+    onGround || onBlock
+
+
+-- highest surface whose top the falling square crossed this tick (999 = none)
+landTop : Int -> Int -> Int -> Int
+landTop px prevFp newFp =
+    let
+        best0 =
+            List.foldl
+                (\s acc ->
+                    if px + pw > s.x0 && px < s.x1
+                        && prevFp <= groundY * fp && groundY * fp <= newFp then
+                        min acc groundY
+                    else
+                        acc
+                )
+                999
+                groundSegs
+    in
+    List.foldl
+        (\b acc ->
+            if px + pw > b.x && px < b.x + b.w
+                && prevFp <= b.top * fp && b.top * fp <= newFp then
+                min acc b.top
+            else
+                acc
+        )
+        best0
+        blockRects
+
+
+deadAt : Int -> Int -> Bool
+deadAt px botFp =
+    let
+        bot = botFp // fp
+        top = bot - pw
+        inPit = botFp > (groundY + 12) * fp
+        onSpike =
+            List.any
+                (\s -> px < s.x1 && px + pw > s.x0 && top < s.y1 && bot > s.y0)
+                spikeBoxes
+        blockSide =
+            List.any
+                (\b -> px < b.x + b.w && px + pw > b.x && bot > b.top + 2 && top < groundY)
+                blockRects
+    in
+    inPit || onSpike || blockSide
+
+
+toggleMute : Model -> (Model, Cmd Msg)
+toggleMute model =
+    let
+        m2 = model.muted == False
+    in
+    ( { model | muted = m2 }, Sound.setMuted m2 )
+
+
+inMuteZone : Model -> Int -> Int -> Bool
+inMuteZone model x y =
+    let
+        lay = layout model
+        lx = (x - lay.ox) * 100 // max 1 lay.scale
+        ly = (y - lay.oy) * 100 // max 1 lay.scale
+    in
+    lx > gameW - 40 && ly < 20

@@ -1,0 +1,122 @@
+module Hud exposing (..)
+
+-- Screen-space furniture that does not move with the road: the dashboard, the
+-- banners, the mute icon, and the title and game-over screens.
+
+
+import Balance exposing (..)
+import Draw exposing (..)
+import Font exposing (..)
+import Palette exposing (..)
+import Seasons exposing (..)
+import Types exposing (..)
+import Canvas exposing ( rect )
+
+
+-- --- HUD ---
+
+
+hudShapes : Model -> List Shape
+hudShapes m =
+    let
+        sec = (m.timeLeft + 999) // 1000
+        timeC = if sec <= 10 then hudRed else hudWhite
+        prog = iclamp 0 150 ((m.camZ - m.phaseStartZ) * 150 // phaseLen)
+    in
+    List.concat
+        [ [ rect 0 0 gameW 17 hudBg ]
+        , pixText 4 2 1 timeC ("TIME " ++ String.fromInt sec)
+        , pixTextC 160 2 1 hudAmber (seasonName m.phaseIx ++ " YR " ++ String.fromInt m.year)
+        , pixTextR 288 2 1 hudWhite ("SPD " ++ String.fromInt m.speed)
+        , [ rect 4 10 152 4 barBg
+          , rect 5 11 prog 2 hudAmber
+          ]
+        , pixTextR 288 9 1 hudDim ("CARS " ++ String.fromInt m.passed)
+        ]
+
+
+bannerShapes : Model -> List Shape
+-- kept high in the sky (above the horizon, below the start gantry) so it never
+-- covers the road or the oncoming traffic; dark drop shadow for legibility.
+bannerShapes m =
+    if m.bannerT > 0 && m.mode == Race then
+        List.concat
+            [ pixTextC 161 49 2 ink m.bannerTop
+            , pixTextC 160 48 2 hudWhite m.bannerTop
+            , pixTextC 161 61 2 ink m.bannerBot
+            , pixTextC 160 60 2 hudAmber m.bannerBot
+            ]
+    else
+        []
+
+
+muteIcon : Model -> List Shape
+muteIcon m =
+    List.concat
+        [ [ rect 300 4 5 6 hudWhite
+          , rect 305 2 3 10 hudWhite
+          ]
+        , if m.muted then
+            [ rect 310 4 6 2 hudRed
+            , rect 310 8 6 2 hudRed
+            ]
+          else
+            [ rect 310 5 2 4 hudDim
+            , rect 313 3 2 8 hudDim
+            ]
+        ]
+
+
+raceShapes : Model -> List Shape
+raceShapes m =
+    List.concat
+        [ sceneShapes m
+        , gantryShapes m
+        , hudShapes m
+        , bannerShapes m
+        ]
+
+
+titleShapes : Model -> List Shape
+titleShapes m =
+    let
+        blink = mod2 (m.tick // 30) == 0
+    in
+    List.concat
+        [ sceneShapes m
+        , [ rect 0 0 gameW 17 hudBg
+          , rect 44 116 232 20 hudBg
+          , rect 44 140 232 34 hudBg
+          ]
+        , pixTextC 163 31 5 ink "SEASONS"
+        , pixTextC 160 28 5 hudWhite "SEASONS"
+        , pixTextC 162 60 2 ink "GRAND PRIX"
+        , pixTextC 160 58 2 hudAmber "GRAND PRIX"
+        , if blink then pixTextC 160 122 1 hudWhite "TAP OR PRESS ENTER" else []
+        , pixTextC 160 144 1 hudDim "STEER: ARROWS  GAS: SPACE  BRAKE: DOWN"
+        , pixTextC 160 154 1 hudDim "TOUCH: DRAG TO STEER - GAMEPAD SUPPORTED"
+        , pixTextC 160 164 1 hudAmber "REACH THE FLAGS BEFORE TIME RUNS OUT"
+        ]
+
+
+overShapes : Model -> List Shape
+overShapes m =
+    let
+        blink = mod2 (m.tick // 30) == 0
+        kmTen = m.camZ // 6000
+        km = String.fromInt (kmTen // 10) ++ "." ++ String.fromInt (modBy 10 kmTen)
+    in
+    -- the game FREEZES in place (Over mode stops the sim) and the messages
+    -- overlay the frozen scene, so you can see how close to the flags you were:
+    -- the progress bar (HUD) and the checkered flags on the road stay visible.
+    -- The panel is kept high (over the sky) so the road below is unobscured.
+    List.concat
+        [ sceneShapes m
+        , hudShapes m
+        , [ rect 60 26 200 52 hudBg ]
+        , pixTextC 161 33 3 ink "TIME UP"
+        , pixTextC 160 32 3 hudRed "TIME UP"
+        , pixTextC 160 52 1 hudWhite ("YEAR " ++ String.fromInt m.year ++ " - " ++ seasonName m.phaseIx)
+        , pixTextC 160 62 1 hudAmber (String.fromInt m.passed ++ " CARS - " ++ km ++ " KM")
+        , if blink then pixTextC 160 72 1 hudWhite "TAP OR PRESS ENTER" else []
+        ]

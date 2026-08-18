@@ -1,0 +1,258 @@
+module Sfx exposing (..)
+
+-- The whistles, the kicks, and the crowd -- which is a bed that swells and
+-- boos rather than a loop.
+
+import Pitch exposing (..)
+import Roster exposing (..)
+import Types exposing (..)
+
+
+cueSound : Cue -> Sound
+cueSound c =
+    case c of
+        CuKick -> kickSfx
+        CuWhistle -> whistleSfx
+        CuStart -> startSfx
+        CuGoal -> goalSfx
+        CuTackle -> tackleSfx
+        CuUnmute -> unmuteSfx
+        CuWin -> winSfx
+        CuLose -> loseSfx
+        CuHalf -> halftimeSfx
+        CuTimeLow -> timeLowSfx
+        CuFinalWhistle -> finalWhistleSfx
+
+
+-- raise a cue; it fires once, on the next `emit`.
+cue : Cue -> Model -> Model
+cue c model =
+    { model | sfx = c :: model.sfx }
+
+
+-- drain the cues raised this update into Sound.play commands (one play each).
+-- When muted, cues are still cleared but no sound is emitted.
+emit : Model -> (Model, Cmd Msg)
+emit model =
+    ( { model | sfx = [] }
+    , if model.muted || model.paused then Cmd.none else Cmd.batch (List.map (\c -> Sound.play (cueSound c)) model.sfx)
+    )
+
+
+-- flip the sound on/off. Turning it ON queues a tiny confirm blip (heard because
+-- we're no longer muted); turning it OFF stays silent.
+toggleMute : Model -> Model
+toggleMute model =
+    if model.muted then
+        { model | muted = False, sfx = CuUnmute :: model.sfx }
+    else
+        { model | muted = True }
+
+
+-- a low thud: Sound.duty thins the square to ~22% for extra harmonics, so the
+-- kick reads as a "thock" with body, not a hollow 50% beep.
+kickSfx : Sound
+kickSfx = Sound.volume 70 (Sound.duty 22 (Sound.tone Sound.Square 180 70))
+
+
+-- a shrill referee peep (a quick upward chirp) with a fast Sound.vibrato warble,
+-- so it flutters like a real pea whistle instead of a flat electronic beep.
+whistleSfx : Sound
+whistleSfx = Sound.volume 70 (Sound.vibrato 40 12 (Sound.sweep 2700 (Sound.tone Sound.Square 2300 240)))
+
+
+-- the FULL-TIME whistle: ONE long, CONSTANT referee's blast, the same steady peep
+-- as the half-time whistle, just held far longer. It's cued in playTick the instant
+-- the clock reaches 0 (full time), so it lands ON the final second, not after it.
+finalWhistleSfx : Sound
+finalWhistleSfx =
+    Sound.volume 82 (Sound.vibrato 40 12 (Sound.tone Sound.Square 2400 1500))
+
+
+-- a little rising fanfare when you start a match: a three-note run up into a
+-- held top note. Short, but with enough of a flourish to land as "here we go".
+startSfx : Sound
+startSfx =
+    Sound.sequence
+        [ Sound.tone Sound.Square 523 95
+        , Sound.tone Sound.Square 659 95
+        , Sound.tone Sound.Square 784 95
+        , Sound.volume 80 (Sound.tone Sound.Square 1046 300)
+        ]
+
+
+tackleSfx : Sound
+tackleSfx = Sound.volume 60 (Sound.tone Sound.Noise 0 90)
+
+
+-- a soft two-note rise, played when you switch sound back on so you hear it work.
+unmuteSfx : Sound
+unmuteSfx = Sound.volume 55 (Sound.sequence [ Sound.tone Sound.Square 660 70, Sound.tone Sound.Square 880 110 ])
+
+
+-- a crisp countdown blip, high and short so it cuts through the crowd. One fires
+-- on each of the last 10 whole seconds before half time and before full time
+-- (see playTick's periodEnd/toEnd).
+timeLowSfx : Sound
+timeLowSfx = Sound.volume 45 (Sound.tone Sound.Square 1200 85)
+
+
+-- GOOOOOOOOOOOOOL: a Brazilian commentator's berro as ONE continuous wave. A
+-- medium-high sawtooth that sits FLAT at the top (agudo constante) for a beat, then
+-- glides all the way down to the cellar (grave). It is a SINGLE voice - Sound.holdPitch
+-- keeps the pitch flat, then Sound.sweep bends it down over the rest of the note, on
+-- one oscillator with one envelope - so it reads as a single falling yell, NOT two
+-- stitched notes (the old hold-tone + sweep-tone seam is what sounded "dividido em
+-- dois"). Two copies a few Hz apart (goalSfx) beat into a ragged human berro; the
+-- sustain envelope keeps it strong the whole way down.
+goalVoice : Int -> Sound
+goalVoice base =
+    -- a very gentle Sound.vibrato (15 cents, 5 Hz) makes the berro WAVER like an
+    -- excited human yell, on top of the two-copy beating. Subtle on purpose.
+    Sound.volume 33 (Sound.vibrato 15 5 (Sound.holdPitch 1150 (Sound.sweep (base - 220) (Sound.tone Sound.Sawtooth base 2750))))
+
+
+goalSfx : Sound
+goalSfx =
+    Sound.chord [ goalVoice 430, goalVoice 437 ]
+
+
+-- the win jingle at full time: a proper little victory tune, not just a stab.
+-- A square-wave melody (a rising fanfare that turns and lands high on C) sings
+-- over a moving triangle bass (C - G - C) and a soft sustained harmony, so it
+-- reads as a short song rather than a handful of notes.
+winSfx : Sound
+winSfx =
+    Sound.chord
+        [ Sound.sequence
+            [ Sound.volume 80 (Sound.tone Sound.Square 523 150)   -- C5
+            , Sound.volume 80 (Sound.tone Sound.Square 659 150)   -- E5
+            , Sound.volume 80 (Sound.tone Sound.Square 784 150)   -- G5
+            , Sound.volume 82 (Sound.tone Sound.Square 1046 320)  -- C6, land
+            , Sound.volume 80 (Sound.tone Sound.Square 988 150)   -- B5
+            , Sound.volume 80 (Sound.tone Sound.Square 1046 150)  -- C6
+            , Sound.volume 80 (Sound.tone Sound.Square 784 320)   -- G5, turn
+            , Sound.volume 80 (Sound.tone Sound.Square 880 150)   -- A5
+            , Sound.volume 80 (Sound.tone Sound.Square 988 150)   -- B5
+            , Sound.volume 90 (Sound.tone Sound.Square 1046 640)  -- C6, hold
+            ]
+        , Sound.sequence
+            [ Sound.volume 46 (Sound.tone Sound.Triangle 131 770)  -- C3
+            , Sound.volume 46 (Sound.tone Sound.Triangle 196 770)  -- G3
+            , Sound.volume 52 (Sound.tone Sound.Triangle 131 790)  -- C3
+            ]
+        , Sound.sequence
+            [ Sound.volume 26 (Sound.tone Sound.Triangle 330 770)  -- E4
+            , Sound.volume 26 (Sound.tone Sound.Triangle 392 770)  -- G4
+            , Sound.volume 30 (Sound.tone Sound.Triangle 330 790)  -- E4
+            ]
+        ]
+
+
+-- the sad-trombone fall: the lose jingle at full time (a descending minor line
+-- sliding into the cellar).
+loseSfx : Sound
+loseSfx =
+    Sound.sequence
+        [ Sound.volume 40 (Sound.tone Sound.Triangle 392 300)
+        , Sound.volume 46 (Sound.tone Sound.Triangle 349 300)
+        , Sound.volume 50 (Sound.tone Sound.Triangle 294 320)
+        , Sound.volume 48 (Sound.sweep 175 (Sound.tone Sound.Triangle 262 760))
+        ]
+
+
+-- the HALF-TIME whistle: a single, steady referee's peep, same character as the
+-- kickoff whistle, a touch longer so it reads as "end of half", but clearly shorter
+-- than the drawn-out full-time blast.
+halftimeSfx : Sound
+halftimeSfx =
+    Sound.volume 74 (Sound.tone Sound.Square 2400 430)
+
+
+-- Crowd beds (Sound.glide holds each as a steady wash). ALL the noise beds share one live source: the runtime
+-- keys a music bed by structure, NOT volume, so returning the crowd at a new
+-- volume ramps the same bed smoothly (a swell) instead of restarting it. So the
+-- crowd murmurs quietly all match and rises as an attack nears goal (crowdBed),
+-- surges on a goal (crowdRoar), and cheers a win (crowdCheer) - one seamless bed.
+-- A loss swaps to a distinct booing bed (crowdBoo, different structure = its own key).
+crowdBed : Model -> Sound
+crowdBed model =
+    let
+        b = model.ball
+        -- 0 at midfield, up to 100 when the team in possession has the ball on the
+        -- goal line it is attacking; a loose ball only stirs the crowd a little.
+        -- The ball parks off-pitch between plays (warm-up / breaks) - keep quiet then.
+        press =
+            if b.x < pitchL || b.x > pitchR then 0
+            else case teamOf b.owner model.players of
+                -- how far the possessing team has advanced the ball in ITS attack
+                -- direction (atkDir flips at half time, so the swell follows the play).
+                Just Blue -> iclamp 0 100 (atkDir model Blue * (b.x - midX) * 100 // (pitchR - midX))
+                Just Red -> iclamp 0 100 (atkDir model Red * (b.x - midX) * 100 // (pitchR - midX))
+                Nothing -> iclamp 0 55 (absI (b.x - midX) * 100 // (pitchR - midX))
+    in
+    -- a soft murmur far out (5) that swells hard as the attack reaches the box (up
+    -- to ~37 on the goal line) - the crowd, not the goal shout, carries the tension.
+    crowdNoise (5 + press * 32 // 100)
+
+
+-- the crowd wash at a given volume. Every noise bed (murmur / roar / cheer / the
+-- flat draw hum) is THIS at a different level - and since the runtime keys a bed by
+-- structure not volume, they are literally one live bed that swells between levels.
+-- The band a stadium actually sounds like, and OUR choice to make: cut the
+-- sub-bass (its slow random flutter reads as an irregular thump) and the harshest
+-- top, leaving the mid "shhh" of many voices. This used to be hardcoded in the
+-- runtime, which meant every sustained noise in every Mar app came out
+-- crowd-shaped; the numbers belong to the game that wants them.
+crowdNoise : Int -> Sound
+crowdNoise vol =
+    Sound.volume vol
+        (Sound.lowCut 340 (Sound.highCut 2600 (Sound.tone Sound.Noise 0 1000)))
+
+
+crowdRoar : Sound
+crowdRoar = crowdNoise 44
+
+
+crowdCheer : Sound
+crowdCheer = crowdNoise 28
+
+
+-- the "vaia": now noise-forward (a jeering crowd murmur - the Noise voice is
+-- band-passed into a wash by the bed) over a soft, detuned pair of low triangle
+-- "oooo" vowels. Triangles are round, not the buzzy sawtooth drone of before, so it
+-- reads as a booing crowd, not a menacing hum; the ~9Hz detune gives it a live
+-- waver. Level is fed live (see booLevel) so it swells and fades in a slow wave.
+crowdBoo : Int -> Sound
+crowdBoo level =
+    Sound.chord
+        [ Sound.volume level
+            (Sound.lowCut 340 (Sound.highCut 2600 (Sound.tone Sound.Noise 0 1000)))
+        , Sound.volume (level * 2 // 3) (Sound.tone Sound.Triangle 160 1000)
+        , Sound.volume (level // 2) (Sound.tone Sound.Triangle 151 1000)
+        ]
+
+
+-- a quiet boo undulating over a long (~8s) wave. `intro` free-runs on the Full
+-- screen (stepGame), so the live bed swells and fades slowly.
+booLevel : Model -> Int
+booLevel model =
+    5 + osc (model.intro // 2) 0 3
+
+
+-- which bed is playing right now (returned from subscriptions), only while muted
+-- is off. A quiet crowd runs through the match, swelling toward goal; it surges on
+-- a GOAL!, and at full time cheers a win or boos a loss. Silent only on the title.
+musicSub : Model -> Sub Msg
+musicSub model =
+    if model.muted || model.paused then
+        Sub.none
+    else
+        case model.phase of
+            Title -> Sub.none
+            Break -> if model.flashText == "GOAL!" then Sound.glide crowdRoar else Sound.glide (crowdBed model)
+            Full ->
+                if model.blue > model.red then Sound.glide crowdCheer
+                else if model.red > model.blue then Sound.glide (crowdBoo (booLevel model))
+                else Sound.glide (crowdNoise 8)
+            _ -> Sound.glide (crowdBed model)

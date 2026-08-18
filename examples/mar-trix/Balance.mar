@@ -1,0 +1,155 @@
+module Balance exposing (..)
+
+-- The well's size, the frame rate, how fast gravity pulls, and the letterbox
+-- layout. Every number you would tune to change the feel.
+
+import Types exposing (..)
+
+
+
+
+-- ---------------------------------------------------------------- dimensions
+
+
+cols : Int
+cols = 10
+
+
+rows : Int
+rows = 20
+
+
+-- Frames per second the whole game counts in. Gravity, lock delay and every
+-- animation are measured in ticks of this clock, never in wall time, so the
+-- run is reproducible.
+fps : Int
+fps = 60
+
+
+-- How many frames a piece takes to fall one row. The curve is roughly
+-- geometric, each level is about four fifths of the last, rather than the
+-- straight line a first draft always uses. A straight line spends its whole
+-- length in the middle: every level feels like the one before, and the game
+-- is either sleepy for twenty levels or brutal from level three. Geometric
+-- gives a long comfortable start AND a real cliff, which is the shape every
+-- good game in this genre has.
+--
+-- The RATE is the second knob and they must be tuned one at a time. Steepening
+-- the curve and halving the lines-per-level at once made level 4 arrive in
+-- fifteen lines at a speed the old curve did not reach until thirty: three
+-- times the pressure at the same point in a run, from two changes that each
+-- looked reasonable. Eight lines a level puts level 4 back where it was and
+-- leaves the cliff around level 9, which is sixty-four lines away.
+gravityFrames : Int -> Int
+gravityFrames level =
+    case level of
+        1 -> 34
+        2 -> 30
+        3 -> 26
+        4 -> 22
+        5 -> 19
+        6 -> 16
+        7 -> 13
+        8 -> 11
+        9 -> 9
+        10 -> 7
+        11 -> 6
+        12 -> 5
+        13 -> 4
+        14 -> 3
+        _ -> 2
+
+
+-- Reflow from the live canvas size. There are two shapes, not one, and the
+-- difference is not cosmetic: the matrix is ten by twenty, so a tall window
+-- runs out of WIDTH and a wide one runs out of HEIGHT, and whichever one is
+-- spare is where the panel belongs.
+--
+-- In portrait the spare is the band above the matrix, and the strip drawn
+-- there takes the FULL canvas width rather than the matrix width: the
+-- leftover margin either side of a ten-column matrix is dead space, and hold,
+-- previews and score were being crowded into the narrow part while it sat
+-- empty.
+--
+-- In landscape the spare is enormous: twenty rows in a phone's 375 points
+-- forces a small cell, and matrix plus one column came to barely a third of
+-- the window with the rest blank. So landscape opens into TWO columns, hold
+-- on the left and previews on the right, which is what fills the width and
+-- gives each of them room instead of stacking them in one narrow strip.
+layout : Model -> Layout
+layout m =
+    let
+        handheld =
+            case m.dev of
+                Just d -> Device.touchOnly d
+                Nothing -> False
+
+        portrait = m.w * 4 < m.h * 5
+    in
+    if portrait then
+        let
+            -- A ten-column matrix in a phone's width runs out of HEIGHT first,
+            -- so there is always a margin either side of it doing nothing.
+            -- Reserving that margin up front is what turns it into two real
+            -- columns: hold on the left, previews on the right, both beside
+            -- the piece they describe instead of crowded into a strip over it.
+            --
+            -- `sideMin` is what a four-cell preview needs to be legible. It is
+            -- deliberately taken out of the width BEFORE the cell is sized, so
+            -- the columns can never be squeezed to nothing by a wide window:
+            -- and on a phone it costs nothing, because the cell is bound by
+            -- height anyway.
+            sideMin = 46
+            gutter = 8
+            headRows = 2
+            cell =
+                max 8
+                    (min ((m.w - 2 * sideMin - 2 * gutter) // cols)
+                        ((m.h - 16) // (rows + headRows))
+                    )
+            bw = cell * cols
+            bh = cell * rows
+            margin = max 6 (cell // 3)
+            side = (m.w - bw) // 2
+            col = max 24 (side - gutter)
+            inset = (side - col) // 2
+        in
+        { cell = cell
+        , bx = (m.w - bw) // 2
+        , by = m.h - bh - margin
+        , bw = bw
+        , bh = bh
+        , stack = True
+        , lx = inset
+        , rx = m.w - side + inset
+        , col = col
+        , sx0 = margin
+        , sw = m.w - margin * 2
+        , handheld = handheld
+        }
+
+    else
+        let
+            -- Two columns of six cells each, one gap on each side of the
+            -- matrix: the whole arrangement is cols + 12 + 4 wide.
+            cell = max 8 (min ((m.h - 40) // rows) ((m.w - 40) // (cols + 16)))
+            bw = cell * cols
+            bh = cell * rows
+            col = cell * 6
+            gap = cell * 2
+            total = col + gap + bw + gap + col
+            x0 = (m.w - total) // 2
+        in
+        { cell = cell
+        , bx = x0 + col + gap
+        , by = (m.h - bh) // 2
+        , bw = bw
+        , bh = bh
+        , stack = False
+        , lx = x0
+        , rx = x0 + col + gap + bw + gap
+        , col = col
+        , sx0 = 0
+        , sw = 0
+        , handheld = handheld
+        }

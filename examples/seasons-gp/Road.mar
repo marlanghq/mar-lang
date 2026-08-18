@@ -1,0 +1,92 @@
+module Road exposing (..)
+
+-- The pseudo-3D itself: a z per strip, where the road's centre and edges land
+-- on screen, and the cells a strip is built from. This is the projection the
+-- entire scene hangs off.
+
+import Balance exposing (..)
+import Palette exposing (..)
+import Types exposing (..)
+import Canvas exposing ( rect )
+
+
+-- --- strips: the road ---
+
+
+stripY : Int -> Int
+stripY i =
+    gameH - (i + 1) * stripH
+
+
+zOf : Int -> Int
+zOf i =
+    zNear * nstrips // (nstrips - i)
+
+
+bendPx : Int -> Int -> Int
+bendPx curve i =
+    curve * i * i // 4000
+
+
+roadCenterPx : Int -> Int -> Int
+roadCenterPx curve i =
+    160 + bendPx curve i
+
+
+halfWPx : Int -> Int
+halfWPx i =
+    halfWNearPx * (nstrips - i) // nstrips
+
+
+stripGeom : List StripCell
+stripGeom =
+    List.map
+        (\i -> { y = stripY i, z = zOf i, hw = halfWPx i, isq = i * i })
+        (range nstrips)
+
+
+-- The road. The four season colours (asphalt, the two rumble shades, dash)
+-- depend only on phaseIx, so they're derived ONCE per frame here and threaded
+-- into every strip: they used to be re-derived inside each strip (~256
+-- redundant colour lookups a frame). The ground is one solid rect (drawn in
+-- sceneShapes) so the field never seams; each strip is drawn 1px TALLER (sh) so
+-- neighbours overlap and no sub-pixel gaps show at non-integer canvas zoom.
+roadStrips : Model -> List Shape
+roadStrips m =
+    let
+        roadCol = roadAOf m.phaseIx
+        rumA = rumbleAOf m.phaseIx
+        rumB = rumbleBOf m.phaseIx
+        dashCol = dashOf m.phaseIx
+    in
+    List.concat
+        (List.map (stripCellShapes m.camZ m.curve roadCol rumA rumB dashCol) stripGeom)
+
+
+stripCellShapes : Int -> Int -> Color -> Color -> Color -> Color -> StripCell -> List Shape
+stripCellShapes camZ curve roadCol rumA rumB dashCol cell =
+    let
+        y = cell.y
+        band = mod2 ((camZ + cell.z) // 700)
+        cx = 160 + curve * cell.isq // 4000    -- = roadCenterPx via the precomputed i squared
+        hw = cell.hw
+        rumble = if band == 0 then rumA else rumB
+        rw = max 2 (hw // 9)
+        dw = max 1 (hw // 26)
+        sh = stripH + 1
+    in
+    List.concat
+        [ [ rect (cx - hw) y (hw * 2) sh roadCol ]
+        , if hw > 9 then
+            [ rect (cx - hw) y rw sh rumble
+            , rect (cx + hw - rw) y rw sh rumble
+            ]
+          else
+            []
+        , if band == 0 && hw > 16 then
+            [ rect (cx - hw // 3 - dw) y dw sh dashCol
+            , rect (cx + hw // 3) y dw sh dashCol
+            ]
+          else
+            []
+        ]

@@ -1,0 +1,489 @@
+module Hud exposing (..)
+
+-- Screen furniture that does not move with the view: the crosshair, the
+-- damage frames, the weapon, the hearts, the minimap and the touch pads.
+
+import Balance exposing (..)
+import Font exposing (..)
+import Palette exposing (..)
+import Sim exposing (..)
+import Types exposing (..)
+import Canvas exposing ( circle, group, rect, rgb, triangle )
+
+
+
+
+crossShapes : List Shape
+crossShapes =
+    -- four single-pixel ticks around dead center (160,100): a fine reticle
+    -- that frames the aim point without a fat dot covering the target
+    [ rect 160 96 1 1 (rgb 235 235 235)
+    , rect 160 104 1 1 (rgb 235 235 235)
+    , rect 156 100 1 1 (rgb 235 235 235)
+    , rect 164 100 1 1 (rgb 235 235 235)
+    ]
+
+
+-- at one heart the dark starts closing in: a slow-breathing black-red
+-- frame that has nothing to do with taking a hit (that one is bright)
+dreadFrame : Model -> List Shape
+dreadFrame m =
+    if m.hp <= 2 && m.mode == Play then
+        let
+            th = 3 + (if modBy 2 (m.tick // 26) == 0 then 1 else 0)
+        in
+        [ rect 0 0 320 th (rgb 74 8 10)
+        , rect 0 (200 - th) 320 th (rgb 74 8 10)
+        , rect 0 0 th 200 (rgb 74 8 10)
+        , rect (320 - th) 0 th 200 (rgb 74 8 10)
+        ]
+    else
+        []
+
+
+hurtFrame : Model -> List Shape
+hurtFrame m =
+    if m.hurtT > 0 then
+        [ rect 0 0 320 5 (rgb 190 24 24)
+        , rect 0 195 320 5 (rgb 190 24 24)
+        , rect 0 0 5 200 (rgb 190 24 24)
+        , rect 315 0 5 200 (rgb 190 24 24)
+        ]
+    else
+        []
+
+
+-- Vigdis' hands, bottom-right: each weapon has its own held pose and
+-- fire animation. The animation IS the cooldown readout
+weaponShapes : Model -> List Shape
+weaponShapes m =
+    let
+        shaftC = rgb 148 118 82
+        headC = rgb 214 218 228
+        glowC = rgb 150 226 255
+        handC = rgb 172 138 104
+        kick = if m.cool > wcool m.weapon - 6 then 6 else 0
+    in
+    case m.weapon of
+        0 ->
+            -- seax: a lâmina curta descansa baixa; o golpe corta em arco
+            if m.cool > wcool 0 - 8 then
+                [ rect 218 148 44 10 (rgb 214 218 228)
+                , rect 210 144 12 14 (rgb 230 234 240)
+                , rect 250 156 14 22 handC
+                ]
+            else if m.cool > 6 then
+                [ rect 250 138 10 40 (rgb 214 218 228)
+                , rect 248 132 14 10 (rgb 230 234 240)
+                , rect 250 176 14 20 handC
+                ]
+            else
+                [ rect 244 162 10 30 (rgb 200 206 218)
+                , rect 242 156 14 8 (rgb 224 228 236)
+                , rect 246 190 14 10 handC
+                ]
+
+        2 ->
+            -- hunting bow: limbs, string, and a nocked arrow when ready
+            List.concat
+                [ [ rect 244 128 6 66 (rgb 110 84 52)
+                  , rect 238 126 12 6 (rgb 110 84 52)
+                  , rect 238 190 12 6 (rgb 110 84 52)
+                  , rect (240 - kick) 132 2 56 (rgb 210 206 190)
+                  ]
+                , if m.cool == 0 && m.arrows > 0 then
+                    [ rect 214 158 34 3 (rgb 214 196 150)
+                    , rect 210 156 6 7 headC
+                    ]
+                  else
+                    []
+                , [ rect 246 168 12 20 handC ]
+                ]
+
+        3 ->
+            -- hewing axe held heavy; it leaves the hand on the throw
+            if m.cool > wcool 3 - 14 then
+                [ rect 232 178 26 22 handC ]
+            else
+                [ rect 246 138 9 60 (rgb 120 96 66)
+                , rect 232 132 26 16 (rgb 205 210 220)
+                , rect 236 148 16 6 (rgb 160 164 176)
+                , rect 244 184 14 16 handC
+                ]
+
+        4 ->
+            -- Surtr-fire: green glass, a fuse you can read
+            let
+                fl = modBy 2 (m.tick // 2)
+            in
+            if m.cool > wcool 4 - 14 then
+                [ rect 232 178 26 22 handC ]
+            else
+                List.concat
+                    [ [ rect 238 156 22 30 (rgb 96 130 70)
+                      , rect 244 148 9 10 (rgb 74 100 56)
+                      ]
+                    , if m.flasks > 0 then
+                        [ rect 246 138 5 10 (if fl == 0 then rgb 255 190 70 else rgb 235 120 40) ]
+                      else
+                        []
+                    , [ rect 236 184 24 16 handC ]
+                    ]
+
+        _ ->
+            if m.cool == 0 then
+                [ rect 236 158 8 42 shaftC
+                , rect 240 148 8 42 shaftC
+                , rect 244 138 8 14 headC
+                , rect 246 132 4 8 headC
+                ]
+            else if m.cool > 26 then
+                [ rect 226 128 10 72 shaftC
+                , rect 226 112 10 18 headC
+                , rect 228 104 6 10 headC
+                ]
+            else if m.cool > 10 then
+                [ rect 238 176 26 24 handC
+                , rect 244 170 12 10 (rgb 190 156 118)
+                ]
+            else
+                [ rect 240 150 8 50 glowC
+                , rect 244 140 8 12 (rgb 240 252 255)
+                ]
+
+
+heartShape : Int -> Int -> Int -> List Shape
+heartShape x y state =
+    let
+        c =
+            if state == 2 then rgb 224 44 54
+            else if state == 1 then rgb 150 40 52
+            else rgb 52 40 46
+    in
+    [ rect x y 5 4 c
+    , rect (x + 6) y 5 4 c
+    , rect x (y + 3) 11 4 c
+    , rect (x + 2) (y + 7) 7 3 c
+    , rect (x + 4) (y + 10) 3 2 c
+    ]
+
+
+hudShapes : Model -> List Shape
+hudShapes m =
+    let
+        hearts =
+            List.concat
+                (List.indexedMap
+                    (\i _ ->
+                        let
+                            st =
+                                if m.hp >= i * 2 + 2 then 2
+                                else if m.hp == i * 2 + 1 then 1
+                                else 0
+                        in
+                        heartShape (8 + i * 15) 8 st)
+                    (List.repeat 3 0))
+        runeC =
+            if m.runeBlink > 0 && modBy 2 (m.runeBlink // 4) == 0 then
+                rgb 255 70 70
+            else if m.hasRune then
+                rgb 178 120 255
+            else
+                rgb 70 66 84
+        runeSlot =
+            [ rect 250 6 16 16 (rgb 34 32 44)
+            , rect 252 8 12 12 runeC
+            ]
+        goldHud =
+            List.concat
+                [ [ rect 216 10 8 8 (rgb 232 190 70) ]
+                , pixTextR 212 10 1 (rgb 230 222 200) (String.fromInt m.gold)
+                ]
+        jarl =
+            List.head (List.filter (\a -> a.kind == 2 && isDead a.st == False) m.actors)
+        bossBar =
+            case jarl of
+                Just j ->
+                    if j.st == ASleep then
+                        []
+                    else
+                        [ rect 99 167 122 8 (rgb 30 26 30)
+                        , rect 100 168 120 6 (rgb 60 30 34)
+                        , rect 100 168 (max 1 (j.hp * 120 // 24)) 6 (rgb 190 40 40)
+                        ]
+
+                Nothing ->
+                    []
+    in
+    List.concat [ hearts, armorHud m, faceShapes m, runeSlot, goldHud, bossBar, weaponHud m, miniMap m, pickupNote m ]
+
+
+-- the discreet "what did I grab" line: low-centre, above the weapon, fades
+-- out over its last ~24 ticks (lingers ~2.2s). Empty when nothing was picked up recently.
+pickupNote : Model -> List Shape
+pickupNote m =
+    if m.pickT <= 0 then
+        []
+    else
+        let
+            g = min 100 (m.pickT * 100 // 24)
+        in
+        pixTextC 160 158 1 (rgb (150 + g * 70 // 100) (140 + g * 66 // 100) (110 + g * 40 // 100)) m.pickMsg
+
+
+-- top-right: the whole barrow at 1.5px per cell (36px panel, between the
+-- 2px \"too big\" and the 1px \"too small\"). Cell edges land on the exact
+-- grid (v*3/2 both ends), so rows/columns alternate 1px and 2px: it reads
+-- as parchment grain, not error. Walls in stone, shut doors in their own
+-- colors (the purple one is what your rune is FOR), you as a steady white
+-- arrowhead pointing where you face, and once you hold the rune, the
+-- waystone glints gold: the rune knows the way home
+miniMap : Model -> List Shape
+miniMap m =
+    let
+        ox = 279
+        oy = 25
+        wallC = shade 0 (stoneRGB m.barrow) 46
+        runs =
+            List.map
+                (\r ->
+                    rect (ox + r.x * 3 // 2) (oy + r.y * 3 // 2)
+                        (max 1 ((r.x + r.w) * 3 // 2 - r.x * 3 // 2))
+                        (max 1 ((r.y + 1) * 3 // 2 - r.y * 3 // 2))
+                        wallC)
+                m.mapRuns
+        doorDots =
+            List.concatMap
+                (\dr ->
+                    if dr.openT == 0 then
+                        []
+                    else if dr.rune then
+                        [ rect (ox + dr.cx * 3 // 2) (oy + dr.cy * 3 // 2) 2 2 (rgb 178 120 255) ]
+                    else
+                        [ rect (ox + dr.cx * 3 // 2) (oy + dr.cy * 3 // 2) 2 2 (rgb 176 136 88) ])
+                m.doors
+        way =
+            if m.hasRune && modBy 2 (m.tick // 12) == 0 then
+                List.filterMap
+                    (\it ->
+                        if it.kind == 3 && it.taken == False then
+                            Just (rect (ox + it.x * 3 // 2048) (oy + it.y * 3 // 2048) 2 2 (rgb 255 224 130))
+                        else
+                            Nothing)
+                    m.items
+            else
+                []
+        -- marker center on the minimap; a fixed-size arrowhead rotated by the
+        -- heading so it reads which way you face. Drawn as a rotated template
+        -- (not by scaling dirAt's components) so integer truncation can't make
+        -- it grow/shrink at diagonal headings: the size stays constant.
+        -- heading is 240 steps of 1.5 degrees (index 0 = east), which is 15
+        -- tenths of a degree per step, the same angle dirAt builds. The arrow
+        -- therefore points exactly where the rays are cast.
+        cxm = ox + m.px * 3 // 2048 + 1
+        cym = oy + m.py * 3 // 2048 + 1
+        me =
+            [ group
+                [ Canvas.Translate cxm cym
+                , Canvas.Rotate (Math.deciDegrees (m.heading * 15))
+                , Canvas.Scale 75 75
+                ]
+                [ triangle 4 0 (0 - 2) (0 - 2) (0 - 2) 2 (rgb 250 250 250) ]
+            ]
+    in
+    List.concat
+        [ [ rect (ox - 2) (oy - 2) 40 40 (rgb 9 9 13)
+          , rect (ox - 2) (oy - 2) 40 1 (rgb 74 72 92)
+          , rect (ox - 2) (oy + 37) 40 1 (rgb 74 72 92)
+          , rect (ox - 2) (oy - 2) 1 40 (rgb 74 72 92)
+          , rect (ox + 37) (oy - 2) 1 40 (rgb 74 72 92)
+          ]
+        , runs
+        , doorDots
+        , way
+        , me
+        ]
+
+
+-- Vigdis herself, Doom-style: the face keeps the score of the night.
+-- Blood creeps in as the hearts go; a hit screws her eyes shut
+faceShapes : Model -> List Shape
+faceShapes m =
+    let
+        fx = 152
+        fy = 4
+        hurt = m.hurtT > 0
+        blink = modBy 220 (m.tick + 37) < 8
+        skin = if hurt then rgb 214 150 120 else rgb 208 170 134
+        hair = rgb 196 150 74
+        eye = rgb 40 44 60
+        blood = rgb 150 22 26
+        eyes =
+            if hurt || blink then
+                [ rect (fx + 3) (fy + 7) 3 1 eye, rect (fx + 10) (fy + 7) 3 1 eye ]
+            else
+                [ rect (fx + 3) (fy + 6) 3 2 eye, rect (fx + 10) (fy + 6) 3 2 eye ]
+        mouth =
+            if m.mode == Won then
+                [ rect (fx + 5) (fy + 12) 6 1 blood, rect (fx + 4) (fy + 11) 2 1 blood, rect (fx + 10) (fy + 11) 2 1 blood ]
+            else if hurt then
+                [ rect (fx + 6) (fy + 11) 4 3 (rgb 60 22 22) ]
+            else if m.hp <= 2 then
+                [ rect (fx + 5) (fy + 12) 6 2 (rgb 96 40 40) ]
+            else
+                [ rect (fx + 5) (fy + 12) 6 1 (rgb 120 70 60) ]
+        wounds =
+            List.concat
+                [ if m.hp <= 4 then [ rect (fx + 12) (fy + 4) 2 5 blood ] else []
+                , if m.hp <= 2 then
+                    [ rect (fx + 2) (fy + 9) 2 4 blood
+                    , rect (fx + 7) (fy + 2) 3 2 blood
+                    ]
+                  else
+                    []
+                ]
+        -- Armour rides on her head, Doom-style: no armour = bare hair; a
+        -- little (leather, 1-4) = a boiled-hide cap; a full byrnie's worth
+        -- (5-8) = an iron helm with the Norse nasal bar down the brow.
+        -- Painted last so it sits over the hair (and any head wound).
+        helm =
+            if m.armor <= 0 then
+                []
+            else if m.armor <= 4 then
+                [ rect fx fy 16 5 (rgb 120 84 52)
+                , rect fx (fy + 4) 16 1 (rgb 152 112 70)
+                , rect fx (fy + 3) 2 7 (rgb 98 68 44)
+                , rect (fx + 14) (fy + 3) 2 7 (rgb 98 68 44)
+                , rect (fx + 3) (fy + 1) 5 1 (rgb 150 110 70)
+                ]
+            else
+                [ rect fx (fy - 1) 16 6 (rgb 150 158 176)
+                , rect fx (fy + 4) 16 1 (rgb 196 204 220)
+                , rect fx (fy + 3) 2 8 (rgb 128 136 154)
+                , rect (fx + 14) (fy + 3) 2 8 (rgb 128 136 154)
+                , rect (fx + 7) (fy + 4) 2 8 (rgb 174 182 200)
+                , rect (fx + 3) fy 3 1 (rgb 208 216 232)
+                ]
+    in
+    List.concat
+        [ [ rect (fx - 2) (fy - 2) 20 20 (rgb 30 28 38)
+          , rect (fx - 1) (fy - 1) 18 18 (rgb 16 15 20)
+          , rect fx fy 16 4 hair
+          , rect fx (fy + 3) 2 8 hair
+          , rect (fx + 14) (fy + 3) 2 8 hair
+          , rect (fx + 2) (fy + 3) 12 12 skin
+          ]
+        , eyes
+        , mouth
+        , wounds
+        , helm
+        ]
+
+
+armorHud : Model -> List Shape
+armorHud m =
+    if m.armor <= 0 then
+        []
+    else
+        List.concat
+            [ [ rect 8 24 7 8 (rgb 150 158 176)
+              , rect 9 30 5 3 (rgb 120 128 146)
+              ]
+            , pixText 19 25 1 (rgb 170 178 196) (String.fromInt m.armor)
+            ]
+
+
+-- bottom-left: the arsenal. Lit slot = in hand; unowned slots stay dark
+-- and empty until you FIND the weapon out in the barrows
+weaponHud : Model -> List Shape
+weaponHud m =
+    let
+        slot =
+            \i x owned icon ammo ->
+                let
+                    on = m.weapon == i
+                    boxC = if on then rgb 60 58 76 else rgb 24 23 31
+                    edgeC = if on then rgb 178 160 110 else rgb 52 50 62
+                in
+                List.concat
+                    [ [ rect x 178 20 18 boxC
+                      , rect x 178 20 1 edgeC
+                      , rect x 195 20 1 edgeC
+                      , rect x 178 1 18 edgeC
+                      , rect (x + 19) 178 1 18 edgeC
+                      ]
+                    , if owned then icon else []
+                    , if owned then ammo else []
+                    ]
+        seaxI = \x -> [ rect (x + 8) 181 3 9 (rgb 214 218 228), rect (x + 7) 189 5 4 (rgb 148 118 82) ]
+        spearI = \x -> [ rect (x + 8) 181 2 10 (rgb 148 118 82), rect (x + 7) 180 4 3 (rgb 214 218 228) ]
+        bowI = \x -> [ rect (x + 6) 181 2 11 (rgb 110 84 52), rect (x + 11) 182 1 9 (rgb 210 206 190), rect (x + 5) 180 6 2 (rgb 110 84 52) ]
+        axeI = \x -> [ rect (x + 9) 181 2 11 (rgb 120 96 66), rect (x + 5) 180 8 4 (rgb 205 210 220) ]
+        flaskI = \x -> [ rect (x + 6) 184 8 8 (rgb 96 130 70), rect (x + 9) 181 2 3 (rgb 255 190 70) ]
+    in
+    List.concat
+        [ slot 0 8 True (seaxI 8) []
+        , slot 1 30 m.hasSpear (spearI 30) []
+        , slot 2 52 m.hasBow (bowI 52) (pixTextR 71 190 1 (rgb 200 196 180) (String.fromInt m.arrows))
+        , slot 3 74 (m.axes > 0) (axeI 74) (pixTextR 93 190 1 (rgb 200 196 180) (String.fromInt m.axes))
+        , slot 4 96 (m.flasks > 0) (flaskI 96) (pixTextR 115 190 1 (rgb 200 196 180) (String.fromInt m.flasks))
+        ]
+
+
+muteIcon : Model -> List Shape
+muteIcon model =
+    let
+        c = if model.muted then rgb 120 110 110 else rgb 214 208 190
+    in
+    List.concat
+        [ [ rect 300 8 5 6 c
+          , rect 305 6 3 10 c
+          ]
+        , if model.muted then [ rect 297 4 14 2 (rgb 200 60 60) ] else [ rect 310 8 2 6 c ]
+        ]
+
+
+touchPadShapes : Model -> List Shape
+touchPadShapes m =
+    if padsWanted m.dev && m.mode == Play then
+        let
+            p = padSpots m
+            padC = rgb 40 42 52
+            edgeC = rgb 92 96 116
+            knobC = rgb 170 176 196
+            mo = Maybe.withDefault { dx = 0, dy = 0 } m.padMove
+            -- The turn knob shows where the thumb IS, the same as the move
+            -- knob. It used to be drawn from the swipe queue, which stepMove
+            -- empties every frame, so it twitched off centre and sprang back
+            -- however hard you held it.
+            to = Maybe.withDefault { dx = 0, dy = 0 } m.padTurn
+        in
+        List.concat
+            -- Twin round analog sticks (modern mobile-FPS look): LEFT moves
+            -- (2-axis), RIGHT looks/turns (rides on X). Sticks are self
+            -- explanatory, so no labels; the two BUTTONS carry their meaning
+            -- inside the face: ATK text on attack, cycle arrows on switch.
+            [ [ circle p.mcx p.mcy 52 edgeC
+              , circle p.mcx p.mcy 49 padC
+              , circle (p.mcx + mo.dx * 38 // 60) (p.mcy + mo.dy * 38 // 60) 18 knobC
+              ]
+            , [ circle p.tcx p.tcy 52 edgeC
+              , circle p.tcx p.tcy 49 padC
+              , circle (p.tcx + to.dx * 38 // 60) p.tcy 18 knobC
+              ]
+              -- ATTACK button (throws / swings the current weapon)
+            , [ circle p.fx p.fy 26 (rgb 96 44 80)
+              , circle p.fx p.fy 21 (rgb 150 70 130)
+              ]
+            , pixTextC p.fx (p.fy - 5) 2 (rgb 246 224 242) "ATK"
+              -- SWITCH button: two opposing arrows = cycle to the next weapon
+            , [ circle p.fx (p.fy - 62) 22 (rgb 44 52 84)
+              , circle p.fx (p.fy - 62) 17 (rgb 74 86 130)
+              , rect (p.fx - 10) (p.fy - 69) 13 4 (rgb 206 216 240)
+              , triangle (p.fx + 3) (p.fy - 71) (p.fx + 3) (p.fy - 63) (p.fx + 10) (p.fy - 67) (rgb 206 216 240)
+              , rect (p.fx - 3) (p.fy - 59) 13 4 (rgb 206 216 240)
+              , triangle (p.fx - 3) (p.fy - 61) (p.fx - 3) (p.fy - 53) (p.fx - 10) (p.fy - 57) (rgb 206 216 240)
+              ]
+            ]
+    else
+        []

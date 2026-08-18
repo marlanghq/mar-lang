@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Myrkheim map generator.
 
-Emits the barrow maps that get pasted into Main.mar. They are built
+Emits the barrow maps that get pasted into Barrows.mar. They are built
 programmatically (carve rooms out of rock, then place glyphs) so the 24x24
 shape, the solid border and the glyph placement can be ASSERTED instead of
 eyeballed. BFS validates that the player can reach the rune without crossing

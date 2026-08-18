@@ -1,0 +1,99 @@
+module Sfx exposing (..)
+
+-- The engine note and the race cues. The engine is pitched from speed, so it
+-- rises and falls with the car rather than looping.
+
+import Balance exposing (..)
+import Types exposing (..)
+
+
+-- The engine is a Sub: a Sound.glide, ONE continuously-held triangle
+-- oscillator that the sound runtime slides in place (Sound.glide keys ignore
+-- freq, so a new pitch each frame glides the same node: see soundBedSet), a
+-- smooth rev with no clicks/crossfade. The pitch simulates a 2-SPEED GEARBOX:
+-- within each gear the "rpm" climbs, then at the single shift it dips and climbs
+-- again, and because the runtime glides the transition, it sounds like a quick
+-- downshift rather than a step. The gear floor creeps up so 2nd sits higher.
+-- Volume tracks speed (kept fairly low). Mute via Sound.setMuted.
+engineSound : Int -> Sound
+engineSound speed =
+    let
+        gears = 2
+        gw = maxSpeed // gears                    -- speed band per gear (120)
+        gear = min (gears - 1) (speed // gw)     -- current gear, 0..1
+        within = speed - gear * gw               -- position inside the gear
+        hz = 60 + gear * 45 + within * 3 // 5     -- climbs within a gear, small dip at the one shift
+    in
+    Sound.volume (9 + speed // 20) (Sound.tone Sound.Triangle hz 400)
+
+
+-- What the engine bed should sound like right now. On the grid (countT > 0) the
+-- car is in neutral: the pitch and volume follow the throttle blip (rev) with no
+-- gears and no motion. Once the lights go out it's the gearbox tracking speed.
+-- Both are a single triangle voice, so the runtime glides seamlessly from the
+-- last rev pitch into the launch: no restart, no click.
+engineNote : Model -> Sound
+engineNote m =
+    if m.countT > 0 then
+        Sound.volume (9 + m.rev // 7) (Sound.tone Sound.Triangle (60 + m.rev * 3 // 2) 400)
+    else
+        engineSound m.speed
+
+
+cueSound : Cue -> Sound
+cueSound cue =
+    case cue of
+        CueLight ->
+            Sound.volume 50 (Sound.duty 50 (Sound.tone Sound.Square (Sound.a 4) 120))
+
+        CueGo ->
+            Sound.volume 55 (Sound.duty 50 (Sound.tone Sound.Square (Sound.a 5) 340))
+
+        CueCrash ->
+            Sound.chord
+                [ Sound.volume 85 (Sound.tone Sound.Noise 0 300)
+                , Sound.volume 60 (Sound.sweep 50 (Sound.tone Sound.Sawtooth 320 260))
+                ]
+
+        CueSkid ->
+            Sound.volume 26 (Sound.tone Sound.Noise 0 45)
+
+        CueWhoosh ->
+            -- a car flashing past at speed: a doppler down-sweep + a noise swish
+            Sound.chord
+                [ Sound.volume 32 (Sound.sweep 190 (Sound.tone Sound.Sawtooth 560 260))
+                , Sound.volume 22 (Sound.sweep 40 (Sound.tone Sound.Noise 0 240))
+                ]
+
+        CueScreech ->
+            -- tyres losing grip: a wavering high squeal over a scrubbing noise
+            Sound.chord
+                [ Sound.volume 24 (Sound.vibrato 45 15 (Sound.tone Sound.Square 1150 220))
+                , Sound.volume 20 (Sound.tone Sound.Noise 0 220)
+                ]
+
+        CueCheck ->
+            Sound.sequence
+                [ Sound.duty 25 (Sound.tone Sound.Square (Sound.g 5) 80)
+                , Sound.duty 25 (Sound.tone Sound.Square (Sound.c 6) 80)
+                , Sound.duty 25 (Sound.tone Sound.Square (Sound.e 6) 200)
+                ]
+
+        CueYear ->
+            Sound.sequence
+                [ Sound.duty 25 (Sound.tone Sound.Square (Sound.c 5) 80)
+                , Sound.duty 25 (Sound.tone Sound.Square (Sound.e 5) 80)
+                , Sound.duty 25 (Sound.tone Sound.Square (Sound.g 5) 80)
+                , Sound.duty 25 (Sound.tone Sound.Square (Sound.c 6) 90)
+                , Sound.vibrato 20 7 (Sound.duty 50 (Sound.tone Sound.Square (Sound.e 6) 320))
+                ]
+
+        CueBeep ->
+            Sound.volume 45 (Sound.duty 50 (Sound.tone Sound.Square (Sound.e 5) 70))
+
+        CueOver ->
+            Sound.sequence
+                [ Sound.tone Sound.Triangle (Sound.c 4) 220
+                , Sound.tone Sound.Triangle (Sound.g 3) 220
+                , Sound.vibrato 18 5 (Sound.tone Sound.Triangle (Sound.e 3) 600)
+                ]

@@ -1,0 +1,674 @@
+module Draw exposing (..)
+
+-- The 3D view: wall strips from the cast, then the billboards -- actors,
+-- items, bolts, blasts, gore -- depth-tested against the wall behind them.
+
+import Balance exposing (..)
+import Hud exposing (..)
+import Palette exposing (..)
+import Raycaster exposing (..)
+import Types exposing (..)
+import World exposing (..)
+import Canvas exposing ( rect, rgb )
+
+
+dawnPct : Model -> Int
+dawnPct m =
+    if m.mode == Won then iclamp 0 100 (m.modeT * 2 // 3) else 0
+
+
+-- the whole 3D frame: backdrop, wall strips, then every billboard sorted
+-- far-to-near and depth-tested per column
+worldShapes : Model -> List Shape
+worldShapes m =
+    let
+        env = castEnv m
+        dawn = dawnPct m
+        cols = List.map (castCol env) (range nCols)
+        fc = floorRGB m.barrow
+        cc = ceilRGB m.barrow
+        -- Wall base colours depend only on the barrow (constant this frame), so
+        -- derive them ONCE here instead of re-deriving carvedRGB / torchRGB /
+        -- stoneRGB / doorRGB inside every one of the 160 wall strips.
+        pal =
+            { carved = carvedRGB m.barrow
+            , torch = torchRGB m.barrow
+            , stone = stoneRGB m.barrow
+            , doorN = doorRGB False
+            , doorR = doorRGB True
+            }
+        back =
+            [ rect 0 0 320 55 (shade dawn cc 62)
+            , rect 0 55 320 45 (shade dawn cc 30)
+            , rect 0 100 320 45 (shade dawn fc 30)
+            , rect 0 145 320 27 (shade dawn fc 58)
+            , rect 0 172 320 28 (shade dawn fc 92)
+            ]
+        strips =
+            List.concat (List.indexedMap (\i h -> stripShape m pal dawn i h) cols)
+        sprites = spriteShapes m env cols dawn
+        drips =
+            -- Hel's Threshold sweats: slow green drops falling in the dark
+            if m.barrow == 2 then
+                List.concat
+                    (List.indexedMap
+                        (\i _ ->
+                            let
+                                ci = modBy nCols (i * 53 + (m.tick // 160) * 31)
+                                fy = modBy 240 (m.tick * 2 + i * 397) - 20
+                            in
+                            if colDepth cols ci > 4200 && fy > 6 && fy < 190 then
+                                [ rect (ci * 2) fy 2 4 (rgb 70 120 80) ]
+                            else
+                                [])
+                        (List.repeat 6 0))
+            else
+                []
+        overlayL =
+            -- the reticle only belongs while you're actually aiming: hide it
+            -- during the death scene (and the cleared/won holds) so it doesn't
+            -- hang over Vigdis' last moment.
+            List.concat
+                [ weaponShapes m
+                , if m.mode == Play then crossShapes else []
+                , hurtFrame m
+                , dreadFrame m
+                ]
+    in
+    List.concat [ back, strips, sprites, drips, overlayL ]
+
+
+stripShape : Model -> WallPal -> Int -> Int -> Hit -> List Shape
+stripShape m pal dawn i hit =
+    let
+        hh = iclamp 12 1600 (200 * k1 // hit.d)
+        y0 = max 0 (100 - hh // 2)
+        y1 = min 200 (100 + hh // 2)
+        base =
+            if hit.code == 2 then pal.carved
+            else if hit.code == 3 then pal.torch
+            else if hit.code == 4 then pal.doorN
+            else if hit.code == 5 then pal.doorR
+            else pal.stone
+        drainF =
+            -- an opening door bleeds out of the world over 18 ticks
+            if hit.code == 4 || hit.code == 5 then
+                case List.head (List.filter (\dr -> dr.cx == hit.cx && dr.cy == hit.cy && dr.openT > 0) m.doors) of
+                    Just dr -> dr.openT * 100 // 18
+                    Nothing -> 100
+            else
+                100
+        flick = if hit.code == 3 then 30 + modBy 4 (m.tick // 2 + hit.cx * 5) * 4 else 0
+        litBand = iclamp 0 100 (bandPct hit.d + flick)
+        sideF = if hit.side == 1 then 82 else 100
+        f = litBand * sideF * drainF // 10000
+        hh2 = max 1 (y1 - y0)
+        wallC = shade dawn base f
+    in
+    -- the COMMON column (plain stone/torch) takes the single-cons fast
+    -- path: no empty crack/door lists, no List.concat, this runs 160
+    -- times a frame, so the allocations it skips are the frame budget
+    if hit.code == 4 || hit.code == 5 then
+        -- doors read as DOORS: bright timber frame down both edges, iron
+        -- straps + centre seam up close, and the rune door's violet
+        -- sigil, which ignores distance: the lock glows in the dark
+        let
+            ironC = shade dawn { r = 34, g = 34, b = 44 } f
+        in
+        if hit.fr < 96 || hit.fr > 928 then
+            [ rect (i * 2) y0 2 hh2 (shade dawn { r = 198, g = 184, b = 146 } (f * 94 // 100)) ]
+        else if hit.code == 5 && hit.fr >= 352 && hit.fr < 672 && modBy 2 (hit.fr // 64) == 0 then
+            [ rect (i * 2) y0 2 hh2 wallC
+            , rect (i * 2) (y0 + hh2 * 42 // 100) 2 (max 1 (hh2 * 14 // 100)) (shade 0 { r = 196, g = 150, b = 255 } (60 + modBy 5 (m.tick // 3) * 10))
+            ]
+        else if hit.d >= 8704 then
+            [ rect (i * 2) y0 2 hh2 wallC ]
+        else if hit.fr >= 484 && hit.fr < 540 then
+            [ rect (i * 2) y0 2 hh2 ironC ]
+        else
+            [ rect (i * 2) y0 2 hh2 wallC
+            , rect (i * 2) (y0 + hh2 * 24 // 100) 2 (max 1 (hh2 * 6 // 100)) ironC
+            , rect (i * 2) (y0 + hh2 * 70 // 100) 2 (max 1 (hh2 * 6 // 100)) ironC
+            ]
+    else if hit.code == 6 && modBy 4 (hit.fr // 96) == 1 then
+        -- cracked walls keep their fissure: the secret tell
+        [ rect (i * 2) y0 2 hh2 wallC
+        , rect (i * 2) (y0 + hh2 // 4 + modBy 5 (hit.fr // 48) * hh2 // 12) 2 (max 2 (hh2 * 2 // 5)) (shade dawn base (f * 55 // 100))
+        ]
+    else if hit.code == 3 then
+        -- a wall TORCH reads as FIRE, not a yellow strip: the wall stays
+        -- stone, and a bright flickering flame licks up from a bracket in
+        -- the centre of the cell. The flame ignores fog (it is a light) so
+        -- it pops as a landmark across the dark
+        let
+            stoneC = shade dawn pal.stone (litBand * sideF // 100)
+            fl = modBy 6 (m.tick // 3 + hit.cx * 7)
+        in
+        if hit.fr >= 400 && hit.fr < 624 then
+            let
+                fy = y0 + hh2 * (28 - fl) // 100
+                fh = max 2 (hh2 * (30 + fl) // 100)
+            in
+            [ rect (i * 2) y0 2 hh2 stoneC
+            , rect (i * 2) (y0 + hh2 * 58 // 100) 2 (max 1 (hh2 * 10 // 100)) (shade dawn { r = 40, g = 30, b = 24 } f)
+            , rect (i * 2) fy 2 fh (rgb (238 - fl * 4) (150 + fl * 8) 52)
+            , rect (i * 2) fy 2 (max 1 (fh // 3)) (rgb 255 (226 + fl * 4) 150)
+            ]
+        else
+            [ rect (i * 2) y0 2 hh2 (shade dawn { r = 116, g = 92, b = 66 } (litBand * sideF // 100)) ]
+    else
+        [ rect (i * 2) y0 2 hh2 wallC ]
+
+
+project : CastEnv -> List Hit -> Int -> Int -> Maybe { col : Int, size : Int, d : Int }
+project env cols wx wy =
+    let
+        relX = wx - env.px
+        relY = wy - env.py
+        dRaw = env.plx * env.dy - env.dx * env.ply
+        tY = ((0 - env.ply) * relX + env.plx * relY) * k1 // dRaw
+        tX = (env.dy * relX - env.dx * relY) * k1 // dRaw
+    in
+    if tY < 120 then
+        Nothing
+    else
+        let
+            col = 80 + 80 * tX // tY
+        in
+        if col < 0 - 30 || col > nCols + 30 then
+            Nothing
+        else if colDepth cols (iclamp 0 (nCols - 1) col) + 280 < tY then
+            Nothing
+        else
+            Just { col = col, size = 200 * k1 // tY, d = tY }
+
+
+spriteShapes : Model -> CastEnv -> List Hit -> Int -> List Shape
+spriteShapes m env cols dawn =
+    let
+        -- past the last fog band (12% shade) ground clutter is invisible:
+        -- don't build shapes for it at all. Glowing things are exempt:
+        -- the rune (kind 0) is MEANT to be seen across the dark
+        pileS =
+            List.filterMap
+                (\p ->
+                    project env cols p.x p.y
+                        |> Maybe.andThen
+                            (\pr ->
+                                if pr.d > 8704 then
+                                    Nothing
+
+                                else
+                                    Just { d = pr.d, shapes = pileShape pr p.big }))
+                m.piles
+        itemS =
+            List.filterMap
+                (\it ->
+                    if it.taken then
+                        Nothing
+                    else
+                        project env cols it.x it.y
+                            |> Maybe.andThen
+                                (\pr ->
+                                    if pr.d > 8704 && it.kind /= 0 then
+                                        Nothing
+
+                                    else
+                                        Just { d = pr.d, shapes = itemShape m pr it.kind }))
+                m.items
+        boltS =
+            List.filterMap
+                (\b ->
+                    project env cols b.x b.y
+                        |> Maybe.map (\pr -> { d = pr.d, shapes = boltShape pr }))
+                m.bolts
+        pboltS =
+            List.filterMap
+                (\b ->
+                    project env cols b.x b.y
+                        |> Maybe.map (\pr -> { d = pr.d, shapes = pboltShape m pr b.kind }))
+                m.pbolts
+        boomS =
+            List.filterMap
+                (\b ->
+                    project env cols b.x b.y
+                        |> Maybe.map (\pr -> { d = pr.d, shapes = boomShape pr b.t }))
+                m.booms
+        gibS =
+            List.filterMap
+                (\g ->
+                    project env cols g.x g.y
+                        |> Maybe.andThen
+                            (\pr ->
+                                if pr.d > 8704 then
+                                    Nothing
+
+                                else
+                                    Just { d = pr.d, shapes = gibShape pr g.t }))
+                m.gibs
+        actS =
+            List.filterMap
+                (\a ->
+                    project env cols a.x a.y
+                        |> Maybe.map (\pr -> { d = pr.d, shapes = actorShape m pr a }))
+                m.actors
+        all = List.concat [ pileS, itemS, boltS, pboltS, boomS, gibS, actS ]
+    in
+    List.sortBy (\s -> 0 - s.d) all
+        |> List.concatMap (\s -> s.shapes)
+
+
+fogF : Int -> Int
+fogF d = bandPct d
+
+
+-- billboard rects must be clipped to the logical screen by hand: the
+-- scaled root group does not clip, so a point-blank sprite would spill
+-- over the letterbox (the seasons-gp lesson)
+clipR : Int -> Int -> Int -> Int -> Color -> List Shape
+clipR x y w h c =
+    let
+        x0 = max 0 x
+        y0 = max 0 y
+        x1 = min 320 (x + w)
+        y1 = min 200 (y + h)
+    in
+    if x1 > x0 && y1 > y0 then [ rect x0 y0 (x1 - x0) (y1 - y0) c ] else []
+
+
+-- a slain thing on the floor: dark pool, thrown bones
+pileShape : { col : Int, size : Int, d : Int } -> Bool -> List Shape
+pileShape pr big =
+    let
+        s = pr.size * (if big then 30 else 20) // 100
+        w = pr.size * (if big then 84 else 60) // 100
+        x = pr.col * 2 - w // 2
+        y = 100 + pr.size // 2 - s // 2
+        f = fogF pr.d
+        pool = shade 0 bloodRGB f
+        bone = shade 0 boneRGB f
+    in
+    List.concat
+        [ clipR x y w (max 1 (s // 2)) pool
+        , clipR (x + w // 5) (y - s // 4) (max 1 (w // 6)) (max 1 (s // 3)) bone
+        , clipR (x + w * 3 // 5) (y - s // 5) (max 1 (w // 7)) (max 1 (s // 4)) bone
+        ]
+
+
+itemShape : Model -> { col : Int, size : Int, d : Int } -> Int -> List Shape
+itemShape m pr kind =
+    let
+        f = fogF pr.d
+        bot = 100 + pr.size // 2
+        cx = pr.col * 2
+    in
+    case kind of
+        0 ->
+            -- the rune: a bright glyph, pulsing, ignores fog, it GLOWS
+            let
+                s = pr.size * 26 // 100
+                p = modBy 4 (m.tick // 6)
+                w = s - p
+            in
+            List.concat
+                [ clipR (cx - w // 2) (bot - s - s // 2) w s (rgb 178 120 255)
+                , clipR (cx - w // 4) (bot - s - s // 4) (max 1 (w // 2)) (max 1 (s // 2)) (rgb 240 220 255)
+                ]
+
+        1 ->
+            let
+                s = pr.size * 20 // 100
+            in
+            List.concat
+                [ clipR (cx - s // 2) (bot - s) s (max 1 (s * 2 // 3)) (shade 0 { r = 214, g = 176, b = 110 } f)
+                , clipR (cx + s // 3) (bot - s - s // 4) (max 1 (s // 3)) (max 1 (s // 2)) (shade 0 boneRGB f)
+                ]
+
+        2 ->
+            let
+                s = max 2 (pr.size * 12 // 100)
+                tw = modBy 3 (m.tick // 8 + pr.col)
+            in
+            clipR (cx - s // 2) (bot - s) s s (shade 0 { r = 232, g = 190, b = 70 } (iclamp 0 100 (f + tw * 10)))
+
+        4 ->
+            -- a quiver of arrows
+            let
+                s = max 3 (pr.size * 18 // 100)
+            in
+            List.concat
+                [ clipR (cx - s // 3) (bot - s) (max 1 (s * 2 // 3)) s (shade 0 { r = 130, g = 100, b = 64 } f)
+                , clipR (cx - s // 3) (bot - s - s // 4) (max 1 (s // 5)) (max 1 (s // 3)) (shade 0 boneRGB f)
+                , clipR (cx + s // 8) (bot - s - s // 4) (max 1 (s // 5)) (max 1 (s // 3)) (shade 0 boneRGB f)
+                ]
+
+        5 ->
+            -- a pair of hewing axes on the stone
+            let
+                s = max 3 (pr.size * 16 // 100)
+            in
+            List.concat
+                [ clipR (cx - s // 2) (bot - s) (max 1 (s // 4)) s (shade 0 { r = 120, g = 96, b = 66 } f)
+                , clipR (cx - s // 2 - s // 4) (bot - s) (max 1 (s * 3 // 4)) (max 2 (s // 3)) (shade 0 { r = 200, g = 204, b = 214 } f)
+                , clipR (cx + s // 4) (bot - s * 3 // 4) (max 1 (s // 4)) (max 1 (s * 3 // 4)) (shade 0 { r = 120, g = 96, b = 66 } f)
+                ]
+
+        6 ->
+            -- Surtr-fire flask: green glass, live fuse (glows through fog)
+            let
+                s = max 3 (pr.size * 16 // 100)
+                fl = modBy 2 (m.tick // 3 + pr.col)
+            in
+            List.concat
+                [ clipR (cx - s // 2) (bot - s) s s (shade 0 { r = 96, g = 130, b = 70 } f)
+                , clipR (cx - s // 8) (bot - s - s // 3) (max 1 (s // 4)) (max 1 (s // 3)) (if fl == 0 then rgb 255 190 70 else rgb 235 120 40)
+                ]
+
+        7 ->
+            -- leather cuirass on a stand
+            let
+                s = max 3 (pr.size * 22 // 100)
+            in
+            List.concat
+                [ clipR (cx - s // 2) (bot - s) s (max 1 (s * 3 // 4)) (shade 0 { r = 140, g = 96, b = 58 } f)
+                , clipR (cx - s // 3) (bot - s - s // 6) (max 1 (s * 2 // 3)) (max 1 (s // 5)) (shade 0 { r = 160, g = 112, b = 66 } f)
+                ]
+
+        8 ->
+            -- the iron byrnie: it catches what little light there is
+            let
+                s = max 3 (pr.size * 24 // 100)
+                gl = modBy 4 (m.tick // 5 + pr.col)
+            in
+            List.concat
+                [ clipR (cx - s // 2) (bot - s) s (max 1 (s * 3 // 4)) (shade 0 { r = 150, g = 158, b = 176 } (iclamp 0 100 (f + gl * 4)))
+                , clipR (cx - s // 3) (bot - s - s // 6) (max 1 (s * 2 // 3)) (max 1 (s // 5)) (shade 0 { r = 180, g = 188, b = 205 } f)
+                , clipR (cx - s // 6) (bot - s + s // 5) (max 1 (s // 3)) (max 1 (s // 8)) (rgb 220 226 240)
+                ]
+
+        9 ->
+            -- GUNGNIR num pedestal de pedra: a lança espera por uma mão digna
+            let
+                s = pr.size * 44 // 100
+                gl = modBy 3 (m.tick // 5)
+            in
+            List.concat
+                [ clipR (cx - s // 3) (bot - s // 3) (max 2 (s * 2 // 3)) (max 1 (s // 3)) (shade 0 { r = 130, g = 140, b = 156 } f)
+                , clipR (cx - s // 12) (bot - s) (max 1 (s // 6)) s (shade 0 { r = 148, g = 118, b = 82 } f)
+                , clipR (cx - s // 8) (bot - s - s // 5) (max 1 (s // 4)) (max 1 (s // 4)) (rgb (200 + gl * 15) 240 255)
+                ]
+
+        10 ->
+            -- o arco de caça encostado numa pedra
+            let
+                s = pr.size * 36 // 100
+            in
+            List.concat
+                [ clipR (cx - s // 3) (bot - s // 4) (max 2 (s * 2 // 3)) (max 1 (s // 4)) (shade 0 { r = 120, g = 126, b = 140 } f)
+                , clipR (cx - s // 8) (bot - s) (max 1 (s // 5)) s (shade 0 { r = 110, g = 84, b = 52 } f)
+                , clipR (cx + s // 8) (bot - s + s // 8) (max 1 (s // 12)) (max 1 (s * 3 // 4)) (rgb 210 206 190)
+                ]
+
+        _ ->
+            -- the waystone: a standing stone with a lit crown
+            let
+                s = pr.size * 64 // 100
+                w = pr.size * 26 // 100
+            in
+            List.concat
+                [ clipR (cx - w // 2) (bot - s) w s (shade 0 { r = 150, g = 160, b = 176 } f)
+                , clipR (cx - w // 2) (bot - s) w (max 1 (s // 6)) (rgb 255 224 130)
+                ]
+
+
+boltShape : { col : Int, size : Int, d : Int } -> List Shape
+boltShape pr =
+    let
+        s = max 2 (pr.size * 12 // 100)
+        cx = pr.col * 2
+        cy = 100 + pr.size // 2 - pr.size * 40 // 100
+    in
+    List.concat
+        [ clipR (cx - s // 2) (cy - s // 2) s s (rgb 190 255 140)
+        , clipR (cx - s // 4) (cy - s // 4) (max 1 (s // 2)) (max 1 (s // 2)) (rgb 250 255 230)
+        ]
+
+
+pboltShape : Model -> { col : Int, size : Int, d : Int } -> Int -> List Shape
+pboltShape m pr kind =
+    let
+        cx = pr.col * 2
+        cy = 100 + pr.size // 2 - pr.size * 42 // 100
+    in
+    case kind of
+        9 ->
+            -- Gungnir's wake: a sliver of light where the spear flew
+            let
+                s = max 2 (pr.size * 10 // 100)
+            in
+            List.concat
+                [ clipR (cx - s // 2) (cy - s // 6) s (max 1 (s // 3)) (rgb 190 235 255)
+                , clipR (cx - s // 4) (cy - s // 4) (max 1 (s // 2)) (max 1 (s // 2)) (rgb 245 252 255)
+                ]
+
+        1 ->
+            -- vista por trás, a flecha é um dardo: ponta clara e emplumado
+            let
+                s = max 2 (pr.size * 7 // 100)
+            in
+            List.concat
+                [ clipR (cx - s // 2) (cy - s // 2) s s (rgb 230 230 235)
+                , clipR (cx - s // 4) (cy + s // 2) (max 1 (s // 2)) (max 1 (s // 2)) (rgb 214 196 150)
+                ]
+
+        2 ->
+            -- the hewing axe tumbles as it flies
+            let
+                s = max 3 (pr.size * 16 // 100)
+                sp = modBy 2 (m.tick // 3)
+            in
+            List.concat
+                [ clipR (cx - s // 2) (cy - s // 2) s s (rgb 120 96 66)
+                , if sp == 0 then
+                    clipR (cx - s // 2) (cy - s // 2) s (max 2 (s // 2)) (rgb 210 214 222)
+                  else
+                    clipR (cx - s // 2) (cy - s // 2) (max 2 (s // 2)) s (rgb 210 214 222)
+                ]
+
+        _ ->
+            -- the flask: glass and a burning fuse
+            let
+                s = max 3 (pr.size * 14 // 100)
+                fl = modBy 2 (m.tick // 2)
+            in
+            List.concat
+                [ clipR (cx - s // 2) (cy - s // 2) s s (rgb 96 130 70)
+                , clipR (cx - s // 6) (cy - s) (max 1 (s // 3)) (max 1 (s // 2)) (if fl == 0 then rgb 255 190 70 else rgb 255 120 40)
+                ]
+
+
+boomShape : { col : Int, size : Int, d : Int } -> Int -> List Shape
+boomShape pr t =
+    let
+        grow = (14 - t) * pr.size // 16
+        cx = pr.col * 2
+        cy = 100 + pr.size // 2 - pr.size * 30 // 100
+        core = max 3 (grow * 55 // 100)
+    in
+    List.concat
+        [ clipR (cx - grow // 2) (cy - grow // 2) grow grow (if modBy 2 t == 0 then rgb 255 160 40 else rgb 255 90 30)
+        , clipR (cx - core // 2) (cy - core // 2) core core (rgb 255 240 190)
+        ]
+
+
+gibShape : { col : Int, size : Int, d : Int } -> Int -> List Shape
+gibShape pr t =
+    let
+        s = max 1 (pr.size * (4 + t // 3) // 100)
+        cx = pr.col * 2
+        cy = 100 + pr.size // 2 - pr.size * (10 + t * 3) // 100
+    in
+    clipR (cx - s // 2) (cy - s // 2) s s (rgb 150 22 26)
+
+
+actorShape : Model -> { col : Int, size : Int, d : Int } -> Actor -> List Shape
+actorShape m pr a =
+    let
+        dying =
+            case a.st of
+                ADie t -> t
+                _ -> 12
+        hFull =
+            case a.kind of
+                1 -> pr.size * 70 // 100
+                2 -> pr.size * 118 // 100
+                3 -> pr.size * 46 // 100
+                4 -> pr.size * 86 // 100
+                5 -> pr.size * 96 // 100
+                _ -> pr.size * 82 // 100
+        h = hFull * dying // 12
+        w = hFull * (if a.kind == 3 then 150 else if a.kind == 5 then 48 else 55) // 100
+        bob =
+            if a.kind == 1 || a.kind == 5 then
+                pr.size * (2 + modBy 6 (m.tick // 5 + a.idx)) // 100
+            else
+                0
+        bot = 100 + pr.size // 2 - bob
+        x = pr.col * 2 - w // 2
+        y = bot - h
+        f = fogF pr.d
+        flash = a.fT > 0
+        wind =
+            case a.st of
+                AWind _ -> True
+                ASum _ -> True
+                _ -> False
+        bodyC =
+            if flash then
+                rgb 255 90 80
+            else if a.kind == 1 then
+                shade 0 { r = 96, g = 84, b = 128 } f
+            else if a.kind == 2 then
+                shade 0 { r = 108, g = 96, b = 70 } f
+            else if a.kind == 3 then
+                shade 0 { r = 74, g = 64, b = 54 } f
+            else if a.kind == 4 then
+                shade 0 { r = 92, g = 102, b = 88 } f
+            else if a.kind == 5 then
+                shade 0 { r = 58, g = 46, b = 88 } f
+            else if a.kind == 6 then
+                shade 0 { r = 120, g = 108, b = 84 } f
+            else
+                shade 0 { r = 78, g = 96, b = 82 } f
+        headC = if flash then rgb 255 140 120 else shade 0 boneRGB f
+        eyeC =
+            if a.kind == 1 then rgb 214 140 255
+            else if a.kind == 2 then rgb 255 170 60
+            else if a.kind == 3 then rgb 255 186 60
+            else if a.kind == 5 then rgb 150 255 170
+            else if a.kind == 6 then rgb 255 150 60
+            else rgb 120 230 255
+        eyeGlow = if wind then max 2 (w // 6) else max 1 (w // 8)
+        wounded = a.hp * 2 <= maxHpOf a.kind
+        armY = if wind then y - h // 8 else y + h // 4
+        -- past the last fog band only the EYES survive (they already
+        -- ignore fog by design): the body would render at 12% of its
+        -- color, unreadable, and cost a dozen clipped rects per actor
+        farDark = pr.d > 8704 && dying == 12
+        walking = a.st == AChase && a.kind /= 1 && a.kind /= 5 && a.kind /= 6
+        step0 = modBy 2 (m.tick // 7 + a.idx * 5) == 0
+        legL = if walking && step0 then h // 7 else 0
+        legR = if walking && step0 == False then h // 7 else 0
+        body =
+            if a.kind == 3 then
+                -- the varg: a low running slab of pelt, head thrown forward.
+                -- Its whole silhouette is half a man's height and twice as wide
+                let
+                    headY = if wind then y + h * 30 // 100 else y + h * 4 // 100
+                in
+                List.concat
+                    [ clipR x (y + h * 34 // 100) (w * 76 // 100) (max 1 (h * 42 // 100)) bodyC
+                    , clipR (x + w * 6 // 100) (y + h * 70 // 100) (max 1 (w * 10 // 100)) (max 1 (h * 30 // 100 - legL)) bodyC
+                    , clipR (x + w * 28 // 100) (y + h * 70 // 100) (max 1 (w * 10 // 100)) (max 1 (h * 30 // 100 - legR)) bodyC
+                    , clipR (x + w * 50 // 100) (y + h * 70 // 100) (max 1 (w * 10 // 100)) (max 1 (h * 30 // 100 - legR)) bodyC
+                    , clipR (x + w * 66 // 100) (y + h * 70 // 100) (max 1 (w * 10 // 100)) (max 1 (h * 30 // 100 - legL)) bodyC
+                    , clipR (x + w * 64 // 100) headY (max 1 (w * 30 // 100)) (max 1 (h * 38 // 100)) bodyC
+                    , clipR (x + w * 68 // 100) (headY - h * 12 // 100) (max 1 (w * 7 // 100)) (max 1 (h * 14 // 100)) bodyC
+                    , clipR (x + w * 82 // 100) (headY - h * 12 // 100) (max 1 (w * 7 // 100)) (max 1 (h * 14 // 100)) bodyC
+                    , clipR (x + w * 70 // 100) (headY + h * 10 // 100) eyeGlow eyeGlow eyeC
+                    , clipR (x + w * 84 // 100) (headY + h * 10 // 100) eyeGlow eyeGlow eyeC
+                    ]
+            else if a.kind == 5 then
+                -- the volva floats: a hooded pillar of robe over nothing,
+                -- a rune stitched into the skirt that catches the torchlight
+                List.concat
+                    [ clipR (x + w // 6) (y + h * 24 // 100) (max 1 (w * 2 // 3)) (max 1 (h * 28 // 100)) bodyC
+                    , clipR x (y + h * 48 // 100) w (max 1 (h * 46 // 100)) bodyC
+                    , clipR (x + w // 5) y (max 1 (w * 3 // 5)) (max 1 (h * 26 // 100)) (shade 0 { r = 40, g = 30, b = 62 } f)
+                    , clipR (x + w * 30 // 100) (y + h * 10 // 100) eyeGlow eyeGlow eyeC
+                    , clipR (x + w - w * 30 // 100 - eyeGlow) (y + h * 10 // 100) eyeGlow eyeGlow eyeC
+                    , if modBy 5 (m.tick // 3 + a.idx) < 3 then
+                        clipR (x + w * 40 // 100) (y + h * 58 // 100) (max 1 (w * 20 // 100)) (max 1 (h * 14 // 100)) (rgb 176 146 255)
+                      else
+                        []
+                    ]
+            else
+                List.concat
+                    [ clipR x (y + h // 4) w (max 1 (h * 5 // 9)) bodyC
+                    , clipR (x + w // 8) (y + h * 7 // 9) (max 1 (w // 3)) (max 1 (h * 2 // 9 - legL)) bodyC
+                    , clipR (x + w * 5 // 9) (y + h * 7 // 9) (max 1 (w // 3)) (max 1 (h * 2 // 9 - legR)) bodyC
+                    , clipR (x + w // 6) y (max 1 (w * 2 // 3)) (max 1 (h // 3)) headC
+                    , clipR (x + w // 5) (y + h // 9) eyeGlow eyeGlow eyeC
+                    , clipR (x + w - w // 5 - eyeGlow) (y + h // 9) eyeGlow eyeGlow eyeC
+                    -- the archer holds a tall bowstave at its side; it flexes
+                    -- forward (the draw) while the shot is winding up
+                    , if a.kind == 6 then
+                        clipR (x + w - (if wind then 0 else w * 6 // 100)) (y + h * 12 // 100)
+                            (max 1 (w * 7 // 100)) (max 1 (h * 66 // 100))
+                            (shade 0 { r = 156, g = 120, b = 64 } f)
+                      else
+                        []
+                    ]
+        shield =
+            -- the skjaldmaer's painted roundshield: covers her while she
+            -- walks at you, swings ASIDE with the blow - that is the window
+            if a.kind == 4 && dying == 12 then
+                let
+                    shW = max 2 (w * 92 // 100)
+                    shX = if wind then x - shW * 60 // 100 else x + (w - shW) // 2
+                    shY = y + h * 26 // 100
+                    shH = max 2 (h * 40 // 100)
+                    shC = if flash then rgb 255 120 100 else shade 0 { r = 152, g = 56, b = 44 } f
+                    rimC = shade 0 { r = 196, g = 186, b = 158 } f
+                in
+                List.concat
+                    [ clipR (shX + shW // 6) (shY - shH // 8) (max 1 (shW * 2 // 3)) (max 1 (shH // 8)) rimC
+                    , clipR shX shY shW shH shC
+                    , clipR (shX + shW // 6) (shY + shH) (max 1 (shW * 2 // 3)) (max 1 (shH // 8)) rimC
+                    , clipR (shX + shW * 38 // 100) (shY + shH * 34 // 100) (max 1 (shW * 24 // 100)) (max 1 (shH * 30 // 100)) (shade 0 { r = 178, g = 182, b = 194 } f)
+                    ]
+            else
+                []
+        weapon =
+            if a.kind == 1 || a.kind == 3 || a.kind == 5 then
+                []
+            else
+                clipR (x + w - w // 8) armY (max 1 (w // 4)) (max 1 (h // 2)) (shade 0 { r = 160, g = 150, b = 130 } f)
+        wound =
+            if wounded && dying == 12 then
+                clipR (x + w // 4) (y + h // 2) (max 1 (w // 3)) (max 1 (h // 5)) (rgb 150 22 26)
+            else
+                []
+        aura =
+            if wind && (a.kind == 1 || a.kind == 5) then
+                clipR (x - w // 5) (y - h // 6) (max 1 (w // 4)) (max 1 (w // 4)) (if a.kind == 5 then rgb 170 255 190 else rgb 214 140 255)
+            else
+                []
+    in
+    if farDark then
+        List.concat
+            [ clipR (x + w // 4) (y + h // 6) eyeGlow eyeGlow eyeC
+            , clipR (x + w - w // 4 - eyeGlow) (y + h // 6) eyeGlow eyeGlow eyeC
+            ]
+    else
+        List.concat [ body, weapon, shield, wound, aura ]

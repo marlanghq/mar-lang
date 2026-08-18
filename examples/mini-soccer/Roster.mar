@@ -1,0 +1,167 @@
+module Roster exposing (..)
+
+-- Questions about the eleven: who is nearest, who is the keeper, who is on
+-- which team, who has the ball. Everything else asks this module instead of
+-- walking the player list itself.
+
+import Pitch exposing (..)
+import Types exposing (..)
+
+
+noOwner : Int
+noOwner = 0 - 1
+
+
+-- one player at its formation home (home = its start = its support anchor).
+-- Defined ABOVE kickoffPlayers: that binding is a plain value, so it's
+-- evaluated at load and needs mk to already exist (see the fieldShapes note).
+mk : Int -> Team -> Role -> Int -> Int -> Int -> Int -> Player
+mk i team role x y fx fy =
+    { id = i, team = team, role = role, x = x, y = y, fx = fx, fy = fy, homeX = x, homeY = y, moving = False, slide = 0, sx = 0, sy = 0 }
+
+
+-- Kickoff roster: 3 outfield + 1 keeper per side. Blue attacks right (+x),
+-- Red attacks left (-x). Ids 0..3 blue, 4..7 red.
+kickoffPlayers : List Player
+kickoffPlayers =
+    [ mk 0 Blue Field 150 200 1 0
+    , mk 1 Blue Field 270 132 1 0
+    , mk 2 Blue Field 270 268 1 0
+    , mk 3 Blue Keeper 56 200 1 0
+    , mk 4 Red Field 490 200 (0 - 1) 0
+    , mk 5 Red Field 370 132 (0 - 1) 0
+    , mk 6 Red Field 370 268 (0 - 1) 0
+    , mk 7 Red Keeper 584 200 (0 - 1) 0
+    ]
+
+
+centerBall : Ball
+centerBall =
+    { x = midX, y = midY, vx = 0, vy = 0, owner = noOwner, lock = 0 }
+
+
+-- parked off-screen while the teams are walking on (the ball only appears once
+-- play starts). Never drawn during Warmup / Break, so the exact spot is moot.
+hiddenBall : Ball
+hiddenBall =
+    { x = 0 - 100, y = 0 - 100, vx = 0, vy = 0, owner = noOwner, lock = 0 }
+
+
+
+
+playerById : Int -> List Player -> Maybe Player
+playerById i players =
+    List.head (List.filter (\p -> p.id == i) players)
+
+
+-- apply f to the one player with this id, leaving the rest untouched.
+setPlayer : Int -> (Player -> Player) -> List Player -> List Player
+setPlayer i f players =
+    List.map (\p -> if p.id == i then f p else p) players
+
+
+-- Stop every player's motion (slide, run, sub-pixel carry) without moving them.
+-- Used when the sim freezes for a banner: a player caught mid-slide when a goal
+-- goes in would otherwise stay stuck in the sliding sprite through the whole
+-- celebration and walk-back.
+freezeMotion : List Player -> List Player
+freezeMotion players =
+    List.map (\p -> { p | slide = 0, moving = False, sx = 0, sy = 0 }) players
+
+
+teamOf : Int -> List Player -> Maybe Team
+teamOf i players =
+    case playerById i players of
+        Just p -> Just p.team
+        Nothing -> Nothing
+
+
+roleOf : Int -> List Player -> Maybe Role
+roleOf i players =
+    case playerById i players of
+        Just p -> Just p.role
+        Nothing -> Nothing
+
+
+keeperOf : Team -> List Player -> Maybe Player
+keeperOf team players =
+    List.head (List.filter (\p -> p.team == team && p.role == Keeper) players)
+
+
+-- id of the team's outfielder nearest the ball (falls back to a fixed id so the
+-- caller never has to unwrap a Maybe on the hot path).
+teamNearestField : Team -> List Player -> Ball -> Int
+teamNearestField team players b =
+    let
+        cands = List.filter (\p -> p.team == team && p.role == Field) players
+        step = \p acc ->
+            let
+                d = d2 p.x p.y b.x b.y
+            in
+            if d < acc.d then { id = p.id, d = d } else acc
+        best = List.foldl step { id = firstFieldId team, d = 2000000000 } cands
+    in
+    best.id
+
+
+firstFieldId : Team -> Int
+firstFieldId team =
+    case team of
+        Blue -> 0
+        Red -> 4
+
+
+-- id of the team's SECOND-nearest outfielder to the ball, or noOwner if the
+-- team has fewer than two. One fold tracks the two smallest distances (id1/id2).
+secondNearestField : Team -> List Player -> Ball -> Int
+secondNearestField team players b =
+    let
+        cands = List.filter (\p -> p.team == team && p.role == Field) players
+        step =
+            \p acc ->
+                let
+                    d = d2 p.x p.y b.x b.y
+                in
+                if d < acc.d1 then
+                    { id1 = p.id, d1 = d, id2 = acc.id1, d2 = acc.d1 }
+                else if d < acc.d2 then
+                    { id1 = acc.id1, d1 = acc.d1, id2 = p.id, d2 = d }
+                else
+                    acc
+        best = List.foldl step { id1 = noOwner, d1 = 2000000000, id2 = noOwner, d2 = 2000000000 } cands
+    in
+    best.id2
+
+
+nearestFieldInRange : Ball -> List Player -> Maybe Int
+nearestFieldInRange b players =
+    let
+        cands = List.filter (\p -> p.role == Field && d2 p.x p.y b.x b.y <= pickupR2) players
+    in
+    nearestIdOf b cands
+
+
+nearestPresser : Team -> Ball -> List Player -> Maybe Int
+nearestPresser team b players =
+    let
+        cands = List.filter (\p -> p.team == team && p.role == Field && d2 p.x p.y b.x b.y <= pressR2) players
+    in
+    nearestIdOf b cands
+
+
+nearestIdOf : Ball -> List Player -> Maybe Int
+nearestIdOf b cands =
+    let
+        step = \p acc ->
+            let
+                d = d2 p.x p.y b.x b.y
+            in
+            if d < acc.d then { id = p.id, d = d } else acc
+        best = List.foldl step { id = noOwner, d = 2000000000 } cands
+    in
+    if best.id == noOwner then Nothing else Just best.id
+
+
+otherTeam : Team -> Team
+otherTeam team =
+    if team == Blue then Red else Blue

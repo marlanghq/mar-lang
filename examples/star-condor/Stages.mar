@@ -1,0 +1,123 @@
+module Stages exposing (..)
+
+-- The ten stages as data: where in Latin America each one is, what it says on
+-- the way in, and who guards it. Adding a stage is adding rows here.
+
+import Types exposing (..)
+import Canvas exposing ( rgb )
+
+
+
+
+stagePlace : Int -> String
+stagePlace s =
+    case s of
+        1 -> "THE AMAZON - BRAZIL"
+        2 -> "IGUAZU FALLS - BRAZIL AND ARGENTINA"
+        3 -> "THE PAMPAS - ARGENTINA"
+        4 -> "PATAGONIA - ARGENTINA AND CHILE"
+        5 -> "ATACAMA DESERT - CHILE"
+        6 -> "SALAR DE UYUNI - BOLIVIA"
+        7 -> "MACHU PICCHU - PERU"
+        8 -> "GALAPAGOS ISLANDS - ECUADOR"
+        9 -> "THE CANAL COAST - PANAMA"
+        _ -> "TEOTIHUACAN - MEXICO"
+
+
+stageDesc1 : Int -> String
+stageDesc1 s =
+    case s of
+        1 -> "THE LARGEST RAINFOREST ON EARTH."
+        2 -> "NEARLY 275 FALLS ROAR ON THIS BORDER."
+        3 -> "GOLDEN PLAINS THAT FEED MILLIONS."
+        4 -> "GRANITE TOWERS OVER BLUE GLACIERS."
+        5 -> "THE DRIEST DESERT IN THE WORLD."
+        6 -> "THE LARGEST SALT FLAT ON EARTH."
+        7 -> "A STONE CITY ABOVE THE CLOUDS."
+        8 -> "VOLCANIC ISLES OF FEARLESS CREATURES."
+        9 -> "TWO OCEANS SHAKE HANDS AT THE LOCKS."
+        _ -> "THE CITY WHERE THE GODS WERE BORN."
+
+
+stageDesc2 : Int -> String
+stageDesc2 s =
+    case s of
+        1 -> "A RIVER SEA BREATHES UNDER THE CANOPY."
+        2 -> "RAINBOWS LIVE ALL DAY IN THE MIST."
+        3 -> "AT DUSK THE TANGO CITY LIGHTS UP."
+        4 -> "DOWN HERE THE WIND HAS NAMES."
+        5 -> "ITS CLEAR NIGHTS HOLD GIANT TELESCOPES."
+        6 -> "AFTER RAIN IT TURNS INTO A SKY MIRROR."
+        7 -> "INCA TERRACES STILL HOLD THE PEAKS."
+        8 -> "EVOLUTION TOOK ITS NOTES HERE."
+        9 -> "CARNIVAL COLORS RIDE EVERY WAVE."
+        _ -> "MARIGOLDS BLOOM UNDER THE PYRAMIDS."
+
+
+bossName : Int -> String
+bossName s =
+    case s of
+        1 -> "MECHA ANACONDA"
+        2 -> "TURBINE WARDEN"
+        3 -> "BANDONEON KING"
+        4 -> "FROST CONDOR"
+        5 -> "STARGAZER ORB"
+        6 -> "THE MIRROR TWINS"
+        7 -> "STONE SENTINEL"
+        8 -> "IRON TORTOISE"
+        9 -> "HARBOR KRAKEN"
+        _ -> "THE RELIC CORE"
+
+
+theme : Int -> Theme
+theme s =
+    case s of
+        1 -> { skyA = rgb 12 40 38, skyB = rgb 16 56 44, skyC = rgb 24 74 52
+             , far = rgb 10 48 40, farD = rgb 7 36 32
+             , mid = rgb 28 96 56, midD = rgb 18 72 46
+             , det = rgb 62 132 196, acc = rgb 255 196 40 }
+        2 -> { skyA = rgb 34 48 66, skyB = rgb 52 72 92, skyC = rgb 84 110 128
+             , far = rgb 46 58 66, farD = rgb 34 44 52
+             , mid = rgb 150 190 214, midD = rgb 108 150 182
+             , det = rgb 232 240 248, acc = rgb 235 90 90 }
+        3 -> { skyA = rgb 46 22 60, skyB = rgb 120 50 70, skyC = rgb 214 120 60
+             , far = rgb 38 22 52, farD = rgb 28 16 40
+             , mid = rgb 178 140 52, midD = rgb 140 108 40
+             , det = rgb 255 220 120, acc = rgb 230 60 80 }
+        4 -> { skyA = rgb 18 30 52, skyB = rgb 34 56 84, skyC = rgb 70 104 132
+             , far = rgb 62 70 86, farD = rgb 44 50 64
+             , mid = rgb 130 190 210, midD = rgb 92 150 178
+             , det = rgb 240 248 252, acc = rgb 90 220 210 }
+        5 -> { skyA = rgb 6 8 22, skyB = rgb 12 14 36, skyC = rgb 30 22 46
+             , far = rgb 96 52 36, farD = rgb 70 38 28
+             , mid = rgb 130 78 50, midD = rgb 104 62 42
+             , det = rgb 240 240 255, acc = rgb 255 150 60 }
+        6 -> { skyA = rgb 120 150 190, skyB = rgb 170 190 216, skyC = rgb 224 232 244
+             , far = rgb 120 96 140, farD = rgb 94 74 112
+             , mid = rgb 238 242 246, midD = rgb 204 214 226
+             , det = rgb 168 198 226, acc = rgb 244 120 160 }
+        7 -> { skyA = rgb 40 66 74, skyB = rgb 74 108 104, skyC = rgb 130 164 142
+             , far = rgb 56 84 74, farD = rgb 42 64 58
+             , mid = rgb 84 128 76, midD = rgb 62 100 60
+             , det = rgb 160 160 152, acc = rgb 240 190 70 }
+        8 -> { skyA = rgb 10 44 74, skyB = rgb 14 74 104, skyC = rgb 26 118 134
+             , far = rgb 40 46 50, farD = rgb 28 34 38
+             , mid = rgb 44 130 96, midD = rgb 32 100 78
+             , det = rgb 214 240 244, acc = rgb 70 140 255 }
+        9 -> { skyA = rgb 20 60 96, skyB = rgb 24 110 140, skyC = rgb 44 170 176
+             , far = rgb 40 52 70, farD = rgb 30 40 54
+             , mid = rgb 34 140 158, midD = rgb 24 110 130
+             , det = rgb 236 244 246, acc = rgb 235 70 140 }
+        _ -> { skyA = rgb 40 20 60, skyB = rgb 96 42 74, skyC = rgb 196 110 60
+             , far = rgb 110 84 64, farD = rgb 86 64 50
+             , mid = rgb 208 120 40, midD = rgb 170 96 34
+             , det = rgb 244 200 90, acc = rgb 255 170 40 }
+
+
+nthI : Int -> List Int -> Int
+nthI i xs =
+    List.foldl
+        (\x acc -> { j = acc.j + 1, v = if acc.j == i then x else acc.v })
+        { j = 0, v = 440 }
+        xs
+        |> (\r -> r.v)

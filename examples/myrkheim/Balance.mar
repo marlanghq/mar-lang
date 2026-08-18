@@ -1,0 +1,166 @@
+module Balance exposing (..)
+
+-- The logical screen, the raycaster's numbers (one cell is k1 units, 160 rays,
+-- the fog distance), the player's reach and cooldowns, and the letterbox
+-- layout. The heading table is here too: a heading is an INDEX of 240 steps,
+-- not an angle, so all three runtimes agree on where you are facing.
+
+import Types exposing (..)
+
+
+
+
+
+
+gameW : Int
+gameW = 320
+
+
+gameH : Int
+gameH = 200
+
+
+fps : Int
+fps = 60
+
+
+
+
+k1 : Int
+k1 = 1024                 -- one map cell, in fixed-point units
+
+
+nCols : Int
+nCols = 160               -- rays per frame (2px columns)
+
+
+fovP : Int
+fovP = 683                -- camera plane length /1024 (~67 degree FOV)
+
+
+maxDda : Int
+maxDda = 40               -- DDA step cap (a 24x24 map never needs more)
+
+
+farD : Int
+farD = 11264              -- treat anything past 11 cells as pitch black
+
+
+
+
+playerR : Int
+playerR = 240             -- collision radius, units
+
+
+walkF : Int
+walkF = 60                -- forward speed, units/tick
+
+
+walkS : Int
+walkS = 45                -- strafe / backpedal speed
+
+
+-- weapon ids: 0 seax (melee, a arma inicial), 1 Gungnir spear (hitscan,
+-- FOUND on a pedestal), 2 hunting bow (found; uses arrows), 3 hewing axe
+-- (heavy projectile), 4 Surtr-fire flask (lobbed, explodes). Everything
+-- past the seax is FOUND in the barrows: classic FPS progression
+wcool : Int -> Int
+wcool w =
+    case w of
+        0 -> 22
+        2 -> 20
+        3 -> 46
+        4 -> 62
+        _ -> 36
+
+
+
+
+
+
+iclamp : Int -> Int -> Int -> Int
+iclamp lo hi v = max lo (min hi v)
+
+
+absI : Int -> Int
+absI n = if n < 0 then 0 - n else n
+
+
+range : Int -> List Int
+range n =
+    List.indexedMap (\i _ -> i) (List.repeat n 0)
+
+
+-- octagonal length approximation: within ~7% of the true distance and
+-- needs no square root: plenty for ranges, pickups and normalization
+octDist : Int -> Int -> Int
+octDist dx dy =
+    let
+        ax = absI dx
+        ay = absI dy
+    in
+    max ax ay + min ax ay * 3 // 8
+
+
+-- Threads a Random.Seed through the sim so gore and wraith moods are random
+-- but the model stays a plain record (dev-dock time travel keeps working). A
+-- thin adapter over the stdlib: value first out of Random.step, seed flipped to
+-- the front so the (seed, value) call sites stay unchanged.
+rnd : Random.Seed -> Int -> (Random.Seed, Int)
+rnd seed n =
+    let
+        (v, s2) = Random.step (Random.int 0 (max 1 n - 1)) seed
+    in
+    ( s2, v )
+
+
+-- 240 steps of 1.5 degrees. Index 0 faces east, 60 south, 120 west,
+-- 180 north (y grows south, like the map rows).
+--
+-- Math.sin and Math.cos answer on a scale of 1000. The world runs on
+-- k1 units to the cell, so the vector is rescaled once, here, and every
+-- caller keeps working in cell units.
+
+
+dirAt : Int -> { x : Int, y : Int }
+dirAt h =
+    let
+        a = Math.deciDegrees (h * 15)
+    in
+    { x = Math.cos a * k1 // 1000
+    , y = Math.sin a * k1 // 1000
+    }
+
+
+-- True on finger-only hardware: coarse pointer, nothing fine attached, no
+-- hover. The pads (and the title's touch hint) key off the device capability,
+-- so a desktop mouse never summons them and a phone shows them from the start.
+padsWanted : Maybe Device -> Bool
+padsWanted dev =
+    case dev of
+        Just d -> Device.touchOnly d
+        Nothing -> False
+
+
+layout : Model -> Layout
+layout model =
+    let
+        -- Touch-only hardware with a TALL canvas (tablets): reserve a bottom
+        -- strip so the twin sticks get a real bezel instead of sitting on top
+        -- of the view and the weapon HUD (iPad landscape has no side bezels:
+        -- its 4:3-ish aspect lets the picture fill the screen). Phones in
+        -- landscape are too short to give anything up (their side bezels
+        -- already host the sticks); desktop never shows pads.
+        reserve = if padsWanted model.dev && model.h >= 640 then 132 else 0
+        hAvail = model.h - reserve
+        s = max 60 (min (model.w * 100 // gameW) (hAvail * 100 // gameH))
+        slack = hAvail - gameH * s // 100
+    in
+    { scale = s
+    , ox = (model.w - gameW * s // 100) // 2
+    -- Portrait phones: seat the picture in the UPPER area (top margin = 1/6 of
+    -- the vertical slack) instead of dead centre, so the roomy space BELOW
+    -- holds the touch controls: padSpots already drops the pads into that
+    -- bottom bezel. Landscape (wider than tall) stays vertically centred.
+    , oy = if model.h > model.w then slack // 6 else slack // 2
+    }

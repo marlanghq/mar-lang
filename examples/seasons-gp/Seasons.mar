@@ -1,0 +1,60 @@
+module Seasons exposing (..)
+
+-- The four seasons as data: name, light, grip, traffic and how hard the road
+-- bends. A season is a number in, a table out -- adding a fifth would touch
+-- this file and nothing else.
+
+
+
+-- 0 SPRING, 1 SUMMER, 2 AUTUMN (night), 3 WINTER (snow/ice)
+
+
+seasonCount : Int
+seasonCount = 4
+
+
+seasonName : Int -> String
+seasonName ix =
+    case ix of
+        0 -> "SPRING"
+        1 -> "SUMMER"
+        2 -> "AUTUMN"
+        _ -> "WINTER"
+
+
+isNight : Int -> Bool
+isNight ix =
+    ix == 2
+
+
+isIce : Int -> Bool
+isIce ix =
+    ix == 3
+
+
+-- time budget per season, shrinking with the years (ms)
+budgetMs : Int -> Int
+budgetMs year =
+    1000 * max 38 (54 - year * 2)
+
+
+-- rival cruising speed: quick enough that overtakes stay readable, slow
+-- enough that a car ahead leaves you time to pick a side
+rivalBase : Int -> Int
+rivalBase year =
+    min 186 (126 + 8 * (year - 1))
+
+
+-- average gap between spawned rivals (world units); summer is rush hour
+spawnGapBase : Int -> Int -> Int
+spawnGapBase year phaseIx =
+    let
+        base = max 4200 (9000 - 700 * (year - 1))
+    in
+    if phaseIx == 1 then base * 7 // 10 else base
+
+
+-- how hard the road is allowed to bend, per year
+curveMax : Int -> Int
+curveMax year =
+    min 99 (56 + 9 * year)

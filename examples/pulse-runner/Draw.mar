@@ -1,0 +1,291 @@
+module Draw exposing (..)
+
+-- The palette and the world as pixels: ground, blocks, spikes, the flag, the
+-- runner, the HUD.
+
+import Balance exposing (..)
+import Font exposing (..)
+import Level exposing (..)
+import Types exposing (..)
+import Canvas exposing ( group, rect, rgb, triangle )
+
+
+
+
+ink : Color
+ink = rgb 10 10 18
+
+
+hudWhite : Color
+hudWhite = rgb 235 238 245
+
+
+hudAmber : Color
+hudAmber = rgb 255 196 64
+
+
+hudDim : Color
+hudDim = rgb 120 128 150
+
+
+hudRed : Color
+hudRed = rgb 235 80 70
+
+
+orange : Color
+orange = rgb 255 150 40
+
+
+orangeDark : Color
+orangeDark = rgb 140 60 0
+
+
+spikeC : Color
+spikeC = rgb 226 232 244
+
+
+blockC : Color
+blockC = rgb 30 34 52
+
+
+blockEdge : Color
+blockEdge = rgb 150 200 255
+
+
+voidC : Color
+voidC = rgb 8 8 14
+
+
+groundC : Color
+groundC = rgb 17 17 28
+
+
+flagC : Color
+flagC = rgb 90 220 120
+
+
+bezel : Color
+bezel = rgb 6 6 10
+
+
+-- background per 32-beat segment: the hue changes exactly at the checkpoint
+-- lines (beats 32/64/96/128/160), and at the same world positions in
+-- hardcore, where the checkpoints would be. The last two run hot.
+bgColor : Model -> Color
+bgColor m =
+    let
+        seg = iclamp 0 8 (max 0 m.px // loopPx)
+    in
+    if seg == 0 then rgb 24 30 66
+    else if seg == 1 then rgb 40 24 64
+    else if seg == 2 then rgb 16 48 58
+    else if seg == 3 then rgb 56 24 44
+    else if seg == 4 then rgb 62 38 18
+    else if seg == 5 then rgb 66 16 24
+    else if seg == 6 then rgb 74 46 12
+    else if seg == 7 then rgb 34 12 52
+    else rgb 84 12 18
+
+
+camX : Model -> Int
+camX m =
+    m.px - playerScreenX
+
+
+worldShapes : Model -> List Shape
+worldShapes m =
+    let
+        cx = camX m
+    in
+    List.concat
+        [ [ rect 0 0 gameW gameH (bgColor m) ]
+        , [ rect 0 groundY gameW (gameH - groundY) voidC ]
+        , groundShapes cx
+        , flagShapes m cx
+        , finishShapes cx
+        , blockShapes cx
+        , spikeShapes cx
+        , attemptTextShapes m cx
+        , playerShapes m cx
+        , hudShapes m
+        ]
+
+
+groundShapes : Int -> List Shape
+groundShapes cx =
+    List.concat
+        (List.map
+            (\s ->
+                let
+                    x0 = max s.x0 (cx - 10)
+                    x1 = min s.x1 (cx + gameW + 10)
+                in
+                if x1 <= x0 then
+                    []
+                else
+                    [ rect (x0 - cx) groundY (x1 - x0) (gameH - groundY) groundC
+                    , rect (x0 - cx) groundY (x1 - x0) 2 blockEdge
+                    ]
+            )
+            groundSegs)
+
+
+visible : Int -> Int -> Int -> Bool
+visible cx x w =
+    x + w > cx - 20 && x < cx + gameW + 20
+
+
+blockShapes : Int -> List Shape
+blockShapes cx =
+    List.concat
+        (List.map
+            (\b ->
+                if visible cx b.x b.w then
+                    [ rect (b.x - cx) b.top b.w (groundY - b.top) blockC
+                    , rect (b.x - cx) b.top b.w 2 blockEdge
+                    , rect (b.x - cx) b.top 2 (groundY - b.top) (rgb 70 88 120)
+                    ]
+                else
+                    []
+            )
+            blockRects)
+
+
+-- a 15x15 spike: one Canvas.triangle, base on the ground, apex up
+spikeShapes : Int -> List Shape
+spikeShapes cx =
+    List.concat
+        (List.map
+            (\o ->
+                case o of
+                    Spk u lift ->
+                        let
+                            x = u * unitPx
+                            top = groundY - lift * unitPx - unitPx
+                        in
+                        if visible cx x unitPx then
+                            [ triangle (x - cx) (top + unitPx) (x - cx + unitPx) (top + unitPx) (x - cx + unitPx // 2) top spikeC ]
+                        else
+                            []
+
+                    _ ->
+                        []
+            )
+            obs)
+
+
+flagShapes : Model -> Int -> List Shape
+flagShapes m cx =
+    if m.hardcore then
+        []
+    else
+        List.concat
+            (List.map
+                (\i ->
+                    let
+                        x = cpX (i + 1)
+                    in
+                    if visible cx x 12 then
+                        [ rect (x - cx) 126 2 38 hudWhite
+                        , rect (x - cx + 2) 126 9 7 flagC
+                        ]
+                    else
+                        []
+                )
+                (range 8))
+
+
+finishShapes : Int -> List Shape
+finishShapes cx =
+    if visible cx finishX 10 then
+        List.concat
+            (List.map
+                (\i ->
+                    [ rect (finishX - cx) (44 + i * 24) 8 12 hudWhite
+                    , rect (finishX - cx) (56 + i * 24) 8 12 ink
+                    ]
+                )
+                (range 5))
+    else
+        []
+
+
+playerShapes : Model -> Int -> List Shape
+playerShapes m cx =
+    if m.mode == Dead then
+        shatterShapes m cx
+    else
+        let
+            x = m.px - cx
+            top = m.pyBot // fp - pw
+            edge = orangeDark
+            -- mid-air the square does a quarter turn over the hop (a square is
+            -- symmetric under 90 degrees, so it lands looking upright again)
+            deg = min 90 (m.airT * 90 // 28)
+        in
+        let
+            -- pw is odd, so anchor everything on the top-left corner (-pw/2)
+            -- and derive the far edges from it: pw/2-2 would land the
+            -- bottom/right borders 2 px inside the body
+            o = 0 - pw // 2
+            f = o + pw - 2
+        in
+        [ group [ Canvas.Translate (x + pw // 2) (top + pw // 2), Canvas.Rotate (Math.degrees deg) ]
+            [ rect o o pw pw orange
+            , rect o o pw 2 edge
+            , rect o f pw 2 edge
+            , rect o o 2 pw edge
+            , rect f o 2 pw edge
+            ]
+        ]
+
+
+-- the square breaks into eight fragments that fly apart under gravity:
+-- the object itself shatters, nothing else on screen moves
+shatterShapes : Model -> Int -> List Shape
+shatterShapes m cx =
+    let
+        t = m.deathT
+        vels =
+            [ { vx = 0 - 40, vy = 0 - 90 }, { vx = 0 - 15, vy = 0 - 110 }
+            , { vx = 20, vy = 0 - 100 }, { vx = 45, vy = 0 - 70 }
+            , { vx = 0 - 50, vy = 0 - 40 }, { vx = 35, vy = 0 - 45 }
+            , { vx = 0 - 25, vy = 0 - 70 }, { vx = 10, vy = 0 - 120 }
+            ]
+    in
+    List.concat
+        (List.map
+            (\v ->
+                let
+                    fx = m.deathX + (v.vx * t) // 16
+                    fy = m.deathY - pw + (v.vy * t + 2 * t * t) // 16
+                in
+                if fy > gameH then
+                    []
+                else
+                    [ rect (fx - cx) fy 4 4 orange ]
+            )
+            vels)
+
+
+attemptTextShapes : Model -> Int -> List Shape
+attemptTextShapes m cx =
+    let
+        sx = if m.hardcore then 0 else cpX m.lastCp
+    in
+    pixText (sx + 6 - cx) 118 1 hudWhite ("ATTEMPT " ++ String.fromInt m.attempts)
+
+
+hudShapes : Model -> List Shape
+hudShapes m =
+    let
+        barW = gameW - 80
+        fill = iclamp 0 barW (m.px * barW // finishX)
+    in
+    List.concat
+        [ [ rect 40 6 barW 4 (rgb 40 44 62)
+          , rect 40 6 fill 4 hudAmber
+          ]
+        , pixText 4 3 1 hudWhite (String.fromInt (iclamp 0 100 (m.px * 100 // finishX)))
+        , pixTextR (gameW - 32) 13 1 hudDim (if m.hardcore then "HARDCORE" else "CHECKPOINT")
+        ]

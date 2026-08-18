@@ -1,0 +1,559 @@
+module Draw exposing (..)
+
+-- The well and its furniture as pixels: tiles, the ghost, the flash on a
+-- clear, the panels around the playfield.
+
+import Balance exposing (..)
+import Board exposing (..)
+import Pieces exposing (..)
+import Sim exposing (..)
+import Types exposing (..)
+import Canvas exposing ( group, rect, rgb, rgba )
+
+
+-- A cell is five flat rectangles: a dark gap around it, the colour, a lit top
+-- edge, a shaded bottom edge, and a paler square set into the middle. No
+-- gradient and no image, and it still reads as a glazed tile rather than a
+-- coloured square.
+tile : Int -> Int -> Int -> Int -> List Shape
+tile px py cell kind =
+    let
+        ink = inkOf kind
+        inset = max 1 (cell // 7)
+        inner = cell - 2
+    in
+    [ rect px py cell cell (rgb 8 8 12)
+    , rect (px + 1) (py + 1) inner inner ink
+    , rect (px + 1) (py + 1) inner (max 1 (cell // 9)) (rgba 255 255 255 22)
+    , rect (px + 1) (py + cell - 1 - max 1 (cell // 9)) inner (max 1 (cell // 9)) (rgba 0 0 0 26)
+    , rect (px + inset) (py + inset) (cell - inset * 2) (cell - inset * 2) (rgba 255 255 255 12)
+    ]
+
+
+matrixTiles : Model -> Layout -> List Shape
+matrixTiles m lay =
+    List.concat
+        (List.map
+            (\y ->
+                List.concat
+                    (List.map
+                        (\x ->
+                            let
+                                k = cellAt x y m.matrix
+                            in
+                            if k == 0 then
+                                []
+
+                            else
+                                tile (lay.bx + x * lay.cell) (lay.by + y * lay.cell) lay.cell k
+                        )
+                        (List.range 0 (cols - 1))
+                    )
+            )
+            (List.range 0 (rows - 1))
+        )
+
+
+gridLines : Layout -> List Shape
+gridLines lay =
+    List.map
+        (\x -> rect (lay.bx + x * lay.cell) lay.by 1 lay.bh (rgba 255 255 255 5))
+        (List.range 1 (cols - 1))
+        ++ List.map
+            (\y -> rect lay.bx (lay.by + y * lay.cell) lay.bw 1 (rgba 255 255 255 4))
+            (List.range 1 (rows - 1))
+
+
+pieceTiles : Piece -> Layout -> List Shape
+pieceTiles p lay =
+    List.concat
+        (List.map
+            (\c ->
+                let
+                    y = p.y + c.y
+                in
+                if y < 0 then
+                    []
+
+                else
+                    tile (lay.bx + (p.x + c.x) * lay.cell) (lay.by + y * lay.cell) lay.cell p.kind
+            )
+            (shapeOf p.kind p.rot)
+        )
+
+
+-- The ghost is an outline in the piece's own colour, not a translucent copy: a
+-- filled ghost competes with the real piece for attention, and the whole point
+-- is that you read the landing spot without looking away from what you hold.
+--
+-- It is also deliberately quiet: a thin line at about half opacity. The ghost
+-- answers a question you ask once per piece ("where does this land"), and the
+-- moment it is loud enough to read without looking, it is loud enough to be
+-- mistaken for a piece already on the stack.
+--
+-- The whole outline goes in ONE Alpha group rather than carrying the fade on
+-- each rect: the four edges of a cell meet at the corners, and per-shape alpha
+-- would paint those corners twice and print a brighter dot at each one.
+ghostTiles : Model -> Layout -> List Shape
+ghostTiles m lay =
+    let
+        g = dropTo m.piece m.matrix
+        edge = max 1 (lay.cell // 14)
+        ink = inkOf g.kind
+    in
+    [ group [ Canvas.Alpha 55 ]
+        (List.concat
+            (List.map
+                (\c ->
+                    let
+                        px = lay.bx + (g.x + c.x) * lay.cell
+                        py = lay.by + (g.y + c.y) * lay.cell
+                    in
+                    if g.y + c.y < 0 then
+                        []
+
+                    else
+                        [ rect px py lay.cell edge ink
+                        , rect px (py + lay.cell - edge) lay.cell edge ink
+                        , rect px py edge lay.cell ink
+                        , rect (px + lay.cell - edge) py edge lay.cell ink
+                        ]
+                )
+                (shapeOf g.kind g.rot)
+            )
+        )
+    ]
+
+
+-- A cleared row lights from the middle outwards. The light is drawn in Add
+-- blend so stacked tiles brighten rather than average toward grey, which is
+-- what makes it read as light instead of paint.
+flashShapes : Model -> Layout -> List Shape
+flashShapes m lay =
+    let
+        t = m.frame - m.flashAt
+        reach = (t * (cols // 2 + 1)) // 14 + 1
+    in
+    List.concat
+        (List.map
+            (\y ->
+                List.map
+                    (\x ->
+                        rect (lay.bx + x * lay.cell) (lay.by + y * lay.cell) lay.cell lay.cell
+                            (rgba 255 250 226 (max 0 (82 - t * 4)))
+                    )
+                    (List.filter
+                        (\x -> abs (x * 2 - (cols - 1)) <= reach * 2)
+                        (List.range 0 (cols - 1))
+                    )
+            )
+            m.flashRows
+        )
+
+
+slamShapes : Model -> Layout -> List Shape
+slamShapes m lay =
+    let
+        t = m.frame - m.slamAt
+    in
+    if t > 8 then
+        []
+
+    else
+        List.map
+            (\c ->
+                rect (lay.bx + c.x * lay.cell) (lay.by + max 0 c.y * lay.cell) lay.cell lay.cell
+                    (rgba 255 255 255 (max 0 (44 - t * 5)))
+            )
+            (List.filter (\c -> c.y >= 0) m.slam)
+
+
+-- A preview, CENTRED on the point given rather than hung off its top-left.
+--
+-- The rotation tables put each kind wherever it happens to sit inside its 4x4
+-- box: the O one column in, the I a whole row down, the others two or three
+-- wide starting at zero. Drawing those offsets raw makes a row of previews
+-- look shaken loose: every piece at a different height, and the gaps between
+-- them uneven because a 2-wide O leaves the same pitch as a 4-wide I. So the
+-- piece is measured first and placed on its own middle, which is the only
+-- thing four different shapes have in common.
+miniPiece : Int -> Int -> Int -> Int -> List Shape
+miniPiece kind cx cy cell =
+    let
+        cells = shapeOf kind 0
+        xs = List.map (\c -> c.x) cells
+        ys = List.map (\c -> c.y) cells
+        minX = List.foldl min 3 xs
+        maxX = List.foldl max 0 xs
+        minY = List.foldl min 3 ys
+        maxY = List.foldl max 0 ys
+
+        px = cx - (maxX - minX + 1) * cell // 2 - minX * cell
+        py = cy - (maxY - minY + 1) * cell // 2 - minY * cell
+    in
+    List.concat
+        (List.map
+            (\c -> tile (px + c.x * cell) (py + c.y * cell) cell kind)
+            cells
+        )
+
+
+-- ---------------------------------------------------------------- background
+--
+-- Mar's canvas has no gradient primitive, and it turns out not to need one:
+-- eighteen flat bands of decreasing alpha read as a gradient, and the two
+-- circles behind the well in Add blend are the only light in the scene. Every
+-- value here is derived from the canvas size, so it fills a phone the same way.
+
+
+-- The wall cells are the palette at a tenth of its strength: enough to catch
+-- the light, never enough to compete with the matrix.
+wallInk : Int -> Color
+wallInk kind =
+    case kind of
+        1 -> rgba 86 200 199 4
+        2 -> rgba 92 128 214 4
+        3 -> rgba 224 150 66 3
+        4 -> rgba 226 196 84 3
+        5 -> rgba 122 194 108 3
+        6 -> rgba 168 116 210 5
+        _ -> rgba 219 96 106 3
+
+
+-- The wall behind the game is a dead matrix: one flat cell every two, hue
+-- picked by position, all of it barely above the background. A few hundred
+-- rectangles buy a texture that no flat fill can, and it is the right texture
+--: the game is played against a dim, empty copy of the thing it is named
+-- after.
+backdropShapes : Model -> Layout -> List Shape
+backdropShapes m lay =
+    let
+        bands = 20
+        bandH = m.h // bands + 1
+        step = max 16 (lay.cell * 3)
+        gap = max 2 (step // 14)
+    in
+    [ rect 0 0 m.w m.h (rgb 9 10 16) ]
+        ++ List.map
+            (\i -> rect 0 (i * bandH) m.w bandH (rgba 70 58 124 (max 0 (12 - i))))
+            (List.range 0 (bands - 1))
+        ++ List.concat
+            (List.map
+                (\y ->
+                    List.map
+                        (\x ->
+                            rect (x * step + gap) (y * step + gap)
+                                (step - gap * 2) (step - gap * 2)
+                                (wallInk (1 + modBy 7 (x * 5 + y * 3)))
+                        )
+                        (List.range 0 (m.w // step))
+                )
+                (List.range 0 (m.h // step))
+            )
+
+
+-- Drawn last, over everything: the corners fall away and the eye lands on the
+-- well without anything having to be brighter.
+vignette : Model -> List Shape
+vignette m =
+    let
+        band = m.h // 40 + 2
+    in
+    List.concat
+        (List.map
+            (\i ->
+                let
+                    a = max 0 (6 - i)
+                    t = i * band
+                in
+                [ rect 0 t m.w band (rgba 0 0 0 a)
+                , rect 0 (m.h - t - band) m.w band (rgba 0 0 0 a)
+                , rect t 0 band m.h (rgba 0 0 0 a)
+                , rect (m.w - t - band) 0 band m.h (rgba 0 0 0 a)
+                ]
+            )
+            (List.range 0 7)
+        )
+
+
+-- A panel card: a pane of frosted glass with a lit top edge and a shadow under
+-- it. The same three rectangles behind NEXT, HOLD and the stats is what makes
+-- the right-hand column read as one object instead of floating text.
+card : Int -> Int -> Int -> Int -> List Shape
+card px py pw ph =
+    [ rect px py pw ph (rgba 255 255 255 7)
+    , rect px py pw 1 (rgba 255 255 255 16)
+    , rect px (py + ph - 1) pw 1 (rgba 0 0 0 35)
+    ]
+
+
+-- A triangle wave in whole numbers. Mar has no floats and therefore no sine,
+-- and it turns out a triangle is what you want anyway for a bob or a pulse:
+-- it spends no time loitering at the extremes.
+wave : Int -> Int -> Int
+wave span t =
+    abs (modBy (span * 2) t - span) - span // 2
+
+
+-- The frame breathes on a level up: a warm pulse around the border for half a
+-- second, the object changing rather than the screen.
+frameShapes : Model -> Layout -> List Shape
+frameShapes m lay =
+    let
+        t = m.frame - m.levelAt
+
+        glow =
+            if t < 36 && m.levelAt > 0 then
+                max 0 (58 - t * 2)
+
+            else
+                0
+
+        edge = max 3 (lay.cell // 5)
+        lip = max 1 (edge // 3)
+    in
+    [ rect (lay.bx - edge) (lay.by - edge) (lay.bw + edge * 2) (lay.bh + edge * 2) (rgb 44 48 66)
+    , rect (lay.bx - edge) (lay.by - edge) (lay.bw + edge * 2) lip (rgba 255 255 255 18)
+    , rect (lay.bx - edge) (lay.by + lay.bh + edge - lip) (lay.bw + edge * 2) lip (rgba 0 0 0 44)
+    , rect lay.bx lay.by lay.bw lay.bh (rgb 13 14 21)
+    , rect lay.bx lay.by lay.bw (max 1 (lay.cell // 10)) (rgba 0 0 0 50)
+    ]
+        ++ (if glow == 0 then
+                []
+
+            else
+                [ group [ Canvas.Blend Canvas.Add ]
+                    [ rect (lay.bx - edge) (lay.by - edge) (lay.bw + edge * 2) edge (rgba 226 196 84 glow)
+                    , rect (lay.bx - edge) (lay.by + lay.bh) (lay.bw + edge * 2) edge (rgba 226 196 84 glow)
+                    , rect (lay.bx - edge) (lay.by - edge) edge (lay.bh + edge * 2) (rgba 226 196 84 glow)
+                    , rect (lay.bx + lay.bw) (lay.by - edge) edge (lay.bh + edge * 2) (rgba 226 196 84 glow)
+                    ]
+                ]
+           )
+
+
+-- Landscape opens into TWO columns, one either side of the matrix: hold on
+-- the left, previews and score on the right. One narrow column beside the
+-- matrix left two thirds of a phone held sideways completely empty while the
+-- cards inside it were too cramped to breathe: the width was there the whole
+-- time, it was just all on one side of everything.
+panelShapes : Model -> Layout -> List Shape
+panelShapes m lay =
+    let
+        cell = lay.cell
+        pw = lay.col
+        mini = max 4 (cell * 3 // 5)
+        slot = mini * 4
+        pad = cell * 2 // 3
+        head = cell
+
+        label = \x y s -> Canvas.text (x + pad) y (max 10 (cell * 2 // 5)) Canvas.Left (rgba 255 255 255 47) s
+        value = \x y s -> Canvas.text (x + pw - pad) y (max 13 (cell * 7 // 10)) Canvas.Right (rgb 244 240 232) s
+
+        -- HOLD, alone on the left, sized for exactly what it holds.
+        holdH = pad + head + slot
+        holdY = lay.by
+        holdMid = lay.lx + pw // 2
+
+        holdBlock =
+            if m.hold == 0 then
+                [ rect (holdMid - mini * 2) (holdY + pad + head) (mini * 4) (mini * 2) (rgba 255 255 255 5)
+                , rect (holdMid - mini * 2) (holdY + pad + head) (mini * 4) 1 (rgba 255 255 255 16)
+                ]
+
+            else
+                miniPiece m.hold holdMid (holdY + pad + head + slot // 2) mini
+
+        -- NEXT and the score share the right column, stacked.
+        nextY = lay.by
+        nextH = pad + head + slot * 5
+        statY = nextY + nextH + pad
+        statH = pad + cell * 4 + pad // 2
+        nextMid = lay.rx + pw // 2
+        statRow = \i -> statY + pad + cell * i + cell // 2
+
+        nextBlocks =
+            List.concat
+                (List.indexedMap
+                    (\i k -> miniPiece k nextMid (nextY + pad + head + slot // 2 + i * slot) mini)
+                    (List.take 5 m.queue)
+                )
+    in
+    card lay.lx holdY pw holdH
+        ++ [ label lay.lx (holdY + pad + head // 2) "HOLD" ]
+        ++ holdBlock
+        ++ card lay.rx nextY pw nextH
+        ++ [ label lay.rx (nextY + pad + head // 2) "NEXT" ]
+        ++ nextBlocks
+        ++ card lay.rx statY pw statH
+        ++ [ label lay.rx (statRow 0) "SCORE"
+           , value lay.rx (statRow 0) (String.fromInt m.score)
+           , label lay.rx (statRow 1) "LINES"
+           , value lay.rx (statRow 1) (String.fromInt m.lines)
+           , label lay.rx (statRow 2) "LEVEL"
+           , value lay.rx (statRow 2) (String.fromInt m.level)
+           , label lay.rx (statRow 3) "BEST"
+           , value lay.rx (statRow 3) (String.fromInt m.best)
+           ]
+
+
+-- Portrait, on a phone: hold and previews go in the margins either side of
+-- the matrix, and only the score stays in the band above it.
+--
+-- They used to share one strip over the matrix, and that strip was the worst
+-- part of the game on a phone. Three previews laid out sideways read as a row
+-- of unrelated little shapes rather than a queue, hold sat next to them
+-- looking like a fourth, and all of it competed with the score for one line
+-- of width, while the margins either side of a ten-column matrix, which are
+-- always there because the matrix runs out of height first, stayed empty the
+-- whole time.
+--
+-- Beside the matrix, each one gets a column of its own: the queue reads
+-- downward, which is the direction the pieces are actually coming from, and
+-- hold sits opposite it where nothing else is competing for the eye.
+phoneShapes : Model -> Layout -> List Shape
+phoneShapes m lay =
+    let
+        cell = lay.cell
+        pw = lay.col
+        top = max 6 (cell // 3)
+        bandH = lay.by - top - cell // 3
+        pad = max 4 (cell // 4)
+        small = max 9 (cell * 2 // 5)
+        big = max 18 (cell * 6 // 5)
+
+        -- The preview size comes from the COLUMN, not from the cell: a piece
+        -- is up to four cells wide, and sizing it off the matrix cell would
+        -- let a big cell print an I piece wider than the column it lives in.
+        mini = max 4 (min (cell // 2) ((pw - pad * 2) // 4))
+        slot = mini * 4
+        head = max 12 (cell * 3 // 5)
+
+        holdMid = lay.lx + pw // 2
+        nextMid = lay.rx + pw // 2
+        holdY = lay.by
+        nextY = lay.by
+
+        -- Four previews, not three. The column has the height for them and a
+        -- deeper queue is what lets somebody plan a well two pieces early
+        -- instead of reacting.
+        shown = List.take 4 m.queue
+        holdH = pad + head + slot
+        nextH = pad + head + slot * List.length shown + pad
+
+        holdBlock =
+            if m.hold == 0 then
+                -- An empty hold is a fact worth showing: the slot stays, so a
+                -- player learns there is somewhere to put a piece. It needs an
+                -- edge to read as a container.
+                [ rect (holdMid - mini * 2) (holdY + pad + head) (mini * 4) (mini * 2) (rgba 255 255 255 5)
+                , rect (holdMid - mini * 2) (holdY + pad + head) (mini * 4) 1 (rgba 255 255 255 16)
+                ]
+
+            else
+                miniPiece m.hold holdMid (holdY + pad + head + slot // 2) mini
+
+        nextBlocks =
+            List.concat
+                (List.indexedMap
+                    (\i k -> miniPiece k nextMid (nextY + pad + head + slot // 2 + i * slot) mini)
+                    shown
+                )
+    in
+    card lay.lx holdY pw holdH
+        ++ [ Canvas.text holdMid (holdY + pad + head // 2) small Canvas.Center (rgba 255 255 255 47) "HOLD" ]
+        ++ holdBlock
+        ++ card lay.rx nextY pw nextH
+        ++ [ Canvas.text nextMid (nextY + pad + head // 2) small Canvas.Center (rgba 255 255 255 47) "NEXT" ]
+        ++ nextBlocks
+        ++ [ Canvas.text (lay.bx + lay.bw // 2) (top + bandH * 2 // 5) big Canvas.Center (rgb 244 240 232)
+                (String.fromInt m.score)
+           , Canvas.text (lay.bx + lay.bw // 2) (top + bandH * 3 // 4) small Canvas.Center (rgba 255 255 255 40)
+                ("best " ++ String.fromInt m.best ++ "    level " ++ String.fromInt m.level
+                    ++ "    " ++ String.fromInt m.lines ++ " lines")
+           ]
+
+
+-- The reward for a clear is named over the matrix and fades out with the light.
+-- It is the one piece of text that moves, so it is the one you read.
+clearBanner : Model -> Layout -> List Shape
+clearBanner m lay =
+    let
+        n = m.banner
+        t = m.frame - m.bannerAt
+
+        -- Half a second at full strength, then half a second fading. A word
+        -- has to be ON the screen long enough for an eye that is busy watching
+        -- the stack to leave it, land, and come back.
+        alpha =
+            if t < 30 then
+                100
+
+            else
+                max 0 (100 - (t - 30) * 3)
+
+        -- Genre convention: the four-row clear is named after the game. It is
+        -- the only clear that needs a well set up several pieces in advance,
+        -- so it earns the title.
+        word =
+            if n >= 4 then
+                "MAR-TRIX"
+
+            else if n == 3 then
+                "TRIPLE"
+
+            else if n == 2 then
+                "DOUBLE"
+
+            else
+                "LINE"
+
+        cx = lay.bx + lay.bw // 2
+        cy = lay.by + lay.bh // 4
+    in
+    if n == 0 || alpha == 0 then
+        []
+
+    else
+        [ Canvas.text (cx + 2) (cy + 2) (lay.cell * 5 // 4) Canvas.Center (rgba 0 0 0 alpha) word
+        , Canvas.text cx cy (lay.cell * 5 // 4) Canvas.Center (rgba 232 204 96 alpha) word
+        ]
+            ++ (if m.combo > 1 then
+                    [ Canvas.text cx (cy + lay.cell * 5 // 4) (max 11 (lay.cell * 3 // 5)) Canvas.Center
+                        (rgba 255 255 255 alpha)
+                        (String.fromInt m.combo ++ " IN A ROW")
+                    ]
+
+                else
+                    []
+               )
+
+
+-- ------------------------------------------------------------------ screens
+
+
+-- One tile drifting down the title background. The frame counter IS the
+-- animation: position is a pure function of it, so nothing has to be stored
+-- and the loop never accumulates drift. They fall in the two side margins
+-- only, so the wordmark always sits on clean background.
+driftPiece : Model -> Int -> Int -> Shape
+driftPiece m cell i =
+    let
+        kind = 1 + modBy 7 (i * 3)
+
+        -- max 1: the only divisor in the game derived from the canvas size.
+        -- `modBy 0` is defined to be 0, but a divisor that can be zero is a
+        -- smell whatever the runtime does with it.
+        band = max 1 (m.w // 4)
+        speed = 1 + modBy 3 i
+
+        px =
+            if modBy 2 i == 0 then
+                modBy band (i * 137 + 20)
+
+            else
+                m.w - band + modBy band (i * 91 + 30)
+
+        py = modBy (m.h + 200) (m.frame * speed // 2 + i * 190) - 100
+    in
+    group [ Canvas.Alpha 18 ] (miniPiece kind px py (cell // 2))

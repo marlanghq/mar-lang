@@ -1,0 +1,211 @@
+module Types exposing (..)
+
+-- Everything the tube is made of: a point, a web, a lane, the camera, the
+-- actors, and the model. No behaviour, so anything may import it.
+
+import Keyboard
+import Random
+
+
+
+
+type alias Pt =
+    { x : Int
+    , y : Int
+    }
+
+
+type alias Web =
+    { rim : List Pt
+    , closed : Bool
+    , ink : { r : Int, g : Int, b : Int }
+    }
+
+
+
+
+type alias Lane =
+    { a : Pt
+    , b : Pt
+    , mid : Pt
+    }
+
+
+type alias Cam =
+    { cx : Int          -- screen centre
+    , cy : Int
+    , scale : Int       -- web units to screen pixels, scaled by `one`
+    , spin : Int        -- brads the web is turned by (fixed per level)
+    , vx : Int          -- vanishing point, offset from centre, in web units
+    , vy : Int
+    , camZ : Int        -- how far the eye has travelled INTO the well
+    }
+
+
+
+
+type alias Shot =
+    { lane : Int
+    , z : Int
+    }
+
+
+-- Two kinds, and two is the ceiling.
+--
+-- The FLIPPER climbs, and flips lane to lane on the way. Deep in the well it
+-- flips fast, in a direction of its own; near the rim it flips slowly, and
+-- toward you. It is the game's verb: something is coming, get in front of it.
+--
+-- The TANKER is the same idea asked as a question. It only climbs: no flip,
+-- no drift, no hunt, and when you shoot it, it becomes two flippers, one to
+-- each side. That is its entire behaviour, and it earns its keep because it
+-- adds no new movement to read and one new decision to make: kill it deep and
+-- the halves have the whole well to hunt you across, kill it late and they
+-- arrive on top of you. Shooting it is never simply good.
+--
+-- A third creature would be a third thing to learn. This game is asking you
+-- to learn a place, not a bestiary.
+type Kind
+    = Flipper
+    | Tanker
+
+
+type alias Foe =
+    { kind : Kind
+    , lane : Int
+    , z : Int
+    , t : Int       -- private clock, drives the flip cadence
+    , dir : Int     -- which way it drifts while it is still deep
+    , rim : Int     -- `climbing`, or frames of stay left once it is up here
+    }
+
+
+type alias Spark =
+    { p : Pt
+    , z : Int
+    , t : Int
+    , ink : { r : Int, g : Int, b : Int }
+    }
+
+
+
+
+type Phase
+    = Title
+    | Playing
+    | Dying
+    | Warping
+    | Over
+
+
+-- A thumb on the walking half of the screen. `ox` is where it landed, `x`
+-- where it is now, and the difference between them is the whole control.
+--
+-- It is a stick, not a pair of buttons and not a position: the rim of a
+-- closed web has no ends, so a control that maps THIS far along the strip to
+-- THAT lane runs out of strip on a shape you can walk forever. Deflection
+-- means speed, and speed has no end to run out of.
+type alias Stick =
+    { ox : Int
+    , oy : Int
+    , x : Int
+    , y : Int
+    }
+
+
+type alias Model =
+    { w : Int
+    , h : Int
+    , frame : Int
+    , phase : Phase
+    , level : Int
+    , web : Web
+    , lanes : List Lane
+    , laneCount : Int
+    , lane : Int            -- where the claw stands
+    , walk : Int            -- frames until the claw may step again
+    , cool : Int            -- frames until the gun may fire again
+    , shots : List Shot
+    , foes : List Foe
+    , sparks : List Spark
+    , score : Int
+    , lives : Int
+    , spin : Int            -- this web's fixed orientation
+    , leanX : Int           -- where the far end has leaned to
+    , leanY : Int
+    , camZ : Int            -- how far the eye has travelled into the well
+    , phaseT : Int
+    , left : Int            -- enemies this level still has to send
+    , spawn : Int           -- frames until the next one enters
+    , seed : Random.Seed
+    , keys : List Keyboard.Key
+    , touch : List Keyboard.Key
+    , stick : Maybe Stick   -- the walking thumb, if one is down
+    , padTilt : Int         -- left stick X on a controller, -100..100, deadzoned
+    , padDown : List Gamepad.Button
+    , pads : Bool           -- draw the touch controls: this is a finger device
+    , sfx : List Cue
+    }
+
+
+type Cue
+    = CFire
+    | CHit Kind Int      -- what died, and the depth it died at
+    | CDie
+    | CClear
+
+
+
+
+type Msg
+    = Tick
+    | KeysChanged { down : List Keyboard.Key }
+    | Resized Int Int
+    | Tapped Int Int
+    | Pointers (List { id : Int, x : Int, y : Int })
+    | DeviceChanged Device
+    | PadChanged { connected : Bool, leftX : Int, leftY : Int, rightX : Int, rightY : Int, down : List Gamepad.Button }
+
+
+-- Touch: a band across the bottom, walking on the left of it and firing on
+-- the right, and nothing anywhere else: the middle and top of the screen is
+-- the well and must never be under a thumb.
+--
+-- WHY A STICK AND NOT TWO ARROWS. The claw walks the rim at one speed, so a
+-- left button and a right button say everything there is to say about it, and
+-- that is exactly the problem: two squares big enough to hit are two squares
+-- big enough to be in the way, and the game is a thing you read. A stick is
+-- one control, it is smaller than either button was, and it earns its
+-- footprint by being ANALOG: a nudge crawls you one lane over, a shove
+-- sprints you across the web.
+--
+-- It also does not need to be aimed. You grab it anywhere in the walking
+-- half; wherever the thumb lands becomes the centre and the rest is
+-- deflection. Nothing to hunt for and nothing to slide off.
+--
+-- The geometry is computed ONCE, here, and both the hit test and the drawing
+-- read it. That is not tidiness: it is the only way a control can be where it
+-- looks. An earlier version split the screen by fractions in the hit test and
+-- drew boxes from the same fractions somewhere else, which is two copies of
+-- one truth, and they were 38% of the screen tall because nobody was looking
+-- at the number in both places at once.
+--
+-- Sizes come off the SHORT side of the screen, so the control is the same
+-- physical size in portrait and landscape. A thumb does not get bigger when
+-- you turn the phone.
+type alias Rect =
+    { x : Int
+    , y : Int
+    , w : Int
+    , h : Int
+    }
+
+
+type alias Zones =
+    { walk : Rect       -- grab the stick anywhere in here
+    , fire : Rect       -- and hold anywhere in here to shoot
+    , rail : Rect       -- the drawn track, centred in `walk`
+    , fireX : Int       -- and the drawn fire button
+    , fireY : Int
+    , fireR : Int
+    }

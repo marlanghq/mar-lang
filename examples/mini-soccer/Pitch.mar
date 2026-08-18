@@ -1,0 +1,526 @@
+module Pitch exposing (..)
+
+-- Where the pitch is and how the match is tuned. The dimensions and the
+-- numbers derived from them live together because they are one sheet -- a
+-- pass range means nothing without the pitch it is measured on. The touch
+-- control geometry is here too, so drawing a button and hit-testing it read
+-- the same rectangle.
+
+import Palette exposing (..)
+import Types exposing (..)
+
+
+
+
+
+
+fieldW : Int
+fieldW = 640
+
+
+fieldH : Int
+fieldH = 400
+
+
+pitchL : Int
+pitchL = 40              -- left touch / goal line
+
+
+pitchR : Int
+pitchR = 600             -- right touch / goal line
+
+
+pitchT : Int
+pitchT = 46              -- top touch line
+
+
+pitchB : Int
+pitchB = 354             -- bottom touch line
+
+
+midX : Int
+midX = 320
+
+
+midY : Int
+midY = 200
+
+
+goalTop : Int
+goalTop = 160            -- goal mouth spans goalTop..goalBot (centred on midY)
+
+
+goalBot : Int
+goalBot = 240
+
+
+goalDepth : Int
+goalDepth = 20           -- how far the net sticks out behind the line
+
+
+-- Where the pitch sits and how big, this frame. `scale` is a PERCENT for
+-- Canvas.Scale. LANDSCAPE fills the screen at a whole-number zoom (crisp pixels),
+-- centred on the dark bezel. PORTRAIT pins the pitch to the TOP and scales it to
+-- fill the width (capped so it never eats more than ~58% of the height); the empty
+-- band below becomes the control deck. Portrait scale isn't whole-number, but the
+-- art is all rects so it stays clean.
+ctrlBand : Int
+ctrlBand = 168           -- landscape: width reserved on EACH side for the touch controls, off the pitch
+
+
+pitchLayout : Model -> { scale : Int, ox : Int, oy : Int, portrait : Bool }
+pitchLayout model =
+    let
+        w = model.w
+        h = model.h
+    in
+    if h > w then
+        let
+            fitW = w * 100 // fieldW
+            fitH = (h * 58 // 100) * 100 // fieldH
+            s = max 60 (min fitW fitH)
+        in
+        { scale = s, ox = (w - fieldW * s // 100) // 2, oy = 6, portrait = True }
+    else
+        -- LANDSCAPE: reserve a control column each SIDE (the d-pad + buttons live there,
+        -- OFF the pitch); the pitch is scaled to fit + centre in the space between them.
+        let
+            innerW = max 200 (w - 2 * ctrlBand)
+            s = min (innerW * 100 // fieldW) (h * 100 // fieldH)
+        in
+        { scale = s, ox = (w - fieldW * s // 100) // 2, oy = (h - fieldH * s // 100) // 2, portrait = False }
+
+
+-- A floating joystick lives in the LEFT half of the screen (press anywhere to
+-- drop it, drag to steer); the action buttons are bottom-RIGHT. Splitting by
+-- screen half lets one thumb steer while the other taps, since the canvas gives
+-- us no per-pointer id to tell the two touches apart.
+
+
+joyMax : Int
+joyMax = 46              -- max knob travel from the base
+
+
+joyDead : Int
+joyDead = 14             -- knob offset before a direction registers
+
+
+btnKick : Int -> Int -> Vec
+btnKick w h =
+    { x = w - 76, y = h - 88 }
+
+
+btnSlide : Int -> Int -> Vec
+btnSlide w h =
+    { x = w - 150, y = h - 150 }
+
+
+btnSwitch : Int -> Int -> Vec
+btnSwitch w h =
+    { x = w - 44, y = h - 172 }
+
+
+btnR : Int
+btnR = 32
+
+
+inCircle : Int -> Int -> Vec -> Int -> Bool
+inCircle x y c r =
+    d2 x y c.x c.y <= r * r
+
+
+-- Screen positions of the d-pad + the three action buttons. PORTRAIT: they live in
+-- the DECK below the pitch (anchored to the screen's bottom corners, which IS the
+-- deck). LANDSCAPE: they sit over the GRASS in the pitch's bottom corners, inset from
+-- the goals and touchlines: computed from the SAME `lay` the pitch is drawn with, so
+-- they always land on green, never lost in the dark bezel or sitting on a goal.
+controlAnchors : Model -> { scale : Int, ox : Int, oy : Int, portrait : Bool } -> { dpad : Vec, kick : Vec, slide : Vec, switch : Vec }
+controlAnchors model lay =
+    let
+        w = model.w
+        h = model.h
+    in
+    if lay.portrait then
+        { dpad = { x = 92, y = h - 96 }
+        , kick = btnKick w h
+        , slide = btnSlide w h
+        , switch = btnSwitch w h
+        }
+    else
+        -- LANDSCAPE: the pitch left `ctrlBand` free on each side (pitchLayout), so the
+        -- screen-edge corners now land in those empty columns, off the grass.
+        { dpad = { x = 84, y = h - 92 }
+        , kick = { x = w - 62, y = h - 74 }
+        , slide = { x = w - 124, y = h - 112 }
+        , switch = { x = w - 52, y = h - 146 }
+        }
+
+
+-- The fixed d-pad's centre (its layout-aware anchor). The finger steers off this.
+dpadCenter : Model -> Vec
+dpadCenter model =
+    (controlAnchors model (pitchLayout model)).dpad
+
+
+dpadHit : Int
+dpadHit = 88             -- half-size of the d-pad's touch zone (a comfortable thumb area)
+
+
+inDpad : Model -> Int -> Int -> Bool
+inDpad model x y =
+    let
+        c = dpadCenter model
+    in
+    absI (x - c.x) < dpadHit && absI (y - c.y) < dpadHit
+
+
+
+
+-- The match runs at a smooth 60fps. How fast it *feels* is set by the small
+-- per-tick step sizes here, NOT by the frame rate: keep the steps low and the
+-- action stays slow and readable while every frame is still fluid. (Dropping
+-- the frame rate to slow things down just looks choppy, so we don't.) YOUR
+-- movement is sub-pixel (subPx / cardSub / diagSub, below); the AI uses these
+-- whole-pixel steps.
+cpuSpeed : Int
+cpuSpeed = 2             -- AI cardinal step: matches your ~2px straight-line speed
+
+
+cpuDiag : Int
+cpuDiag = 1              -- AI diagonal step: also equal to yours (a fair chase)
+
+
+keeperSpeed : Int
+keeperSpeed = 3          -- a touch quicker, so it can reach a shot aimed at a corner
+
+
+keeperReact : Int
+keeperReact = 82         -- only commits to a shot's corner once it is this close;
+                         -- caught flat-footed on the far corner from range, so a
+                         -- well-placed shot beats it (goals happen; no shot-save loop)
+
+
+spaceR2 : Int
+spaceR2 = 1024           -- 32^2: two players closer than this shove apart
+
+
+spacePush : Int
+spacePush = 15           -- how hard each too-close neighbour nudges a support target
+
+
+spaceMax : Int
+spaceMax = 42            -- cap on the total separation nudge
+
+
+coverGap : Int
+coverGap = 62            -- how far goal-side the 2nd presser sits off the ball (so the pair don't stack)
+
+
+-- Sub-pixel movement for the player you control: positions are whole pixels,
+-- but movement accumulates in 1/subPx steps so a diagonal covers the same
+-- ground as a straight line (before, a straight run was ~40% faster than a
+-- diagonal). cardSub = subPx * 2 (2 px/tick straight); diagSub ≈ cardSub / √2.
+subPx : Int
+subPx = 8
+
+
+cardSub : Int
+cardSub = 16             -- straight-line speed: 16/8 = 2 px per tick
+
+
+diagSub : Int
+diagSub = 11             -- per-axis diagonal: 11*√2/8 ≈ 1.9 px, ~even with straight
+
+
+-- sliding tackle ("carrinho"): a committed lunge that reaches farther than a
+-- standing tackle but leaves you recovering (cool) if you miss.
+slideTicks : Int
+slideTicks = 10          -- how long the slide lasts (shorter, so it doesn't overshoot)
+
+
+slideSpeed : Int
+slideSpeed = 3           -- px/tick while sliding: a lunge, only a bit faster than a run
+
+
+slideReach2 : Int
+slideReach2 = 484        -- 22^2: the steal radius during a slide (the lunge still sweeps ground, so it must connect close, not vacuum the ball from afar)
+
+
+slideRecover : Int
+slideRecover = 16        -- extra cool ticks after a slide before you can act
+
+
+slideDownTicks : Int
+slideDownTicks = 12      -- ticks face-down after a MISSED slide (won nothing): a brief stumble, just enough that a wild carrinho isn't free
+
+
+dribbleAhead : Int
+dribbleAhead = 12        -- how far ahead of the carrier the ball sits
+
+
+kickPow : Int
+kickPow = 10             -- shot / kick launch speed (slow enough to read + aim); the
+                         -- CPU shoots at this same power, so neither keeper has it easy
+
+
+shootBoostRange : Int
+shootBoostRange = 150    -- within this of the enemy goal line, your shot gets extra pace
+
+
+shootBoost : Int
+shootBoost = 2           -- how much faster a close-range shot flies (kickPow + this):
+                         -- firmer than a normal shot, but not the rocket +3 was
+
+
+passPow : Int
+passPow = 7              -- speed the kickoff ball is rolled toward the receiver
+
+
+passArrive2 : Int
+passArrive2 = 144        -- 12^2: within this of the receiver, he collects the kickoff pass
+
+
+cpuPassPow : Int
+cpuPassPow = 8           -- a Red CPU's firm ground pass to a team-mate (a touch under a shot's kickPow=10)
+
+
+passLead : Int
+passLead = 24            -- a CPU pass target must be at least this far AHEAD (toward goal): only forward balls
+
+
+passPressR2 : Int
+passPressR2 = 324        -- 18^2: a Blue defender this close to a Red carrier is "pressure", lay the ball off
+
+
+passEvery : Int
+passEvery = 75           -- even unpressured, a Red carrier out of shooting range lays a pass off about this often (ticks)
+
+
+clearPow : Int
+clearPow = 9             -- keeper punch speed
+
+
+pickupR2 : Int
+pickupR2 = 324           -- 18^2: a loose ball this close is collected
+
+
+tackleR2 : Int
+tackleR2 = 256           -- 16^2: YOUR standing-steal reach (L near a red carrier) - you must be right on him, not just nearby
+
+
+pressR2 : Int
+pressR2 = 196            -- 14^2: the CPU's robbing reach, a bit shorter than your 22^2
+                         -- tackle so you keep the ball, but close enough to pressure you
+
+
+catchR2 : Int
+catchR2 = 676            -- 26^2: keeper clear reach
+
+
+collectMax : Int
+collectMax = 230         -- ball too fast (v^2 above this) blows past outfielders
+
+
+pickGrace : Int
+pickGrace = 13           -- ticks a ball you WON (tackle, slide, loose pickup) stays safe,
+                         -- long enough to start dribbling away after winning it
+
+
+tackleGrace : Int
+tackleGrace = 12         -- ticks the ball locks after the CPU robs you, short enough
+                         -- that you can contest again quickly (your reach beats theirs)
+
+
+goalFlash : Int
+goalFlash = 205          -- GOAL! celebration hold (banner + confetti) before reset (~3.4s, covers the rising shout)
+
+
+breakTicks : Int
+breakTicks = 100         -- HALF TIME banner hold before the second-half walk-on
+
+
+warmupSpeed : Int
+warmupSpeed = 2          -- px/tick the teams walk on, or trot back, to position (a slow, ceremonial pace)
+
+
+setPause : Int
+setPause = 55            -- a beat with the teams set, before the ball drops (~0.9s)
+
+
+whistleLead : Int
+whistleLead = 26         -- the ref whistles this many ticks BEFORE the ball goes
+                         -- live, so there is a real pause between peep and kickoff
+
+
+startHold : Int
+startHold = 40           -- a beat on the menu after you press start, while the intro sound rings out (~0.66s)
+
+
+fullLock : Int
+fullLock = 110           -- full time: ignore input (and hide the prompt) for ~1.8s, so a shot you were mashing as the match ended does not skip the end screen
+
+
+introCycle : Int
+introCycle = 200         -- title-screen animation loop (one crossing of the big ball)
+
+
+shootX : Int
+shootX = 150             -- a red carrier carries this deep before shooting, so its
+                         -- aimed diagonal is steep enough to trouble the keeper (as
+                         -- your own close-range shots do) - not a soft long-range poke
+
+
+animCycle : Int
+animCycle = 60           -- animation clock wrap (bobs / pulses)
+
+
+-- 60fps: fluid motion. The per-tick step sizes above (not this number) set the
+-- pace. Clock + match length derive from it, so they stay in real seconds.
+fps : Int
+fps = 60
+
+
+matchTicks : Int
+matchTicks = 90 * fps    -- a 90-second match
+
+
+
+
+attackDirX : Team -> Int
+attackDirX team =
+    if team == Blue then 1 else 0 - 1
+
+
+enemyGoalX : Team -> Int
+enemyGoalX team =
+    if team == Blue then pitchR else pitchL
+
+
+-- SECOND-HALF END SWAP. Real teams change ends at half time. The pitch is symmetric
+-- about midX, so the swap is a single sign: in the 2nd half every team-relative
+-- direction and goal flips (a team that attacked right now attacks left, defends the
+-- other goal). Home positions are mirrored once at the half-time walk-on (placeAtSides)
+-- and every geometry helper reads this sign, so the SIMULATION is genuinely mirrored -
+-- rendering, on-screen text and your controls are all untouched (you still just move
+-- toward where you want to go, and the score/goals stay correct).
+flipSign : Model -> Int
+flipSign model =
+    if model.half == 2 then 0 - 1 else 1
+
+
+-- the direction a team attacks along x THIS half (+1 = toward +x, -1 = toward -x).
+atkDir : Model -> Team -> Int
+atkDir model team =
+    attackDirX team * flipSign model
+
+
+-- the goal a team is attacking this half (mirrored to the far side in the 2nd half).
+foeGoalX : Model -> Team -> Int
+foeGoalX model team =
+    if model.half == 2 then fieldW - enemyGoalX team else enemyGoalX team
+
+
+inMouth : Int -> Bool
+inMouth y =
+    y >= goalTop && y <= goalBot
+
+
+clampPX : Int -> Int
+clampPX x =
+    iclamp 26 614 x
+
+
+-- keep the player between the touchlines (the sideline is the limit), so nobody
+-- walks out onto the terraces. The top bound is inset a little more than the
+-- bottom because the sprite is drawn UPWARD from its feet: this keeps the head
+-- clear of the top stand.
+clampPY : Int -> Int
+clampPY y =
+    iclamp 55 354 y
+
+
+boolInt : Bool -> Int
+boolInt b =
+    if b then 1 else 0
+
+
+approach : Int -> Int -> Int -> Int
+approach cur target sp =
+    let
+        d = target - cur
+    in
+    if absI d <= sp then target else cur + isign d * sp
+
+
+absI : Int -> Int
+absI n =
+    if n < 0 then 0 - n else n
+
+
+iclamp : Int -> Int -> Int -> Int
+iclamp lo hi v =
+    if v < lo then lo else if v > hi then hi else v
+
+
+isign : Int -> Int
+isign n =
+    if n > 0 then 1 else if n < 0 then 0 - 1 else 0
+
+
+d2 : Int -> Int -> Int -> Int -> Int
+d2 ax ay bx by =
+    (ax - bx) * (ax - bx) + (ay - by) * (ay - by)
+
+
+mod2 : Int -> Int
+mod2 n =
+    n - (n // 2) * 2
+
+
+mod4 : Int -> Int
+mod4 n =
+    n - (n // 4) * 4
+
+
+-- positive modulo (n >= 0, m > 0): used to scatter confetti deterministically.
+imodP : Int -> Int -> Int
+imodP n m =
+    n - (n // m) * m
+
+
+-- a slow triangle oscillation in [-amp, amp], period 240 ticks (~4s), offset by
+-- `phase`. Drives the little wander of off-ball players so they are not glued to
+-- an exact spot. Fed the match clock (a long-running counter), phased per player.
+osc : Int -> Int -> Int -> Int
+osc clock phase amp =
+    let
+        p = imodP (clock + phase) 240
+        v = 120 - absI (p - 120)
+    in
+    (v - 60) * amp // 60
+
+
+nextAnim : Int -> Int
+nextAnim a =
+    if a + 1 >= animCycle then 0 else a + 1
+
+
+-- two-position vertical wobble: 0 for the first half of `period`, `height` for
+-- the second. Used for the goal banner lift.
+bob : Int -> Int -> Int -> Int
+bob clock period height =
+    if mod2 (clock // (period // 2)) == 0 then 0 else height
+
+
+blink : Int -> Color
+blink a =
+    if mod2 (a // 8) == 0 then hudAmber else hudDim
+
+
+clockStr : Int -> String
+clockStr ticks =
+    -- `ticks` is match time REMAINING (the sim counts down internally, and that
+    -- counter also drives animation/RNG). A real scoreboard counts UP, so show
+    -- ELAPSED whole match-minutes: 0 → 45 (half time) → 90 (full time). One real
+    -- second of play reads as one match-minute here.
+    String.join "" [ String.fromInt ((matchTicks - ticks) // fps), "'" ]

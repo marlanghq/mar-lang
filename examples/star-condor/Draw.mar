@@ -1,0 +1,1034 @@
+module Draw exposing (..)
+
+-- The sky as pixels: three parallax layers per stage, then the ship, the
+-- foes, the bullets, the sparks and the HUD.
+
+import Balance exposing (..)
+import Boss exposing (..)
+import Font exposing (..)
+import Stages exposing (..)
+import Types exposing (..)
+import Canvas exposing ( circle, group, rect, rgb, triangle )
+
+
+-- Opaque strips over the four letterbox margins, drawn AFTER the world
+-- group. The scaled group is not clipped, and the game constantly draws
+-- outside the 320x240 stage (foes spawn at y = -16, parallax bands wrap
+-- past the edges): on a desktop canvas the playfield ends exactly at the
+-- canvas border so none of it shows, but on a tall phone screen the
+-- margins expose everything. Same color as the page backdrop, so the
+-- stage reads as a framed arcade screen.
+matteShapes : Model -> Layout -> List Shape
+matteShapes m lay =
+    let
+        pw = gameW * lay.scale // 100
+        ph = gameH * lay.scale // 100
+        bg = rgb 6 6 10
+    in
+    [ rect 0 0 m.w (max 0 lay.oy) bg
+    , rect 0 (lay.oy + ph) m.w (max 0 (m.h - lay.oy - ph)) bg
+    , rect 0 0 (max 0 lay.ox) m.h bg
+    , rect (lay.ox + pw) 0 (max 0 (m.w - lay.ox - pw)) m.h bg
+    ]
+
+
+muteIcon : Model -> List Shape
+muteIcon m =
+    let
+        c = rgb 150 156 176
+    in
+    List.concat
+        [ [ rect 300 6 3 5 c
+          , rect 303 4 2 9 c
+          ]
+        , if m.muted then [ rect 297 3 14 2 (rgb 220 70 70) ] else [ rect 308 6 2 5 c ]
+        ]
+
+
+
+
+bgShapes : Model -> List Shape
+bgShapes m =
+    let
+        th = theme m.stage
+        t = m.st + m.tick // 4
+        farS = t // 6
+        midS = t // 2
+        detS = t * 2
+    in
+    List.concat
+        [ [ rect 0 0 gameW 90 th.skyA
+          , rect 0 90 gameW 80 th.skyB
+          , rect 0 170 gameW 70 th.skyC
+          ]
+        -- Aerial perspective: the further a layer is, the more air sits
+        -- between it and the Condor, so the more sky bleeds through it. The
+        -- far silhouettes read as haze, the canopies as closer but still
+        -- airy, and the detail layer stays solid because it is right under
+        -- the wing. Depth used to be carried by parallax speed alone.
+        --
+        -- One Alpha group per LAYER, not per shape: that is one composite
+        -- per layer per frame (cheap), and it is the only way the overlapping
+        -- puffs inside a layer come out evenly translucent instead of showing
+        -- every circle's seam where they cross.
+        , [ group [ Canvas.Alpha 62 ] (farLayer m.stage th farS) ]
+        , [ group [ Canvas.Alpha 84 ] (midLayer m.stage th midS) ]
+        , detLayer m.stage th detS
+        ]
+
+
+-- big slow silhouettes: one band of features that wraps vertically
+farLayer : Int -> Theme -> Int -> List Shape
+farLayer s th scroll =
+    List.concat
+        (List.map
+            (\i ->
+                let
+                    y = modBy (gameH + 120) (i * 96 + scroll) - 100
+                    x = 20 + modBy 240 (i * 137 + s * 61)
+                in
+                if s == 2 then
+                    -- basalt shelf of the falls
+                    [ rect 0 y gameW 20 th.far
+                    , rect 0 (y + 20) gameW 4 th.farD
+                    ]
+                else if s == 5 then
+                    -- dune ridges under the star sky
+                    [ triangle x (y + 40) (x + 90) (y + 40) (x + 45) y th.far
+                    , triangle (x + 60) (y + 40) (x + 150) (y + 40) (x + 105) (y + 12) th.farD
+                    ]
+                else if s == 7 then
+                    -- terraced peak
+                    [ triangle x (y + 52) (x + 76) (y + 52) (x + 38) y th.far
+                    , rect (x + 8) (y + 34) 60 4 th.farD
+                    , rect (x + 16) (y + 22) 44 4 th.farD
+                    ]
+                else if s == 10 then
+                    -- stepped pyramid
+                    [ rect (x + 6) (y + 30) 68 14 th.far
+                    , rect (x + 16) (y + 18) 48 14 th.farD
+                    , rect (x + 26) (y + 6) 28 14 th.far
+                    ]
+                else if s == 3 then
+                    -- city blocks on the dusk horizon
+                    [ rect x y 14 40 th.far
+                    , rect (x + 20) (y + 10) 10 30 th.farD
+                    , rect (x + 36) (y + 4) 12 36 th.far
+                    ]
+                else if s == 9 then
+                    -- harbor cranes
+                    [ rect x y 4 40 th.far
+                    , rect x y 30 4 th.far
+                    , rect (x + 26) y 3 12 th.farD
+                    ]
+                else
+                    -- generic mountains / volcano cones
+                    [ triangle x (y + 48) (x + 84) (y + 48) (x + 42) y th.far
+                    , triangle (x + 50) (y + 48) (x + 118) (y + 48) (x + 84) (y + 14) th.farD
+                    ]
+            )
+            (List.range 0 3))
+
+
+-- mid features: trees, floes, reeds, waves, per-stage shapes
+midLayer : Int -> Theme -> Int -> List Shape
+midLayer s th scroll =
+    List.concat
+        (List.map
+            (\i ->
+                let
+                    y = modBy (gameH + 80) (i * 60 + scroll) - 60
+                    x = 10 + modBy 290 (i * 197 + s * 89)
+                in
+                if s == 1 then
+                    -- canopy puffs + the river ribbon
+                    List.concat
+                        [ [ circle x y 12 th.mid
+                          , circle (x + 12) (y + 4) 9 th.midD
+                          ]
+                        , if modBy 3 i == 0 then [ rect 0 (y + 30) gameW 10 th.det ] else []
+                        ]
+                else if s == 2 then
+                    -- falling water columns with foam heads
+                    [ rect (modBy 300 (x * 3)) y 12 44 th.mid
+                    , rect (modBy 300 (x * 3)) (y + 40) 12 6 th.det
+                    , rect (modBy 300 (x * 3) + 3) (y + 8) 3 26 th.midD
+                    ]
+                else if s == 4 then
+                    -- drifting ice floes
+                    [ rect x y 26 8 th.mid
+                    , rect (x + 4) (y - 4) 14 4 th.det
+                    ]
+                else if s == 5 then
+                    -- observatory domes on ridges
+                    [ circle x y 8 th.det
+                    , rect (x - 9) y 18 6 th.mid
+                    ]
+                else if s == 6 then
+                    -- salt polygons + a flamingo fleck
+                    List.concat
+                        [ [ rect x y 22 2 th.midD
+                          , rect (x + 6) (y + 8) 18 2 th.midD
+                          ]
+                        , if modBy 4 i == 0 then [ circle (x + 14) (y - 4) 2 th.acc ] else []
+                        ]
+                else if s == 8 then
+                    -- island humps + surf
+                    [ circle x y 14 th.mid
+                    , rect (x - 14) (y + 8) 30 4 th.det
+                    ]
+                else if s == 9 then
+                    -- waves + a cargo hull
+                    List.concat
+                        [ [ rect x y 30 3 th.det ]
+                        , if modBy 3 i == 1 then [ rect (x + 4) (y - 8) 22 7 th.far ] else []
+                        ]
+                else if s == 10 then
+                    -- marigold beds
+                    [ rect x y 24 6 th.mid
+                    , circle (x + 6) y 3 th.acc
+                    , circle (x + 16) (y + 3) 3 th.acc
+                    ]
+                else
+                    -- pampas grass / generic scrub
+                    [ rect x y 18 4 th.mid
+                    , rect (x + 4) (y - 4) 4 4 th.midD
+                    ]
+            )
+            (List.range 0 6))
+
+
+-- near dust: fast small particles set the speed feeling
+detLayer : Int -> Theme -> Int -> List Shape
+detLayer s th scroll =
+    List.concat
+        (List.map
+            (\i ->
+                let
+                    y = modBy (gameH + 20) (i * 34 + scroll) - 10
+                    x = modBy gameW (i * 173 + s * 31)
+                in
+                [ rect x y 2 (if s == 2 || s == 4 then 6 else 2) th.det ]
+            )
+            (List.range 0 11))
+
+
+
+
+-- the Condor: swept delta wings, cockpit up front, tail fins, twin engines
+shipShapes : Model -> List Shape
+shipShapes m =
+    let
+        x = m.px
+        y = m.py
+        flame = if modBy 2 (m.tick // 3) == 0 then 5 else 8
+        flame2 = if modBy 2 (m.tick // 3) == 0 then 8 else 5
+        body =
+            List.concat
+            [ -- twin engine flames at the wing roots
+              [ triangle (x - 5) (y + 6) (x - 2) (y + 6) (x - 3) (y + 6 + flame) (rgb 255 170 40)
+              , triangle (x + 2) (y + 6) (x + 5) (y + 6) (x + 4) (y + 6 + flame2) (rgb 255 170 40)
+              , triangle (x - 4) (y + 6) (x - 3) (y + 6) (x - 3) (y + 3 + flame) (rgb 255 240 170)
+              , triangle (x + 3) (y + 6) (x + 4) (y + 6) (x + 4) (y + 3 + flame2) (rgb 255 240 170)
+              ]
+            , -- swept delta wings, gold tipped
+              [ triangle (x - 12) (y + 5) (x - 2) (y - 3) (x - 2) (y + 5) (rgb 205 214 228)
+              , triangle (x + 12) (y + 5) (x + 2) (y - 3) (x + 2) (y + 5) (rgb 205 214 228)
+              , rect (x - 12) (y + 3) 3 2 (rgb 240 190 70)
+              , rect (x + 9) (y + 3) 3 2 (rgb 240 190 70)
+              ]
+            , -- tail fins
+              [ triangle (x - 7) (y + 7) (x - 2) (y + 3) (x - 2) (y + 7) (rgb 160 170 188)
+              , triangle (x + 7) (y + 7) (x + 2) (y + 3) (x + 2) (y + 7) (rgb 160 170 188)
+              ]
+            , -- fuselage: nose cone, crest stripe, canopy, engine bar
+              [ rect (x - 2) (y - 6) 4 13 (rgb 235 240 248)
+              , triangle (x - 2) (y - 6) (x + 2) (y - 6) x (y - 11) (rgb 235 240 248)
+              , rect (x - 1) (y - 9) 2 3 (rgb 230 60 80)
+              , rect (x - 1) (y - 4) 2 4 (rgb 70 140 255)
+              , rect (x - 2) (y + 3) 4 2 (rgb 160 170 188)
+              ]
+            ]
+    in
+    if m.mode == Play && m.invulnT > 0 then
+        -- Post-hit invulnerability used to blink the ship out of existence
+        -- every 4 ticks. That is a 15Hz strobe, and it deleted the one thing
+        -- you need after taking a hit: knowing where you are. Now the Condor
+        -- PHASES instead, breathing between 35% and 55% twice a second. Same
+        -- signal, no flicker, and the plane never leaves the screen.
+        --
+        -- Alpha, not rgba on each part: the sprite is fifteen overlapping
+        -- shapes, so fading them one by one would show the wings through the
+        -- fuselage and the canopy through the nose. Alpha composites the ship
+        -- first and fades the result, so it stays a plane.
+        [ group [ Canvas.Alpha (35 + modBy 2 (m.invulnT // 15) * 20) ] body ]
+    else
+        body
+
+
+foeShapes : Model -> List Shape
+foeShapes m =
+    let
+        th = theme m.stage
+    in
+    List.concat
+        (List.map
+            (\f ->
+                let
+                    x = f.x // fp
+                    y = f.y // fp
+                    body =
+                        if f.kind == 0 then
+                            [ circle x y 6 th.acc
+                            , rect (x - 9) (y - 1) 18 3 th.farD
+                            , circle x (y - 2) 2 (rgb 20 20 30)
+                            ]
+                        else if f.kind == 1 then
+                            [ triangle (x - 6) (y - 6) (x + 6) (y - 6) x (y + 8) (rgb 220 80 70)
+                            , rect (x - 2) (y - 6) 4 4 (rgb 40 24 30)
+                            ]
+                        else if f.kind == 2 then
+                            [ circle x y 8 th.midD
+                            , circle x y 5 th.mid
+                            , circle x (y + 2) 2 (rgb 255 120 90)
+                            , rect (x - 10) (y - 2) 3 4 th.farD
+                            , rect (x + 7) (y - 2) 3 4 th.farD
+                            ]
+                        else if f.kind == 3 then
+                            [ group [ Canvas.Translate x y, Canvas.Rotate (Math.degrees (f.t * 6)) ]
+                                [ rect (0 - 5) (0 - 5) 10 10 th.acc
+                                , rect (0 - 2) (0 - 2) 4 4 (rgb 20 20 30)
+                                ]
+                            ]
+                        else
+                            -- the pinata: striped diamond, hinting its gift color
+                            [ triangle (x - 8) y (x + 8) y x (y - 11) (starColor f.gift)
+                            , triangle (x - 8) y (x + 8) y x (y + 11) (rgb 240 240 244)
+                            , rect (x - 7) (y - 3) 14 2 (rgb 240 190 70)
+                            , rect (x - 5) (y + 3) 10 2 (starColor f.gift)
+                            ]
+                    -- white damage flash: unmistakable "you ARE hurting it"
+                    flash =
+                        if f.hurtT > 0 then
+                            [ circle x y 5 (rgb 255 255 255) ]
+                        else
+                            []
+                in
+                List.concat [ body, flash ]
+            )
+            m.foes)
+
+
+-- repeat a decoration across a barrier segment, padded off both ends
+across : Int -> Int -> Int -> (Int -> List Shape) -> List Shape
+across x0 wid step f =
+    if wid < step + 8 then
+        []
+    else
+        List.concat
+            (List.map (\i -> f (x0 + 4 + i * step)) (List.range 0 ((wid - 8) // step - 1)))
+
+
+-- barriers WEAR the stage instead of being generic walls: a canopy line,
+-- a falls lip, a fence with silos, an ice ridge, a dune crest, salt crust,
+-- an inca terrace, a lava reef, a canal lock gate, a pyramid step
+wallShapes : Model -> List Shape
+wallShapes m =
+    let
+        th = theme m.stage
+        s = m.stage
+    in
+    List.concat
+        (List.map
+            (\w ->
+                if w.w <= 0 then
+                    []
+                else
+                    let
+                        y = w.y // fp
+                    in
+                    if s == 1 then
+                        -- Amazon: an unbroken treetop line with trunks below
+                        List.concat
+                            [ [ rect w.x y w.w 14 (rgb 24 74 46)
+                              , rect w.x (y + 11) w.w 3 (rgb 12 40 26)
+                              ]
+                            , across w.x w.w 13 (\x -> [ circle x (y + 3) 5 (rgb 34 96 54) ])
+                            , across w.x w.w 26 (\x -> [ circle (x + 7) (y + 5) 4 th.midD ])
+                            , across w.x w.w 36 (\x -> [ rect x (y + 8) 4 6 (rgb 92 62 38) ])
+                            ]
+                    else if s == 2 then
+                        -- Iguazu: a basalt ledge, water spilling off its lip
+                        List.concat
+                            [ [ rect w.x y w.w 14 th.far
+                              , rect w.x y w.w 3 th.det
+                              ]
+                            , across w.x w.w 11 (\x -> [ rect x (y + 14) 3 (4 + modBy 5 x) th.mid ])
+                            ]
+                    else if s == 3 then
+                        -- Pampas: fence rails, posts and little red silos
+                        List.concat
+                            [ [ rect w.x y w.w 14 (rgb 150 118 48)
+                              , rect w.x (y + 4) w.w 2 (rgb 110 84 36)
+                              , rect w.x (y + 9) w.w 2 (rgb 110 84 36)
+                              ]
+                            , across w.x w.w 16 (\x -> [ rect x y 2 14 (rgb 86 64 30) ])
+                            , across w.x w.w 72
+                                (\x ->
+                                    [ rect x (y + 2) 8 12 (rgb 176 60 54)
+                                    , triangle (x - 1) (y + 2) (x + 9) (y + 2) (x + 4) (y - 3) (rgb 140 46 42)
+                                    ])
+                            ]
+                    else if s == 4 then
+                        -- Patagonia: a drifting ice ridge, spiked and cracked
+                        List.concat
+                            [ [ rect w.x y w.w 14 (rgb 168 208 224)
+                              , rect w.x (y + 12) w.w 2 (rgb 90 140 170)
+                              ]
+                            , across w.x w.w 15 (\x -> [ triangle x y (x + 10) y (x + 5) (y - 6) th.det ])
+                            , across w.x w.w 23 (\x -> [ rect x (y + 4) 1 8 (rgb 120 168 196) ])
+                            ]
+                    else if s == 5 then
+                        -- Atacama: a dune crest with sun-baked rocks
+                        List.concat
+                            [ [ rect w.x y w.w 14 (rgb 128 78 48) ]
+                            , across w.x w.w 17 (\x -> [ triangle x y (x + 14) y (x + 7) (y - 5) (rgb 150 96 58) ])
+                            , across w.x w.w 29 (\x -> [ rect x (y + 8) 3 3 (rgb 70 42 30) ])
+                            ]
+                    else if s == 6 then
+                        -- Uyuni: raised salt crust, cracked into polygons
+                        List.concat
+                            [ [ rect w.x y w.w 14 (rgb 226 232 238)
+                              , rect w.x y w.w 2 th.det
+                              ]
+                            , across w.x w.w 19
+                                (\x ->
+                                    [ rect x (y + 4) 12 2 (rgb 190 200 212)
+                                    , rect (x + 6) (y + 9) 10 2 (rgb 190 200 212)
+                                    ])
+                            ]
+                    else if s == 7 then
+                        -- Machu Picchu: an inca terrace, grass lip over masonry
+                        List.concat
+                            [ [ rect w.x y w.w 14 (rgb 134 134 126)
+                              , rect w.x y w.w 3 th.mid
+                              ]
+                            , across w.x w.w 15
+                                (\x ->
+                                    [ rect x (y + 4) 2 5 (rgb 104 104 96)
+                                    , rect (x + 7) (y + 9) 2 5 (rgb 104 104 96)
+                                    ])
+                            ]
+                    else if s == 8 then
+                        -- Galapagos: a lava reef breaking the surf
+                        List.concat
+                            [ [ rect w.x y w.w 14 (rgb 46 42 46) ]
+                            , across w.x w.w 13 (\x -> [ circle x (y + 2) 4 (rgb 66 60 64) ])
+                            , across w.x w.w 21 (\x -> [ rect x (y - 2) 6 2 th.det ])
+                            ]
+                    else if s == 9 then
+                        -- Panama: a steel lock gate; hazard stripes mark the gap
+                        let
+                            sx = if w.x == 0 then w.x + w.w - 12 else w.x
+                        in
+                        List.concat
+                            [ [ rect w.x y w.w 14 (rgb 56 66 84)
+                              , rect w.x (y + 1) w.w 2 (rgb 96 110 132)
+                              , rect w.x (y + 11) w.w 2 (rgb 96 110 132)
+                              ]
+                            , across w.x w.w 13
+                                (\x ->
+                                    [ rect x (y + 1) 2 12 (rgb 36 44 58)
+                                    , rect (x + 6) (y + 2) 1 1 th.det
+                                    , rect (x + 6) (y + 11) 1 1 th.det
+                                    ])
+                            , List.map
+                                (\i -> rect (sx + i * 3) (y + 3) 3 8 (if modBy 2 i == 0 then rgb 232 190 70 else rgb 30 30 36))
+                                (List.range 0 3)
+                            ]
+                    else
+                        -- Teotihuacan: a pyramid step, marigolds on the ledge
+                        List.concat
+                            [ [ rect w.x y w.w 14 (rgb 170 100 42)
+                              , rect w.x (y + 8) w.w 6 (rgb 140 80 34)
+                              , rect w.x y w.w 4 (rgb 196 122 52)
+                              ]
+                            , across w.x w.w 11 (\x -> [ circle x (y + 2) 2 th.acc ])
+                            ]
+            )
+            m.walls)
+
+
+starColor : Int -> Color
+starColor k =
+    if k == 0 then rgb 255 210 60
+    else if k == 1 then rgb 80 150 255
+    else if k == 2 then rgb 240 80 80
+    else if k == 3 then rgb 90 220 120
+    else rgb 250 130 180
+
+
+starShapes : Model -> List Shape
+starShapes m =
+    List.concat
+        (List.map
+            (\s ->
+                let
+                    x = s.x // fp
+                    y = s.y // fp
+                    c = starColor s.kind
+                    r = if modBy 2 (s.t // 8) == 0 then 5 else 6
+                in
+                if s.kind == 4 then
+                    [ circle (x - 2) (y - 1) 3 c
+                    , circle (x + 2) (y - 1) 3 c
+                    , triangle (x - 5) y (x + 5) y x (y + 6) c
+                    ]
+                else
+                    [ triangle (x - r) (y + 2) (x + r) (y + 2) x (y - r) c
+                    , triangle (x - r) (y - 2) (x + r) (y - 2) x (y + r) c
+                    ]
+            )
+            m.stars)
+
+
+bulShapes : Model -> List Shape
+bulShapes m =
+    List.concat
+        (List.map
+            (\b ->
+                let
+                    x = b.x // fp
+                    y = b.y // fp
+                in
+                if b.w == 0 then
+                    [ rect (x - 1) (y - 6) 2 10 (rgb 140 200 255)
+                    , rect (x - 1) (y - 8) 2 3 (rgb 235 245 255)
+                    ]
+                else if b.w == 1 then
+                    [ circle x y 2 (rgb 255 150 90)
+                    , circle x (y - 2) 1 (rgb 255 230 160)
+                    ]
+                else
+                    [ circle x y 3 (rgb 110 230 140)
+                    , circle x y 1 (rgb 230 255 230)
+                    ]
+            )
+            m.buls)
+
+
+shotShapes : Model -> List Shape
+shotShapes m =
+    List.concat
+        (List.map
+            (\s ->
+                let
+                    x = s.x // fp
+                    y = s.y // fp
+                in
+                case m.stage of
+                    1 ->
+                        [ circle x y 4 (rgb 46 110 70)
+                        , circle x y 2 (rgb 255 205 70)
+                        ]
+
+                    2 ->
+                        [ circle x y 3 (rgb 70 180 230)
+                        , circle x y 1 (rgb 235 250 255)
+                        ]
+
+                    3 ->
+                        [ circle x y 4 (rgb 80 35 90)
+                        , circle x y 2 (rgb 255 205 105)
+                        ]
+
+                    4 ->
+                        [ triangle (x - 4) y x (y - 5) x (y + 5) (rgb 110 220 240)
+                        , triangle (x + 4) y x (y - 5) x (y + 5) (rgb 235 255 255)
+                        ]
+
+                    5 ->
+                        [ rect (x - 1) (y - 5) 2 10 (rgb 255 170 70)
+                        , rect (x - 5) (y - 1) 10 2 (rgb 255 235 170)
+                        , circle x y 2 (rgb 255 255 240)
+                        ]
+
+                    6 ->
+                        [ triangle (x - 4) y x (y - 4) x (y + 4) (rgb 244 120 160)
+                        , triangle (x + 4) y x (y - 4) x (y + 4) (rgb 220 240 255)
+                        ]
+
+                    7 ->
+                        [ rect (x - 3) (y - 3) 6 6 (rgb 116 112 102)
+                        , rect (x - 1) (y - 2) 2 2 (rgb 240 190 70)
+                        ]
+
+                    8 ->
+                        [ circle x y 4 (rgb 30 38 42)
+                        , circle (x - 1) (y - 1) 2 (rgb 110 160 120)
+                        , rect (x - 1) (y - 3) 2 2 (rgb 225 245 230)
+                        ]
+
+                    9 ->
+                        [ rect (x - 4) (y - 3) 8 6 (rgb 235 70 140)
+                        , rect (x - 2) (y - 1) 4 2 (rgb 245 235 120)
+                        ]
+
+                    _ ->
+                        [ triangle (x - 5) y x (y - 5) x (y + 5) (rgb 255 130 50)
+                        , triangle (x + 5) y x (y - 5) x (y + 5) (rgb 255 225 100)
+                        , circle x y 2 (rgb 255 255 235)
+                        ]
+            )
+            m.shots)
+
+
+partColor : Int -> Color
+partColor k =
+    if k == 0 then rgb 255 190 80
+    else if k == 1 then rgb 255 110 80
+    else rgb 250 240 200
+
+
+-- Sparks are LIGHT, so they go in an Add group: each one adds to the sky
+-- instead of covering it, and where several land on the same pixel the
+-- channels saturate one at a time: the core of a burst goes orange, then
+-- gold, then white, without a single one of those colours being drawn. Over
+-- the dark sky it reads as heat. (No layer: Blend without Alpha is free.)
+partShapes : Model -> List Shape
+partShapes m =
+    [ group [ Canvas.Blend Canvas.Add ]
+        (List.concat
+            (List.map
+                (\p ->
+                    let
+                        sz = if p.t < 10 then 3 else 2
+                    in
+                    [ rect (p.x // fp) (p.y // fp) sz sz (partColor p.k) ]
+                )
+                m.parts))
+    ]
+
+
+
+
+bossShapes : Model -> List Shape
+bossShapes m =
+    case m.boss of
+        Nothing ->
+            []
+
+        Just b ->
+            let
+                x = b.x // fp
+                y = b.y // fp
+                th = theme m.stage
+                wob = if modBy 2 (b.t // 12) == 0 then 2 else 0 - 2
+                hurtC = if b.ph == 2 then rgb 255 110 80 else th.acc
+                body =
+                    case m.stage of
+                        1 ->
+                            -- MECHA ANACONDA: coil chain + fanged head
+                            [ circle (x - 34) (y + wob) 9 th.mid
+                            , circle (x - 18) (y - wob) 10 th.midD
+                            , circle (x + 0) (y + wob) 11 th.mid
+                            , circle (x + 18) (y - wob) 10 th.midD
+                            , circle (x + 34) (y + wob) 12 th.mid
+                            , circle (x + 34) (y + wob - 4) 3 (rgb 255 220 90)
+                            , triangle (x + 30) (y + wob + 8) (x + 34) (y + wob + 8) (x + 32) (y + wob + 14) (rgb 240 240 244)
+                            , triangle (x + 36) (y + wob + 8) (x + 40) (y + wob + 8) (x + 38) (y + wob + 14) (rgb 240 240 244)
+                            ]
+
+                        2 ->
+                            -- TURBINE WARDEN: a shielded central plant fed by
+                            -- two visible auxiliary turbines. Its gates expose
+                            -- the core while the mega-flow beam charges.
+                            let
+                                cycle = wardenCycle b
+                                open = wardenVulnerable b
+                                charging = wardenCharging b
+                                beamOn = wardenBeamActive b
+                                gateShift = if open then 10 else if charging then iclamp 0 9 (cycle - 72) else 0
+                                beamTop = y + 17
+                                beamH = max 0 (gameH - beamTop)
+                                spin = modBy 360 (b.t * (if b.ph == 2 then 8 else 5))
+                                auxSpin = modBy 360 (b.t * (if b.ph == 2 then 11 else 7))
+                                leftX = x - 46
+                                rightX = x + 46
+                                auxY = y + 7
+                                aux =
+                                    \ax turn ->
+                                        [ circle ax auxY 13 th.farD
+                                        , circle ax auxY 10 th.far
+                                        , group [ Canvas.Translate ax auxY, Canvas.Rotate (Math.degrees turn) ]
+                                            [ rect (0 - 2) (0 - 10) 4 20 th.det
+                                            , rect (0 - 10) (0 - 2) 20 4 th.det
+                                            ]
+                                        , circle ax auxY 3 (if charging || beamOn then rgb 255 220 110 else th.acc)
+                                        ]
+                                centralTelegraph =
+                                    List.map
+                                        (\i -> rect (x - 1) (beamTop + i * 20) 2 10 (if open then rgb 255 220 110 else th.det))
+                                        (List.range 0 8)
+                                auxTelegraphs =
+                                    if b.ph == 2 then
+                                        List.concat
+                                            [ List.map (\i -> rect (leftX - 1) (beamTop + i * 20) 2 9 th.det) (List.range 0 8)
+                                            , List.map (\i -> rect (rightX - 1) (beamTop + i * 20) 2 9 th.det) (List.range 0 8)
+                                            ]
+                                    else []
+                                beamShapes =
+                                    if beamOn then
+                                        List.concat
+                                            [ [ rect (x - (if b.ph == 2 then 13 else 11)) beamTop (if b.ph == 2 then 26 else 22) beamH (rgb 70 180 230)
+                                              , rect (x - (if b.ph == 2 then 8 else 6)) beamTop (if b.ph == 2 then 16 else 12) beamH (rgb 205 245 255)
+                                              , rect (x - 2) beamTop 4 beamH (rgb 255 255 235)
+                                              ]
+                                            , if b.ph == 2 then
+                                                [ rect (leftX - 7) beamTop 14 beamH (rgb 70 180 230)
+                                                , rect (leftX - 3) beamTop 6 beamH (rgb 220 250 255)
+                                                , rect (rightX - 7) beamTop 14 beamH (rgb 70 180 230)
+                                                , rect (rightX - 3) beamTop 6 beamH (rgb 220 250 255)
+                                                ]
+                                              else []
+                                            ]
+                                    else if charging then List.concat [ centralTelegraph, auxTelegraphs ]
+                                    else []
+                                status =
+                                    if beamOn then pixTextC x (y + 35) 1 (rgb 210 245 255) "MEGA FLOW"
+                                    else if open then pixTextC x (y + 35) 1 (rgb 255 225 100) "CORE OPEN"
+                                    else if charging then pixTextC x (y + 35) 1 th.det "VENTING"
+                                    else pixTextC x (y + 35) 1 (rgb 140 150 170) "ARMORED"
+                            in
+                            List.concat
+                                [ beamShapes
+                                , [ rect (leftX + 11) (auxY - 3) 24 6 th.farD
+                                  , rect (x + 11) (auxY - 3) 24 6 th.farD
+                                  ]
+                                , aux leftX auxSpin
+                                , aux rightX (0 - auxSpin)
+                                , [ rect (x - 31) (y - 18) 62 36 th.farD
+                                  , rect (x - 27) (y - 14) 54 28 th.mid
+                                  , triangle (x - 27) (y + 14) (x - 15) (y + 25) (x - 3) (y + 14) (rgb 70 180 230)
+                                  , triangle (x + 3) (y + 14) (x + 15) (y + 25) (x + 27) (y + 14) (rgb 70 180 230)
+                                  , circle x y 16 th.far
+                                  , group [ Canvas.Translate x y, Canvas.Rotate (Math.degrees spin) ]
+                                        [ rect (0 - 2) (0 - 15) 4 30 th.det
+                                        , rect (0 - 15) (0 - 2) 30 4 th.det
+                                        , triangle (0 - 4) (0 - 13) 4 (0 - 13) 0 (0 - 20) th.det
+                                        , triangle 13 (0 - 4) 13 4 20 0 th.det
+                                        ]
+                                  , circle x y 8 (if open then rgb 255 225 100 else th.farD)
+                                  , circle x y 4 (if open then rgb 255 250 220 else hurtC)
+                                  , rect (x - 25 - gateShift) (y - 11) 13 22 (if open then th.far else th.det)
+                                  , rect (x + 12 + gateShift) (y - 11) 13 22 (if open then th.far else th.det)
+                                  , rect (x - 30) (y - 18) 60 3 (if charging then rgb 255 225 100 else th.det)
+                                  ]
+                                , [ rect (x - 35) (y + 29) 70 12 th.farD ]
+                                , status
+                                ]
+
+                        3 ->
+                            -- BANDONEON KING: breathing bellows + bow tie
+                            let
+                                cycle = bossCycleAt 3 b.t
+                                sq = 10 + modBy 8 (b.t // 8)
+                                chord = cycle >= 100 && cycle < 140
+                            in
+                            List.concat
+                                [ [ rect (x - sq - 12) (y - 14) 12 28 (rgb 58 26 66)
+                                  , rect (x + sq) (y - 14) 12 28 (rgb 58 26 66)
+                                  , rect (x - sq) (y - 10) (sq * 2) 20 hurtC
+                                  , rect (x - sq + 3) (y - 10) 2 20 (rgb 40 20 40)
+                                  , rect (x - 2) (y - 10) 4 20 (rgb 255 205 105)
+                                  , rect (x + sq - 5) (y - 10) 2 20 (rgb 40 20 40)
+                                  , triangle (x - 5) (y - 16) x (y - 11) (x + 5) (y - 16) (rgb 230 60 80)
+                                  , circle (x - sq - 6) y 3 (if chord then rgb 255 225 120 else rgb 240 240 244)
+                                  , circle (x + sq + 6) y 3 (if chord then rgb 255 225 120 else rgb 240 240 244)
+                                  ]
+                                , if chord then
+                                    [ circle (x - sq - 18) (y - 8) 3 (rgb 255 205 105)
+                                    , rect (x - sq - 15) (y - 17) 2 9 (rgb 255 205 105)
+                                    , circle (x + sq + 18) (y + 7) 3 (rgb 255 205 105)
+                                    , rect (x + sq + 19) (y - 2) 2 9 (rgb 255 205 105)
+                                    , rect (x - 29) (y + 24) 58 11 th.farD
+                                    ]
+                                  else []
+                                , if chord then pixTextC x (y + 28) 1 (rgb 255 220 120) "CHORD WAVE" else []
+                                ]
+
+                        4 ->
+                            -- FROST CONDOR: rival bird, flapping ice wings
+                            let
+                                cycle = bossCycleAt 4 b.t
+                                diving = cycle >= 60 && cycle < 140
+                                warning = cycle >= 48 && cycle < 60
+                                fl = if diving then 12 else if modBy 2 (b.t // 14) == 0 then 0 - 8 else 6
+                            in
+                            List.concat
+                                [ [ triangle (x - 38) (y + fl) (x - 5) (y - 5) (x - 5) (y + 9) th.mid
+                                  , triangle (x + 38) (y + fl) (x + 5) (y - 5) (x + 5) (y + 9) th.mid
+                                  , triangle (x - 38) (y + fl) (x - 26) (y + fl - 3) (x - 29) (y + fl + 8) th.det
+                                  , triangle (x + 38) (y + fl) (x + 26) (y + fl - 3) (x + 29) (y + fl + 8) th.det
+                                  , rect (x - 6) (y - 11) 12 24 th.det
+                                  , triangle (x - 6) (y + 13) (x + 6) (y + 13) x (y + 22) th.det
+                                  , triangle (x - 4) (y - 11) (x + 4) (y - 11) x (y - 18) hurtC
+                                  , circle (x - 3) (y - 4) 1 (rgb 20 20 30)
+                                  , circle (x + 3) (y - 4) 1 (rgb 20 20 30)
+                                  ]
+                                , if warning then
+                                    List.concat
+                                        [ List.map (\i -> rect (x - 1) (y + 28 + i * 16) 2 8 (rgb 120 230 245)) (List.range 0 7)
+                                        , pixTextC x (y + 24) 1 (rgb 210 250 255) "DIVE!"
+                                        ]
+                                  else []
+                                ]
+
+                        5 ->
+                            -- STARGAZER ORB: dome + slit eye that tracks you
+                            let
+                                cycle = bossCycleAt 5 b.t
+                                angle = modBy 360 (cycle * 3)
+                                podX = x + dirX angle * 34 // 1024
+                                podY = y + dirY angle * 24 // 1024
+                                locked = cycle >= 76 && cycle < 102
+                            in
+                            List.concat
+                                [ [ circle x y 21 th.farD
+                                  , circle x y 18 (rgb 230 234 244)
+                                  , rect (x - 21) (y + 10) 42 9 th.far
+                                  , rect (x - 15) (y - 5) 30 9 (rgb 22 20 46)
+                                  , circle (iclamp (x - 11) (x + 11) m.px) (y - 1) 4 (if locked then rgb 255 230 120 else hurtC)
+                                  , circle podX podY 5 th.acc
+                                  , circle (2 * x - podX) (2 * y - podY) 5 th.det
+                                  ]
+                                , if locked then
+                                    List.concat
+                                        [ List.map (\i -> rect (x - 1) (y + 24 + i * 19) 2 9 (rgb 255 170 60)) (List.range 0 8)
+                                        , [ rect (x - 31) (y + 25) 62 11 th.farD ]
+                                        , pixTextC x (y + 29) 1 (rgb 255 210 110) "ORBIT LOCK"
+                                        ]
+                                  else []
+                                ]
+
+                        6 ->
+                            -- THE MIRROR TWINS: two orbs breathing in mirror
+                            let
+                                gap = 26 + modBy 10 (b.t // 10)
+                                cycle = bossCycleAt 6 b.t
+                                crossfire = cycle >= 88 && cycle < 108
+                            in
+                            List.concat
+                                [ [ circle (x - gap) y 14 th.midD
+                                  , circle (x - gap) y 9 th.det
+                                  , triangle (x - gap - 4) y (x - gap + 4) (y - 6) (x - gap + 4) (y + 6) hurtC
+                                  , circle (x + gap) y 14 th.midD
+                                  , circle (x + gap) y 9 th.det
+                                  , triangle (x + gap + 4) y (x + gap - 4) (y - 6) (x + gap - 4) (y + 6) hurtC
+                                  , rect (x - gap + 14) (y - 1) (gap * 2 - 28) 3 (if crossfire then rgb 244 120 160 else rgb 220 240 255)
+                                  , circle x y 5 th.farD
+                                  ]
+                                , if crossfire then
+                                    List.concat
+                                        [ [ rect (x - 32) (y + 21) 64 11 th.farD ]
+                                        , pixTextC x (y + 25) 1 (rgb 255 180 210) "MIRROR BURST"
+                                        ]
+                                  else []
+                                ]
+
+                        7 ->
+                            -- STONE SENTINEL: masonry head + rotating sun disc
+                            let
+                                cycle = bossCycleAt 7 b.t
+                                gateWarn = (cycle >= 78 && cycle < 94) || (b.ph == 2 && cycle >= 150 && cycle < 166)
+                            in
+                            List.concat
+                                [ [ group [ Canvas.Translate x (y - 2), Canvas.Rotate (Math.degrees (b.t * 4)) ]
+                                        [ rect (0 - 30) (0 - 2) 60 4 (rgb 240 190 70)
+                                        , rect (0 - 2) (0 - 30) 4 60 (rgb 240 190 70)
+                                        , circle 0 (0 - 28) 4 th.acc
+                                        , circle 0 28 4 th.acc
+                                        ]
+                                  , rect (x - 17) (y - 15) 34 31 (rgb 116 114 108)
+                                  , rect (x - 14) (y - 12) 28 25 (rgb 146 142 132)
+                                  , rect (x - 14) (y - 2) 28 3 (rgb 92 90 86)
+                                  , rect (x - 10) (y + 7) 20 3 (rgb 92 90 86)
+                                  , rect (x - 9) (y - 9) 6 5 hurtC
+                                  , rect (x + 3) (y - 9) 6 5 hurtC
+                                  ]
+                                , if gateWarn then
+                                    List.concat
+                                        [ [ rect (x - 33) (y + 22) 66 11 th.farD ]
+                                        , pixTextC x (y + 26) 1 (rgb 250 205 90) "STONE GATE"
+                                        ]
+                                  else []
+                                ]
+
+                        8 ->
+                            -- IRON TORTOISE: shell tank, head peeks to fire
+                            let
+                                open = tortoiseOpen b
+                                headY = y + (if open then 25 else 13)
+                            in
+                            List.concat
+                                [ [ circle x y 24 th.farD
+                                  , circle x (y - 3) 20 th.midD
+                                  , circle x (y - 5) 15 th.mid
+                                  , rect (x - 12) (y - 9) 8 7 th.farD
+                                  , rect (x + 4) (y - 9) 8 7 th.farD
+                                  , rect (x - 20) (y + 12) 9 7 th.far
+                                  , rect (x + 11) (y + 12) 9 7 th.far
+                                  , rect (x - 5) (y + 10) 10 (if open then 16 else 7) (rgb 80 118 88)
+                                  , circle x headY 7 (if open then rgb 112 164 112 else th.farD)
+                                  , circle (x - 2) (headY + 1) 1 (rgb 240 245 220)
+                                  , circle (x + 2) (headY + 1) 1 (rgb 240 245 220)
+                                  , rect (x - 3) (headY + 5) 6 3 hurtC
+                                  , rect (x - 30) (y + 31) 60 11 th.farD
+                                  ]
+                                , pixTextC x (y + 35) 1
+                                    (if open then rgb 170 245 170 else rgb 130 150 140)
+                                    (if open then "HEAD EXPOSED" else "SHELL LOCK")
+                                ]
+
+                        9 ->
+                            -- HARBOR KRAKEN: container body + crane tentacles
+                            let
+                                cycle = bossCycleAt 9 b.t
+                                lifting = b.ph == 2 && cycle >= 88 && cycle < 106
+                                turn = modBy 360 (b.t * 3)
+                            in
+                            List.concat
+                                [ [ group [ Canvas.Translate x y, Canvas.Rotate (Math.degrees turn) ]
+                                        [ rect (0 - 34) (0 - 3) 22 6 th.farD
+                                        , rect 12 (0 - 3) 22 6 th.farD
+                                        , rect (0 - 3) (0 - 34) 6 22 th.farD
+                                        , rect (0 - 3) 12 6 22 th.farD
+                                        , circle (0 - 30) 0 5 th.acc
+                                        , circle 30 0 5 th.acc
+                                        , circle 0 (0 - 30) 5 th.acc
+                                        , circle 0 30 5 th.acc
+                                        ]
+                                  , rect (x - 19) (y - 13) 38 26 (rgb 34 58 72)
+                                  , rect (x - 16) (y - 10) 32 20 th.acc
+                                  , rect (x - 16) (y - 3) 32 3 (rgb 30 40 54)
+                                  , rect (x - 11) (y - 8) 3 16 (rgb 245 130 175)
+                                  , rect (x + 8) (y - 8) 3 16 (rgb 245 130 175)
+                                  , circle x (y - 2) 5 (rgb 240 240 244)
+                                  , circle x (y - 2) 2 (rgb 20 20 30)
+                                  ]
+                                , if lifting then
+                                    List.concat
+                                        [ [ rect (x - 34) (y + 25) 68 11 th.farD ]
+                                        , pixTextC x (y + 29) 1 (rgb 255 150 200) "CARGO DROP"
+                                        ]
+                                  else []
+                                ]
+
+                        _ ->
+                            -- THE RELIC CORE: diamond heart + orbiting pods
+                            let
+                                turn = modBy 360 (b.t * (if b.ph == 2 then 6 else 3))
+                                pulse = 25 + modBy 5 (b.t // 8)
+                            in
+                            List.concat
+                                [ if b.ph == 2 then
+                                    [ circle x y pulse (rgb 255 120 35)
+                                    , circle x y (pulse - 4) th.skyA
+                                    , circle x y (pulse - 9) (rgb 95 35 65)
+                                    ]
+                                  else []
+                                , [ group [ Canvas.Translate x y, Canvas.Rotate (Math.degrees turn) ]
+                                        [ triangle (0 - 18) 0 18 0 0 (0 - 25) (rgb 225 220 220)
+                                        , triangle (0 - 18) 0 18 0 0 25 (rgb 160 164 180)
+                                        , circle 0 0 8 hurtC
+                                        , circle 0 0 3 (rgb 255 245 180)
+                                        ]
+                                  , group [ Canvas.Translate x y, Canvas.Rotate (Math.degrees (0 - turn)) ]
+                                        [ circle (0 - 38) 0 7 th.farD
+                                        , circle 38 0 7 th.farD
+                                        , circle 0 (0 - 34) 7 th.farD
+                                        , circle 0 34 7 th.farD
+                                        , rect (0 - 38) (0 - 1) 76 2 (rgb 255 190 70)
+                                        , rect (0 - 1) (0 - 34) 2 68 (rgb 255 190 70)
+                                        ]
+                                  , rect (x - 32) (y + 42) 64 11 th.farD
+                                  ]
+                                , pixTextC x (y + 46) 1
+                                    (if b.ph == 2 then rgb 255 170 70 else rgb 245 210 120)
+                                    (if b.ph == 2 then "CORE OVERLOAD" else "RELIC ARRAY")
+                                ]
+            in
+            body
+
+
+-- The middle of the HUD row is a slot two readouts take turns in: the stage
+-- counter while you fly there, the boss's health while you fight it, with
+-- the name sitting ON the bar instead of above it. Sharing the slot is what
+-- keeps the HUD one row deep even mid-boss, which is what lets the ship keep
+-- the whole floor when the fight matters most.
+centerSlot : Model -> List Shape
+centerSlot m =
+    case m.boss of
+        Nothing ->
+            pixTextC 160 4 1 (rgb 120 128 150)
+                ("STAGE " ++ String.fromInt m.stage ++ "/10")
+
+        Just b ->
+            let
+                w = iclamp 0 120 (b.hp * 120 // max 1 b.mx)
+            in
+            List.concat
+                [ [ rect 100 3 120 10 (rgb 28 16 22)
+                  , rect 100 3 w 10 (rgb 200 60 60)
+                  ]
+                , pixTextC 160 6 1 (rgb 255 240 230) (bossName m.stage)
+                ]
+
+
+
+
+hudShapes : Model -> List Shape
+hudShapes m =
+    let
+        wName = if m.weapon == 0 then "BEAM" else if m.weapon == 1 then "SPREAD" else "WAVE"
+        wCol = if m.weapon == 0 then rgb 140 200 255 else if m.weapon == 1 then rgb 255 150 90 else rgb 110 230 140
+        pips =
+            List.concat
+                (List.map
+                    (\i ->
+                        [ rect (272 + i * 6) 5 4 4 (if i < m.power then wCol else rgb 50 54 70) ])
+                    (List.range 0 2))
+        -- hull energy: five cells, red when down to the last one. The word
+        -- ENERGY is gone with the bottom row: five cells that drain and turn
+        -- red say it without a label, and the label cost play area.
+        energyCells =
+            List.concat
+                (List.map
+                    (\i ->
+                        [ rect (36 + i * 9) 4 7 7
+                            (if i < m.energy then
+                                (if m.energy <= 1 then rgb 240 80 70 else rgb 92 214 120)
+                             else
+                                rgb 42 46 60)
+                        ])
+                    (List.range 0 4))
+    in
+    List.concat
+        [ pixText 4 5 1 (rgb 235 238 245) (String.fromInt m.score)
+        , energyCells
+        , centerSlot m
+        , pixTextR 268 5 1 wCol wName
+        , pips
+        , muteIcon m
+        , if m.st >= stageTicks && m.st < bossTick && modBy 2 (m.st // 15) == 0 then
+            pixTextC 160 110 2 (rgb 235 90 80) "WARNING!"
+          else
+            []
+        , if m.paused then
+            List.concat
+                [ [ rect 100 104 120 30 (rgb 12 12 20) ]
+                , pixTextC 160 116 2 (rgb 235 238 245) "PAUSED"
+                ]
+          else
+            []
+        ]

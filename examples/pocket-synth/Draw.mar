@@ -1,0 +1,235 @@
+module Draw exposing (..)
+
+-- The panel as pixels. Everything here reads the layout from Panel rather
+-- than placing anything itself.
+
+
+import Controls exposing (..)
+import Panel exposing (..)
+import Presets exposing (..)
+import Synth exposing (..)
+import Types exposing (..)
+import Canvas exposing ( circle, rect, rgb, text )
+
+
+
+
+bgDark : Color
+bgDark = rgb 24 22 28
+
+
+panelBg : Color
+panelBg = rgb 38 34 44
+
+
+accent : Color
+accent = rgb 255 176 84
+
+
+textDim : Color
+textDim = rgb 152 146 160
+
+
+textMain : Color
+textMain = rgb 236 230 224
+
+
+-- The label of a control that cannot reach the sound in the current mode. It had
+-- been written inline at the one place that needed it; GLIDE became the second,
+-- and guessing a value there landed DARKER than this one, so the new button read
+-- as broken rather than as unavailable. One name, so the next one cannot drift.
+textOff : Color
+textOff = rgb 88 84 96
+
+
+header : Model -> List Shape
+header model =
+    -- nothing to draw where headerH is 0 (landscape): the row does not exist
+    if isShort model then
+        []
+    else
+        -- No caption naming the patch. The lit button already says which preset
+        -- is loaded, and no lit button already says the patch is nobody's: a
+        -- line of text repeating that would only be a second place to keep true.
+        [ text 14 28 19 Canvas.Left accent "POCKET SYNTH" ]
+
+
+presetShapes : Model -> List Shape
+presetShapes model =
+    let
+        sel = selectedPreset model
+    in
+    List.concat
+        (List.indexedMap
+            (\i p ->
+                let
+                    on = i == sel
+                    r = presetRect model i
+                in
+                [ rect r.x r.y r.w r.h (if on then rgb 70 54 40 else panelBg)
+                , rect r.x r.y r.w 3 (if on then accent else rgb 58 54 66)
+                , text (r.x + r.w // 2) (r.y + 22) 11 Canvas.Center
+                    (if on then accent else textMain)
+                    p.name
+                ]
+            )
+            presets)
+
+
+sectionLabel : Model -> Int -> String -> List Shape
+sectionLabel m c label =
+    [ text (colX m c + 8) (headerH m + presetRowH m + 4) 9 Canvas.Left textDim label ]
+
+
+panelShapes : Model -> List Shape
+panelShapes model =
+    let
+        p = model.patch
+
+        panelTop = headerH model + presetRowH model + 6
+    in
+    List.concat
+        [ [ rect 6 (panelTop - 8) (model.w - 12) (panelH model) panelBg ]
+        , sectionLabel model 0 "OSCILLATOR"
+        , sectionLabel model 1 "MODIFIERS"
+        , sectionLabel model 2 "LFO + CONTROL"
+        , waveButtons model
+        , List.concat (List.map (\id -> sliderShapes model id) sliderIds)
+        , octaveButtons model
+        , toggleButtons model
+        ]
+
+
+waveButtons : Model -> List Shape
+waveButtons model =
+    let
+        names = [ "SQR", "TRI", "SAW", "NOI" ]
+    in
+    List.concat
+        (List.indexedMap
+            (\i nm ->
+                let
+                    r = waveRect model i
+                    on = model.patch.wave == i
+                in
+                [ rect r.x r.y r.w r.h (if on then rgb 70 54 40 else rgb 50 46 58)
+                , text (r.x + r.w // 2) (r.y + 18) 10 Canvas.Center (if on then accent else textMain) nm
+                ]
+            )
+            names)
+
+
+sliderShapes : Model -> Int -> List Shape
+sliderShapes model id =
+    let
+        r = sliderRect model id
+        rng = sliderRange id
+        v = sliderGet model.patch id
+        fx = r.x + (v - rng.lo) * r.w // max 1 (rng.hi - rng.lo)
+
+        -- Dimmed, not hidden: the value is still true and still worth reading,
+        -- it just has nothing to act on until the mode changes. Hiding it would
+        -- make the panel jump around every time you switch waves.
+        on = sliderActive model.patch id
+    in
+    [ text r.x (r.y - 5) 9 Canvas.Left
+        (if on then textDim else textOff)
+        (sliderName id ++ "  " ++ String.fromInt v)
+    , rect r.x (r.y + 8) r.w 5 (if on then rgb 56 52 64 else rgb 44 41 50)
+    , rect r.x (r.y + 8) (max 2 (fx - r.x)) 5 (if on then rgb 120 90 60 else rgb 62 56 52)
+    , circle fx (r.y + 10) 9 (if on then rgb 84 78 94 else rgb 56 52 62)
+    , circle fx (r.y + 10) 6 (if on then accent else rgb 104 92 78)
+    ]
+
+
+octaveButtons : Model -> List Shape
+octaveButtons model =
+    let
+        d = octDownRect model
+        u = octUpRect model
+        lbl = "OCT " ++ (if model.patch.oct > 0 then "+" else "") ++ String.fromInt model.patch.oct
+    in
+    [ rect d.x d.y d.w d.h (rgb 50 46 58)
+    , text (d.x + d.w // 2) (d.y + 18) 12 Canvas.Center textMain "-"
+    , rect u.x u.y u.w u.h (rgb 50 46 58)
+    , text (u.x + u.w // 2) (u.y + 18) 12 Canvas.Center textMain "+"
+    , text (d.x + 38) (d.y - 6) 9 Canvas.Left textDim lbl
+    ]
+
+
+toggleButtons : Model -> List Shape
+toggleButtons model =
+    let
+        s = subRect model
+        v = voiceRect model
+        g = glideRect model
+        a = arpRect model
+        arpName =
+            if model.patch.arp == 1 then "ARP UP"
+            else if model.patch.arp == 2 then "ARP MIN"
+            else if model.patch.arp == 3 then "ARP U-D"
+            else if model.patch.arp == 4 then "ARP OCT"
+            else if model.patch.arp == 5 then "ARP MJ7"
+            else "ARP OFF"
+    in
+    [ rect s.x s.y s.w s.h (if model.patch.sub then rgb 70 54 40 else rgb 50 46 58)
+    , text (s.x + s.w // 2) (s.y + 18) 10 Canvas.Center (if model.patch.sub then accent else textMain) "SUB"
+
+    -- VOICE is a selector, not a toggle: every mode is a real setting, so it is
+    -- drawn in the neutral button colour like OCT rather than lit like SUB/ARP.
+    , rect v.x v.y v.w v.h (rgb 50 46 58)
+    , text (v.x + v.w // 2) (v.y + 18) 10 Canvas.Center textMain (voiceLabel model.patch)
+    , text v.x (v.y - 6) 9 Canvas.Left textDim "VOICE"
+    -- GLIDE lights like SUB when on, and goes dim and unclickable in the modes it
+    -- cannot reach: it replaces the per-key voices with one sliding source, and a
+    -- note that rings once has nothing to slide.
+    , rect g.x g.y g.w g.h (if glideActive model.patch then rgb 70 54 40 else rgb 50 46 58)
+    , text (g.x + g.w // 2) (g.y + 18) 10 Canvas.Center
+        (if glideActive model.patch then accent
+         else if glideReachable model.patch then textMain
+         else textOff)
+        "GLIDE"
+    , rect a.x a.y a.w a.h (if model.patch.arp > 0 then rgb 70 54 40 else rgb 50 46 58)
+    , text (a.x + a.w // 2) (a.y + 18) 10 Canvas.Center (if model.patch.arp > 0 then accent else textMain) arpName
+    ]
+
+
+isHeld : Model -> Int -> Bool
+isHeld model semi =
+    List.member semi (voices model)
+
+
+keyboardShapes : Model -> List Shape
+keyboardShapes model =
+    List.concat
+        [ List.concat
+            (List.indexedMap
+                (\i semi ->
+                    let
+                        r = whiteRect model i
+                        on = isHeld model semi
+                    in
+                    [ rect r.x r.y r.w r.h (if on then rgb 255 214 150 else rgb 238 234 226)
+                    , rect r.x (r.y + r.h - 5) r.w 5 (rgb 200 194 184)
+                    ]
+                )
+                (visibleWhites model))
+        , List.concat
+            (List.map
+                (\b ->
+                    let
+                        r = blackRect model b.after
+                        on = isHeld model b.semi
+                    in
+                    [ rect r.x r.y r.w r.h (if on then rgb 150 110 50 else rgb 28 26 32)
+                    , rect r.x (r.y + r.h - 4) r.w 4 (rgb 10 9 12)
+                    ]
+                )
+                (visibleBlacks model))
+        , [ text (model.w // 2) (kbTop model - 6) 9 Canvas.Center textDim
+                (if isNarrow model then
+                    "tap or drag the keys, OCT - / + shifts the range"
+                 else
+                    "tap or drag the keys, computer keys: Z-row low, Q-row high")
+          ]
+        ]

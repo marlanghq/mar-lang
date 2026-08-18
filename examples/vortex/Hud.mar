@@ -1,0 +1,127 @@
+module Hud exposing (..)
+
+-- Score, lives, level, and the title screen.
+
+
+import Draw exposing (..)
+import Logo exposing (..)
+import Types exposing (..)
+import Canvas exposing ( rgb )
+
+
+
+
+hud : Model -> List Shape
+hud m =
+    if m.phase == Title then
+        []
+
+    else
+        -- All three on the top line. The lives used to sit in the bottom-left
+        -- corner, which on a phone is under the stick and under the thumb
+        -- holding it: the one number you check when things are going badly,
+        -- in the one place you cannot see.
+        [ Canvas.text 16 28 18 Canvas.Left (rgb 210 220 255) (String.fromInt m.score)
+        , Canvas.text 16 50 15 Canvas.Left (rgb 255 240 90)
+            (String.repeat (max 0 m.lives) "/")
+        , Canvas.text (m.w - 16) 28 18 Canvas.Right (rgb 210 220 255)
+            ("LEVEL " ++ String.fromInt (m.level + 1))
+        ]
+
+
+titleShapes : Model -> Cam -> List Shape
+titleShapes m cam =
+    case m.phase of
+        Title ->
+            logoShapes m cam
+                ++ (if m.phaseT < logoLands then
+                        -- While the letters are still in the air the screen is
+                        -- theirs. Captions sitting under a logo that has not
+                        -- arrived are a screen that finished before it started.
+                        []
+
+                    else
+                        [ Canvas.text (m.w // 2) (m.h // 6 + 82) 15 Canvas.Center (rgb 150 165 200)
+                            (if m.pads then
+                                "slide left to walk the rim - hold right to fire"
+
+                             else
+                                "arrows walk the rim - space fires"
+                            )
+                        , Canvas.text (m.w // 2) (m.h - 26) 17 Canvas.Center
+                            (rgb 255 240 90)
+                            (if modBy 66 m.frame < 44 then
+                                (if m.pads then "tap to start" else "press any key")
+
+                             else
+                                ""
+                            )
+                        ]
+                   )
+
+        Over ->
+            -- THE TEXT DOES NOT MOVE.
+            --
+            -- Third attempt at this screen, and the first two failed the same
+            -- way: they were flourishes laid ON TOP of the scene. Draining the
+            -- whole web to grey, backing the eye out, and then the verdict
+            -- flying up the well out of the vanishing point. Each one read as
+            -- a trick rather than an ending.
+            --
+            -- The scene already has something happening in it: the place going
+            -- dark around the lane that got you. That is the animation. The
+            -- text is a VERDICT, and a verdict does not need an entrance, it
+            -- needs to be legible and to arrive at the right moment. So it
+            -- holds still, at one size, in one place, and only fades up out of
+            -- the backdrop so it does not slam on. Three beats in reading
+            -- order, and nothing travels.
+            let
+                -- sized off the screen width, because at a fixed 36 this line
+                -- ran edge to edge on a phone and looked like a mistake
+                big = clamp 20 36 (m.w // 13)
+                hx = m.w // 2
+                hy = m.h // 2 - 10
+
+                -- fading up FROM the backdrop rather than by alpha: one colour
+                -- per shape is all a canvas text takes, and the backdrop is a
+                -- flat known colour, so a mix is the same picture for less
+                fade = \c k ->
+                    let
+                        d = mixInk { r = 4, g = 4, b = 10 } c (clamp 0 100 k)
+                    in
+                    rgb d.r d.g d.b
+
+                lead = m.phaseT * 100 // overFade
+                rest = (m.phaseT - overHold) * 100 // overFade
+            in
+            [ Canvas.text hx hy big Canvas.Center
+                (fade { r = 255, g = 110, b = 110 } lead) "THE WELL KEEPS YOU"
+            ]
+                ++ (if rest <= 0 then
+                        []
+
+                    else
+                        [ Canvas.text hx (hy + 40) 18 Canvas.Center
+                            (fade { r = 210, g = 220, b = 255 } rest)
+                            ("SCORE " ++ String.fromInt m.score)
+                        , Canvas.text hx (hy + 62) 13 Canvas.Center
+                            (fade { r = 150, g = 155, b = 175 } rest)
+                            ("REACHED LEVEL " ++ String.fromInt (m.level + 1))
+                        ]
+                   )
+                ++ (if rest < 100 then
+                        []
+
+                    else
+                        [ Canvas.text hx (hy + 94) 15 Canvas.Center (rgb 255 240 90)
+                            (if modBy 66 m.frame < 44 then
+                                (if m.pads then "tap to play again" else "press any key")
+
+                             else
+                                ""
+                            )
+                        ]
+                   )
+
+        _ ->
+            []

@@ -1,0 +1,111 @@
+module Screens exposing (..)
+
+-- The screens around the run -- title, win, mute icon -- and the mattes that
+-- keep a scaled group from spilling outside the letterbox.
+
+
+import Balance exposing (..)
+import Draw exposing (..)
+import Font exposing (..)
+import Types exposing (..)
+import Canvas exposing ( group, rect, rgb, triangle )
+
+
+
+
+titleShapes : Model -> List Shape
+titleShapes m =
+    let
+        cx = gameW // 2
+        blink = modBy 50 m.tick < 32
+        hopT = modBy 30 m.tick
+        hopY = groundY - (hopT * (30 - hopT)) * 26 // 225
+        btn =
+            \x y w sel label ->
+                List.concat
+                    [ [ rect x y w 22 (if sel then orange else rgb 28 32 50)
+                      , rect x y w 2 (if sel then rgb 255 210 130 else hudDim)
+                      , rect x (y + 20) w 2 (if sel then orangeDark else hudDim)
+                      ]
+                    , pixTextC (x + w // 2) (y + 8) 1 (if sel then ink else hudWhite) label
+                    ]
+    in
+    List.concat
+        [ [ rect 0 0 gameW gameH (rgb 20 24 52) ]
+        , [ rect 0 groundY gameW (gameH - groundY) groundC
+          , rect 0 groundY gameW 2 blockEdge
+          ]
+        , [ group
+                [ Canvas.Translate (46 + pw // 2) (hopY - 13 + pw // 2)
+                , Canvas.Rotate (Math.degrees (min 90 (hopT * 90 // 28)))
+                ]
+                [ rect (0 - pw // 2) (0 - pw // 2) pw pw orange ]
+          ]
+        , [ triangle 92 groundY (92 + unitPx) groundY (92 + unitPx // 2) (groundY - unitPx) spikeC ]
+        , pixTextC (cx + 3) 33 4 ink "PULSE"
+        , pixTextC cx 30 4 hudWhite "PULSE"
+        , pixTextC (cx + 3) 63 4 ink "RUNNER"
+        , pixTextC cx 60 4 hudAmber "RUNNER"
+        , btn (cx - 75) 104 150 (m.sel == 0) "HARDCORE"
+        , btn (cx - 75) 134 150 (m.sel == 1) "CHECKPOINTS"
+        , if blink then
+            pixTextC cx 170 1 hudDim "SPACE OR TAP TO JUMP - M TO MUTE"
+          else
+            []
+        ]
+
+
+winShapes : Model -> List Shape
+winShapes m =
+    let
+        blink = modBy 50 m.tick < 32
+        cx = gameW // 2
+    in
+    List.concat
+        [ [ rect (cx - 102) 56 204 76 ink
+          , rect (cx - 102) 56 204 2 hudAmber
+          , rect (cx - 102) 130 204 2 hudAmber
+          ]
+        , pixTextC cx 66 2 hudAmber "COMPLETE!"
+        , pixTextC cx 86 1 hudWhite ("ATTEMPTS: " ++ String.fromInt m.attempts)
+        , pixTextC cx 98 1 hudDim (if m.hardcore then "MODE: HARDCORE" else "MODE: CHECKPOINTS")
+        , if blink then pixTextC cx 114 1 hudWhite "PRESS TO CONTINUE" else []
+        ]
+
+
+-- Opaque strips over the four letterbox margins, drawn AFTER the scaled
+-- world group. The group is not clipped, so a spike that has scrolled just
+-- past the logical stage edge still draws into the black margin on a wide
+-- phone screen (portrait desktop hides it because the stage fills the canvas).
+-- Same color as the bezel, so the stage reads as a framed screen.
+matteShapes : Model -> Layout -> List Shape
+matteShapes m lay =
+    let
+        pw = gameW * lay.scale // 100
+        ph = gameH * lay.scale // 100
+    in
+    [ rect 0 0 m.w (max 0 lay.oy) bezel
+    , rect 0 (lay.oy + ph) m.w (max 0 (m.h - lay.oy - ph)) bezel
+    , rect 0 0 (max 0 lay.ox) m.h bezel
+    , rect (lay.ox + pw) 0 (max 0 (m.w - lay.ox - pw)) m.h bezel
+    ]
+
+
+muteIcon : Model -> List Shape
+muteIcon m =
+    let
+        mx = gameW - 20
+    in
+    List.concat
+        [ [ rect mx 4 5 6 hudWhite
+          , rect (mx + 5) 2 3 10 hudWhite
+          ]
+        , if m.muted then
+            [ rect (mx + 10) 4 6 2 hudRed
+            , rect (mx + 10) 8 6 2 hudRed
+            ]
+          else
+            [ rect (mx + 10) 5 2 4 hudDim
+            , rect (mx + 13) 3 2 8 hudDim
+            ]
+        ]
