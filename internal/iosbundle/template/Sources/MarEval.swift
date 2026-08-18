@@ -132,6 +132,29 @@ enum Eval {
 
         case .binop(let op, let left, let right):
             let l = try eval(left, env)
+            // `&&` and `||` SHORT-CIRCUIT: when the left operand already decides
+            // the answer, the right one is never evaluated. Mirrors evalAt in
+            // internal/runtime/eval.go and evalExpr in runtime.js, and it has to
+            // happen HERE, before the right operand is evaluated below.
+            //
+            // Not an optimisation. Mar is pure but not total, so an operand can
+            // fail: `n < 1 && 9007199254740991 + n > 0` used to overflow with the
+            // left side already False. On this runtime the second failure mode
+            // bites hardest -- a recursion guarded by `depth < 80 && walk t > 0`
+            // used to spend a stack that only holds about 85 Mar frames, so the
+            // guard the author wrote was the thing being ignored.
+            if op == "&&" || op == "||" {
+                guard case .bool(let a) = l else {
+                    throw MarRuntimeError.message("\(op): expected Bool")
+                }
+                if op == "&&" && !a { return .bool(false) }
+                if op == "||" && a { return .bool(true) }
+                let rv = try eval(right, env)
+                guard case .bool(let b) = rv else {
+                    throw MarRuntimeError.message("\(op): expected Bool")
+                }
+                return .bool(b)
+            }
             let r = try eval(right, env)
             // Fast paths for the hot operators: skip the env-chain lookup
             // (which hashes the operator string once per frame of the
@@ -151,8 +174,7 @@ enum Eval {
             case ">":  return .bool(l.compareMar(r) > 0)
             case "<=": return .bool(l.compareMar(r) <= 0)
             case ">=": return .bool(l.compareMar(r) >= 0)
-            case "&&": if case .bool(let a) = l, case .bool(let b) = r { return .bool(a && b) }
-            case "||": if case .bool(let a) = l, case .bool(let b) = r { return .bool(a || b) }
+            // no "&&" / "||" arms: both returned above, before `r` existed.
             case "++":
                 if case .string(let a) = l, case .string(let b) = r { return .string(a + b) }
                 if case .list(let a) = l, case .list(let b) = r { return .list(a + b) }

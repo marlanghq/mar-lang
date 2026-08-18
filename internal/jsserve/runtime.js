@@ -1088,6 +1088,22 @@
         const op = envLookup(env, e.op);
         if (op === undefined) throw new Error('unknown operator: ' + e.op);
         const left = evalExpr(e.left, env);
+        // `&&` and `||` SHORT-CIRCUIT: when the left operand already decides the
+        // answer, the right one is never evaluated. Mirrors evalAt in
+        // internal/runtime/eval.go and Eval.eval in MarEval.swift.
+        //
+        // Not an optimisation. Mar is pure but not total, so an operand can
+        // fail: `n < 1 && 9007199254740991 + n > 0` used to overflow with the
+        // left side already False, and a recursion guarded by `depth < 80 && …`
+        // used to spend the stack anyway. Elm short-circuits; so does this now.
+        if (e.op === '&&' || e.op === '||') {
+          if (left.k !== 'B') throw new Error(e.op + ': expected Bool');
+          if (e.op === '&&' && !left.b) return VBool(false);
+          if (e.op === '||' && left.b) return VBool(true);
+          const rv = evalExpr(e.right, env);
+          if (rv.k !== 'B') throw new Error(e.op + ': expected Bool');
+          return rv;
+        }
         const right = evalExpr(e.right, env);
         return apply(apply(op, left), right);
       }

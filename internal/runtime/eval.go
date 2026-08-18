@@ -136,6 +136,42 @@ func evalAt(e ast.Expr, env *Env, depth int) (Value, error) {
 		if err != nil {
 			return nil, err
 		}
+		// `&&` and `||` SHORT-CIRCUIT: when the left operand already decides
+		// the answer, the right one is never evaluated.
+		//
+		// This is not an optimisation, and purity does not make it one. Mar is
+		// pure but not TOTAL: pure checked code has exactly two ways to fail,
+		// and both are reachable from an operand. `n < 1 && 9007199254740991 + n > 0`
+		// used to raise an Int overflow even though the left side said False,
+		// and `depth < 80 && walk tree > 0` used to spend the stack the guard
+		// existed to protect. A guard that its own language ignores is not a
+		// guard. Elm short-circuits here, so this also closes an Elm divergence
+		// that was never declared (ADR: Elm-fidelity).
+		//
+		// The operator is still looked up above, and `andOp`/`orOp` still live
+		// in BaseEnv, because the lookup is what reports an unknown operator
+		// and the name has to resolve for that to work.
+		if n.Op == "&&" || n.Op == "||" {
+			lb, isBool := left.(VBool)
+			if !isBool {
+				return nil, errorf(n.Pos, "%s: expected Bool", n.Op)
+			}
+			if n.Op == "&&" && !lb.V {
+				return VBool{V: false}, nil
+			}
+			if n.Op == "||" && lb.V {
+				return VBool{V: true}, nil
+			}
+			right, err := evalAt(n.Right, env, depth)
+			if err != nil {
+				return nil, err
+			}
+			rb, isBool := right.(VBool)
+			if !isBool {
+				return nil, errorf(n.Pos, "%s: expected Bool", n.Op)
+			}
+			return rb, nil
+		}
 		right, err := evalAt(n.Right, env, depth)
 		if err != nil {
 			return nil, err

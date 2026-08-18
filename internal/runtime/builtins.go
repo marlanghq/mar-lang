@@ -989,6 +989,14 @@ func compareValues(a, b Value) (int, error) {
 
 // --- logic / strings ---
 
+// andOp and orOp are STRICT, and the evaluator never reaches them for a written
+// `&&` or `||`: evalAt short-circuits those in its EBinop case before the right
+// operand is evaluated. They stay because the operator is looked up by name
+// there, and that lookup is what reports an unknown operator; a `&&` missing
+// from BaseEnv would turn a short-circuit into "unknown operator: &&".
+//
+// Mar has no parenthesised-operator syntax, so `(&&)` cannot be passed as a
+// value and there is no route by which a program reaches the strict version.
 func andOp(args []Value) (Value, error) {
 	a, ok := args[0].(VBool)
 	b, ok2 := args[1].(VBool)

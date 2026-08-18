@@ -412,9 +412,41 @@ mathCases =
         ]
 
 
+-- The logical operators SHORT-CIRCUIT, and this block is where the three
+-- runtimes have to agree about it. Two of its cases are not comparisons but
+-- assertions: a runtime that evaluates the right operand does not produce a
+-- different answer, it raises an Int overflow and takes the whole corpus down.
+-- That is the intended failure mode, because a runtime that is strict here is
+-- not slightly wrong, it is wrong about which programs run at all.
+--
+-- (No backticks in this file: Source is a Go raw string, and one would end it.)
+shortCircuitCases : String
+shortCircuitCases =
+    String.join ";"
+        [ "andTT=" ++ yn (True && True)
+        , "andTF=" ++ yn (True && False)
+        , "andFT=" ++ yn (False && True)
+        , "andFF=" ++ yn (False && False)
+        , "orTT=" ++ yn (True || True)
+        , "orTF=" ++ yn (True || False)
+        , "orFT=" ++ yn (False || True)
+        , "orFF=" ++ yn (False || False)
+
+        -- the left operand decides, so the right one must never be reached
+        , "andSkips=" ++ yn (False && (9007199254740991 + 1) > 0)
+        , "orSkips=" ++ yn (True || (9007199254740991 + 1) > 0)
+
+        -- the controls: the left operand does NOT decide, so the right one IS
+        -- evaluated. Without these, a runtime that never evaluated the right
+        -- operand at all would also pass.
+        , "andEvaluates=" ++ yn (True && 2 > 1)
+        , "orEvaluates=" ++ yn (False || 2 > 1)
+        ]
+
+
 results : String
 results =
-    String.join "\n" [ basicsCases, stringCases, listCases, maybeCases, resultCases, tupleCases, charCases, dictCases, setCases, jsonCases, mathCases ]
+    String.join "\n" [ basicsCases, stringCases, listCases, maybeCases, resultCases, tupleCases, charCases, dictCases, setCases, jsonCases, mathCases, shortCircuitCases ]
 `
 
 // Entry is the value each runtime is asked to evaluate.
@@ -425,6 +457,7 @@ const Entry = "Conform.results"
 // the block it landed in: `Dict.map`, not `map`.
 var Blocks = []string{
 	"Basics", "String", "List", "Maybe", "Result", "Tuple", "Char", "Dict", "Set", "JSON", "Math",
+	"ShortCircuit",
 }
 
 // Scope is the set of modules whose meaning must be identical everywhere: pure
@@ -727,6 +760,20 @@ Math.isqrtSquare=4
 Math.isqrtAboveSquare=4
 Math.isqrtMillion=1000
 Math.isqrtBig=999999
+
+ShortCircuit.andTT=T
+ShortCircuit.andTF=F
+ShortCircuit.andFT=F
+ShortCircuit.andFF=F
+ShortCircuit.orTT=T
+ShortCircuit.orTF=T
+ShortCircuit.orFT=T
+ShortCircuit.orFF=F
+
+ShortCircuit.andSkips=F
+ShortCircuit.orSkips=T
+ShortCircuit.andEvaluates=T
+ShortCircuit.orEvaluates=T
 `
 
 // Expectations parses the hand-written answers. Blank lines only group them for

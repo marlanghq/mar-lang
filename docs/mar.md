@@ -225,6 +225,18 @@ Standard Elm syntax:
 
 Booleans combine with `&&` and `||`. Negation is the function `not`, not a prefix operator — Mar has none — so it is written `not busy` and composes like anything else: `List.filter (\m -> not m.seen) rows`.
 
+**`&&` and `||` short-circuit.** When the left operand already decides the answer, the right one is not evaluated. So a guard is a real guard:
+
+```
+safe : Int -> Bool
+safe n =
+    n > 0 && 1000000 // n < 5000
+```
+
+That matters more than it would in a total language. Mar is pure, but an expression can still fail two ways — the [53-bit Int bound](#numbers) and the recursion budget — and both are reachable from an operand. Without short-circuiting, `depth < 80 && walk tree` spends the very budget the `depth < 80` was written to protect, and it spends it on a phone where the budget is smallest.
+
+There is no way to observe the difference through a value: the truth table is the ordinary one. The difference is only ever which programs run.
+
 A small numeric kit sits beside it, all bare and named as in Elm: `max`, `min` and `clamp` (which ride Comparable, so they order Char and String too), `abs` (Int or Decimal), and two remainders — `modBy` follows the divisor's sign, which is what wrapping an index wants, while `remainderBy` follows the dividend's and so stays in step with `//`. Both take the divisor first, so `modBy 8` is the wrapping function. Together with `always` and `linkTo` these are the whole bare-name surface of the language; everything else is qualified.
 
 ### 3.2 Numbers
