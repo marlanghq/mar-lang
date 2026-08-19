@@ -1,0 +1,19 @@
+module Probe exposing (t1, t2, t3, t4, t5)
+
+import Music
+
+
+t1 : Sound
+t1 = Music.missionTheme 1
+
+t2 : Sound
+t2 = Music.missionTheme 2
+
+t3 : Sound
+t3 = Music.missionTheme 3
+
+t4 : Sound
+t4 = Music.missionTheme 4
+
+t5 : Sound
+t5 = Music.missionTheme 5

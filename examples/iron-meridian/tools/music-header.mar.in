@@ -1,0 +1,314 @@
+module Music exposing (missionTheme, skirmishThemeCount)
+
+import Sound
+
+
+-- IRON MERIDIAN: the mission music.
+--
+-- Five pieces, each past three minutes, each a real tune: a bass line, a
+-- counter-melody, a lead with a hook, and a kit. Four voices, written the way a
+-- tracker is written.
+--
+-- WHAT HAPPENED TO THE OLD BED, because the rules it was built on are exactly
+-- what was wrong with it. The previous soundtrack was four sustained voices with
+-- no percussion, nothing written above 392 Hz, and every piece constrained to a
+-- minor pentatonic so that no two notes anywhere could form a semitone or a
+-- tritone. Each of those rules was adopted for a defensible reason -- a kit put a
+-- transient in the mix every half second, a listener heard a held tritone as
+-- "weird" rather than as tense -- and together they produced something that
+-- could not offend and could not hold anyone's attention either. A scale with no
+-- semitone has no leading tone, so nothing can pull anywhere; a bed with no
+-- percussion has no time; a ceiling at 392 Hz means no voice can ever sing above
+-- the bass. The result was calm, and calm is not what an RTS about a war wants.
+--
+-- These five replace it. Four of them are ported from the Star Trek shooter,
+-- where they were written as faction cues, and they are the opposite of a bed:
+-- a D minor war march built on a tritone fanfare, a cold cue that implies its
+-- key and never states it, a machine piece whose whole development happens in a
+-- floor under one fixed alien beep, and a fast phrygian-dominant piece that
+-- changes key in the middle. The fifth, for the last mission, is new. Each was
+-- roughly a minute long there and is roughly three here: the original form is
+-- movement one, and what follows develops it.
+--
+-- THE MISSIONS THEY LANDED ON, which is not arbitrary:
+--
+--   1 Dust and Iron    the war march. First mission, first ground taken.
+--   2 The Silo Gambit  the cold one. A gambit is not a battle.
+--   3 Static           the machine. The mission is literally named for it.
+--   4 Scrap Truce      the fast one. A truce that is about to break.
+--   5 Meridian Engine  new, and the only piece that quotes another: the rising
+--                      fourth from mission 1 comes back in the last movement, so
+--                      the campaign ends on the interval it opened with.
+--
+-- WHAT THE ENGINE GAINED, and every one of the three is load-bearing here:
+--
+--   Sound.decay gives a note a falling energy of its own, so a voice can be
+--   PLAYED rather than held. The bass plucks (150 ms to 58%), the counter stabs,
+--   the lead falls just enough that a long note breathes, and the kit finally has
+--   real drum envelopes instead of a fade standing in for one. Without it every
+--   repeated note is an organ key going down and coming up.
+--
+--   Sound.Sine is the fundamental with nothing on top. The kick is a sine
+--   sweeping 165 Hz to 46 in 130 ms, which is a kick rather than an impression
+--   of one, and every bass note carries a sine at its own pitch under the
+--   sawtooth at 46%: a sawtooth's energy is in its harmonics, and on a laptop
+--   speaker that means a bass line you can hear the SHAPE of but not the WEIGHT.
+--
+--   Sound.detune makes the lead a unison PAIR nine cents apart. That is the
+--   sound of two players not quite in tune, it is why a 16-bit lead reads as an
+--   instrument rather than an oscillator, and it costs one field.
+--
+-- HOW IT KEEPS Sound.loop's INVARIANT (all voices summing to identical
+-- milliseconds) true BY CONSTRUCTION rather than by anyone counting: every
+-- pattern is exactly 16 steps and every voice plays the same number of bars, so
+-- the four cannot drift apart. A voice that summed short would slide further out
+-- of phase on every repeat until the loop was mush. The generator refuses to
+-- write this file otherwise, and it also refuses if any piece falls under three
+-- minutes.
+--
+-- Only missionTheme and skirmishThemeCount escape the module.
+
+
+-- A step is 150 ms, so a bar of 16 steps is 2.4 seconds and 100 BPM in 4/4.
+stepMs : Int
+stepMs = 150
+
+
+-- hz 0 is a rest. n is the length in steps. v is the note's own level, 0-100,
+-- which the generator folds the MOVEMENT's level into: the same pattern played
+-- in a quiet movement and a loud one becomes two entries in the emitted table.
+type alias Note =
+    { hz : Int, n : Int, v : Int }
+
+
+nt : Int -> Int -> Note
+nt hz n =
+    { hz = hz, n = n, v = 100 }
+
+
+ntv : Int -> Int -> Int -> Note
+ntv hz n v =
+    { hz = hz, n = n, v = v }
+
+
+-- One multiply, one divide: keeping the voice volume and the note level
+-- together until the end stops integer truncation from flattening the soft end,
+-- where two levels a fifth apart would otherwise round to the same value.
+level : Int -> Int -> Int
+level vol v =
+    max 1 (vol * v * musicGain // 10000)
+
+
+-- ONE KNOB for how loud the whole soundtrack sits under the game. The balance
+-- BETWEEN the voices is set per piece, where it belongs; this scales all of them
+-- together, so turning it changes the level and never the mix.
+musicGain : Int
+musicGain = 100
+
+
+-- THE BASS. Two oscillators at the SAME pitch: the piece's own wave carries the
+-- shape, and a sine under it at 46% carries the weight.
+--
+-- That is not thickening for its own sake. A sawtooth at 82 Hz puts almost
+-- nothing at 82 Hz and a great deal at 164, 246, 328; a small speaker reproduces
+-- the harmonics and drops the fundamental, so the line reads as a buzz an octave
+-- up rather than as a bass. The sine is the missing fundamental, put back.
+--
+-- The volume and the ceiling are applied INSIDE each layer, not around the
+-- chord, because those two are patchLast: wrapping the chord would set them on
+-- the sine alone and leave the saw at full level with no ceiling. attack,
+-- release and decay are patchAll and correctly go outside.
+bassOf : Sound.Wave -> Int -> List Note -> Sound
+bassOf wave vol notes =
+    Sound.sequence (List.map (bassNote wave vol) notes)
+
+
+bassNote : Sound.Wave -> Int -> Note -> Sound
+bassNote wave vol n =
+    if n.hz <= 0 then
+        Sound.rest (n.n * stepMs)
+
+    else
+        Sound.sequence
+            [ Sound.release 70
+                (Sound.decay 150 58
+                    (Sound.attack 6
+                        (Sound.chord
+                            [ Sound.highCut 2400
+                                (Sound.volume (level vol n.v)
+                                    (Sound.tone wave n.hz (n.n * stepMs - 30))
+                                )
+                            , Sound.volume (level vol n.v * 46 // 100)
+                                (Sound.tone Sound.Sine n.hz (n.n * stepMs - 30))
+                            ]
+                        )
+                    )
+                )
+            , Sound.rest 30
+            ]
+
+
+-- THE COUNTER sits behind the lead: a narrow pulse, softer, and cut short, so it
+-- reads as accompaniment rather than as a second tune fighting the first. The
+-- decay is what makes it a STAB -- it drops to 46% in 210 ms and rings down from
+-- there, which is the difference between a chord being struck and a chord being
+-- held.
+counterOf : Int -> List Note -> Sound
+counterOf vol notes =
+    Sound.sequence (List.map (counterNote vol) notes)
+
+
+counterNote : Int -> Note -> Sound
+counterNote vol n =
+    if n.hz <= 0 then
+        Sound.rest (n.n * stepMs)
+
+    else
+        Sound.sequence
+            [ Sound.release 100
+                (Sound.decay 210 46
+                    (Sound.duty 25
+                        (Sound.volume (level vol n.v)
+                            (Sound.tone Sound.Square n.hz (n.n * stepMs - 40))
+                        )
+                    )
+                )
+            , Sound.rest 40
+            ]
+
+
+-- THE LEAD breathes: a slow vibrato, a wide-ish pulse to cut through, a decay
+-- shallow enough (74%) that a held note falls without dying, and a UNISON of two
+-- copies nine cents apart.
+--
+-- Each layer sits at 71%, which is 1/sqrt(2): two sources that BEAT are
+-- incoherent, so they add in quadrature rather than arithmetically, and a pair
+-- written at 50% each measures quiet.
+--
+-- The layers are a CHORD inside one note, so the note still spans exactly n
+-- steps and the 16-step invariant is untouched.
+leadOf : Int -> List Note -> Sound
+leadOf vol notes =
+    Sound.sequence (List.map (leadNote vol) notes)
+
+
+leadNote : Int -> Note -> Sound
+leadNote vol n =
+    if n.hz <= 0 then
+        Sound.rest (n.n * stepMs)
+
+    else
+        Sound.sequence
+            [ Sound.release 80
+                (Sound.decay 280 74
+                    (Sound.chord
+                        [ Sound.detune (0 - 9) (leadLayer vol n)
+                        , Sound.detune 9 (leadLayer vol n)
+                        ]
+                    )
+                )
+            , Sound.rest 30
+            ]
+
+
+leadLayer : Int -> Note -> Sound
+leadLayer vol n =
+    Sound.vibrato 18 6
+        (Sound.duty 40
+            (Sound.volume (level vol n.v * 71 // 100)
+                (Sound.tone Sound.Square n.hz (n.n * stepMs - 30))
+            )
+        )
+
+
+-- THE KIT. One drum step, always exactly stepMs long, and the VELOCITY picks the
+-- drum: over 50 is the kick, 30 to 50 the snare, under 30 the hat. Three sounds
+-- out of one number per step is what keeps the patterns readable as rhythm --
+-- sixteen integers a bar, and you can see the backbeat.
+--
+-- The three are scaled against each other here rather than in the patterns. An
+-- earlier version had the kick take a flat discount and the snare take none, so
+-- a snare written 50 came out louder than a kick written 66, and the skin was
+-- the loudest thing in the mix.
+drumLine : Int -> List Int -> Sound
+drumLine vol hits =
+    Sound.sequence (List.map (drumHit vol) hits)
+
+
+drumHit : Int -> Int -> Sound
+drumHit vol v =
+    if v <= 0 then
+        Sound.rest stepMs
+
+    else if v > 50 then
+        kickHit vol v
+
+    else if v >= 30 then
+        snareHit vol v
+
+    else
+        hatHit vol v
+
+
+-- A sine falling 165 Hz to 46 in 130 ms, at 10% of its level after 70. The sweep
+-- is the pitch envelope and the decay is the energy envelope; a kick needs both,
+-- and before Sound.decay existed the release had to stand in for the second,
+-- which is why the old kick was a slow fade from full volume rather than a hit.
+kickHit : Int -> Int -> Sound
+kickHit vol v =
+    Sound.sequence
+        [ Sound.decay 70 10
+            (Sound.attack 3
+                (Sound.highCut 900
+                    (Sound.volume (level vol (v * 74 // 100))
+                        (Sound.sweep 46 (Sound.tone Sound.Sine 165 130))
+                    )
+                )
+            )
+        , Sound.rest (stepMs - 130)
+        ]
+
+
+-- Noise for the wires and a short swept triangle for the shell. A snare is both,
+-- and noise alone is a hiss.
+snareHit : Int -> Int -> Sound
+snareHit vol v =
+    Sound.sequence
+        [ Sound.decay 45 8
+            (Sound.chord
+                [ Sound.highCut 4200
+                    (Sound.lowCut 900
+                        (Sound.volume (level vol (v * 88 // 100))
+                            (Sound.tone Sound.Noise 0 95)
+                        )
+                    )
+                , Sound.highCut 1100
+                    (Sound.volume (level vol (v * 44 // 100))
+                        (Sound.sweep 140 (Sound.tone Sound.Triangle 235 95))
+                    )
+                ]
+            )
+        , Sound.rest (stepMs - 95)
+        ]
+
+
+-- Short and high. The band starts at 3200 Hz so the hats sizzle instead of
+-- hissing, and 45 ms with a 22 ms decay is a closed hat rather than a wash.
+hatHit : Int -> Int -> Sound
+hatHit vol v =
+    Sound.sequence
+        [ Sound.decay 22 6
+            (Sound.highCut 9000
+                (Sound.lowCut 3200
+                    (Sound.volume (level vol (v * 62 // 100))
+                        (Sound.tone Sound.Noise 0 45)
+                    )
+                )
+            )
+        , Sound.rest (stepMs - 45)
+        ]
+
+
+arrange : (Int -> List a) -> List Int -> List a
+arrange pat order =
+    List.concat (List.map pat order)
