@@ -74,11 +74,17 @@ const kCounter = [
   [[_, 1], [220, 2], [_, 1], [208, 2], [196, 2], [_, 1], [175, 2], [165, 2], [220, 3]],                       // 6 the descent, turning up to the dominant
   [[_, 1], [147, 2], [196, 6], [_, 1], [196, 3], [175, 3]],                                                   // 7 the hook, doubled low
   // --- new ---
-  [[220, 8], [196, 8]],                                                                                       // 8
+  [[220, 8], [165, 8]],                                                                                       // 8
   [[175, 6], [233, 4], [196, 6]],                                                                             // 9
   [[147, 16]],                                                                                                // 10 one note, held
 ];
 kCounter.push(tr(kCounter[0], 5), tr(kCounter[3], 5), tr(kCounter[6], 5));               // 11 12 13: G minor
+// 14: the G-minor counter with one note moved. Transposing kCounter[3] up a
+// fourth lands its step-11 E4 on A4, and the lead is holding A#4 a semitone
+// above it -- in the same octave, three times over (bars 37, 41, 45). That was
+// the only true semitone left in the piece and the harshest interval there is.
+// G4 instead: a minor 3rd under the lead, and the tonic of the movement.
+kCounter.push(kCounter[12].map(([hz, n]) => (hz === 440 ? [392, n] : [hz, n])));
 
 const kLead = [
   [[_, 1], [294, 2], [392, 5], [_, 1], [392, 3], [440, 2], [392, 1], [349, 1]],   // 0 THE HOOK: D4 up to G4, held
@@ -155,7 +161,7 @@ const T1 = {
     {
       bars: 12, gain: { bass: 86, counter: 80, lead: 88, drum: 84 },
       bass: [13, 14, 13, 15],
-      counter: [11, 12, 11, 13],
+      counter: [11, 14, 11, 13],
       lead: [11, 12, 11, 13],
       drum: [0, 1, 2, 3],
     },

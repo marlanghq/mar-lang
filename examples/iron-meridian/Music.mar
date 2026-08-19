@@ -460,7 +460,7 @@ m1Counter i =
         [ ntv 220 3 96, nt 0 1, ntv 220 2 96, ntv 196 2 96, ntv 277 2 96, nt 0 1, ntv 330 2 96, ntv 277 2 96, ntv 220 1 96 ]
 
     else if i == 15 then
-        [ ntv 220 8 50, ntv 196 8 50 ]
+        [ ntv 220 8 50, ntv 165 8 50 ]
 
     else if i == 16 then
         [ ntv 175 6 50, ntv 233 4 50, ntv 196 6 50 ]
@@ -472,7 +472,7 @@ m1Counter i =
         [ ntv 196 2 80, ntv 234 1 80, nt 0 1, ntv 294 2 80, ntv 262 1 80, ntv 234 1 80, ntv 196 3 80, nt 0 1, ntv 234 2 80, ntv 208 1 80, ntv 196 1 80 ]
 
     else if i == 19 then
-        [ ntv 294 3 80, nt 0 1, ntv 294 2 80, ntv 262 2 80, ntv 370 2 80, nt 0 1, ntv 440 2 80, ntv 370 2 80, ntv 294 1 80 ]
+        [ ntv 294 3 80, nt 0 1, ntv 294 2 80, ntv 262 2 80, ntv 370 2 80, nt 0 1, ntv 392 2 80, ntv 370 2 80, ntv 294 1 80 ]
 
     else if i == 20 then
         [ nt 0 1, ntv 294 2 80, nt 0 1, ntv 278 2 80, ntv 262 2 80, nt 0 1, ntv 234 2 80, ntv 220 2 80, ntv 294 3 80 ]
