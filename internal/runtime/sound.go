@@ -23,6 +23,7 @@ func soundBuiltins() map[string]Value {
 		"Sound.Square":   VCtor{Tag: "Square"},
 		"Sound.Triangle": VCtor{Tag: "Triangle"},
 		"Sound.Sawtooth": VCtor{Tag: "Sawtooth"},
+		"Sound.Sine":     VCtor{Tag: "Sine"},
 		"Sound.Noise":    VCtor{Tag: "Noise"},
 
 		// builders: opaque Sound in, opaque Sound out (never synthesised here).
@@ -34,7 +35,9 @@ func soundBuiltins() map[string]Value {
 		"soundHoldPitch": inertSound(2),
 		"soundAttack":    inertSound(2),
 		"soundRelease":   inertSound(2),
+		"soundDecay":     inertSound(3),
 		"soundDuty":      inertSound(2),
+		"soundDetune":    inertSound(2),
 		"soundVibrato":   inertSound(3),
 		"soundArp":       inertSound(2),
 		"soundRest":      inertSound(1),

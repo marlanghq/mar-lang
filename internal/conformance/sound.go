@@ -88,6 +88,27 @@ shortEnvelope =
     Sound.release 1 (Sound.attack 2 (Sound.tone Sound.Square 500 60))
 
 
+-- the decay stage, both ends of it. the struck one falls to silence inside its own
+-- length, which is the case that breaks a naive implementation: an exponential
+-- ramp cannot be given a zero target on the web, and pow(0,0) is 1 on iOS.
+struck : Sound
+struck =
+    Sound.decay 260 0 (Sound.attack 4 (Sound.tone Sound.Triangle 330 700))
+
+
+-- and a pad: falls part way, then HOLDS there until the release.
+settled : Sound
+settled =
+    Sound.release 300 (Sound.decay 420 65 (Sound.attack 180 (Sound.tone Sound.Sawtooth 147 1400)))
+
+
+-- decay asked for on a note too short to hold it: the fall is clamped to the
+-- space the attack and release leave, and must not run past the note.
+crowded : Sound
+crowded =
+    Sound.release 40 (Sound.decay 900 20 (Sound.attack 30 (Sound.tone Sound.Square 440 80)))
+
+
 -- pitch over time: sweep, sweep with a hold, and the arp stepper
 swept : Sound
 swept =
@@ -113,6 +134,31 @@ pulsed =
 wobbly : Sound
 wobbly =
     Sound.vibrato 28 9 (Sound.tone Sound.Sawtooth 165 320)
+
+
+-- the sine: the one wave with no harmonics, and the only one where duty is
+-- meaningless. Both runtimes have to route it as a sine and not fall back to a
+-- square, which is exactly what they used to do with an unknown tag.
+pure : Sound
+pure =
+    Sound.duty 25 (Sound.tone Sound.Sine 110 400)
+
+
+-- detune: a unison, which is what it exists for. The two layers differ, so this
+-- also pins that detune patches the LAST voice and not every voice.
+unison : Sound
+unison =
+    Sound.chord
+        [ Sound.detune (0 - 7) (Sound.tone Sound.Sawtooth 220 500)
+        , Sound.detune 7 (Sound.tone Sound.Sawtooth 220 500)
+        ]
+
+
+-- detune on noise, where it means resampling the clip rather than shifting an
+-- oscillator: the two runtimes reach the same ratio from opposite directions.
+detunedNoise : Sound
+detunedNoise =
+    Sound.detune 600 (Sound.tone Sound.Noise 300 120)
 
 
 -- the two cuts, nested both ways round: the outer one used to eat the inner
@@ -199,7 +245,8 @@ var SoundFixtures = []string{
 	"plain", "triangle", "sawtooth", "noise", "rest",
 	"loud", "enveloped", "shortEnvelope",
 	"swept", "held", "arpeggio",
-	"pulsed", "wobbly",
+	"struck", "settled", "crowded",
+	"pulsed", "wobbly", "pure", "unison", "detunedNoise",
 	"cut", "cutFlipped",
 	"stacked", "ordered",
 	"notes", "octaves",
@@ -217,5 +264,5 @@ var SoundFixtures = []string{
 var SoundFields = []string{
 	"wave", "freq", "ms", "endFreq", "holdMs", "volume", "delayMs",
 	"duty", "vibDepth", "vibRate", "arp", "lowCut", "highCut",
-	"attack", "release",
+	"attack", "release", "decay", "sustain", "detune",
 }

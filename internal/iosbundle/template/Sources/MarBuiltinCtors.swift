@@ -156,6 +156,7 @@ enum MarBuiltinCtors {
         env.define("Sound.Square", .ctor(tag: "Square", args: [], origin: nil))
         env.define("Sound.Triangle", .ctor(tag: "Triangle", args: [], origin: nil))
         env.define("Sound.Sawtooth", .ctor(tag: "Sawtooth", args: [], origin: nil))
+        env.define("Sound.Sine", .ctor(tag: "Sine", args: [], origin: nil))
         env.define("Sound.Noise", .ctor(tag: "Noise", args: [], origin: nil))
         env.define("Canvas.Translate", .fn(MarFn.native(2) { .ctor(tag: "Translate", args: $0, origin: nil) }))
         env.define("Canvas.Scale", .fn(MarFn.native(2) { .ctor(tag: "Scale", args: $0, origin: nil) }))

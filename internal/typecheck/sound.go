@@ -11,8 +11,15 @@ var soundNoteNames = []string{"c", "cs", "d", "ds", "e", "f", "fs", "g", "gs", "
 // `case w of Sound.Square -> ...` is exhaustiveness-checked and a typo is a
 // COMPILE error. The JS runtime maps each to a WebAudio oscillator type (Noise
 // to a noise buffer). Qualified-only, like Keyboard.Key / Gamepad.Button, so
-// the four names don't pollute the global scope. See docs/proposals/sound.md.
-var soundWaves = []string{"Square", "Triangle", "Sawtooth", "Noise"}
+// the names don't pollute the global scope. See docs/proposals/sound.md.
+//
+// Sine is a BASIS, not a flavour: it is the one waveform with no harmonics at
+// all, so it is the only way to write a fundamental that does not buzz — a sub
+// bass, a flute, an inner voice that does not fight the melody for harmonic
+// space. Every other member of this set is a sum of sines; this is the sine.
+// Adding it is source-breaking by design (ADR-0022: every `case` is total), and
+// that is the trade recorded in docs/proposals/sound-snes.md.
+var soundWaves = []string{"Square", "Triangle", "Sawtooth", "Sine", "Noise"}
 
 // soundWaveCustomType registers the Sound.Wave union for exhaustiveness
 // checking. Mirrors gamepadButtonCustomType / keyboardKeyCustomType.

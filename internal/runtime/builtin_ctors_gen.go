@@ -160,6 +160,7 @@ func builtinCtors() map[string]Value {
 		"Sound.Square":   VCtor{Tag: "Square"},
 		"Sound.Triangle": VCtor{Tag: "Triangle"},
 		"Sound.Sawtooth": VCtor{Tag: "Sawtooth"},
+		"Sound.Sine":     VCtor{Tag: "Sine"},
 		"Sound.Noise":    VCtor{Tag: "Noise"},
 		"Canvas.Translate": nativeFn(2, func(args []Value) (Value, error) {
 			return VCtor{Tag: "Translate", Args: append([]Value(nil), args...)}, nil

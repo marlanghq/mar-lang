@@ -36,6 +36,16 @@ private struct Voice {
     // renderer floors at the shortest ramp that is not a click.
     var attack: Double
     var release: Double
+    // Sound.decay: the stage between attack and the hold. `decay` is the fall
+    // time in ms and `sustain` the level it falls TO, as a percent of this
+    // voice's own volume. decay 0 means the voice never asked, and then the
+    // envelope is exactly the attack / hold / release it always was.
+    var decay: Double
+    var sustain: Double
+    // Sound.detune: a fixed offset in cents, applied as a frequency ratio right
+    // where vibrato applies its own. The web reaches the same number through the
+    // oscillator's `detune` AudioParam.
+    var detune: Double
 }
 
 /// The floor below which a gain change is a step discontinuity: a click. Not a
@@ -126,6 +136,10 @@ private final class BedVoice {
     var vibDepth: Double = 0       // cents (0 = none)
     var vibRate: Double = 0        // Hz
     var vibPhase: Double = 0       // LFO phase, 0..1
+    // Sound.detune on a HELD voice: a fixed cents offset. Like vibrato it rides
+    // the instantaneous pitch and leaves freqTarget alone, so a live retune keeps
+    // gliding underneath the offset instead of erasing it.
+    var detune: Double = 0         // cents (0 = none)
     // Fade-out rate, from the voice's Sound.release. Held here because the sub
     // teardown has the node but not the Sound that built it.
     var stopK: Double = 0
@@ -303,15 +317,32 @@ final class MarSound: @unchecked Sendable {
         // The held bed (bedSample) was never wrong: its `ampK` smoothing is an
         // exponential approach already. Only the one-shot voice was linear.
         let floorAmp = 0.0001
+        // Sound.decay: the fall from the peak to a held level, in whatever space
+        // the attack and the release leave behind. Exponential like the other two
+        // stages, because a resonator loses energy in proportion to what it has.
+        //
+        // `sus` is FLOORED at floorAmp, and that is not cosmetic. The pow() form
+        // is `from * pow(to/from, x)`; with a bare 0 target it computes
+        // pow(0, 0) = 1 at the first sample -- FULL volume -- and exactly 0 for
+        // every sample after, which is a step to silence, the opposite of a decay.
+        // The web meets the same wall from the other side: an exponential ramp
+        // cannot be handed a zero target at all.
+        let dec = v.decay > 0 ? min(rampSec(v.decay), max(0, dur - atk - tail)) : 0
+        let sus = dec > 0 ? max(floorAmp, peak * max(0, min(100, v.sustain)) / 100) : peak
+        let holdStart = atk + dec
         let amp: Double
         if ts < atk {
             amp = floorAmp * pow(peak / floorAmp, ts / atk)
-        } else if ts < max(atk, dur - tail) {
-            amp = peak
+        } else if dec > 0 && ts < holdStart {
+            amp = peak * pow(sus / peak, (ts - atk) / dec)
+        } else if ts < max(holdStart, dur - tail) {
+            amp = sus
         } else {
-            let relStart = max(atk, dur - tail)
+            let relStart = max(holdStart, dur - tail)
             let span = max(0.0001, dur - relStart)
-            amp = peak * pow(floorAmp / peak, min(1, (ts - relStart) / span))
+            // The release leaves from the SUSTAIN level, not the peak: a note that
+            // already decayed must not jump back up to fade from the top.
+            amp = sus * pow(floorAmp / sus, min(1, (ts - relStart) / span))
         }
 
         // Instantaneous frequency: arp steps, else sweep with optional hold.
@@ -329,6 +360,10 @@ final class MarSound: @unchecked Sendable {
                 freq = max(1, v.freq) + (max(1, v.endFreq) - max(1, v.freq)) * min(1, g)
             }
         }
+        // Sound.detune: a fixed cents offset as a frequency ratio, applied BEFORE
+        // vibrato so the two compose the way they do on the web, where the static
+        // value and the LFO sum on one `detune` AudioParam.
+        if v.detune != 0 { freq *= pow(2, v.detune / 1200) }
         // Vibrato: sine LFO on detune (cents -> frequency ratio).
         if v.vibDepth > 0 {
             lv.vibPhase += v.vibRate / sr
@@ -354,6 +389,12 @@ final class MarSound: @unchecked Sendable {
             osc = 4 * abs(p - 0.5) - 1
         case "Sawtooth":
             osc = 2 * p - 1 - polyBlep(p, dt)   // one edge per cycle, at the wrap
+        case "Sine":
+            // Nothing to band-limit: a sine has exactly one partial, so there is
+            // nothing above it to alias. It is the most EXPENSIVE wave here even
+            // so -- one sin() per sample per voice, against the square's compare
+            // plus two polyBLEP corrections.
+            osc = sin(2 * Double.pi * p)
         case "Noise":
             // Sample-and-hold at the note's pitch: draw a new random value only
             // when the phase completes a cycle, and hold it in between. Low keys
@@ -432,6 +473,7 @@ final class MarSound: @unchecked Sendable {
         // voiceSample. Modulates the instantaneous pitch, leaving the smoothed
         // b.freq (the retune target) alone.
         var f = b.freq
+        if b.detune != 0 { f *= pow(2, b.detune / 1200) }
         if b.vibDepth > 0 {
             b.vibPhase += b.vibRate / sr
             if b.vibPhase >= 1 { b.vibPhase -= 1 }
@@ -453,6 +495,12 @@ final class MarSound: @unchecked Sendable {
             osc = 4 * abs(p - 0.5) - 1
         case "Sawtooth":
             osc = 2 * p - 1 - polyBlep(p, dt)   // one edge per cycle, at the wrap
+        case "Sine":
+            // Nothing to band-limit: a sine has exactly one partial, so there is
+            // nothing above it to alias. It is the most EXPENSIVE wave here even
+            // so -- one sin() per sample per voice, against the square's compare
+            // plus two polyBLEP corrections.
+            osc = sin(2 * Double.pi * p)
         default:
             let duty = (b.duty >= 1 && b.duty <= 99) ? b.duty / 100 : 0.5
             // Two edges per cycle: up at the wrap, down at the duty point. The
@@ -519,7 +567,7 @@ final class MarSound: @unchecked Sendable {
     /// (mirrors soundFullKey in the JS runtime).
     static func contentKey(_ snd: MarValue) -> String {
         voicesOf(snd).map {
-            "\($0.wave)|\($0.freq)|\($0.ms)|\($0.endFreq)|\($0.holdMs)|\($0.volume)|\($0.delayMs)|\($0.duty)|\($0.vibDepth)|\($0.vibRate)|\($0.arp)|\($0.lowCut)|\($0.highCut)|\($0.attack)|\($0.release)"
+            "\($0.wave)|\($0.freq)|\($0.ms)|\($0.endFreq)|\($0.holdMs)|\($0.volume)|\($0.delayMs)|\($0.duty)|\($0.vibDepth)|\($0.vibRate)|\($0.arp)|\($0.lowCut)|\($0.highCut)|\($0.attack)|\($0.release)|\($0.decay)|\($0.sustain)|\($0.detune)"
         }.joined(separator: ";")
     }
 
@@ -543,7 +591,7 @@ final class MarSound: @unchecked Sendable {
     /// the source either way: the filter is built once and never glides.
     static func heldKey(_ snd: MarValue, withFreq: Bool) -> String {
         voicesOf(snd).map {
-            "\($0.wave)|\(withFreq ? $0.freq : 0)|\($0.ms)|\($0.endFreq)|\($0.holdMs)|\($0.delayMs)|\($0.duty)|\($0.vibDepth)|\($0.vibRate)|\($0.arp)|\($0.lowCut)|\($0.highCut)|\($0.attack)|\($0.release)"
+            "\($0.wave)|\(withFreq ? $0.freq : 0)|\($0.ms)|\($0.endFreq)|\($0.holdMs)|\($0.delayMs)|\($0.duty)|\($0.vibDepth)|\($0.vibRate)|\($0.arp)|\($0.lowCut)|\($0.highCut)|\($0.attack)|\($0.release)|\($0.decay)|\($0.sustain)|\($0.detune)"
         }.joined(separator: ";")
     }
 
@@ -564,17 +612,106 @@ final class MarSound: @unchecked Sendable {
         fileprivate var bedRefs: [BedVoice] = []
     }
 
+    /// The playhead of one looping Sound. `origin` is the frame at which the
+    /// current pass through `due` began; `i` is how far into that pass the
+    /// cursor has booked. A class, not a struct, because the timer closure
+    /// mutates it across ticks.
+    private final class LoopCursor {
+        let due: [Voice]              // non-Rest, sorted by onset
+        let periodSamples: Double
+        let group: Int
+        var origin: Double
+        var i: Int = 0
+        init(due: [Voice], periodSamples: Double, origin: Double, group: Int) {
+            self.due = due
+            self.periodSamples = periodSamples
+            self.origin = origin
+            self.group = group
+        }
+    }
+
     /// loop: replay the Sound seamlessly on its own period.
+    ///
+    /// IT BOOKS A SLICE, NOT A PERIOD, and on this side that is not a stutter
+    /// but a throughput bug. `render` walks `voices` once PER SAMPLE; a voice
+    /// scheduled for the future is skipped by a bounds check, but it is still
+    /// visited. This used to append every voice of the whole sound up front and
+    /// then append a whole fresh copy every period, so a three-minute score with
+    /// ~3000 sounding voices left ~3000 entries in that array permanently: about
+    /// 150 million iterations a second on the audio render thread, for work that
+    /// is thrown away. Booking only what comes due inside the horizon keeps the
+    /// array at the handful actually sounding.
+    ///
+    /// Mirrors soundLoopStart in runtime.js: same 0.14 s horizon, same 30 ms
+    /// tick, same rule that anything already past is SKIPPED rather than booked.
     func startLoop(_ snd: MarValue) -> Handle {
+        ensure()
         let h = Handle()
-        let period = max(0.05, MarSound.spanMs(snd) / 1000)
-        h.groups.append(schedule(snd))
+        // The period comes from ALL voices, rests included: a trailing
+        // Sound.rest is how a piece pads its last bar.
+        let periodSamples = max(0.05, MarSound.spanMs(snd) / 1000) * sr
+        // Rests are then dropped from the CURSOR (they render to nothing and are
+        // typically half the list), and the rest sorted by onset, which is what
+        // makes a cursor possible at all.
+        let due = MarSound.voicesOf(snd)
+            .filter { $0.wave != "Rest" }
+            .sorted { $0.delayMs < $1.delayMs }
+        if due.isEmpty { return h }          // a loop of pure silence
+        lock.lock()
+        let group = nextGroup; nextGroup += 1
+        // One group for the WHOLE loop, not one per period: stop() removes by
+        // group, and the old shape grew h.groups without bound for as long as
+        // the music played.
+        let cursor = LoopCursor(due: due, periodSamples: periodSamples,
+                                origin: clock + 0.02 * sr, group: group)
+        lock.unlock()
+        h.groups.append(group)
+        pumpLoop(cursor)
         let timer = DispatchSource.makeTimerSource(queue: .main)
-        timer.schedule(deadline: .now() + period, repeating: period)
-        timer.setEventHandler { [weak self] in h.groups.append(self?.schedule(snd, atOffsetMs: 0) ?? 0) }
+        timer.schedule(deadline: .now() + 0.03, repeating: 0.03)
+        timer.setEventHandler { [weak self] in self?.pumpLoop(cursor) }
         timer.resume()
         h.timer = timer
         return h
+    }
+
+    /// One look-ahead tick for a loop. Runs on the main queue and takes the same
+    /// lock the render thread does, because it reads `clock` and appends to
+    /// `voices`.
+    private func pumpLoop(_ c: LoopCursor) {
+        let horizon = 0.14 * sr
+        lock.lock()
+        defer { lock.unlock() }
+        // While muted, keep the timer alive but book nothing, and hold the
+        // playhead at the present so unmuting resumes from the top rather than
+        // bursting to catch up.
+        if muted {
+            c.origin = clock + 0.02 * sr
+            c.i = 0
+            return
+        }
+        let now = clock
+        // Anything already past is SKIPPED. A stalled timer (backgrounded app,
+        // a long main-queue block) would otherwise dump the whole missed stretch
+        // at once, which is the burst this scheduler exists to avoid.
+        // Terminates because every iteration advances either the cursor or the
+        // origin.
+        while true {
+            if c.i >= c.due.count { c.origin += c.periodSamples; c.i = 0 }
+            if c.origin + c.due[c.i].delayMs / 1000 * sr >= now { break }
+            c.i += 1
+        }
+        // Then book what is due inside the horizon. A period shorter than the
+        // horizon simply wraps more than once here.
+        while true {
+            if c.i >= c.due.count { c.origin += c.periodSamples; c.i = 0 }
+            let v = c.due[c.i]
+            let start = c.origin + v.delayMs / 1000 * sr
+            if start >= now + horizon { break }
+            voices.append(LiveVoice(v, startSample: start,
+                                    durSamples: max(0.02, v.ms / 1000) * sr, group: c.group))
+            c.i += 1
+        }
     }
 
     /// ambient: a steady bed, each voice becomes ONE held BedVoice (no
@@ -587,7 +724,16 @@ final class MarSound: @unchecked Sendable {
         let h = Handle()
         lock.lock()
         for v in MarSound.voicesOf(snd) where v.wave != "Rest" {
-            let peak = max(0.0002, min(100, max(0, v.volume)) / 100)
+            // A held source settles at the voice's SUSTAIN level, not at its raw
+            // peak -- that is what a sustain level means for something with no
+            // end. The decay TIME cannot apply here: this path holds one node at
+            // one level with no per-note clock to fall along, and building one
+            // would rebuild the note renderer inside the bed, the drift
+            // sound-envelope.md exists to prevent. Mirrors heldLevel() on the web.
+            let full = max(0.0002, min(100, max(0, v.volume)) / 100)
+            let peak = v.decay > 0
+                ? max(0.0002, full * max(0, min(100, v.sustain)) / 100)
+                : full
             // Fade in / out at the voice's own envelope, not at a house constant.
             // k = 1 - exp(-1/(tau*sr)) is the per-sample form of the web ramp.
             let b = BedVoice(wave: v.wave, duty: v.duty,
@@ -598,6 +744,7 @@ final class MarSound: @unchecked Sendable {
             b.highCut = v.highCut
             b.vibDepth = v.vibDepth
             b.vibRate = v.vibRate
+            b.detune = v.detune
             beds.append(b)
             h.bedRefs.append(b)
         }
@@ -674,7 +821,10 @@ final class MarSound: @unchecked Sendable {
                      volume: f["volume"] == nil ? 60 : d("volume"), delayMs: d("delayMs"),
                      duty: d("duty"), vibDepth: d("vibDepth"), vibRate: d("vibRate"), arp: arp,
                      lowCut: d("lowCut"), highCut: d("highCut"),
-                     attack: d("attack"), release: d("release"))
+                     attack: d("attack"), release: d("release"),
+                     decay: d("decay"),
+                     sustain: f["sustain"] == nil ? 100 : d("sustain"),
+                     detune: d("detune"))
     }
 
     // MARK: builtin registration
@@ -691,7 +841,8 @@ final class MarSound: @unchecked Sendable {
                 "delayMs": .int(0), "duty": .int(0), "vibDepth": .int(0),
                 "vibRate": .int(0), "arp": .unit,
                 "lowCut": .int(0), "highCut": .int(0),
-            ], order: ["wave", "freq", "ms", "endFreq", "holdMs", "volume", "delayMs", "duty", "vibDepth", "vibRate", "arp", "lowCut", "highCut"])
+                "decay": .int(0), "sustain": .int(100), "detune": .int(0),
+            ], order: ["wave", "freq", "ms", "endFreq", "holdMs", "volume", "delayMs", "duty", "vibDepth", "vibRate", "arp", "lowCut", "highCut", "decay", "sustain", "detune"])
         }
         func mkSound(_ voices: [MarValue]) -> MarValue { .ctor(tag: "__Snd", args: [.list(voices)], origin: nil) }
         func voicesOfVal(_ snd: MarValue) -> [MarValue] {
@@ -728,7 +879,22 @@ final class MarSound: @unchecked Sendable {
         env.defineFn("soundHoldPitch", "Sound.holdPitch", 2) { a in patchLast(a[1]) { setField($0, "holdMs", .int(intArg(a[0]))) } }
         env.defineFn("soundAttack", "Sound.attack", 2) { a in patchAll(a[1]) { setField($0, "attack", .int(max(0, intArg(a[0])))) } }
         env.defineFn("soundRelease", "Sound.release", 2) { a in patchAll(a[1]) { setField($0, "release", .int(max(0, intArg(a[0])))) } }
+        // decay : fall time in ms, then the level to hold, as a percent of this
+        // voice's own volume. patchAll for the same reason attack and release are:
+        // a chord is one note on several oscillators, so a per-layer envelope
+        // would make it click and speak twice.
+        env.defineFn("soundDecay", "Sound.decay", 3) { a in
+            patchAll(a[2]) {
+                setField(setField($0, "decay", .int(max(0, intArg(a[0])))),
+                         "sustain", .int(max(0, min(100, intArg(a[1])))))
+            }
+        }
         env.defineFn("soundDuty", "Sound.duty", 2) { a in patchLast(a[1]) { setField($0, "duty", .int(max(1, min(99, intArg(a[0]))))) } }
+        // detune : signed cents on THIS voice. patchLast, unlike the envelope --
+        // a unison is layers that DIFFER, so patching them all would defeat it.
+        // Clamped to two octaves: past that it has stopped being a detune and
+        // become a transpose, which Sound.tone's own pitch says better.
+        env.defineFn("soundDetune", "Sound.detune", 2) { a in patchLast(a[1]) { setField($0, "detune", .int(max(-2400, min(2400, intArg(a[0]))))) } }
         env.defineFn("soundVibrato", "Sound.vibrato", 3) { a in patchLast(a[2]) { setField(setField($0, "vibDepth", .int(max(0, intArg(a[0])))), "vibRate", .int(max(1, intArg(a[1])))) } }
         env.defineFn("soundArp", "Sound.arp", 2) { a in
             let list: MarValue = { if case .list = a[0] { return a[0] }; return .list([]) }()
