@@ -698,9 +698,34 @@ func baseBindings() map[string]Type {
 	// (docs/proposals/sound-envelope.md)
 	out["soundAttack"] = TArrow{From: TInt, To: TArrow{From: TSound, To: TSound}}
 	out["soundRelease"] = TArrow{From: TInt, To: TArrow{From: TSound, To: TSound}}
+	// Sound.decay : Int -> Int -> Sound -> Sound  (fall time in ms, then the level
+	// to hold as a percent of the voice's own volume).
+	//
+	// The stage attack and release could not express. A struck thing loses energy
+	// in proportion to the energy it still has, so its loudness falls and then
+	// keeps falling; `decay 260 0` is a pluck, `decay 400 70` is a pad that
+	// settles and holds. Without it every note is a rectangle, which is the
+	// loudest "this is synthetic" cue the engine has.
+	//
+	// This is A/D/S/R, and sound-envelope.md turned that down once on the grounds
+	// that `struckLayers` already models a struck patch. It models the other half:
+	// dropping layers changes BRIGHTNESS over the note, this changes LOUDNESS. It
+	// also costs one voice per layer, and Sound.loop obliges every voice to sum to
+	// the same milliseconds. Reopened deliberately — docs/proposals/sound-snes.md.
+	//
+	// `decay 0` is exactly today's shape, so no existing sound moves.
+	out["soundDecay"] = TArrow{From: TInt, To: TArrow{From: TInt, To: TArrow{From: TSound, To: TSound}}}
 	// Expressiveness pack: the chip-character modifiers.
 	// Sound.duty : Int -> Sound -> Sound  (pulse width % for Square: 12/25/50/75).
 	out["soundDuty"] = TArrow{From: TInt, To: TArrow{From: TSound, To: TSound}}
+	// Sound.detune : Int -> Sound -> Sound  (signed cents, added to this voice).
+	//
+	// Integer Hz has no resolution for a few cents at low pitch, so an ensemble
+	// could not be written: two copies of a note 7 cents apart beat slowly
+	// against each other, which is what several players physically are. Patches
+	// the LAST voice, unlike attack/release — the whole point is that the layers
+	// of a unison differ.
+	out["soundDetune"] = TArrow{From: TInt, To: TArrow{From: TSound, To: TSound}}
 	// Sound.vibrato : Int -> Int -> Sound -> Sound  (depth in cents, rate in Hz).
 	out["soundVibrato"] = TArrow{From: TInt, To: TArrow{From: TInt, To: TArrow{From: TSound, To: TSound}}}
 	// Sound.arp : List Int -> Sound -> Sound  (cycle the pitch fast through these Hz
@@ -743,7 +768,7 @@ func baseBindings() map[string]Type {
 
 	// === Canvas (v0.0.7): the 2D draw-list vocabulary ===
 	//
-	// `canvas` is a View that reports its own box size (onResize) and taps
+	// `canvas` is a View that reports its own box (watchSize) and taps
 	// (onTap); shapes are positional and re-issued every frame, so a game
 	// lays them out from the live width/height (reflow) and nothing has to
 	// distort. The shape builders are monomorphic: they carry no msg; the
@@ -807,15 +832,27 @@ func baseBindings() map[string]Type {
 			To:   TAttr(TAttrCanvasHost()),
 		},
 	}
-	// watchSize : (Int -> Int -> msg) -> Attr Canvas, the element-box MIRROR
-	// (w, h in CSS px, the model's coordinate space). Seeds the current size on
-	// mount, re-fires on resize. It is a state mirror (the size persists), hence
-	// `watch`, not `on`; it stays a canvas attr, not a Sub, because the box is
-	// the element's, not the viewport's (Device.watch carries the viewport).
+	// watchSize : ({ w, h, top, right, bottom, left } -> msg) -> Attr Canvas,
+	// the element-box MIRROR in CSS px (the model's coordinate space). Seeds the
+	// current box on mount, re-fires on resize. It is a state mirror (the box
+	// persists), hence `watch`, not `on`; it stays a canvas attr, not a Sub,
+	// because the box is the element's, not the viewport's (Device.watch carries
+	// the viewport).
+	//
+	// The four insets ride in the SAME message as w/h on purpose. They change at
+	// exactly the moment the box does -- turning a phone does both at once -- so
+	// a separate subscription could deliver them a frame apart and let an app
+	// draw one frame with a new box and a stale frame. One message makes that
+	// impossible by construction.
+	//
+	// One record rather than six curried Ints: `Sized 844 390 0 59 21 0` is
+	// unreadable, and swapping `left` for `right` would compile and then be
+	// wrong only on one device turned one way. Same reasoning as watchPointers
+	// carrying { id, x, y } instead of three parallel lists.
 	out["watchSize"] = TForall{
 		Vars: []int{a.ID},
 		Body: TArrow{
-			From: TArrow{From: TInt, To: TArrow{From: TInt, To: a}},
+			From: TArrow{From: TCanvasBoxRecord(), To: a},
 			To:   TAttr(TAttrCanvasHost()),
 		},
 	}
@@ -965,7 +1002,7 @@ func baseBindings() map[string]Type {
 	// === Device (docs/proposals/device.md): capabilities, not identities ===
 	//
 	// Device.watch : (Device -> msg) -> Sub msg. Fires immediately with the
-	// current device record on subscribe (Canvas.onResize's precedent), then a
+	// current device record on subscribe (Canvas.watchSize's precedent), then a
 	// fresh record whenever ANY axis changes: window resize, tablet rotation,
 	// split-view, a mouse getting plugged into an iPad, dark mode flipping at
 	// sunset. Everything is read from CSS media queries (pointer / any-pointer /
@@ -3810,7 +3847,9 @@ func qualifiedAliases(flat map[string]Type) map[string]Type {
 		"Sound.holdPitch":    "soundHoldPitch",
 		"Sound.attack":       "soundAttack",
 		"Sound.release":      "soundRelease",
+		"Sound.decay":        "soundDecay",
 		"Sound.duty":         "soundDuty",
+		"Sound.detune":       "soundDetune",
 		"Sound.vibrato":      "soundVibrato",
 		"Sound.arp":          "soundArp",
 		"Sound.rest":         "soundRest",

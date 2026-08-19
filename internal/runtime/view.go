@@ -183,7 +183,7 @@ func viewBuiltins() map[string]Value {
 		// `canvas` is a View whose Children are Shape values (VCtor data,
 		// not VViews) re-issued every frame; the renderer draws them onto a
 		// <canvas> sized to its own box and reports taps / resizes back
-		// through the onTap / onResize attrs. The Shape / Color builders are
+		// through the onTap / watchSize attrs. The Shape / Color builders are
 		// pure data ctors; the Transform / Align ctors live in builtins.go.
 		// CanvasMode constructors: global (bare `Pixelated` / `Crisp`),
 		// nullary, like Pointer's Coarse / Fine. The renderers read the mode

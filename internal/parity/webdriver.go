@@ -156,6 +156,13 @@ function mkEl(tag) {
     click() { this.dispatch('click', { preventDefault() {}, stopPropagation() {}, target: this }); },
     getBoundingClientRect() { return { top: 0, left: 0, right: 100, bottom: 100, width: 100, height: 100 }; },
     getContext() { return null; },
+    // Real elements have this; code that prunes detached nodes reads it, and a
+    // fake that leaves it undefined makes every element look detached.
+    get isConnected() {
+      let n = this;
+      while (n.parentNode) n = n.parentNode;
+      return n === marRoot || n === global.document.body || n === global.document.documentElement;
+    },
   };
   Object.defineProperty(el, 'className', { get: () => cls, set: (v) => { cls = String(v); }, enumerable: true });
   // Structure + classes + text: enough of a fingerprint for "did this
@@ -191,6 +198,8 @@ let entries = [{ state: { marDepth: 0, prevTitle: '' }, path: '/a' }];
 let cursor = 0;
 const winOn = {};
 const fire = (t, ev) => (winOn[t] || []).forEach((f) => f(ev || {}));
+// Window events a test needs to raise by hand (orientationchange, say).
+global.fireWindow = fire;
 
 global.history = {
   scrollRestoration: 'auto',
@@ -217,8 +226,41 @@ global.location = {
 
 const noopObserver = class { observe() {} unobserve() {} disconnect() {} takeRecords() { return []; } };
 global.IntersectionObserver = noopObserver;
-global.ResizeObserver = noopObserver;
 global.MutationObserver = noopObserver;
+
+// ResizeObserver records instead of ignoring, so a test can say "the box
+// changed" the way a browser would. Nothing fires on its own: observe() only
+// registers, and global.fireResize() is what delivers. A noop here would make
+// the canvas size mirror look dead, which reads as a bug in the code under
+// test rather than a hole in the fake.
+const observers = [];
+global.ResizeObserver = class {
+  constructor(cb) { this.cb = cb; }
+  observe(el) { observers.push({ cb: this.cb, el }); }
+  unobserve(el) { for (let i = observers.length - 1; i >= 0; i--) if (observers[i].el === el) observers.splice(i, 1); }
+  disconnect() { for (let i = observers.length - 1; i >= 0; i--) if (observers[i].cb === this.cb) observers.splice(i, 1); }
+  takeRecords() { return []; }
+};
+global.fireResize = () => observers.forEach((o) => o.cb([{ target: o.el }], o));
+
+// env(safe-area-inset-*) is resolved by the CSS engine, which a fake DOM does
+// not have. So the fake resolves it from one table a test can write, and every
+// other property answers '0px'. Global as well as on window: the runtime calls
+// getComputedStyle bare.
+global.safeArea = { top: 0, right: 0, bottom: 0, left: 0 };
+const computedStyle = (el) => {
+  const css = (el && el.style && el.style.cssText) || '';
+  const env = (side, prop) =>
+    css.indexOf(prop + ':env(safe-area-inset-' + side + ')') >= 0
+      ? global.safeArea[side] + 'px'
+      : '0px';
+  return {
+    getPropertyValue: () => '',
+    paddingTop: env('top', 'padding-top'), paddingRight: env('right', 'padding-right'),
+    paddingBottom: env('bottom', 'padding-bottom'), paddingLeft: env('left', 'padding-left'),
+  };
+};
+global.getComputedStyle = computedStyle;
 
 global.window = {
   document: global.document, history: global.history, location: global.location,
@@ -226,10 +268,11 @@ global.window = {
   addEventListener(t, f) { (winOn[t] = winOn[t] || []).push(f); },
   removeEventListener(t, f) { if (winOn[t]) winOn[t] = winOn[t].filter((x) => x !== f); },
   scrollTo() {}, scrollBy() {}, requestAnimationFrame: (f) => setTimeout(() => f(0), 0),
-  cancelAnimationFrame() {}, getComputedStyle: () => ({ getPropertyValue: () => '' }),
+  cancelAnimationFrame() {}, getComputedStyle: computedStyle,
   matchMedia: () => ({ matches: false, media: '', addEventListener() {}, removeEventListener() {},
     addListener() {}, removeListener() {} }),
-  IntersectionObserver: noopObserver, ResizeObserver: noopObserver,
+  IntersectionObserver: noopObserver, ResizeObserver: global.ResizeObserver,
+  screen: { orientation: { addEventListener() {}, removeEventListener() {} } },
 };
 global.navigator = { userAgent: 'node', language: 'en' };
 global.fetch = () => Promise.reject(new Error('no network in this test'));

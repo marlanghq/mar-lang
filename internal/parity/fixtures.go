@@ -281,3 +281,82 @@ main : Cmd ()
 main =
     App.frontend [ page ]
 `
+
+// BoxSource is a canvas that reports its whole box -- size AND the four
+// safe-area insets -- and prints what it last heard. The printed line is the
+// only way to see what watchSize delivered, and it counts the messages, so a
+// duplicate or a missing one is visible as a number rather than inferred.
+//
+// The insets are the point: they are what an app has to keep controls out of,
+// and the case that breaks them (a 180-degree turn in landscape, which moves
+// the notch without changing the size) is invisible in any test that only
+// watches the size. See docs/adrs/0034-a-mirror-reports-the-whole-box.md.
+const BoxSource = `module Main exposing (main)
+
+
+import Canvas exposing (canvas, rect, rgb, watchSize)
+import UI exposing (navigationStack, navigationTitle, vstack, text)
+
+
+type alias Box =
+    { w : Int, h : Int, top : Int, right : Int, bottom : Int, left : Int }
+
+
+type alias Model =
+    { box : Box, seen : Int }
+
+
+type Msg
+    = Sized Box
+
+
+init : (Model, Cmd Msg)
+init =
+    ( { box = { w = 0, h = 0, top = 0, right = 0, bottom = 0, left = 0 }, seen = 0 }
+    , Cmd.none
+    )
+
+
+update : Msg -> Model -> (Model, Cmd Msg)
+update msg model =
+    case msg of
+        Sized box ->
+            ( { model | box = box, seen = model.seen + 1 }, Cmd.none )
+
+
+line : Model -> String
+line model =
+    "box=" ++ String.fromInt model.box.w ++ "x" ++ String.fromInt model.box.h
+        ++ " insets=" ++ String.fromInt model.box.top
+        ++ "," ++ String.fromInt model.box.right
+        ++ "," ++ String.fromInt model.box.bottom
+        ++ "," ++ String.fromInt model.box.left
+        ++ " seen=" ++ String.fromInt model.seen
+
+
+view : Model -> View Msg
+view model =
+    navigationStack [ navigationTitle "Box" ]
+        [ vstack []
+            [ text [] (line model)
+            , canvas Pixelated [ watchSize Sized ] [ rect 0 0 4 4 (rgb 1 2 3) ]
+            ]
+        ]
+
+
+page : Page
+page =
+    Page.create
+        { path = "/"
+        , title = "Box"
+        , init = init
+        , update = update
+        , view = view
+        , subscriptions = always Sub.none
+        }
+
+
+main : Cmd ()
+main =
+    App.frontend [ page ]
+`

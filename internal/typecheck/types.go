@@ -475,6 +475,30 @@ func TGamepadStateRecord() TRecord {
 // TCanvasPointerRecord is "{ id : Int, x : Int, y : Int }", one active pointer
 // (finger / pressed mouse) in canvas CSS-pixel coordinates. Canvas.watchPointers
 // delivers a List of these: the full set of pointers currently down.
+// TCanvasBoxRecord returns the record Canvas.watchSize mirrors:
+// { w, h, top, right, bottom, left }, all in CSS pixels.
+//
+// `w`/`h` are the canvas element's box. The four insets are how far IN from
+// each edge of that box the display is obscured by hardware or system chrome --
+// a notch, a Dynamic Island, a home indicator, a rounded corner.
+//
+// They do NOT shrink w/h, and that is the whole point. The canvas keeps
+// bleeding to the edge of the glass, because a game's scenery should; the
+// insets describe a frame INSIDE it, so an app can draw the world edge to edge
+// and still keep everything a player has to read or touch out of the obscured
+// strip. Shrinking the box instead would letterbox every game on a notched
+// phone, which is why UI pages get real inset padding and the canvas does not.
+func TCanvasBoxRecord() TRecord {
+	return TRecord{
+		Fields: map[string]Type{
+			"w": TInt, "h": TInt,
+			"top": TInt, "right": TInt, "bottom": TInt, "left": TInt,
+		},
+		Order: []string{"w", "h", "top", "right", "bottom", "left"},
+		Tail:  nil,
+	}
+}
+
 func TCanvasPointerRecord() TRecord {
 	return TRecord{
 		Fields: map[string]Type{"id": TInt, "x": TInt, "y": TInt},
@@ -680,7 +704,7 @@ func TAttrInlineHost() Type { return TCon{Name: "Inline"} }
 // polymorphic in their host and so fit here like anywhere else.
 func TAttrTextHost() Type { return TCon{Name: "Text"} }
 
-// TAttrCanvasHost is the host marker for canvas attrs (onTap, onResize),
+// TAttrCanvasHost is the host marker for canvas attrs (onTap, watchSize),
 // valid only on the `canvas` draw-surface (v0.0.7).
 func TAttrCanvasHost() Type { return TCon{Name: "Canvas"} }
 

@@ -73,7 +73,7 @@ enum MarCanvas {
 
         // Input attrs -> Attr Canvas. Written as literal defineFn calls (not a
         // loop) so the drift test sees the dotted names. Occurrences carry
-        // (Int -> Int -> msg); watchSize carries the box (Int -> Int -> msg) and
+        // (Int -> Int -> msg); watchSize carries the box as ONE record and
         // watchPointers the pointer list (List { id, x, y } -> msg).
         env.defineFn("onTap", "Canvas.onTap", 1) { a in attr("onTap", a[0]) }
         env.defineFn("watchSize", "Canvas.watchSize", 1) { a in attr("watchSize", a[0]) }
@@ -99,12 +99,72 @@ struct MarCanvasView: View {
     let view: MarView
     let dispatch: (MarValue) -> Void
 
+    /// Last box+insets delivered, as a key. See fireSize.
+    @State private var lastBox = ""
+
     private func handler(_ name: String) -> MarValue? {
         view.attrs.first(where: { $0.name == name })?.value
     }
     private var shapes: [MarValue] {
         if case .list(let xs)? = view.attrs.first(where: { $0.name == "shapes" })?.value { return xs }
         return []
+    }
+
+    /// The window's safe-area insets, in points -- the same space the canvas
+    /// draws in. Read from the WINDOW rather than from the GeometryProxy on
+    /// purpose: this view applies .ignoresSafeArea(), so its own geometry has
+    /// already had the insets removed and geo.safeAreaInsets reads zero. The
+    /// window still knows.
+    private func safeInsets() -> (top: Int, right: Int, bottom: Int, left: Int) {
+        #if canImport(UIKit)
+        for scene in UIApplication.shared.connectedScenes {
+            guard let ws = scene as? UIWindowScene else { continue }
+            if let w = ws.windows.first(where: { $0.isKeyWindow }) ?? ws.windows.first {
+                let i = w.safeAreaInsets
+                return (Int(i.top.rounded()), Int(i.right.rounded()),
+                        Int(i.bottom.rounded()), Int(i.left.rounded()))
+            }
+        }
+        #endif
+        return (0, 0, 0, 0)
+    }
+
+    /// Fire the watchSize mirror: the element box PLUS the four safe-area
+    /// insets, as one record. One message because the two change at the same
+    /// instant -- a rotation moves both -- so nothing downstream can ever see a
+    /// new box against stale insets. Mirrors the ResizeObserver in runtime.js.
+    ///
+    /// Deduped on the whole record, not just the size, because two things now
+    /// drive it: the geometry change AND the orientation notification. A
+    /// landscape-left to landscape-right flip leaves the size identical and
+    /// only moves the notch, so the size alone cannot decide whether this is
+    /// news.
+    private func fireSize(_ w: Int, _ h: Int) {
+        guard let handler = handler("watchSize") else { return }
+        let ins = safeInsets()
+        let key = "\(w)x\(h):\(ins.top),\(ins.right),\(ins.bottom),\(ins.left)"
+        if key == lastBox { return }
+        lastBox = key
+        let box = MarValue.record(
+            fields: ["w": .int(w), "h": .int(h),
+                     "top": .int(ins.top), "right": .int(ins.right),
+                     "bottom": .int(ins.bottom), "left": .int(ins.left)],
+            order: ["w", "h", "top", "right", "bottom", "left"])
+        if let msg = try? Eval.apply(handler, box) { dispatch(msg) }
+    }
+
+    /// A rotation settles over a few frames: the notification arrives before
+    /// the window's insets have moved. Re-read a handful of times across half a
+    /// second; fireSize dedupes, so the extra reads cost nothing. Same shape as
+    /// rereadCanvasBoxes in runtime.js.
+    private func rereadBox(_ size: CGSize) {
+        #if canImport(UIKit)
+        for i in 1...6 {
+            DispatchQueue.main.asyncAfter(deadline: .now() + Double(i) * 0.09) {
+                fireSize(Int(size.width), Int(size.height))
+            }
+        }
+        #endif
     }
 
     /// Fire a (Int -> Int -> msg) handler with a point.
@@ -154,13 +214,29 @@ struct MarCanvasView: View {
                     .onEnded { g in fire("onRelease", Int(g.location.x), Int(g.location.y)) }
             )
             #endif
-            .onAppear { fire("watchSize", Int(geo.size.width), Int(geo.size.height)) }
-            .onChange(of: geo.size) { _, new in fire("watchSize", Int(new.width), Int(new.height)) }
+            .onAppear {
+                #if canImport(UIKit)
+                // Without this the orientation notification is never posted.
+                UIDevice.current.beginGeneratingDeviceOrientationNotifications()
+                #endif
+                fireSize(Int(geo.size.width), Int(geo.size.height))
+            }
+            .onChange(of: geo.size) { _, new in fireSize(Int(new.width), Int(new.height)) }
+            #if canImport(UIKit)
+            // Turning the phone 180 degrees in landscape leaves geo.size byte
+            // for byte identical and moves the notch from one side to the
+            // other, so the geometry hook above never fires and left/right
+            // would stay swapped. This is the case ADR 0034 exists to prevent.
+            .onReceive(NotificationCenter.default.publisher(
+                for: UIDevice.orientationDidChangeNotification)) { _ in
+                rereadBox(geo.size)
+            }
+            #endif
         }
         // Full-bleed game surface: fill under the safe areas and hide the
         // NavigationStack bar so the canvas owns the whole screen, the way the
         // web canvas fills its container. The game draws its own framing/bezel,
-        // and onResize reports this full size so the shapes lay out to fit.
+        // and watchSize reports this full box so the shapes lay out to fit.
         .ignoresSafeArea()
         .toolbar(.hidden, for: .navigationBar)
     }

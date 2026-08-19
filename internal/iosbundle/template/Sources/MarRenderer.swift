@@ -60,7 +60,7 @@ struct MarRenderer: View {
 
         case "canvas":
             // 2D draw-list (Canvas.*). Replays the shape list every frame via
-            // SwiftUI Canvas and threads onTap/onResize/onDrag/onRelease.
+            // SwiftUI Canvas and threads onTap/watchSize/onDrag/onRelease.
             MarCanvasView(view: view, dispatch: dispatch)
 
         case "button":

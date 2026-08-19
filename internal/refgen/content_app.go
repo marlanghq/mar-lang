@@ -136,9 +136,9 @@ var appCategories = map[string][]CatGroup{
 	},
 	"Sound": {
 		{"Make a sound", []string{"tone", "rest"}},
-		{"Wave shapes", []string{"Square", "Triangle", "Sawtooth", "Noise"}},
+		{"Wave shapes", []string{"Square", "Triangle", "Sawtooth", "Sine", "Noise"}},
 		{"Note pitches", []string{"c", "cs", "d", "ds", "e", "f", "fs", "g", "gs", "a", "as_", "b"}},
-		{"Shape a sound", []string{"attack", "release", "sweep", "holdPitch", "vibrato", "duty", "arp", "volume", "lowCut", "highCut"}},
+		{"Shape a sound", []string{"attack", "decay", "release", "sweep", "holdPitch", "vibrato", "detune", "duty", "arp", "volume", "lowCut", "highCut"}},
 		{"Combine sounds", []string{"chord", "sequence"}},
 		{"Play it", []string{"play", "once", "loop", "voice", "glide"}},
 		{"Global audio", []string{"master", "setMuted"}},
@@ -284,7 +284,7 @@ var appDescriptions = map[string]string{
 	"Canvas.onHover":       "Fires as an unpressed pointer moves over the canvas. Nothing to hover with on a touch screen, so treat it as an enhancement.",
 	"Canvas.onWheel":       "Fires on a scroll wheel or a trackpad scroll, with the horizontal and vertical amounts.",
 	"Canvas.watchPointers": "Mirrors every pointer currently touching the canvas, each with an id and a position. This is the one to use for multi-touch, where two thumbs are two separate pointers.",
-	"Canvas.watchSize":     "Mirrors the canvas size in pixels, and fires again whenever it changes. Read your layout off this rather than assuming a fixed size.",
+	"Canvas.watchSize":     "Mirrors the canvas box in CSS pixels plus the four safe-area insets, and fires again whenever either changes. Read your layout off this rather than assuming a fixed size. The insets say how far in from each edge the display is obscured by a notch, a Dynamic Island or a home indicator; they do NOT shrink w and h, so the picture still reaches the glass and you inset only what has to be read or touched.",
 
 	// Sound
 	"Sound.tone":      "A note: a wave shape, a frequency in Hz, and a length in milliseconds. Everything else in this module either builds one of these or reshapes it.",
@@ -292,6 +292,7 @@ var appDescriptions = map[string]string{
 	"Sound.Square":    "A hollow, buzzy wave. The classic lead and bass voice of 8-bit music.",
 	"Sound.Triangle":  "A soft, rounded wave. Mellower than square, and the usual choice for a bass line.",
 	"Sound.Sawtooth":  "A bright, harsh wave with every harmonic present. Cuts through a busy mix.",
+	"Sound.Sine":      "A pure tone with no harmonics at all. The only wave that does not buzz, which makes it the one for a sub bass, a flute, or an inner voice that should not fight the melody.",
 	"Sound.Noise":     "No pitch at all, just noise. This is what drums, explosions, and wind are made of.",
 	"Sound.c":         "The frequency of C in the given octave, so C4 is middle C.",
 	"Sound.cs":        "The frequency of C sharp in the given octave.",
@@ -307,6 +308,8 @@ var appDescriptions = map[string]string{
 	"Sound.b":         "The frequency of B in the given octave.",
 	"Sound.attack":    "How long the note takes to reach full volume, in milliseconds. Small values are percussive, larger ones swell in.",
 	"Sound.release":   "How long the note takes to fade to silence at its end, in milliseconds. This is the tail that keeps a note from stopping abruptly.",
+	"Sound.decay":     "How long the note takes to fall from full volume to a held level, and what that level is as a percentage. This is what makes a note sound struck: a piano or a drum loses loudness the moment it is hit. A level of 0 fades the note out inside its own length.",
+	"Sound.detune":    "Shifts this voice by a number of cents, up or down. A few cents apart, two copies of the same note beat slowly against each other, which is what an ensemble is.",
 	"Sound.sweep":     "Glides the pitch to an end frequency over the length of the note. Sweeping down is a laser or a falling bomb, sweeping up is a power-up.",
 	"Sound.holdPitch": "Holds the starting pitch for this many milliseconds before a sweep begins, so the note speaks at its true pitch first.",
 	"Sound.vibrato":   "Wobbles the pitch, given a depth and a rate in Hz. A little makes a note sound played rather than generated.",
@@ -587,7 +590,10 @@ var appExamples = map[string][]string{
 	"Canvas.onHover":       {"Canvas.onHover (\\x y -> (x, y))"},
 	"Canvas.onWheel":       {"Canvas.onWheel (\\dx dy -> dy)"},
 	"Canvas.watchPointers": {"type Msg = PointersMoved (List { id : Int, x : Int, y : Int })\n\npointers = Canvas.watchPointers PointersMoved"},
-	"Canvas.watchSize":     {"Canvas.watchSize (\\w h -> (w, h))"},
+	"Canvas.watchSize": {
+		"type Msg = Resized { w : Int, h : Int, top : Int, right : Int, bottom : Int, left : Int }\n\nsize = Canvas.watchSize Resized",
+		"Canvas.watchSize (\\box -> ( box.w - box.left - box.right, box.h - box.top - box.bottom ))",
+	},
 
 	// Sound
 	"Sound.tone":      {"Sound.tone Sound.Square (Sound.a 4) 120"},
@@ -595,6 +601,7 @@ var appExamples = map[string][]string{
 	"Sound.Square":    {"Sound.tone Sound.Square (Sound.c 4) 120"},
 	"Sound.Triangle":  {"Sound.tone Sound.Triangle (Sound.c 2) 240"},
 	"Sound.Sawtooth":  {"Sound.tone Sound.Sawtooth (Sound.e 4) 120"},
+	"Sound.Sine":      {"Sound.tone Sound.Sine (Sound.c 2) 400"},
 	"Sound.Noise":     {"Sound.tone Sound.Noise 200 60"},
 	"Sound.c":         {"Sound.c 4 == 262"},
 	"Sound.cs":        {"Sound.tone Sound.Square (Sound.cs 4) 120"},
@@ -610,6 +617,8 @@ var appExamples = map[string][]string{
 	"Sound.b":         {"Sound.tone Sound.Square (Sound.b 4) 120"},
 	"Sound.attack":    {"Sound.attack 40 (Sound.tone Sound.Triangle (Sound.c 4) 400)"},
 	"Sound.release":   {"Sound.release 120 (Sound.tone Sound.Triangle (Sound.c 4) 400)"},
+	"Sound.decay":     {"Sound.decay 260 0 (Sound.tone Sound.Triangle (Sound.c 4) 600)", "Sound.decay 400 70 (Sound.tone Sound.Sawtooth (Sound.c 3) 1200)"},
+	"Sound.detune":    {"Sound.detune 7 (Sound.tone Sound.Sawtooth (Sound.a 3) 500)"},
 	"Sound.sweep":     {"Sound.sweep 80 (Sound.tone Sound.Sawtooth 900 200)"},
 	"Sound.holdPitch": {"Sound.holdPitch 60 (Sound.sweep 80 (Sound.tone Sound.Sawtooth 900 200))"},
 	"Sound.vibrato":   {"Sound.vibrato 8 6 (Sound.tone Sound.Triangle (Sound.a 4) 500)"},

@@ -110,7 +110,7 @@ struct MarPageHost: View {
             return true
         case "canvas":
             // A full-bleed game surface: MarCanvasView is a GeometryReader
-            // that fills its container and reports that size via onResize.
+            // that fills its container and reports that box via watchSize.
             // Wrapping it in the ScrollView+VStack branch below would
             // collapse the GeometryReader to its ~10pt ideal height (the
             // classic "GeometryReader inside a ScrollView" trap), which
