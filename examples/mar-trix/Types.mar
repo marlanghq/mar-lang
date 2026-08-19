@@ -48,6 +48,24 @@ type alias Pointer =
     }
 
 
+-- A queued sound, and WHERE it happened.
+--
+-- The matrix is ten columns wide and the game knows exactly which one a piece
+-- is in, so the sounds a PIECE makes can come from where the piece is, while
+-- the sounds the MATRIX or the RUN makes queue a `pan` of 0 and stay in the
+-- middle where a row that spans the whole well belongs. That is the whole
+-- rule, and it is the same rule the effects follow: the object moves, the
+-- screen never does.
+--
+-- The position is recorded when the event HAPPENS rather than read back when
+-- the cue plays, because by then it is gone: a piece that locks is replaced by
+-- the next one in the same tick, and the next one spawns in the middle.
+type alias Cue =
+    { n   : Int
+    , pan : Int
+    }
+
+
 -- What a finger on the matrix remembers. `px0` is the column the piece was in
 -- when the finger landed: every frame after that the piece is asked for
 -- `px0 + travelled columns`, so the piece stays pinned to the thumb instead of
@@ -120,7 +138,7 @@ type alias Model =
     , levelAt : Int
 
     , keys : List Keyboard.Key
-    , sfx  : List Int
+    , sfx  : List Cue
 
     -- Touch: the pads a finger is currently holding, expressed as the very
     -- same keys the keyboard sends, and the live device record that decides

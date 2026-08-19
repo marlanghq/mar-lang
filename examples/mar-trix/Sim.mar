@@ -122,7 +122,7 @@ spawn m =
                 m1
 
             else
-                { m1 | phase = Over, best = max m1.best m1.score, sfx = m1.sfx ++ [ 7 ] }
+                { m1 | phase = Over, best = max m1.best m1.score, sfx = m1.sfx ++ [ { n = 7, pan = 0 } ] }
 
 
 tryRotate : Int -> Model -> Model
@@ -139,7 +139,7 @@ tryRotate dir m =
     in
     case landed of
         p :: _ ->
-            touch { m | piece = p, sfx = m.sfx ++ [ 2 ] }
+            touch { m | piece = p, sfx = m.sfx ++ [ { n = 2, pan = panOf p } ] }
 
         [] ->
             m
@@ -151,7 +151,7 @@ tryShift dx m =
         moved = { kind = m.piece.kind, rot = m.piece.rot, x = m.piece.x + dx, y = m.piece.y }
     in
     if fits moved m.matrix then
-        touch { m | piece = moved, sfx = m.sfx ++ [ 1 ] }
+        touch { m | piece = moved, sfx = m.sfx ++ [ { n = 1, pan = panOf moved } ] }
 
     else
         m
@@ -202,7 +202,7 @@ swapHold m =
                 let
                     m1 = spawn { m | hold = stored, queue = next :: rest }
                 in
-                { m1 | held = True, sfx = m1.sfx ++ [ 2 ] }
+                { m1 | held = True, sfx = m1.sfx ++ [ { n = 2, pan = panOf m1.piece } ] }
 
             [] ->
                 m
@@ -218,7 +218,7 @@ swapHold m =
                 , held = True
                 , lock = 0
                 , resets = 0
-                , sfx = m.sfx ++ [ 2 ]
+                , sfx = m.sfx ++ [ { n = 2, pan = panOf swapped } ]
             }
 
         else
@@ -272,7 +272,12 @@ lockPiece m =
                 -- one instant, one sound. Appending the lock on top of it
                 -- played two cues a frame apart for a single event, which is
                 -- what made the landing sound cluttered as well as harsh.
-                , sfx = if List.member 8 m.sfx then m.sfx else m.sfx ++ [ 3 ]
+                , sfx =
+                    if List.any (\c -> c.n == 8) m.sfx then
+                        m.sfx
+
+                    else
+                        m.sfx ++ [ { n = 3, pan = panOf m.piece } ]
             }
 
     else
@@ -308,12 +313,14 @@ lockPiece m =
 
                 else
                     m.levelAt
+            -- A cleared row is the whole width of the matrix and a level is the
+            -- whole run, so neither has a side: both stay in the middle.
             , sfx =
                 if level1 > m.level then
-                    m.sfx ++ [ cue, 6 ]
+                    m.sfx ++ [ { n = cue, pan = 0 }, { n = 6, pan = 0 } ]
 
                 else
-                    m.sfx ++ [ cue ]
+                    m.sfx ++ [ { n = cue, pan = 0 } ]
         }
 
 
@@ -372,7 +379,7 @@ update msg model =
         m = step msg model
     in
     ( { m | sfx = [] }
-    , Cmd.batch (List.map (\c -> Sound.play (cue c)) m.sfx)
+    , Cmd.batch (List.map (\c -> Sound.play (Sound.pan c.pan (cue c.n))) m.sfx)
     )
 
 
@@ -455,7 +462,12 @@ press key m =
                     landed = dropTo m.piece m.matrix
                     dist = landed.y - m.piece.y
                 in
-                lockPiece { m | piece = landed, score = m.score + dist * 2, sfx = m.sfx ++ [ 8 ] }
+                lockPiece
+                    { m
+                        | piece = landed
+                        , score = m.score + dist * 2
+                        , sfx = m.sfx ++ [ { n = 8, pan = panOf landed } ]
+                    }
 
             else if key == Keyboard.KeyC || key == Keyboard.ShiftLeft then
                 swapHold m
@@ -585,12 +597,66 @@ gravity m =
 -- Chip voices, kept short and dry. The clear cues are the only ones with any
 -- length: a reward you cannot hear is not a reward, and everything else has to
 -- stay out of the way of a player dropping four pieces a second.
+--
+-- Every cue in this game is a STRUCK thing: a piece clicks into a column, a
+-- piece lands, four rows go at once. A struck thing loses energy in proportion
+-- to the energy it still has, so its loudness starts falling the moment it
+-- starts and keeps falling — and a note that holds flat and is then cut off is
+-- the one shape nothing physical makes. That is what `Sound.decay` fixes, and
+-- it is the change that matters most here: every cue below has one, because
+-- every cue below is a strike.
+--
+-- It also buys length back. A plucked 36 ms tick reads SHORTER than a
+-- rectangular 26 ms one, because what the ear times is the energy and not the
+-- gate. So the small cues can have room to be a sound rather than a click and
+-- still be out of the way before the next one.
+--
+-- And it costs level, which is why every `Sound.volume` here went UP. A shape
+-- that falls delivers a fraction of the energy a rectangle of the same height
+-- does, so leaving the old numbers alone would have taken the whole game down
+-- by about nine decibels. The new ones were measured back against the old cues
+-- rather than guessed at: each lands within a few decibels of where it was,
+-- with a HIGHER peak and a shorter tail. Sharper, not louder.
+
+
+-- ------------------------------------------------------------------ where
+--
+-- The matrix is ten columns wide and the game knows exactly which one a piece
+-- is in, so a sound the PIECE makes can come from where the piece is. Ten
+-- columns is not ten metres of stage, though, so this is a nudge and
+-- deliberately not a placement: about a quarter of the way over at the walls,
+-- thirty percent at the very most, which is audible on headphones, honest on
+-- speakers and nothing at all in mono. The point is that a piece you are not
+-- looking at is still somewhere.
+--
+-- Only the piece's own sounds get it. A cleared row is the whole width of the
+-- well and a level is the whole run: those stay in the middle, and that rule is
+-- the same one the effects follow — the object moves, the screen never does.
+panWidth : Int
+panWidth = 30
+
+
+panOf : Piece -> Int
+panOf p =
+    let
+        -- The piece's own centre, in QUARTER columns either side of the middle
+        -- of the matrix. Quarters because the centre is the mean of four cells,
+        -- so a quarter column is the smallest step that lands on it exactly and
+        -- integer division never has to throw anything away.
+        --
+        -- It is worth measuring the SHAPE rather than the box it came in: five
+        -- of the seven pieces are three cells wide inside that four-wide box,
+        -- so their real centre is half a column left of the box's, and reading
+        -- the box instead would lean the whole game audibly to the right.
+        quarters = 4 * p.x + List.sum (List.map (\c -> c.x) (shapeOf p.kind p.rot)) - 2 * (cols - 1)
+    in
+    clamp (0 - panWidth) panWidth ((quarters * panWidth) // (2 * (cols - 1)))
 
 
 cue : Int -> Sound
 cue n =
     case n of
-        -- The three sounds you hear constantly are one family, and two things
+        -- The three sounds you hear constantly are one family, and three things
         -- decide how they land.
         --
         -- WAVE. A square's harmonics fall off as 1/n, so a 220 Hz square puts
@@ -604,36 +670,110 @@ cue n =
         -- down there is not "deep", it is absent. So the lock sits at 340 and
         -- FALLS, which is what gives it weight: the drop is the gesture, not
         -- the depth.
-        1 -> Sound.volume 15 (Sound.tone Sound.Triangle 300 26)
-        2 -> Sound.volume 18 (Sound.tone Sound.Triangle 400 30)
+        --
+        -- SHAPE. Both of these are plucks, and nothing else: full level in five
+        -- milliseconds, then all the way back down over the rest of the note,
+        -- with no held part at all. That is what a click IS, and it is why the
+        -- note can be ten milliseconds longer than the beep it replaces and
+        -- still sound quicker.
+        1 -> Sound.volume 26 (Sound.decay 26 0 (Sound.tone Sound.Triangle 300 36))
+        2 -> Sound.volume 32 (Sound.decay 30 0 (Sound.tone Sound.Triangle 400 40))
 
         -- The lock is the one that has to be PRESENT: it is the full stop at
         -- the end of every piece, and a full stop you cannot hear leaves the
-        -- sentence hanging.
-        3 -> Sound.volume 30 (Sound.sweep (-90) (Sound.tone Sound.Triangle 340 55))
-        4 -> Sound.volume 44 (Sound.sweep 180 (Sound.tone Sound.Triangle 440 190))
+        -- sentence hanging. The pitch falls, and now the level falls with it,
+        -- which is what a thing coming to rest does: holding full volume all the
+        -- way down left the tail of it flapping below hearing.
+        3 -> Sound.volume 52 (Sound.decay 45 0 (Sound.sweep (-90) (Sound.tone Sound.Triangle 340 55)))
+
+        -- One to three rows. The sweep falls because the stack falls, and this
+        -- decay settles to a third rather than to nothing: a reward should still
+        -- be ringing a moment after the rows have gone.
+        4 -> Sound.volume 60 (Sound.decay 150 30 (Sound.sweep 180 (Sound.tone Sound.Triangle 440 190)))
+
         5 ->
-            -- Four rows at once: a real chord, four voices of the SAME length,
+            -- Four rows at once: a real chord, five voices of the SAME length,
             -- because voices of different lengths drift apart on a loop and
             -- the habit is worth keeping even where it cannot bite.
-            Sound.volume 52
-                (Sound.chord
-                    [ Sound.tone Sound.Triangle (Sound.a 4) 420
-                    , Sound.tone Sound.Triangle (Sound.c 5) 420
-                    , Sound.tone Sound.Triangle (Sound.e 5) 420
-                    , Sound.tone Sound.Triangle (Sound.a 5) 420
-                    ]
-                )
+            --
+            -- Three things changed, and all three are the chord becoming a
+            -- struck OBJECT instead of four tones switched on together.
+            --
+            -- LEVEL, per voice. `Sound.volume` patches the LAST voice only, so
+            -- the old `volume 52 (chord [...])` reached the top A and left the
+            -- other three at the default 60: the brightest note in the chord was
+            -- also the loudest, which is the recipe for shrill. The levels now
+            -- fall as the pitch rises, and five voices read as one chord.
+            --
+            -- DECAY, per voice, faster the higher it sits. A struck string loses
+            -- its top first: a chord whose voices all die together is a patch,
+            -- one that settles onto its root is an instrument.
+            --
+            -- DETUNE, on the root and nowhere else. Two copies of A4 nine cents
+            -- apart beat slowly against each other, which is physically what
+            -- more than one of something is. It is worth a whole extra voice on
+            -- this cue alone: this is the sound the game is played FOR.
+            Sound.chord
+                [ clearVoice (Sound.a 4) 62 340
+                , Sound.detune 9 (clearVoice (Sound.a 4) 54 360)
+                , clearVoice (Sound.c 5) 54 300
+                , clearVoice (Sound.e 5) 46 250
+                , clearVoice (Sound.a 5) 38 200
+                ]
 
-        6 -> Sound.volume 46 (Sound.arp [ 0, 4, 7, 12 ] (Sound.tone Sound.Square (Sound.c 5) 260))
-        7 -> Sound.volume 50 (Sound.sweep (-260) (Sound.tone Sound.Triangle 380 700))
+        -- The level-up fanfare, which was not one: `Sound.arp` takes its extra
+        -- pitches in HERTZ, so [ 0, 4, 7, 12 ] asked for four steps at twelve
+        -- hertz and below — silence, with a C5 blinking through it ten times a
+        -- second. Written as notes it is the major arpeggio it always meant to
+        -- be, and doubled nine cents apart because a fanfare is the one place in
+        -- this game where WIDE is the point.
+        6 -> Sound.chord [ levelVoice 32, Sound.detune 9 (levelVoice 28) ]
+
+        -- The run ending: seven hundred milliseconds of pitch falling out of
+        -- hearing, and the level now falls out with it. At full volume the last
+        -- third was a speaker moving at a rate nobody hears as a note.
+        7 -> Sound.volume 66 (Sound.decay 620 0 (Sound.sweep (-260) (Sound.tone Sound.Triangle 380 700)))
+
         -- The slam. Noise was the wrong family here for the same reason it
         -- was wrong on the lock: it is broadband, so it dumps energy across
         -- the whole 2–6 kHz band the ear is sharpest in, and ninety
         -- milliseconds of that on every hard drop is the harshest thing in
         -- the game. An impact is a PITCH falling fast: the speed of the drop
         -- is what reads as force, not the hiss.
-        _ -> Sound.volume 26 (Sound.sweep (-140) (Sound.tone Sound.Triangle 380 60))
+        --
+        -- What a falling triangle cannot give it is BODY, and body has to be a
+        -- sine: it is the one wave with no harmonics at all, so it is the only
+        -- way to put a hundred and ninety hertz under the click without also
+        -- putting a buzz on top of it. The small speaker the note above is about
+        -- will not reproduce that layer and does not have to — it still hears the
+        -- click, and anything with a real driver hears the drop land. A hard
+        -- drop is the most forceful thing a player can do and it was QUIETER
+        -- than a piece settling on its own.
+        _ ->
+            Sound.chord
+                [ Sound.volume 42 (Sound.decay 50 0 (Sound.sweep (-140) (Sound.tone Sound.Triangle 380 60)))
+                , Sound.volume 50 (Sound.decay 50 0 (Sound.sweep 50 (Sound.tone Sound.Sine 190 60)))
+                ]
+
+
+-- One voice of the four-row chord: where it sits, how loud it starts, and how
+-- long it takes to fall back to a whisper. The length is the same 420 ms for
+-- every voice; only the envelope and the level tell them apart.
+clearVoice : Int -> Int -> Int -> Sound
+clearVoice hz vol fall =
+    Sound.decay fall 12 (Sound.volume vol (Sound.tone Sound.Triangle hz 420))
+
+
+-- One of the two halves of the level-up fanfare, which differ only by the nine
+-- cents the caller puts between them.
+levelVoice : Int -> Sound
+levelVoice vol =
+    Sound.decay 210 25
+        (Sound.volume vol
+            (Sound.arp [ Sound.e 5, Sound.g 5, Sound.c 6 ]
+                (Sound.tone Sound.Square (Sound.c 5) 260)
+            )
+        )
 
 
 -- ------------------------------------------------------------------ touch
