@@ -14,6 +14,7 @@ import Story exposing (..)
 import Missions exposing (..)
 import Canvas exposing ( canvas, rect, circle, group, rgb, rgba
     , onTap, onDrag, onRelease, watchSize)
+import Device
 
 
 -- IRON MERIDIAN, a real-time strategy game for Mar.
@@ -65,8 +66,38 @@ type alias Model =
     , miniTerrain : List Shape
     , camX : Int
     , camY : Int
+    -- The canvas' safe-area insets, straight off Canvas.watchSize (ADR 0034).
+    -- The world runs UNDER them and the chrome stays inside them; see the
+    -- geometry block in Hud.
+    , insT : Int
+    , insR : Int
+    , insB : Int
+    , insL : Int
+    -- Is the command sidebar out? On a phone it starts away -- 176px is a fifth
+    -- of the screen, and you are not building every second -- and on a desktop
+    -- it starts out, because there is room and it is the game's main control.
+    -- sideSet remembers that the PLAYER decided, so a later Device message
+    -- cannot reach in and overrule them.
+    , sideOpen : Bool
+    , sideSet : Bool
+    -- A fourth armed cursor, beside atkArmed and superArmed: the next tap on
+    -- the world moves the selected producer's rally flag.
+    , rallyArmed : Bool
+    , dev : Maybe Device    -- live device capabilities (Device.watch).
+                            -- Maybe because ADR-0023 says the environment is
+                            -- only ever known through a subscription: there is
+                            -- no getter, so the first frame genuinely does not
+                            -- know yet. Everything that reads it must have an
+                            -- answer for Nothing, and that answer is "desktop",
+                            -- which is what this game already assumed.
     , hoverX : Int          -- last cursor pos over the world (Canvas.onHover)
     , hoverY : Int
+    , hoverOn : Bool        -- is the cursor over the world AT ALL? hoverX/hoverY
+                            -- are a position with no validity bit of their own:
+                            -- they start at 0,0 and keep their last value while
+                            -- the cursor sits on the sidebar, so anything that
+                            -- reads them without this is pointing at a place the
+                            -- cursor has never been.
     , hoverCell : Int       -- hovered sidebar grid slot for tooltips, -1 = none
     , sel : List Int
     , selB : Int             -- selected own building id, -1 none
@@ -122,8 +153,17 @@ freshModel =
     , miniTerrain = []
     , camX = 0
     , camY = 0
+    , insT = 0
+    , insR = 0
+    , insB = 0
+    , insL = 0
+    , sideOpen = True
+    , sideSet = False
+    , rallyArmed = False
+    , dev = Nothing
     , hoverX = 0
     , hoverY = 0
+    , hoverOn = False
     , hoverCell = 0 - 1
     , sel = []
     , selB = 0 - 1
@@ -168,7 +208,7 @@ freshModel =
 
 type Msg
     = Frame
-    | Sized Int Int
+    | Sized { w : Int, h : Int, top : Int, right : Int, bottom : Int, left : Int }
     | Down Int Int
     | Moved Int Int
     | Up Int Int
@@ -176,6 +216,7 @@ type Msg
     | AltTap Int Int         -- desktop: right-click / two-finger (Canvas.onAltTap)
     | Wheel Int Int          -- desktop: scroll delta dx dy (Canvas.onWheel)
     | KeysChanged { down : List Keyboard.Key }
+    | DeviceChanged Device
 
 
 init : (Model, Cmd Msg)
@@ -209,7 +250,7 @@ launch m model =
         , g = g
         , terrain = terrainRuns
         , detailRows = buildDetailRows g.tiles g.mapW g.mapH
-        , miniTerrain = buildMiniTerrain (mmSizeOf model.h) g terrainRuns
+        , miniTerrain = buildMiniTerrain (mmSizeOf (hudStateOf model)) g terrainRuns
         , camX = clampI 0 (max 0 (g.mapW * tileW - vw)) (def.camTx * tileW - vw // 2)
         , camY = clampI 0 (max 0 (g.mapH * tileW - vh)) (def.camTy * tileW - vh // 2)
         , sel = []
@@ -254,43 +295,56 @@ startCreditsOf g =
 update : Msg -> Model -> (Model, Cmd Msg)
 update msg model =
     case msg of
-        Sized w h ->
+        Sized box ->
             -- The cached minimap terrain is built at the minimap's scale, and
-            -- that scale now follows the height. Rotating a phone, or the
-            -- browser toolbar sliding away, changes the height and therefore
-            -- the whole sidebar; without rebuilding here the terrain would
-            -- keep the old scale and sit misaligned in its frame.
-            ( if mmSizeOf h == mmSizeOf model.h then
-                { model | w = w, h = h }
-              else
-                { model
-                    | w = w
-                    , h = h
-                    , miniTerrain = buildMiniTerrain (mmSizeOf h) model.g model.terrain
-                }
-            , Cmd.none
-            )
+            -- that scale follows the usable height. Rotating a phone, the
+            -- browser toolbar sliding away, or a notch appearing on the other
+            -- side all move it; without rebuilding here the terrain would keep
+            -- the old scale and sit misaligned in its frame.
+            ( resizedTo box model, Cmd.none )
 
         Frame ->
             frame model
 
+        -- While the rotate card is up, every INPUT message is dropped. Sized
+        -- and DeviceChanged are deliberately NOT in this list: they are the two
+        -- messages that can make the card go away, and swallowing them would
+        -- wedge the game in it. Frame keeps running -- turning a phone is a
+        -- moment, and a hidden pause that has to negotiate with the real one is
+        -- more machinery than the moment is worth.
         Down x y ->
-            ( press x y model, Cmd.none )
+            if mustRotate model then ( model, Cmd.none ) else ( press x y model, Cmd.none )
 
         Moved x y ->
-            ( move x y model, Cmd.none )
+            if mustRotate model then ( model, Cmd.none ) else ( move x y model, Cmd.none )
 
         Up x y ->
-            release x y model
+            if mustRotate model then ( model, Cmd.none ) else release x y model
 
         Hover x y ->
-            ( hover x y model, Cmd.none )
+            if mustRotate model then ( model, Cmd.none ) else ( hover x y model, Cmd.none )
 
         AltTap x y ->
-            altTap x y model
+            if mustRotate model then ( model, Cmd.none ) else altTap x y model
 
         Wheel dx dy ->
-            ( wheel dx dy model, Cmd.none )
+            if mustRotate model then ( model, Cmd.none ) else ( wheel dx dy model, Cmd.none )
+
+        DeviceChanged d ->
+            -- First word on what kind of machine this is decides where the
+            -- sidebar starts: out on a desktop, where 176px is affordable and
+            -- it is the game's main control; away on a phone, where it is a
+            -- fifth of the screen and you are not building every second.
+            -- sideSet means the player has already chosen, and then this
+            -- message keeps its hands off.
+            if model.sideSet then
+                ( { model | dev = Just d }, Cmd.none )
+
+            else
+                ( withMiniTerrain model
+                    { model | dev = Just d, sideOpen = bnot (Device.touchOnly d) }
+                , Cmd.none
+                )
 
         KeysChanged st ->
             -- the whole held set arrives at once: rebuild shift + the pan flags
@@ -440,12 +494,116 @@ simOnce model =
 -- ----- camera -----
 
 
+-- Is this a touch-only machine? The gate is the CAPABILITY, never a past input:
+-- a game that waits for the first tap to decide cannot size anything for a
+-- thumb before that tap, and a mouse click on a hybrid summons phone controls.
+-- Nothing yet known means desktop, which is what this game always assumed.
+onTouch : Model -> Bool
+onTouch model =
+    case model.dev of
+        Just d -> Device.touchOnly d
+        Nothing -> False
+
+
+-- An RTS needs WIDTH. Portrait halves the map and doubles the layout work, so
+-- the answer is to ask for the phone to be turned rather than to grow a second
+-- layout -- one screen instead of one of everything.
+--
+-- Gated on touch: a desktop window dragged tall is a choice the player made,
+-- and telling them to rotate their monitor is nonsense. There is no orientation
+-- API in the framework; every game in this repo infers it from the box it was
+-- given, and this is that inference.
+mustRotate : Model -> Bool
+mustRotate model =
+    onTouch model && model.h > model.w
+
+
+-- The minimap terrain is CACHED as shapes built at one scale, so every change
+-- that can move that scale has to come through here: a resize, a rotation, a
+-- notch appearing on the other side, and putting the sidebar away (which swaps
+-- the tall column minimap for the small floating one). Comparing the scale
+-- before and after is cheaper than deciding which of those it was.
+withMiniTerrain : Model -> Model -> Model
+withMiniTerrain before after =
+    let
+        want = mmSizeOf (hudStateOf after)
+    in
+    if mmSizeOf (hudStateOf before) == want then
+        after
+    else
+        { after | miniTerrain = buildMiniTerrain want after.g after.terrain }
+
+
+resizedTo : { w : Int, h : Int, top : Int, right : Int, bottom : Int, left : Int } -> Model -> Model
+resizedTo box model =
+    -- Re-clamp the camera too: the viewport is the whole canvas now, so growing
+    -- the window can leave the camera scrolled past the map's edge and showing
+    -- a band of nothing.
+    clampCam
+        (withMiniTerrain model
+            { model
+                | w = box.w
+                , h = box.h
+                , insT = box.top
+                , insR = box.right
+                , insB = box.bottom
+                , insL = box.left
+            }
+        )
+
+
+clampCam : Model -> Model
+clampCam model =
+    { model
+        | camX = clampI 0 (max 0 (model.g.mapW * tileW - viewW model)) model.camX
+        , camY = clampI 0 (max 0 (model.g.mapH * tileW - viewH model)) model.camY
+    }
+
+
+-- Putting the sidebar away or bringing it back. sideSet records that this was
+-- the PLAYER's call, so a later Device message cannot quietly undo it.
+toggleSidebar : Model -> Model
+toggleSidebar model =
+    withMiniTerrain model
+        { model | sideOpen = bnot model.sideOpen, sideSet = True, hoverCell = 0 - 1 }
+
+
+-- SCREEN -> WORLD, in one place.
+--
+-- This conversion was written out inline at six sites -- the rally order, the
+-- release handler, both corners of the selection box, and both branches of the
+-- placement ghost -- each spelling `y - topH + camY` by hand. Six copies of one
+-- truth is how a HUD change starts landing clicks a band-height away from where
+-- the player is looking, and the world offset is exactly what a floating HUD
+-- moves.
+worldOf : Model -> Int -> Int -> { x : Int, y : Int }
+worldOf model x y =
+    { x = x + model.camX, y = y - worldTopOf model + model.camY }
+
+
+-- Where the world's y = 0 sits on screen, and the single place that answers it.
+-- Zero, now that the HUD floats: the world starts at the top of the canvas and
+-- the top strip is painted over it. The render translate reads this too, so the
+-- forward and inverse conversions cannot disagree.
+worldTopOf : Model -> Int
+worldTopOf _ =
+    0
+
+
+-- The viewport IS the canvas. It used to be the canvas minus the sidebar, the
+-- top bar and the console, which on an iPhone in landscape meant a 668x280 slot
+-- out of 844x390 -- 27 by 11 tiles of a battlefield, against a desktop's 46 by
+-- 25. The chrome now floats over these same pixels instead of taking them.
+--
+-- Nothing has to be clipped or matted for that: the world's draw list is culled
+-- against this camera, so widening the camera to the screen turns what used to
+-- spill behind the opaque bars into ordinary on-screen world.
 viewW : Model -> Int
-viewW model = model.w - sideW
+viewW model = model.w
 
 
 viewH : Model -> Int
-viewH model = model.h - topH - botH
+viewH model = model.h
 
 
 panCamera : Model -> Model
@@ -1025,25 +1183,55 @@ conduitCount g =
 -- ===== input: mouse =====
 
 
+-- Which piece of floating chrome owns this point, if any.
+--
+-- The HUD no longer takes a bite out of the world, so "is this the map?" is now
+-- "is it none of the panels?" -- and every panel answers from the SAME rects
+-- Hud draws it with. Order matters exactly once: the grab tab overhangs the
+-- sidebar's left edge, so it is asked first.
 press : Int -> Int -> Model -> Model
 press x y model =
     case model.screen of
         SPlay ->
+            let
+                hs = hudStateOf model
+            in
             if model.menuOpen || model.help || model.log then
                 model
-            else if x >= model.w - sideW then
+
+            else if inRect x y (handleRect hs) then
+                toggleSidebar model
+
+            else if model.sideOpen && x >= sideX hs then
                 pressSidebar x y model
-            else if y < topH then
+
+            else if bnot model.sideOpen && inMiniRect hs x y then
+                -- with the panel away the minimap is a floating badge, and it
+                -- is still the fastest way across the map
+                pressMinimap x y model
+
+            else if y < edgeT hs + topBarH hs then
+                -- the strip, pills included: swallowed here, acted on at release
                 model
-            else if y >= model.h - botH then
-                -- the always-visible command console owns this strip; presses
-                -- here never reach the world
+
+            else if Hud.conOn model.g hs && y >= csY hs then
+                -- the console is a PANEL right now, and it owns this strip
                 consolePress x y model
+
             else
                 { model | drag = { on = True, mode = 0, sx = x, sy = y, x = x, y = y } }
 
         _ ->
             model
+
+
+-- the minimap's square, wherever it currently is
+inMiniRect : HudState -> Int -> Int -> Bool
+inMiniRect hs x y =
+    let
+        mm = mmSizeOf hs
+    in
+    x >= mmX hs && x < mmX hs + mm && y >= mmY hs && y < mmY hs + mm
 
 
 consolePress : Int -> Int -> Model -> Model
@@ -1082,16 +1270,33 @@ consolePress x y model =
     in
     case selBldOf model of
         Just b ->
-            -- a building is selected: the only interactive control is Demolish
             if b.side == 1 && bnot (bIsHQ b.kind) && inRect x y (csDemolishRect hs) then
                 { model | g = applyAct (ADemolish b.id) model.g, selB = 0 - 1 }
+
+            else if b.side == 1 && bProduces b.kind >= 0 && inRect x y (csRallyRect hs) then
+                -- arm the flag; the next tap on the world places it
+                { model | rallyArmed = bnot model.rallyArmed, atkArmed = False, superArmed = False }
+
             else
                 model
 
         Nothing ->
+            if inRect x y (csClearRect hs) then
+                -- The only deselect this game ever had was "drag an empty box",
+                -- and stage E4 deletes that gesture when a drag becomes a pan.
+                { model | sel = [], selB = 0 - 1, atkArmed = False, superArmed = False, rallyArmed = False }
+
+            else
             case orderIx of
                 Just 0 ->
-                    if hasUnits then { model | atkArmed = True, superArmed = False } else model
+                    -- A TOGGLE, not a set. Hud already draws this button lit
+                    -- when atkArmed, so it looked like a toggle and was not:
+                    -- the only way to disarm was Escape or a right-click.
+                    if hasUnits then
+                        { model | atkArmed = bnot model.atkArmed, superArmed = False }
+
+                    else
+                        model
 
                 Just 1 ->
                     if hasUnits then issueSelfOrder (AStop model.sel) model else model
@@ -1134,15 +1339,32 @@ hover : Int -> Int -> Model -> Model
 hover x y model =
     case model.screen of
         SPlay ->
-            if x < model.w - sideW && y >= topH && y < model.h - botH then
-                { model | hoverX = x, hoverY = y, hoverCell = 0 - 1 }
-            else if x >= model.w - sideW then
-                { model | hoverCell = gridCellIndexAt (hudStateOf model) x y }
+            let
+                hs = hudStateOf model
+            in
+            if model.sideOpen && x >= sideX hs then
+                { model | hoverOn = False, hoverCell = gridCellIndexAt hs x y }
+
+            else if overChrome hs model.g x y then
+                { model | hoverOn = False, hoverCell = 0 - 1 }
+
             else
-                { model | hoverCell = 0 - 1 }
+                { model | hoverX = x, hoverY = y, hoverOn = True, hoverCell = 0 - 1 }
 
         _ ->
             model
+
+
+-- Is this point on a floating panel rather than on the map? The one place that
+-- answers it for hover and for right-click, spelled from the same rects press
+-- uses, so the three cannot drift apart.
+overChrome : HudState -> Game -> Int -> Int -> Bool
+overChrome hs g x y =
+    inRect x y (handleRect hs)
+        || (hs.sideOpen && x >= sideX hs)
+        || (bnot hs.sideOpen && inMiniRect hs x y)
+        || y < edgeT hs + topBarH hs
+        || (Hud.conOn g hs && y >= csY hs)
 
 
 -- altTap: right-click / two-finger tap. In this C&C-style scheme LEFT-click
@@ -1153,9 +1375,12 @@ altTap : Int -> Int -> Model -> (Model, Cmd Msg)
 altTap x y model =
     case model.screen of
         SPlay ->
+            let
+                hs = hudStateOf model
+            in
             if model.menuOpen || model.help || model.log then
                 ( { model | rmbGuard = True }, Cmd.none )
-            else if x >= model.w - sideW then
+            else if model.sideOpen && x >= sideX hs then
                 -- right-click on a UNITS-tab cell cancels one queued unit of
                 -- that kind (newest first) and refunds it: the escape hatch
                 -- when training is stalled on supply
@@ -1163,7 +1388,7 @@ altTap x y model =
                     m2 = sidebarAltTap x y model
                 in
                 ( { m2 | rmbGuard = True }, Cmd.none )
-            else if y < topH || y >= model.h - botH then
+            else if overChrome hs model.g x y then
                 ( { model | rmbGuard = True }, Cmd.none )
             else if (Hud.playerSide model.g).sReady >= 0 then
                 ( { model | g = cancelBld 1 model.g, rmbGuard = True }, Cmd.none )
@@ -1173,7 +1398,10 @@ altTap x y model =
                 -- right-click sets the selected producer's rally point (the green
                 -- flag), the C&C / StarCraft way; the building stays selected
                 ( { model
-                    | g = applyAct (ASetRally model.selB (x + model.camX) (y - topH + model.camY)) model.g
+                    | g = let
+                        rp = worldOf model x y
+                    in
+                    applyAct (ASetRally model.selB rp.x rp.y) model.g
                     , rmbGuard = True
                   }
                 , Cmd.none
@@ -1229,17 +1457,27 @@ wheel dx dy model =
                 model
             else
                 let
-                    -- PROPORTIONAL to the delta, not a flat jump per event.
-                    -- The old `if dx > 0 then 96` ignored magnitude, so a
-                    -- trackpad, which fires a stream of tiny deltas, dozens a
-                    -- second: turned every one of them into a full 96 px
-                    -- leap. That is the "too fast": not one step being large,
-                    -- but every step being the largest step.
+                    -- ONE TO ONE with the delta, bounded. A wheel event on a
+                    -- trackpad reports PIXELS, so passing the delta straight
+                    -- through is what makes the map track the fingers, which
+                    -- is how every map on this machine already behaves.
                     --
-                    -- A mouse notch is ~120, so it now moves 30 px; a
-                    -- trackpad's delta of 4 moves 1 px. Capped so a device
-                    -- reporting huge deltas cannot teleport the camera.
-                    step = \d -> clampI (0 - 40) 40 (d * 30 // 120)
+                    -- Two earlier shapes were wrong in opposite directions.
+                    -- A flat `if dx > 0 then 96` ignored magnitude, so a
+                    -- trackpad firing dozens of tiny deltas a second turned
+                    -- every one of them into a full 96 px leap: not one step
+                    -- being large, but every step being the largest step.
+                    -- Scaling it to a quarter (`d * 30 // 120`) fixed that and
+                    -- broke the other end -- INTEGER DIVISION, so any delta
+                    -- under 4 moved exactly zero pixels, and the slow part of
+                    -- every gesture did nothing at all while the rest crawled.
+                    --
+                    -- The CAP is what tames a mouse notch, and it is the right
+                    -- place for it: a notch reports ~100-120 and lands on 50,
+                    -- while a trackpad rarely exceeds 50 in one event and so
+                    -- passes through untouched. It bounds one event instead of
+                    -- flattening every event.
+                    step = \d -> clampI (0 - 50) 50 d
 
                     sx = step dx
 
@@ -1254,30 +1492,60 @@ wheel dx dy model =
             model
 
 
+-- Leaving the structures tab drops whatever structure was pending. An armed
+-- placement would otherwise stay latched and hijack the next map click, and a
+-- blueprint you walked away from is a blueprint you abandoned. Nothing is
+-- charged before placement, so there is nothing to refund.
+setTab : Int -> Model -> Model
+setTab t model =
+    if t /= 0 && model.tab == 0 then
+        { model | tab = t, g = applyAct (ACancelBld 1) model.g }
+
+    else
+        { model | tab = t }
+
+
 pressSidebar : Int -> Int -> Model -> Model
 pressSidebar x y model =
     let
-        mx = mmX { w = model.w, h = model.h, tab = model.tab, kbMode = model.kbMode, shownCredits = 0, sel = [], attackArmed = False, superArmed = False, paused = False, mutedMusic = False, mutedSfx = False, speed = 0, helpOpen = False, logOpen = False, logFactions = [], logCast = [], logSoFar = [], objectives = [], clock = 0, hoverCell = 0 - 1, selB = 0 - 1 }
+        hs = hudStateOf model
     in
-    if x >= mx && x < mx + mmSizeOf model.h && y >= mmY && y < mmY + mmSizeOf model.h then
-        -- minimap: jump the camera, keep panning while dragging
+    if inMiniRect hs x y then
+        pressMinimap x y model
+
+    else if y >= tabsYOf hs && y < tabsYOf hs + 18 then
         let
-            wx = (x - mx) * model.g.mapW * tileW // mmSizeOf model.h
-            wy = (y - mmY) * model.g.mapH * tileW // mmSizeOf model.h
-        in
-        camTo wx wy { model | drag = { on = True, mode = 1, sx = x, sy = y, x = x, y = y } }
-    else if y >= tabsYOf model.h && y < tabsYOf model.h + 18 then
-        let
-            x0 = model.w - sideW + 8
+            x0 = sideX hs + 8
         in
         if x >= x0 && x < x0 + 76 then
-            { model | tab = 0 }
+            setTab 0 model
         else if x >= x0 + 84 && x < x0 + 160 then
-            { model | tab = 1 }
+            setTab 1 model
         else
             model
-    else
+
+    else if model.sideOpen then
         gridPress x y model
+
+    else
+        model
+
+
+-- The minimap: jump the camera, and keep panning while the drag continues.
+-- Lives here rather than inside pressSidebar because with the panel away the
+-- minimap is still on screen as a floating badge.
+pressMinimap : Int -> Int -> Model -> Model
+pressMinimap x y model =
+    let
+        hs = hudStateOf model
+
+        mm = mmSizeOf hs
+
+        wx = (x - mmX hs) * model.g.mapW * tileW // mm
+
+        wy = (y - mmY hs) * model.g.mapH * tileW // mm
+    in
+    camTo wx wy { model | drag = { on = True, mode = 1, sx = x, sy = y, x = x, y = y } }
 
 
 -- which sidebar grid slot the cursor is over (geometry mirror of gridPress),
@@ -1329,8 +1597,11 @@ gridPress x y model =
 superPress : Int -> Int -> Model -> Model
 superPress x y model =
     let
-        sy = superYOf model.h
-        x0 = model.w - sideW + 8
+        hs = hudStateOf model
+
+        sy = superYOf hs
+
+        x0 = sideX hs + 8
     in
     if x >= x0 && x < x0 + 160 && y >= sy && y < sy + 22 then
         if model.superArmed then
@@ -1392,9 +1663,12 @@ move x y model =
         -- minimap pan
         let
             hs = hudStateOf model
-            mx = mmX hs
-            wx = (x - mx) * model.g.mapW * tileW // mmSizeOf model.h
-            wy = (y - mmY) * model.g.mapH * tileW // mmSizeOf model.h
+
+            mm = mmSizeOf hs
+
+            wx = (x - mmX hs) * model.g.mapW * tileW // mm
+
+            wy = (y - mmY hs) * model.g.mapH * tileW // mm
         in
         camTo wx wy { model | drag = dragTo x y model.drag }
     else
@@ -1416,7 +1690,11 @@ release x y model =
             selectClick x y model
 
         SProlog ->
-            ( { model | screen = SBrief, briefLine = 0 }, menuBlip model )
+            if inRect x y (briefBackRect model) then
+                ( { model | screen = SSelect }, menuBlip model )
+
+            else
+                ( { model | screen = SBrief, briefLine = 0 }, menuBlip model )
 
         SBrief ->
             briefClick x y model
@@ -1434,10 +1712,41 @@ release x y model =
             endClick x y model
 
         SPlay ->
-            if model.menuOpen then
+            -- The pills act on RELEASE. They used to act on press, and the very
+            -- next release -- landing outside the card that had just opened --
+            -- read as "tap outside closes" and shut it again: the menu flashed
+            -- and was gone. Every other button that opens something in this game
+            -- acts on release; the HUD acts on press only because a press there
+            -- can become a drag, and a pill cannot.
+            let
+                hs = hudStateOf model
+            in
+            if bnot model.menuOpen && bnot model.help && bnot model.log
+                && inRect x y (menuPillRect hs) then
+                ( { model | menuOpen = True }, menuBlip model )
+
+            else if bnot model.menuOpen && bnot model.help && bnot model.log
+                && inRect x y (helpPillRect hs) then
+                ( { model | help = True, log = False }, menuBlip model )
+
+            else if model.menuOpen then
                 menuClick x y model
+
             else if model.help then
                 ( { model | help = False }, Cmd.none )
+
+            else if model.paused then
+                -- Its own overlay said "P resumes" to a player with no P.
+                ( { model | paused = False }, Cmd.none )
+
+            else if model.log then
+                -- The log had no branch here, and `press` swallows everything
+                -- while it is up: opened, it could only be closed with L. On a
+                -- machine with no keyboard that is not an inconvenience, it is
+                -- the end of the session. A tap closes it, the same way it
+                -- closes the manual.
+                ( { model | log = False }, Cmd.none )
+
             else
                 playRelease x y model
 
@@ -1458,8 +1767,9 @@ playRelease x y model =
         let
             moved = abs (x - d.sx) + abs (y - d.sy) > 8
 
-            wx = x + model.camX
-            wy = y - topH + model.camY
+            wp = worldOf model x y
+            wx = wp.x
+            wy = wp.y
 
             s = Hud.playerSide model.g
         in
@@ -1485,6 +1795,28 @@ playRelease x y model =
             ( boxSelect d.sx d.sy x y m0, Cmd.none )
         else
             clickWorld wx wy m0
+
+
+-- A drag on the world becomes a SELECTION BOX only when nothing is armed.
+--
+-- playRelease already gets this right -- it checks the superweapon, then the
+-- attack move, then a structure waiting for a spot, and only then considers a
+-- box -- but the VIEW did not, so dragging with a building on the cursor drew a
+-- marquee that promised a selection the release would never make. The drag
+-- itself still has to run: with a structure armed it is what carries the ghost
+-- on touch, where there is no hover to follow.
+--
+-- Reading the same three conditions in the same order as playRelease is the
+-- point. Any future armed mode has to be added to both, and putting them next
+-- to each other is what makes that obvious.
+drawsSelectionBox : Model -> { a | sReady : Int } -> Bool
+drawsSelectionBox model s =
+    model.drag.on
+        && model.drag.mode == 0
+        && bnot model.superArmed
+        && bnot model.atkArmed
+        && bnot model.rallyArmed
+        && s.sReady < 0
 
 
 placeAt : Int -> Int -> Model -> Model
@@ -1564,10 +1896,12 @@ selLeaderKind model =
 boxSelect : Int -> Int -> Int -> Int -> Model -> Model
 boxSelect sx sy ex ey model =
     let
-        x0 = min sx ex + model.camX
-        x1 = max sx ex + model.camX
-        y0 = min sy ey - topH + model.camY
-        y1 = max sy ey - topH + model.camY
+        lo = worldOf model (min sx ex) (min sy ey)
+        hi = worldOf model (max sx ex) (max sy ey)
+        x0 = lo.x
+        x1 = hi.x
+        y0 = lo.y
+        y1 = hi.y
 
         found =
             List.filterMap
@@ -1876,7 +2210,7 @@ freeKey k model =
                 Nothing -> ( model, Cmd.none )
 
         Keyboard.KeyB ->
-            ( { model | tab = 0, kbMode = 1 }, Cmd.none )
+            ( setTab 0 { model | kbMode = 1 }, Cmd.none )
 
         Keyboard.Backquote ->
             let
@@ -1916,7 +2250,7 @@ commandKey : Keyboard.Key -> Model -> (Model, Cmd Msg)
 commandKey k model =
     case k of
         Keyboard.KeyT ->
-            ( { model | tab = 1, kbMode = 2 }, Cmd.none )
+            ( setTab 1 { model | kbMode = 2 }, Cmd.none )
 
         Keyboard.KeyA ->
             if List.isEmpty model.sel then
@@ -1964,7 +2298,7 @@ gridKey k model =
     if ix < 0 then
         ( { model | kbMode = 0 }, Cmd.none )
     else
-        ( gridActivate ix { model | kbMode = 0, tab = if model.kbMode == 1 then 0 else 1 }
+        ( gridActivate ix (setTab (if model.kbMode == 1 then 0 else 1) { model | kbMode = 0 })
         , Cmd.none
         )
 
@@ -2153,9 +2487,25 @@ advanceBrief model =
         { model | briefLine = model.briefLine + 1 }
 
 
+-- BACK, bottom-left of the briefing and the prologue. Escape was the only way
+-- out of either, so on a phone a mission tapped by mistake could not be left
+-- before it started -- you played it, or you launched it and abandoned from the
+-- menu. Anywhere else still advances, which is the gesture the screen teaches.
+briefBackRect : Model -> { x : Int, y : Int, w : Int, h : Int }
+briefBackRect model =
+    let
+        hs = hudStateOf model
+    in
+    { x = edgeL hs + 16, y = edgeB hs - 60, w = 110, h = 44 }
+
+
 briefClick : Int -> Int -> Model -> (Model, Cmd Msg)
 briefClick x y model =
-    ( advanceBrief model, menuBlip model )
+    if inRect x y (briefBackRect model) then
+        ( { model | screen = SSelect, briefLine = 0, reBrief = False }, menuBlip model )
+
+    else
+        ( advanceBrief model, menuBlip model )
 
 
 skirmishClick : Int -> Int -> Model -> (Model, Cmd Msg)
@@ -2215,23 +2565,68 @@ endClick x y model =
     ( { model | screen = STitle }, menuBlip model )
 
 
+-- Ten rows, hit-tested from the same `menuRowRect` Hud drew them with. A tap
+-- outside the card closes: a modal you cannot dismiss is the same trap as a
+-- modal you cannot open, and this one is reachable now.
 menuClick : Int -> Int -> Model -> (Model, Cmd Msg)
 menuClick x y model =
     let
-        cx = model.w // 2
-        by = model.h // 2 - 20
+        hs = hudStateOf model
+
+        hit =
+            List.head
+                (List.filter (\i -> inRect x y (menuRowRect hs i))
+                    (List.range 0 (menuRowCount - 1)))
     in
-    if btnHit x y (cx - 110) by 220 34 then
-        ( { model | menuOpen = False }, Cmd.none )
-    else if btnHit x y (cx - 110) (by + 44) 220 34 then
-        if model.mission == 0 then
-            ( launch 0 model, Cmd.none )
-        else
-            ( launch model.mission model, Cmd.none )
-    else if btnHit x y (cx - 110) (by + 88) 220 34 then
-        ( { model | screen = STitle, menuOpen = False }, Cmd.none )
+    case hit of
+        Just i ->
+            ( menuRow i model, menuBlip model )
+
+        Nothing ->
+            if inRect x y (closeRect (menuCardRect hs)) || bnot (inRect x y (menuCardRect hs)) then
+                ( { model | menuOpen = False }, Cmd.none )
+
+            else
+                ( model, Cmd.none )
+
+
+-- The verbs, in the order Hud labels them. Everything here used to be a key.
+menuRow : Int -> Model -> Model
+menuRow i model =
+    if i == 0 then
+        -- RESUME clears the pause too: a player who paused from this menu and
+        -- then taps RESUME means "carry on", not "close the menu and stay
+        -- frozen behind it".
+        { model | menuOpen = False, paused = False }
+
+    else if i == 1 then
+        { model | paused = bnot model.paused }
+
+    else if i == 2 then
+        { model | speed = modBy 3 (model.speed + 1) }
+
+    else if i == 3 then
+        { model | mutedMusic = bnot model.mutedMusic }
+
+    else if i == 4 then
+        { model | mutedSfx = bnot model.mutedSfx }
+
+    else if i == 5 then
+        { model | help = True, log = False, menuOpen = False }
+
+    else if i == 6 then
+        { model | log = True, help = False, menuOpen = False }
+
+    else if i == 7 then
+        -- The briefing replay was behind L then R -- reachable only from inside
+        -- another overlay that itself had no touch path.
+        { model | screen = SBrief, briefLine = 0, reBrief = True, log = False, menuOpen = False }
+
+    else if i == 8 then
+        launch (if model.mission == 0 then 0 else model.mission) model
+
     else
-        ( model, Cmd.none )
+        { model | screen = STitle, menuOpen = False }
 
 
 -- ===== view =====
@@ -2241,6 +2636,13 @@ hudStateOf : Model -> HudState
 hudStateOf model =
     { w = model.w
     , h = model.h
+    , insT = model.insT
+    , insR = model.insR
+    , insB = model.insB
+    , insL = model.insL
+    , sideOpen = model.sideOpen
+    , rallyArmed = model.rallyArmed
+    , touch = onTouch model
     , tab = model.tab
     , kbMode = model.kbMode
     , shownCredits = model.shownCredits
@@ -2271,7 +2673,11 @@ view model =
     canvas Pixelated
         [ watchSize Sized, onTap Down, onDrag Moved, onRelease Up
         , onHover Hover, onAltTap AltTap, onWheel Wheel ]
-        (case model.screen of
+        (if mustRotate model then
+            rotateShapes model
+
+         else
+          case model.screen of
             STitle -> titleShapes model
             SSelect -> selectShapes model
             SProlog -> prologShapes model
@@ -2282,6 +2688,49 @@ view model =
             SEnd -> endShapes model
             SPlay -> playShapes model
         )
+
+
+-- The rotate card. Two phone outlines and an arrow: the dim one is the shape
+-- being held, the lit one is the shape wanted. Everything is sized off the
+-- SHORT side so it is the same physical size on a phone and on a tablet -- a
+-- hand does not get bigger when the screen does.
+rotateShapes : Model -> List Shape
+rotateShapes model =
+    let
+        cx = model.w // 2
+        cy = model.h // 2
+        u = clampI 40 96 (min model.w model.h // 6)   -- the phone's short side
+
+        dim = rgb 92 88 96
+        lit = rgb 255 214 120
+
+        -- an outline as four bars, since there is no stroked rect
+        outline = \x y w h c ->
+            [ rect x y w 2 c
+            , rect x (y + h - 2) w 2 c
+            , rect x y 2 h c
+            , rect (x + w - 2) y 2 h c
+            ]
+
+        portraitX = cx - u * 2
+        landscapeX = cx + u // 2
+    in
+    List.concat
+        [ [ rect 0 0 model.w model.h (rgb 13 9 12) ]
+        , starfield model
+        , outline portraitX (cy - u * 3 // 4) u (u * 3 // 2) dim
+        , [ rect (portraitX + u // 3) (cy + u * 5 // 8) (u // 3) 3 dim ]
+        , [ Canvas.triangle (cx - u // 4) cy (cx - u * 3 // 4) (cy - u // 3)
+                (cx - u * 3 // 4) (cy + u // 3) lit
+          ]
+        , outline landscapeX (cy - u // 2) (u * 3 // 2) u lit
+        , [ rect (landscapeX + u * 3 // 2 - 8) (cy - u // 6) 3 (u // 3) lit ]
+        , [ Canvas.text cx (cy + u * 3 // 2 + 28) 15 Canvas.Center (rgb 235 225 210)
+                "TURN YOUR DEVICE"
+          , Canvas.text cx (cy + u * 3 // 2 + 50) 11 Canvas.Center (rgb 150 145 150)
+                "Iron Meridian is played sideways."
+          ]
+        ]
 
 
 playShapes : Model -> List Shape
@@ -2296,15 +2745,22 @@ playShapes model =
         -- With a structure armed, the ghost follows the cursor via onHover
         -- (desktop) and falls back to the drag point (touch), so you can line
         -- up a placement before committing instead of only during a drag.
+        -- The placement ghost needs a place to BE. With a structure armed but
+        -- the cursor parked on the sidebar -- which is exactly where it is the
+        -- instant you click the card that arms it -- there is no world position
+        -- to point at, and drawing one anyway put a red footprint on the last
+        -- tile the cursor happened to cross, or on the map corner if it had not
+        -- crossed any yet. A drag still counts: on touch there is no hover, and
+        -- the drag point IS the aim.
         ghostTile =
-            if s.sReady >= 0 then
+            if s.sReady >= 0 && (model.drag.on || model.hoverOn) then
                 if model.drag.on then
-                    { tx = (model.drag.x + model.camX) // tileW
-                    , ty = (model.drag.y - topH + model.camY) // tileW
+                    { tx = (worldOf model model.drag.x model.drag.y).x // tileW
+                    , ty = (worldOf model model.drag.x model.drag.y).y // tileW
                     }
                 else
-                    { tx = (model.hoverX + model.camX) // tileW
-                    , ty = (model.hoverY - topH + model.camY) // tileW
+                    { tx = (worldOf model model.hoverX model.hoverY).x // tileW
+                    , ty = (worldOf model model.hoverX model.hoverY).y // tileW
                     }
             else
                 { tx = 0 - 100, ty = 0 - 100 }
@@ -2317,7 +2773,7 @@ playShapes model =
                 ghostTile.ty
 
         boxShapes =
-            if model.drag.on && model.drag.mode == 0
+            if drawsSelectionBox model s
                 && abs (model.drag.x - model.drag.sx) + abs (model.drag.y - model.drag.sy) > 8
             then
                 let
@@ -2337,7 +2793,7 @@ playShapes model =
     in
     List.concat
         [ [ rect 0 0 model.w model.h (rgb 16 9 10) ]
-        , [ group [ Canvas.Translate (0 - model.camX) (0 - model.camY + topH) ] world ]
+        , [ group [ Canvas.Translate (0 - model.camX) (0 - model.camY + worldTopOf model) ] world ]
         , boxShapes
         , drawHud g cam model.miniTerrain (hudStateOf model)
         , tooltipShapes model
@@ -2420,9 +2876,9 @@ tooltipPanel model e =
 
         panelH = bodyTop + nDesc * 12 + nNeed * 14 + 6
 
-        px = max 4 (hs.w - sideW - panelW - 8)
+        px = max (edgeL hs + 4) (sideX hs - panelW - 8)
 
-        py = max (topH + 4) (min (cell.y - 6) (hs.h - panelH - 6))
+        py = max (edgeT hs + topBarH hs + 4) (min (cell.y - 6) (edgeB hs - panelH - 6))
 
         descShapes =
             List.indexedMap
@@ -2452,21 +2908,7 @@ tooltipPanel model e =
 
 menuShapes : Model -> List Shape
 menuShapes model =
-    let
-        cx = model.w // 2
-        by = model.h // 2 - 20
-    in
-    [ rect 0 0 model.w model.h (rgba 10 8 10 170)
-    , rect (cx - 140) (by - 60) 280 210 (rgb 26 22 26)
-    , rect (cx - 140) (by - 60) 280 3 (rgb 255 214 120)
-    , Canvas.text cx (by - 30) 15 Canvas.Center (rgb 235 225 210) "FIELD COMMAND"
-    , rect (cx - 110) by 220 34 (rgb 44 38 44)
-    , Canvas.text cx (by + 22) 12 Canvas.Center (rgb 220 214 206) "RESUME"
-    , rect (cx - 110) (by + 44) 220 34 (rgb 44 38 44)
-    , Canvas.text cx (by + 66) 12 Canvas.Center (rgb 220 214 206) "RESTART MISSION"
-    , rect (cx - 110) (by + 88) 220 34 (rgb 44 38 44)
-    , Canvas.text cx (by + 110) 12 Canvas.Center (rgb 220 214 206) "ABANDON TO TITLE"
-    ]
+    Hud.drawMenu (hudStateOf model)
 
 
 -- ----- menu screens -----
@@ -2667,51 +3109,91 @@ wrapStep maxChars word acc =
         { cur = word, lines = List.concat [ acc.lines, [ acc.cur ] ] }
 
 
-briefWrap : Int
-briefWrap = 84
+-- Characters per line of dialogue, from the width the box actually got. The
+-- glyphs are ~7px wide at this size, and 84 of them is what fits the 660px
+-- desktop box; a phone gets fewer rather than running off the side.
+briefWrapFor : Int -> Int
+briefWrapFor boxW =
+    max 28 (min 84 ((boxW - 100) // 7))
 
 
 -- a briefing entry flattens to one speaker-label row (kind 0) plus one row
 -- per wrapped text line (kind 1). Rows lay out at a uniform 16px pitch.
-briefRows : List Line -> List { kind : Int, s : String }
-briefRows entries =
+briefRows : Int -> List Line -> List { kind : Int, s : String }
+briefRows wrapN entries =
     List.concatMap
         (\ln ->
             List.concat
                 [ [ { kind = 0, s = speakerName ln.who } ]
-                , List.map (\t -> { kind = 1, s = t }) (wrapText briefWrap ln.text)
+                , List.map (\t -> { kind = 1, s = t }) (wrapText wrapN ln.text)
                 ]
         )
         entries
 
 
+-- The briefing card. Every number here used to be a constant sized for a
+-- desktop window -- a 660px box, 84-character lines, and a height that was
+-- whatever the whole script came to. On a phone in landscape that is 660px of
+-- 844 (fine) by ~500px of 390 (not): the last lines of dialogue and the LAUNCH
+-- MISSION button were drawn below the bottom of the screen, so the mission
+-- could not be started at all.
+--
+-- Now the card is sized from the box it was given, inside the safe area, and
+-- when the script is taller than the room, it shows the LAST rows -- which are
+-- the ones just revealed, the ones the player is reading.
 briefShapes : Model -> List Shape
 briefShapes model =
     let
-        cx = model.w // 2
+        hs = hudStateOf model
+
+        cx = (edgeL hs + edgeR hs) // 2
+
+        boxW = min 660 (edgeR hs - edgeL hs - 24)
+
+        bx = cx - boxW // 2
+
         lines = briefing model.mission
         shown = List.take (model.briefLine + 1) lines
 
-        -- size the box for the WHOLE briefing so it never jumps as lines
-        -- reveal; render only the rows shown so far.
-        allRows = briefRows lines
-        shownRows = briefRows shown
+        wrapN = briefWrapFor boxW
+
+        allRows = briefRows wrapN lines
+        shownRows = briefRows wrapN shown
 
         rowPitch = 16
-        contentH = List.length allRows * rowPitch
 
         -- One sentence of what just happened, above the dialogue. A campaign
         -- gets played across several evenings, and without this the player
         -- opens mission 4 with no idea why they are suddenly fighting
         -- alongside the enemy from mission 2.
-        recapRows = wrapText 72 (recap model.mission)
+        recapRows = wrapText (wrapN - 12) (recap model.mission)
         recapH = if List.isEmpty recapRows then 0 else List.length recapRows * 14 + 14
 
-        boxH = 96 + recapH + contentH + 60
-        top = max 24 (model.h // 2 - boxH // 2)
+        headH = 96 + recapH
+
+        footH = 60
+
+        -- how many dialogue rows the screen has room for
+        maxRows =
+            max 3 ((edgeB hs - edgeT hs - 24 - headH - footH) // rowPitch)
+
+        -- The box is sized for the WHOLE briefing so it never jumps as lines
+        -- reveal -- unless the whole briefing does not fit, in which case it is
+        -- sized for what does.
+        nRows = min (List.length allRows) maxRows
+
+        contentH = nRows * rowPitch
+
+        -- Scroll: keep the newest rows on screen once the script outgrows the
+        -- card. Nothing is lost -- the player is reading the line that just
+        -- appeared.
+        visibleRows = List.drop (max 0 (List.length shownRows - nRows)) shownRows
+
+        boxH = headH + contentH + footH
+        top = max (edgeT hs + 12) ((edgeT hs + edgeB hs) // 2 - boxH // 2)
         recapY = top + 76
         rowsY = top + 80 + recapH
-        textX = cx - 246
+        textX = bx + 84
 
         rowShapes =
             List.indexedMap
@@ -2721,7 +3203,7 @@ briefShapes model =
                     else
                         Canvas.text textX (rowsY + i * rowPitch) 11 Canvas.Left (rgb 214 208 202) row.s
                 )
-                shownRows
+                visibleRows
 
         btnY = rowsY + contentH + 12
 
@@ -2733,15 +3215,15 @@ briefShapes model =
     List.concat
         [ [ rect 0 0 model.w model.h (rgb 13 9 12) ]
         , starfield model
-        , [ rect (cx - 330) top 660 boxH (rgba 20 16 20 235)
-          , rect (cx - 330) top 660 3 (rgb 255 214 120)
-          , Canvas.text (cx - 310) (top + 30) 16 Canvas.Left (rgb 235 225 210)
+        , [ rect bx top boxW boxH (rgba 20 16 20 235)
+          , rect bx top boxW 3 (rgb 255 214 120)
+          , Canvas.text (bx + 20) (top + 30) 16 Canvas.Left (rgb 235 225 210)
                 ("MISSION " ++ (if model.mission > 0 then String.fromInt model.mission else "X") ++ ": " ++ missionTitle model.mission)
-          , Canvas.text (cx - 310) (top + 50) 10 Canvas.Left (rgb 150 145 150) (missionPlace model.mission)
+          , Canvas.text (bx + 20) (top + 50) 10 Canvas.Left (rgb 150 145 150) (missionPlace model.mission)
           ]
         -- +recapH so the portrait sits beside the DIALOGUE, not beside the
         -- recap line, which belongs to nobody.
-        , portraitShapes current (cx - 322) (top + 62 + recapH)
+        , portraitShapes current (bx + 8) (top + 62 + recapH)
         , List.indexedMap
             (\i t -> Canvas.text textX (recapY + i * 14) 10 Canvas.Left (rgb 150 175 150) t)
             recapRows
@@ -2749,9 +3231,19 @@ briefShapes model =
         , [ rect (cx - 110) btnY 220 30 (rgb 44 38 44)
           , Canvas.text cx (btnY + 20) 11 Canvas.Center (rgb 220 214 206)
                 (if model.briefLine + 1 >= List.length lines then "LAUNCH MISSION" else "CONTINUE")
-          , Canvas.text cx (btnY + 44) 9 Canvas.Center (rgb 120 115 120) "click or ENTER"
+          , Canvas.text cx (btnY + 44) 9 Canvas.Center (rgb 120 115 120)
+                (if onTouch model then "tap to go on" else "click or ENTER")
           ]
+        , backButton (briefBackRect model)
         ]
+
+
+backButton : { x : Int, y : Int, w : Int, h : Int } -> List Shape
+backButton r =
+    [ rect r.x r.y r.w r.h (rgba 38 32 38 220)
+    , rect r.x r.y r.w 2 (rgb 62 54 60)
+    , Canvas.text (r.x + r.w // 2) (r.y + r.h // 2 + 4) 10 Canvas.Center (rgb 190 184 178) "BACK"
+    ]
 
 
 skirmishShapes : Model -> List Shape
@@ -2875,7 +3367,10 @@ prologShapes model =
                     ]
                 )
                 lines)
-        , [ Canvas.text cx (model.h - 40) 10 Canvas.Center (rgb 150 145 150) "click or press any key" ]
+        , [ Canvas.text cx (model.h - 40) 10 Canvas.Center (rgb 150 145 150)
+                (if onTouch model then "tap to go on" else "click or press any key")
+          ]
+        , backButton (briefBackRect model)
         ]
 
 
@@ -2909,6 +3404,12 @@ subscriptions model =
             SPlay -> Time.every (Time.millis 16) (\_ -> Frame)
             _ -> Sub.none
         , Keyboard.watch KeysChanged
+        -- Capabilities, not identity: Device reads media queries, never a user
+        -- agent. It seeds its current value the moment it is subscribed, so the
+        -- game knows where it is running before the first input rather than
+        -- inferring it from one -- which is the mistake seasons-gp shipped, and
+        -- it took two rounds of feedback to unship.
+        , Device.watch DeviceChanged
         -- The music, which plays only where the fighting is. Menus, briefings
         -- and the win and lose screens stay quiet on purpose: the briefing is
         -- read, and a track under it competes with the reading.
