@@ -161,6 +161,38 @@ detunedNoise =
     Sound.detune 600 (Sound.tone Sound.Noise 300 120)
 
 
+-- pan over a CHORD, which is the whole point of the fixture: pan patches every
+-- voice, so both layers have to come back placed. Under patchLast, the shape
+-- detune deliberately uses two fixtures up, the first voice would read 0 and
+-- only the second would move. Every other patchAll fixture in this file wraps a
+-- single tone, so before this one nothing here could tell the two apart.
+spread : Sound
+spread =
+    Sound.pan 40
+        (Sound.chord
+            [ Sound.tone Sound.Triangle 220 400
+            , Sound.tone Sound.Triangle 330 400
+            ]
+        )
+
+
+-- the negative side, in the idiom the language forces: there is no unary minus,
+-- so a hard left is written (0 - 100). Pins that both runtimes carry the SIGN,
+-- not just the magnitude, which is the one error a listener cannot hear as wrong
+-- and only notices as an image that leans the wrong way.
+hardLeft : Sound
+hardLeft =
+    Sound.pan (0 - 100) (Sound.tone Sound.Square 440 300)
+
+
+-- out of range. Both runtimes clamp to +/-100, and they have to clamp to the
+-- SAME place: the law reads pan directly, so an unclamped 400 becomes a gain of
+-- -3, which is a polarity inversion three times too loud rather than silence.
+overPanned : Sound
+overPanned =
+    Sound.pan 400 (Sound.tone Sound.Sawtooth 165 250)
+
+
 -- the two cuts, nested both ways round: the outer one used to eat the inner
 cut : Sound
 cut =
@@ -247,6 +279,7 @@ var SoundFixtures = []string{
 	"swept", "held", "arpeggio",
 	"struck", "settled", "crowded",
 	"pulsed", "wobbly", "pure", "unison", "detunedNoise",
+	"spread", "hardLeft", "overPanned",
 	"cut", "cutFlipped",
 	"stacked", "ordered",
 	"notes", "octaves",
@@ -264,5 +297,5 @@ var SoundFixtures = []string{
 var SoundFields = []string{
 	"wave", "freq", "ms", "endFreq", "holdMs", "volume", "delayMs",
 	"duty", "vibDepth", "vibRate", "arp", "lowCut", "highCut",
-	"attack", "release", "decay", "sustain", "detune",
+	"attack", "release", "decay", "sustain", "detune", "pan",
 }

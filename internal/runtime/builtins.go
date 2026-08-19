@@ -230,6 +230,7 @@ func qualifiedAliasMapping() map[string]string {
 		"Sound.attack":       "soundAttack",
 		"Sound.release":      "soundRelease",
 		"Sound.decay":        "soundDecay",
+		"Sound.pan":          "soundPan",
 		"Sound.duty":         "soundDuty",
 		"Sound.detune":       "soundDetune",
 		"Sound.vibrato":      "soundVibrato",

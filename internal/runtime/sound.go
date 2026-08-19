@@ -36,6 +36,7 @@ func soundBuiltins() map[string]Value {
 		"soundAttack":    inertSound(2),
 		"soundRelease":   inertSound(2),
 		"soundDecay":     inertSound(3),
+		"soundPan":       inertSound(2),
 		"soundDuty":      inertSound(2),
 		"soundDetune":    inertSound(2),
 		"soundVibrato":   inertSound(3),

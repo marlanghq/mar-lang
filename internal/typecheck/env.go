@@ -715,6 +715,32 @@ func baseBindings() map[string]Type {
 	//
 	// `decay 0` is exactly today's shape, so no existing sound moves.
 	out["soundDecay"] = TArrow{From: TInt, To: TArrow{From: TInt, To: TArrow{From: TSound, To: TSound}}}
+	// Sound.pan : Int -> Sound -> Sound  (stereo position: -100 hard left, 0
+	// centre, +100 hard right).
+	//
+	// The one thing no amount of timbral work substitutes for: two parts in the
+	// same register fighting in mono stay muddy however good the waves are, and
+	// move 35% apart become individually audible. Iron Meridian's four
+	// simultaneous triangle voices are the case that asked for it.
+	//
+	// patchALL, like attack/release/decay and unlike detune. A counter-melody is
+	// a Sound.sequence, so patching only the last voice would place one note and
+	// leave the other thirty in the middle, which is exactly the failure pan
+	// exists to fix. The signature is byte-identical to detune's, so this comment
+	// is the only place the difference is written down.
+	//
+	// The law, in both audio backends:
+	//
+	//	gainL = 1 - max(0,  pan) / 100
+	//	gainR = 1 - max(0, -pan) / 100
+	//
+	// so centre is 1.0/1.0 and `pan 0` is bit-identical to today's mono, and the
+	// 3 dB is paid only by whoever asks for a hard pan. Deliberately NOT the
+	// equal-power law a StereoPannerNode would apply to a mono input, which sits
+	// at 0.707 per channel at centre and would therefore make every one of the
+	// ~670 existing tone and sweep call sites in this repo quieter. The law is
+	// chosen by the migration, not by the textbook (docs/proposals/sound-snes.md).
+	out["soundPan"] = TArrow{From: TInt, To: TArrow{From: TSound, To: TSound}}
 	// Expressiveness pack: the chip-character modifiers.
 	// Sound.duty : Int -> Sound -> Sound  (pulse width % for Square: 12/25/50/75).
 	out["soundDuty"] = TArrow{From: TInt, To: TArrow{From: TSound, To: TSound}}
@@ -3848,6 +3874,7 @@ func qualifiedAliases(flat map[string]Type) map[string]Type {
 		"Sound.attack":       "soundAttack",
 		"Sound.release":      "soundRelease",
 		"Sound.decay":        "soundDecay",
+		"Sound.pan":          "soundPan",
 		"Sound.duty":         "soundDuty",
 		"Sound.detune":       "soundDetune",
 		"Sound.vibrato":      "soundVibrato",

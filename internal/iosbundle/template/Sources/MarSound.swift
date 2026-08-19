@@ -46,6 +46,27 @@ private struct Voice {
     // where vibrato applies its own. The web reaches the same number through the
     // oscillator's `detune` AudioParam.
     var detune: Double
+    // Sound.pan: stereo position, -100 hard left through 0 centre to +100 hard
+    // right. Carried on the voice rather than applied by the playback path, so a
+    // Sound placed once speaks from the same spot however it is played.
+    var pan: Double
+}
+
+/// The pan law, shared by every path that mixes a voice into the output.
+///
+///     gainL = 1 - max(0,  pan) / 100
+///     gainR = 1 - max(0, -pan) / 100
+///
+/// Centre is 1.0/1.0, so an unpanned voice is bit-identical to the mono output
+/// this engine produced before it went stereo, and the 3 dB is paid only by
+/// whoever asks to be placed hard to one side. That is deliberately NOT the
+/// equal-power law (0.707 per channel at centre) that the web would get for free
+/// from a StereoPannerNode fed a mono signal: equal power would have quietened
+/// every existing sound in every app the day pan shipped. Both runtimes compute
+/// this same arithmetic by hand; runtime.js says so in soundPanOut.
+@inline(__always) private func panGains(_ pan: Double) -> (Double, Double) {
+    let p = max(-100, min(100, pan))
+    return (1 - max(0, p) / 100, 1 - max(0, -p) / 100)
 }
 
 /// The floor below which a gain change is a step discontinuity: a click. Not a
@@ -98,11 +119,17 @@ private final class LiveVoice {
     var lpState: Double = 0        // one-pole low-pass memory  (Sound.highCut)
     var hpState: Double = 0        // one-pole high-pass memory (Sound.lowCut)
     let group: Int                 // for once/loop cancellation
+    // Stereo placement, resolved once here rather than per sample in the render
+    // callback: pan cannot change over a note's life, and that loop runs 44100
+    // times a second per voice.
+    let gainL: Double
+    let gainR: Double
     init(_ v: Voice, startSample: Double, durSamples: Double, group: Int) {
         self.v = v
         self.startSample = startSample
         self.durSamples = durSamples
         self.group = group
+        (self.gainL, self.gainR) = panGains(v.pan)
     }
 }
 
@@ -143,6 +170,11 @@ private final class BedVoice {
     // Fade-out rate, from the voice's Sound.release. Held here because the sub
     // teardown has the node but not the Sound that built it.
     var stopK: Double = 0
+    // Sound.pan on a HELD voice. Set from the Sound at start; a Sound.glide can
+    // retune pitch and level but not position, which is why pan is part of the
+    // held source's identity (see heldKey) rather than something to slide.
+    var gainL: Double = 1
+    var gainR: Double = 1
     init(wave: String, duty: Double, freq: Double, peak: Double, fadeInK: Double) {
         self.wave = wave
         self.duty = duty
@@ -237,7 +269,9 @@ final class MarSound: @unchecked Sendable {
         try? session.setCategory(.ambient, mode: .default, options: [.mixWithOthers])
         try? session.setActive(true)
         #endif
-        let fmt = AVAudioFormat(standardFormatWithSampleRate: sr, channels: 1)!
+        // Two channels, so Sound.pan has somewhere to put a voice. `standardFormat`
+        // is non-interleaved float, so render() gets one buffer per channel.
+        let fmt = AVAudioFormat(standardFormatWithSampleRate: sr, channels: 2)!
         let node = AVAudioSourceNode { [weak self] _, _, frameCount, audioBufferList -> OSStatus in
             guard let self else { return noErr }
             self.render(frameCount: Int(frameCount), abl: audioBufferList)
@@ -254,7 +288,13 @@ final class MarSound: @unchecked Sendable {
 
     private func render(frameCount: Int, abl: UnsafeMutablePointer<AudioBufferList>) {
         let ablp = UnsafeMutableAudioBufferListPointer(abl)
-        let out = ablp[0].mData!.assumingMemoryBound(to: Float.self)
+        let chL = ablp[0].mData!.assumingMemoryBound(to: Float.self)
+        // Deinterleaved stereo gives one buffer per channel. If the graph ever
+        // hands us a single buffer, fold the two sides down rather than writing
+        // the left one twice: at centre (l == r) the fold is exactly the old
+        // mono sample, and a hard pan comes out half as loud, which is the
+        // honest mono answer.
+        let chR = ablp.count > 1 ? ablp[1].mData!.assumingMemoryBound(to: Float.self) : nil
 
         lock.lock()
         let level = muted ? 0 : masterLevel
@@ -265,16 +305,35 @@ final class MarSound: @unchecked Sendable {
 
         for frame in 0..<frameCount {
             let now = base + Double(frame)
-            var sample = 0.0
+            // One accumulator per ear. The synthesis itself is untouched: a voice
+            // still produces ONE sample and pan only decides how much of it each
+            // side gets. That is what keeps voiceSample and bedSample single
+            // copies rather than a stereo pair that could drift apart.
+            var l = 0.0
+            var r = 0.0
             for lv in live {
                 let t = now - lv.startSample
                 if t < 0 || t >= lv.durSamples { continue }
-                sample += MarSound.voiceSample(lv, t: t, sr: sr)
+                let x = MarSound.voiceSample(lv, t: t, sr: sr)
+                l += x * lv.gainL
+                r += x * lv.gainR
             }
             for b in bs {
-                sample += MarSound.bedSample(b, sr: sr)
+                let x = MarSound.bedSample(b, sr: sr)
+                l += x * b.gainL
+                r += x * b.gainR
             }
-            out[frame] = Float(MarSound.ceiling(sample * level))
+            // The ceiling applies PER CHANNEL, which is what stops each side
+            // clipping on its own. It does mean a loud hard pan nudges the
+            // perceived position, since one side is past the knee while the other
+            // is still linear. The web ceiling is a WaveShaper and behaves the
+            // same way, so the two platforms agree about it.
+            if let chR {
+                chL[frame] = Float(MarSound.ceiling(l * level))
+                chR[frame] = Float(MarSound.ceiling(r * level))
+            } else {
+                chL[frame] = Float(MarSound.ceiling((l + r) * 0.5 * level))
+            }
         }
 
         lock.lock()
@@ -567,7 +626,7 @@ final class MarSound: @unchecked Sendable {
     /// (mirrors soundFullKey in the JS runtime).
     static func contentKey(_ snd: MarValue) -> String {
         voicesOf(snd).map {
-            "\($0.wave)|\($0.freq)|\($0.ms)|\($0.endFreq)|\($0.holdMs)|\($0.volume)|\($0.delayMs)|\($0.duty)|\($0.vibDepth)|\($0.vibRate)|\($0.arp)|\($0.lowCut)|\($0.highCut)|\($0.attack)|\($0.release)|\($0.decay)|\($0.sustain)|\($0.detune)"
+            "\($0.wave)|\($0.freq)|\($0.ms)|\($0.endFreq)|\($0.holdMs)|\($0.volume)|\($0.delayMs)|\($0.duty)|\($0.vibDepth)|\($0.vibRate)|\($0.arp)|\($0.lowCut)|\($0.highCut)|\($0.attack)|\($0.release)|\($0.decay)|\($0.sustain)|\($0.detune)|\($0.pan)"
         }.joined(separator: ";")
     }
 
@@ -591,7 +650,7 @@ final class MarSound: @unchecked Sendable {
     /// the source either way: the filter is built once and never glides.
     static func heldKey(_ snd: MarValue, withFreq: Bool) -> String {
         voicesOf(snd).map {
-            "\($0.wave)|\(withFreq ? $0.freq : 0)|\($0.ms)|\($0.endFreq)|\($0.holdMs)|\($0.delayMs)|\($0.duty)|\($0.vibDepth)|\($0.vibRate)|\($0.arp)|\($0.lowCut)|\($0.highCut)|\($0.attack)|\($0.release)|\($0.decay)|\($0.sustain)|\($0.detune)"
+            "\($0.wave)|\(withFreq ? $0.freq : 0)|\($0.ms)|\($0.endFreq)|\($0.holdMs)|\($0.delayMs)|\($0.duty)|\($0.vibDepth)|\($0.vibRate)|\($0.arp)|\($0.lowCut)|\($0.highCut)|\($0.attack)|\($0.release)|\($0.decay)|\($0.sustain)|\($0.detune)|\($0.pan)"
         }.joined(separator: ";")
     }
 
@@ -745,6 +804,7 @@ final class MarSound: @unchecked Sendable {
             b.vibDepth = v.vibDepth
             b.vibRate = v.vibRate
             b.detune = v.detune
+            (b.gainL, b.gainR) = panGains(v.pan)
             beds.append(b)
             h.bedRefs.append(b)
         }
@@ -824,7 +884,8 @@ final class MarSound: @unchecked Sendable {
                      attack: d("attack"), release: d("release"),
                      decay: d("decay"),
                      sustain: f["sustain"] == nil ? 100 : d("sustain"),
-                     detune: d("detune"))
+                     detune: d("detune"),
+                     pan: d("pan"))
     }
 
     // MARK: builtin registration
@@ -842,7 +903,8 @@ final class MarSound: @unchecked Sendable {
                 "vibRate": .int(0), "arp": .unit,
                 "lowCut": .int(0), "highCut": .int(0),
                 "decay": .int(0), "sustain": .int(100), "detune": .int(0),
-            ], order: ["wave", "freq", "ms", "endFreq", "holdMs", "volume", "delayMs", "duty", "vibDepth", "vibRate", "arp", "lowCut", "highCut", "decay", "sustain", "detune"])
+                "pan": .int(0),
+            ], order: ["wave", "freq", "ms", "endFreq", "holdMs", "volume", "delayMs", "duty", "vibDepth", "vibRate", "arp", "lowCut", "highCut", "decay", "sustain", "detune", "pan"])
         }
         func mkSound(_ voices: [MarValue]) -> MarValue { .ctor(tag: "__Snd", args: [.list(voices)], origin: nil) }
         func voicesOfVal(_ snd: MarValue) -> [MarValue] {
@@ -889,6 +951,15 @@ final class MarSound: @unchecked Sendable {
                          "sustain", .int(max(0, min(100, intArg(a[1])))))
             }
         }
+        // pan : -100 hard left, 0 centre, +100 hard right. patchAll, with the
+        // envelope and NOT with detune below, whose signature is identical: a
+        // counter-melody is a Sound.sequence, so patching the last voice would
+        // place one note of thirty and leave the rest in the middle. Clamped here
+        // and again in panGains, because the law reads pan directly and an
+        // unclamped 400 would produce a NEGATIVE gain: a polarity inversion three
+        // times too loud, which cancels against the other voices instead of
+        // falling silent.
+        env.defineFn("soundPan", "Sound.pan", 2) { a in patchAll(a[1]) { setField($0, "pan", .int(max(-100, min(100, intArg(a[0]))))) } }
         env.defineFn("soundDuty", "Sound.duty", 2) { a in patchLast(a[1]) { setField($0, "duty", .int(max(1, min(99, intArg(a[0]))))) } }
         // detune : signed cents on THIS voice. patchLast, unlike the envelope --
         // a unison is layers that DIFFER, so patching them all would defeat it.

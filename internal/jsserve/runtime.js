@@ -2001,6 +2001,57 @@
     return head;   // source -> highpass -> lowpass -> dest
   }
 
+  // Sound.pan: where the voice sits between the ears. Wires the envelope gain to
+  // `dest` through two constant gains and a 2-in merger, and at pan 0 wires the
+  // single edge that has always been there instead.
+  //
+  //   gainL = 1 - max(0,  pan) / 100
+  //   gainR = 1 - max(0, -pan) / 100
+  //
+  // Not a StereoPannerNode, which applies the equal-power law to a mono input and
+  // therefore sits at 0.707 per channel in the CENTRE. That is the textbook law
+  // and the wrong one here: it would make all ~670 existing tone and sweep calls
+  // in this repo quieter the day pan shipped. This law puts centre at 1.0/1.0, so
+  // the 3 dB is paid only by whoever asks to be placed hard to one side.
+  //
+  // Three things about the shape, each of which was a bug first:
+  //
+  //  - At pan 0 it builds NOTHING. That is what makes the claim "an unpanned
+  //    sound is bit-identical to before" true by construction rather than by
+  //    arithmetic, and it is also what keeps the fake AudioContexts in the Go
+  //    tests working, since they expose no createChannelMerger.
+  //  - createChannelMerger(2), and both edges name their input index. The default
+  //    is SIX inputs, and a 6-channel signal reaching a 'speakers' destination is
+  //    read as 5.1 and folded down with surround coefficients: the same 3 dB loss
+  //    by another route, and an image that is not left/right at all. Omitting the
+  //    index instead sums both gains into input 0, which pans nothing while
+  //    sounding almost right.
+  //  - It goes AFTER the envelope gain, never before the cuts. A BiquadFilter is
+  //    channelCountMode 'max', so a stereo signal doubles the filter work for
+  //    every cut in the repo, and a fan-out upstream of the cuts makes the graph
+  //    walk in sound_shaping_test.go order-dependent.
+  //
+  // Panned and unpanned voices mix safely: nothing in this file sets channelCount
+  // or channelInterpretation, so masterGain computes 2 channels as soon as one
+  // panned voice connects and up-mixes the mono ones by duplication, with no
+  // level change. The master ceiling is a WaveShaper and so limits per channel,
+  // which is what prevents clipping per channel but does mean that at high level
+  // a hard pan also nudges the perceived position: one side is past the knee
+  // while the other is still linear.
+  function soundPanOut(ctx, v, g, dest) {
+    const pan = Math.max(-100, Math.min(100, v.pan || 0));
+    if (pan === 0) { g.connect(dest); return; }
+    const gl = ctx.createGain();
+    const gr = ctx.createGain();
+    gl.gain.value = 1 - Math.max(0, pan) / 100;
+    gr.gain.value = 1 - Math.max(0, -pan) / 100;
+    const merger = ctx.createChannelMerger(2);
+    g.connect(gl); g.connect(gr);
+    gl.connect(merger, 0, 0);
+    gr.connect(merger, 0, 1);
+    merger.connect(dest);
+  }
+
   function scheduleVoice(ctx, v, at, dest) {
     // A rest (Sound.rest) occupies time in a sequence but emits nothing.
     if (v.wave === 'Rest') return;
@@ -2009,7 +2060,7 @@
     const peak = Math.max(0, Math.min(100, v.volume == null ? 60 : v.volume)) / 100;
     const pk = Math.max(0.0002, peak);
     const g = ctx.createGain();
-    g.connect(dest || masterGain);
+    soundPanOut(ctx, v, g, dest || masterGain);
     // Attack -> sustain -> release. Short sounds (dur <= tail) decay over their whole
     // length exactly as before (punchy blips); LONG notes (the goal shout) hold at
     // full then release only over the last `tail`, so a 3-4s "goooool" stays strong
@@ -2159,7 +2210,7 @@
       if (v.wave === 'Rest') continue;   // a bed has no use for silence voices
       const peak = Math.max(0, Math.min(100, v.volume == null ? 60 : v.volume)) / 100;
       const g = ctx.createGain();
-      g.connect(masterGain);
+      soundPanOut(ctx, v, g, masterGain);
       g.gain.setValueAtTime(0.0001, at);
       // Fade in over the voice's own attack. This used to be a hardcoded 400ms:
       // right for a drone that starts once a session, and half a second of lag on
@@ -5325,12 +5376,19 @@
           // Sound.glide can retune one live source; a detune is the fixed offset
           // that says WHICH layer of a unison this is, so changing it is a new
           // voice — the same call `duty` makes, two entries up.
-          v.detune]));
+          v.detune,
+          // pan is in the identity for a harder reason than the others: there is
+          // no handle on the pan gains anywhere outside soundPanOut, so
+          // soundGlideTo cannot move a live source's position. Two Sound.voice
+          // subs differing only in pan would hash the same, the second would
+          // never start, and the two halves of a stereo pad would collapse into
+          // whichever one began first.
+          v.pan]));
       } catch (e) { return 'x'; }
     };
     // tone : Wave -> Int -> Int -> Sound  (wave, freq Hz, duration ms)
     const soundToneImpl = native(3, ([wave, freq, ms]) =>
-      mkSound([{ wave: (wave && wave.tag) || 'Square', freq: freq.n, ms: ms.n, endFreq: 0, holdMs: 0, volume: 60, delayMs: 0, duty: 0, vibDepth: 0, vibRate: 0, arp: null, lowCut: 0, highCut: 0, attack: 0, release: 0, decay: 0, sustain: 100, detune: 0 }]));
+      mkSound([{ wave: (wave && wave.tag) || 'Square', freq: freq.n, ms: ms.n, endFreq: 0, holdMs: 0, volume: 60, delayMs: 0, duty: 0, vibDepth: 0, vibRate: 0, arp: null, lowCut: 0, highCut: 0, attack: 0, release: 0, decay: 0, sustain: 100, detune: 0, pan: 0 }]));
     def('soundTone', soundToneImpl); def('Sound.tone', soundToneImpl);
     // volume / sweep patch the LAST voice built (so they chain onto a tone).
     const patchLast = (snd, f) => { const vs = cloneVoices(snd); if (vs.length) f(vs[vs.length - 1]); return mkSound(vs); };
@@ -5363,6 +5421,21 @@
       v.sustain = Math.max(0, Math.min(100, level.n));
     }));
     def('soundDecay', soundDecayImpl); def('Sound.decay', soundDecayImpl);
+    // pan : -100 hard left, 0 centre, +100 hard right. patchAll, with attack and
+    // release and decay, and NOT with detune two blocks down even though the
+    // signature is identical: a counter-melody is a Sound.sequence, so patching
+    // the last voice would place one note of thirty and leave the rest centred,
+    // which is the exact muddle pan exists to undo. Per-voice placement is still
+    // expressible the same way per-voice envelopes are: pan a tone BEFORE putting
+    // it in the chord.
+    //
+    // Clamped here AND re-clamped in soundPanOut. The law reads pan directly, so
+    // an unclamped 400 would give gainL = -3: a polarity inversion three times
+    // too loud, which cancels against the other voices instead of going quiet.
+    const soundPanImpl = native(2, ([pos, snd]) => patchAll(snd, v => {
+      v.pan = Math.max(-100, Math.min(100, pos.n));
+    }));
+    def('soundPan', soundPanImpl); def('Sound.pan', soundPanImpl);
     // lowCut / highCut : tone shaping. Separate combinators because a sound
     // usually wants only ONE end trimmed (wind cuts the lows, a sound heard
     // through a wall cuts the highs), and a single band-pass form would force a
@@ -5425,7 +5498,7 @@
     // 0, and the two runtimes then disagreed about what a rest IS. The sound
     // conformance corpus caught exactly that. A field that exists on one side
     // only is the bug this corpus is for.
-    const soundRestImpl = native(1, ([ms]) => mkSound([{ wave: 'Rest', freq: 0, ms: ms.n, endFreq: 0, holdMs: 0, volume: 0, delayMs: 0, decay: 0, sustain: 100, detune: 0 }]));
+    const soundRestImpl = native(1, ([ms]) => mkSound([{ wave: 'Rest', freq: 0, ms: ms.n, endFreq: 0, holdMs: 0, volume: 0, delayMs: 0, decay: 0, sustain: 100, detune: 0, pan: 0 }]));
     def('soundRest', soundRestImpl); def('Sound.rest', soundRestImpl);
     // play : Sound -> Cmd msg  (fire once).
     const soundPlayImpl = native(1, ([snd]) => VEffect(() => { soundPlayNow(snd); return VUnit(); }, 'soundPlay'));
