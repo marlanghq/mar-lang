@@ -58,6 +58,24 @@ import Sound
 --   sound of two players not quite in tune, it is why a 16-bit lead reads as an
 --   instrument rather than an oscillator, and it costs one field.
 --
+--   Sound.pan gives the four parts somewhere to stand. This is the one thing no
+--   amount of timbre work substitutes for: the counter and the lead are both
+--   pulse waves in overlapping registers, and in mono they mask each other no
+--   matter how the two are shaped. The placement below is an ordinary mixing
+--   desk, not an effect:
+--
+--     bass, kick, snare   centre. Low frequencies carry almost no directional
+--                         information, and a placed bass just makes the whole
+--                         piece lean. The weight belongs in the middle.
+--     lead                the unison pair OPENS, one layer 22 left and the
+--                         other 22 right. Detune made the pair beat; pan makes
+--                         it wide, and wide is what turns two oscillators into
+--                         one section. The centre of the tune is still centre.
+--     counter             38 left, which is far enough out from under the lead
+--                         that both are individually audible.
+--     hats                30 right, so the counter has something opposite it and
+--                         the image does not lean left all piece.
+--
 -- HOW IT KEEPS Sound.loop's INVARIANT (all voices summing to identical
 -- milliseconds) true BY CONSTRUCTION rather than by anyone counting: every
 -- pattern is exactly 16 steps and every voice plays the same number of bars, so
@@ -155,7 +173,7 @@ bassNote wave vol n =
 -- held.
 counterOf : Int -> List Note -> Sound
 counterOf vol notes =
-    Sound.sequence (List.map (counterNote vol) notes)
+    Sound.pan (0 - 38) (Sound.sequence (List.map (counterNote vol) notes))
 
 
 counterNote : Int -> Note -> Sound
@@ -202,8 +220,8 @@ leadNote vol n =
             [ Sound.release 80
                 (Sound.decay 280 74
                     (Sound.chord
-                        [ Sound.detune (0 - 9) (leadLayer vol n)
-                        , Sound.detune 9 (leadLayer vol n)
+                        [ Sound.pan (0 - 22) (Sound.detune (0 - 9) (leadLayer vol n))
+                        , Sound.pan 22 (Sound.detune 9 (leadLayer vol n))
                         ]
                     )
                 )
@@ -297,14 +315,15 @@ snareHit vol v =
 hatHit : Int -> Int -> Sound
 hatHit vol v =
     Sound.sequence
-        [ Sound.decay 22 6
+        [ Sound.pan 30
+            (Sound.decay 22 6
             (Sound.highCut 9000
                 (Sound.lowCut 3200
                     (Sound.volume (level vol (v * 62 // 100))
                         (Sound.tone Sound.Noise 0 45)
                     )
                 )
-            )
+            ))
         , Sound.rest (stepMs - 45)
         ]
 

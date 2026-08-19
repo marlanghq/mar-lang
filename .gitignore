@@ -37,3 +37,6 @@ deploy-logs/
 tmp/
 docs/book/book/
 .wrangler/cache/pages.json
+
+# Rendered audio from the example composers: regenerate, do not commit.
+examples/*/wav/
