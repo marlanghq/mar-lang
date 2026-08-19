@@ -896,7 +896,7 @@ func TestValidateLocale(t *testing.T) {
 		}
 	}
 
-	// A mensagem do caso canônico ensina a grafia certa.
+	// The error does not merely reject the spelling, it shows the right one.
 	err := Validate(&Manifest{Name: "app", Locale: "pt_BR"})
 	if err == nil || !strings.Contains(err.Error(), `"pt-BR"`) {
 		t.Errorf("the canonical error should show the right spelling, got %v", err)

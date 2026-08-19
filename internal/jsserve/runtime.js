@@ -6209,8 +6209,8 @@
   // the current MVU dispatcher.
   //
   // Used by the list reorder gesture: both the mouse/touch drag
-  // (attachListReorderDrag) and the keyboard grab (Padrão 2 in
-  // attachListReorderKeyboard, P6 below).
+  // (attachListReorderDrag) and the keyboard grab
+  // (attachListReorderKeyboard, below).
   function dispatchOnMove(handler, from, to) {
     if (!handler || from === to || !currentDispatch) return;
     try {
@@ -6726,8 +6726,8 @@
     btn.dataset.idx = String(posIndex);
   }
 
-  // attachListReorderKeyboard: Padrão 2 (WAI-ARIA grab + arrow
-  // keys) for keyboard / screen-reader users. Invisible to mouse
+  // attachListReorderKeyboard: the WAI-ARIA grab + arrow keys
+  // pattern, for keyboard / screen-reader users. Invisible to mouse
   // users (no extra UI), discoverable via Tab focus + screen
   // reader announcements.
   //
@@ -9800,7 +9800,7 @@
         // Reorder support: driven by the `onMove` attr's editing
         // flag. In edit mode each row gets a drag handle (mouse /
         // touch) AND becomes keyboard-focusable with grab + arrow
-        // semantics (Padrão 2, screen-reader friendly). Both
+        // semantics (screen-reader friendly). Both
         // gestures dispatch the same onMove(from, to) handler.
         const onMoveAttrS = getAttrRaw(view, 'onMove');
         const editingS = !!(onMoveAttrS && onMoveAttrS.editing);
