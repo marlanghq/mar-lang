@@ -25,7 +25,8 @@ type Cue
     | CShot Int              -- weapon index
     | CHit                   -- the boss took a hit
     | CHitFoe                -- a tough enemy took a hit (damage feedback)
-    | CBoomK Int             -- an enemy died: explosion varies by kind
+    | CBoomK Int Int         -- an enemy died: explosion kind, then where it
+                             -- sat across the screen (-100..100; 0 = centre)
     | CBigBoom
     | CShipBoom              -- the player's ship goes down
     | CStar

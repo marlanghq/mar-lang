@@ -53,13 +53,22 @@ grass grinds you down to ~70 km/h.
   clipping helper so nothing spills onto the letterbox.
 - **Roadside**: world-spaced trees and bushes, hashed per slot so the mix
   varies; foliage follows the season.
-- **Engine sound**: one continuously-held `Sound.ambient` triangle that the
-  runtime retunes in place — the ambient key ignores frequency, so a new pitch
-  each frame glides the same oscillator (no clicks, no crossfade). The pitch
-  simulates a 2-speed gearbox: it climbs within a gear and dips at the single
-  shift. On the grid, before lights-out, you can blip the throttle to rev in
-  neutral. SFX are one-shot `Sound.play` cues drained from the model, and the
-  mute button is `Sound.setMuted`.
+- **Engine sound**: a continuously-held `Sound.glide` pair of triangles that the
+  runtime retunes in place — the held key ignores frequency, so a new pitch each
+  frame glides the same oscillators (no clicks, no crossfade). The second
+  triangle is `Sound.detune 22` sharp of the first, and the beat between them is
+  the engine's throb: the beat rate is their interval in hertz, so it speeds up
+  with the revs on its own. The pitch simulates a 2-speed gearbox: it climbs
+  within a gear and dips at the single shift. On the grid, before lights-out, you
+  can blip the throttle to rev in neutral. SFX are one-shot `Sound.play` cues
+  drained from the model, and the mute button is `Sound.setMuted`.
+- **The cues**: every one-shot is struck rather than gated — `Sound.decay` gives
+  the lights, the fanfares, the clock tick and the gravel a fall in proportion to
+  what is left, and the crash gets a `Sound.Sine` dropping 170 Hz to 46
+  underneath the noise, which is the only layer with any weight on a phone
+  speaker. Two cues are placed in stereo, because the game knows where they
+  happened: the scrub goes to the verge you fell off, and a pass goes to the side
+  the rival went by. Nothing else is panned.
 - **Night**: distant rivals render as two red taillights only; the player's
   headlights paint a lighter wedge on the 12 nearest strips.
 - **Winter**: steering eases in at 1/14 per tick instead of 1/3, and the

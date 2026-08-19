@@ -13,12 +13,16 @@ type Mode
     | Over
 
 
+-- The cues a race raises. Two of them happened to one SIDE of the car rather
+-- than at it, and they carry where: a lateral offset in world units, which Sfx
+-- turns into a stereo position (see panOf). Everything else is the car itself or
+-- race control, and is heard dead centre.
 type Cue
     = CueLight
     | CueGo
     | CueCrash
-    | CueSkid
-    | CueWhoosh
+    | CueSkid Int        -- which verge: the car's own lateral offset
+    | CueWhoosh Int      -- where the rival went by, relative to the car
     | CueScreech
     | CueCheck
     | CueYear

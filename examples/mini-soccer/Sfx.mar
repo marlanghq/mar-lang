@@ -8,14 +8,26 @@ import Roster exposing (..)
 import Types exposing (..)
 
 
-cueSound : Cue -> Sound
-cueSound c =
+-- WHERE it happened, as a stereo position. The whole pitch is on screen at once
+-- (there is no camera to follow and no rotation in portrait), so an event on the
+-- left touchline really is on your left: here pan is information, not decoration.
+-- Modest on purpose - +/-38 at the goal lines, so ordinary midfield play sits
+-- inside +/-15 and nothing lurches across the field. Only the two cues that
+-- happen AT the ball are placed; the whistle is the referee, the berro is the
+-- commentator and the crowd is the whole ground, and all three stay centre.
+ballPan : Model -> Int
+ballPan model =
+    iclamp (0 - 38) 38 ((model.ball.x - midX) * 38 // (pitchR - midX))
+
+
+cueSound : Model -> Cue -> Sound
+cueSound model c =
     case c of
-        CuKick -> kickSfx
+        CuKick -> Sound.pan (ballPan model) kickSfx
         CuWhistle -> whistleSfx
         CuStart -> startSfx
         CuGoal -> goalSfx
-        CuTackle -> tackleSfx
+        CuTackle -> Sound.pan (ballPan model) tackleSfx
         CuUnmute -> unmuteSfx
         CuWin -> winSfx
         CuLose -> loseSfx
@@ -35,7 +47,7 @@ cue c model =
 emit : Model -> (Model, Cmd Msg)
 emit model =
     ( { model | sfx = [] }
-    , if model.muted || model.paused then Cmd.none else Cmd.batch (List.map (\c -> Sound.play (cueSound c)) model.sfx)
+    , if model.muted || model.paused then Cmd.none else Cmd.batch (List.map (\c -> Sound.play (cueSound model c)) model.sfx)
     )
 
 
@@ -49,16 +61,31 @@ toggleMute model =
         { model | muted = True }
 
 
--- a low thud: Sound.duty thins the square to ~22% for extra harmonics, so the
--- kick reads as a "thock" with body, not a hollow 50% beep.
+-- boot on leather, in two layers with two envelopes, because a struck thing is
+-- two events at once. The square, thinned to ~22% duty for extra harmonics, is
+-- the CLICK of the contact: it spikes and is gone in about 40ms. Under it a Sine
+-- dropping 150 -> 50 Hz is the BODY, the thump a square has no energy for -- a
+-- pulse or a saw carries its weight in harmonics, so on a laptop speaker the old
+-- kick had shape and no weight at all. The body outlives the click by design:
+-- its pitch has to finish falling before its level does, or the drop is silent
+-- and the layer is wasted. Holding both flat for 70ms is exactly what made the
+-- old kick read as a beep instead of a hit.
 kickSfx : Sound
-kickSfx = Sound.volume 70 (Sound.duty 22 (Sound.tone Sound.Square 180 70))
+kickSfx =
+    Sound.chord
+        [ Sound.decay 45 6 (Sound.volume 70 (Sound.duty 22 (Sound.tone Sound.Square 180 70)))
+        , Sound.decay 95 0 (Sound.volume 60 (Sound.sweep 50 (Sound.tone Sound.Sine 150 110)))
+        ]
 
 
 -- a shrill referee peep (a quick upward chirp) with a fast Sound.vibrato warble,
--- so it flutters like a real pea whistle instead of a flat electronic beep.
+-- so it flutters like a real pea whistle instead of a flat electronic beep. The
+-- small Sound.decay is the puff: a whistle is loudest in the first instant, when
+-- the lungful arrives, and settles a little once the pea is spinning. It falls
+-- only to 80% of its own level, so the peep keeps its edge -- it is a breath, not
+-- a fade.
 whistleSfx : Sound
-whistleSfx = Sound.volume 70 (Sound.vibrato 40 12 (Sound.sweep 2700 (Sound.tone Sound.Square 2300 240)))
+whistleSfx = Sound.volume 70 (Sound.decay 70 80 (Sound.vibrato 40 12 (Sound.sweep 2700 (Sound.tone Sound.Square 2300 240))))
 
 
 -- the FULL-TIME whistle: ONE long, CONSTANT referee's blast, the same steady peep
@@ -66,35 +93,54 @@ whistleSfx = Sound.volume 70 (Sound.vibrato 40 12 (Sound.sweep 2700 (Sound.tone 
 -- the clock reaches 0 (full time), so it lands ON the final second, not after it.
 finalWhistleSfx : Sound
 finalWhistleSfx =
-    Sound.volume 82 (Sound.vibrato 40 12 (Sound.tone Sound.Square 2400 1500))
+    Sound.volume 82 (Sound.decay 240 74 (Sound.vibrato 40 12 (Sound.tone Sound.Square 2400 1500)))
 
 
 -- a little rising fanfare when you start a match: a three-note run up into a
 -- held top note. Short, but with enough of a flourish to land as "here we go".
+-- Sound.decay gives every note of the run its own small fall, which is what a
+-- plucked chip fanfare does and what four flat rectangles in a row cannot: the
+-- run now bounces up to the top note instead of sliding up one continuous block
+-- of tone. Still square waves, still chiptune -- just struck.
 startSfx : Sound
 startSfx =
-    Sound.sequence
-        [ Sound.tone Sound.Square 523 95
-        , Sound.tone Sound.Square 659 95
-        , Sound.tone Sound.Square 784 95
-        , Sound.volume 80 (Sound.tone Sound.Square 1046 300)
+    Sound.decay 130 58
+        (Sound.sequence
+            [ Sound.tone Sound.Square 523 95
+            , Sound.tone Sound.Square 659 95
+            , Sound.tone Sound.Square 784 95
+            , Sound.volume 80 (Sound.tone Sound.Square 1046 300)
+            ]
+        )
+
+
+-- a carrinho that connects: studs through the grass (the Noise) over the dull
+-- thud of two bodies meeting (a Sine falling to the cellar). Noise on its own is
+-- hiss with no impact, and 90ms of hiss at a constant level is static rather than
+-- a tackle. The noise hits hard and keeps a thin scrape behind it (sustain 10);
+-- the thud is a clean fall to nothing. Together they are one HIT.
+tackleSfx : Sound
+tackleSfx =
+    Sound.chord
+        [ Sound.decay 55 10 (Sound.volume 60 (Sound.tone Sound.Noise 0 90))
+        , Sound.decay 70 0 (Sound.volume 45 (Sound.sweep 45 (Sound.tone Sound.Sine 130 90)))
         ]
 
 
-tackleSfx : Sound
-tackleSfx = Sound.volume 60 (Sound.tone Sound.Noise 0 90)
-
-
 -- a soft two-note rise, played when you switch sound back on so you hear it work.
+-- Both notes are plucked (Sound.decay patches every voice), which is what makes a
+-- confirm blip read as a tap rather than a beep.
 unmuteSfx : Sound
-unmuteSfx = Sound.volume 55 (Sound.sequence [ Sound.tone Sound.Square 660 70, Sound.tone Sound.Square 880 110 ])
+unmuteSfx = Sound.volume 55 (Sound.decay 80 22 (Sound.sequence [ Sound.tone Sound.Square 660 70, Sound.tone Sound.Square 880 110 ]))
 
 
 -- a crisp countdown blip, high and short so it cuts through the crowd. One fires
 -- on each of the last 10 whole seconds before half time and before full time
--- (see playTick's periodEnd/toEnd).
+-- (see playTick's periodEnd/toEnd). It ticks rather than beeps: the decay drops
+-- it almost to nothing after 55ms, so the attack still cuts and the rest of the
+-- 85ms is a tail instead of a held square.
 timeLowSfx : Sound
-timeLowSfx = Sound.volume 45 (Sound.tone Sound.Square 1200 85)
+timeLowSfx = Sound.volume 45 (Sound.decay 55 12 (Sound.tone Sound.Square 1200 85))
 
 
 -- GOOOOOOOOOOOOOL: a Brazilian commentator's berro as ONE continuous wave. A
@@ -103,28 +149,51 @@ timeLowSfx = Sound.volume 45 (Sound.tone Sound.Square 1200 85)
 -- keeps the pitch flat, then Sound.sweep bends it down over the rest of the note, on
 -- one oscillator with one envelope - so it reads as a single falling yell, NOT two
 -- stitched notes (the old hold-tone + sweep-tone seam is what sounded "dividido em
--- dois"). Two copies a few Hz apart (goalSfx) beat into a ragged human berro; the
--- sustain envelope keeps it strong the whole way down.
-goalVoice : Int -> Sound
-goalVoice base =
+-- dois"). Two copies just off each other (goalSfx) beat into a ragged human berro.
+--
+-- The offset is CENTS now (Sound.detune), not a fixed 7 Hz. Two voices are out by
+-- an interval, not by a number of hertz, so the beating has to slow as the yell
+-- descends - which it now does: rough and hoarse up at the top, a slow waver by
+-- the time it reaches the cellar. A fixed 7 Hz stayed just as rough at 210 Hz,
+-- where 7 Hz is a much bigger interval, and that is what made the bottom of the
+-- berro buzz. Sound.decay is the lungful running out: it holds most of its level
+-- across nearly the whole glide and only sags at the end, so the shout still
+-- lands hard and still ends like a man out of air.
+goalVoice : Int -> Int -> Sound
+goalVoice cents place =
     -- a very gentle Sound.vibrato (15 cents, 5 Hz) makes the berro WAVER like an
     -- excited human yell, on top of the two-copy beating. Subtle on purpose.
-    Sound.volume 33 (Sound.vibrato 15 5 (Sound.holdPitch 1150 (Sound.sweep (base - 220) (Sound.tone Sound.Sawtooth base 2750))))
+    Sound.pan place
+        (Sound.decay 2100 64
+            (Sound.detune cents
+                (Sound.volume 33 (Sound.vibrato 15 5 (Sound.holdPitch 1150 (Sound.sweep 210 (Sound.tone Sound.Sawtooth 430 2750)))))))
 
 
+-- the pair is spread a little (the one thing a unison is FOR: layers that
+-- differ), which also lifts the berro off the crowd roar underneath it - the roar
+-- is a centred wash in the same band, and in mono the two fight.
 goalSfx : Sound
 goalSfx =
-    Sound.chord [ goalVoice 430, goalVoice 437 ]
+    Sound.chord [ goalVoice 0 (0 - 18), goalVoice 28 18 ]
 
 
 -- the win jingle at full time: a proper little victory tune, not just a stab.
 -- A square-wave melody (a rising fanfare that turns and lands high on C) sings
 -- over a moving triangle bass (C - G - C) and a soft sustained harmony, so it
 -- reads as a short song rather than a handful of notes.
+--
+-- Three envelopes, because the three parts are three different instruments:
+-- the melody is struck and rings down to about two-thirds (so each note has an
+-- edge and the held C6 blooms and settles), the bass is plucked a little deeper,
+-- and the harmony is a PAD - it falls a touch and then holds, which is what
+-- sustained means. The harmony also steps out to the right: it sits directly
+-- under the melody in the mix, and in mono the two smear into one thick voice
+-- however different the waves are. The lead and the bass stay dead centre - low
+-- frequencies carry no direction, and a leaning bass just tips the whole tune.
 winSfx : Sound
 winSfx =
     Sound.chord
-        [ Sound.sequence
+        [ Sound.decay 260 66 (Sound.sequence
             [ Sound.volume 80 (Sound.tone Sound.Square 523 150)   -- C5
             , Sound.volume 80 (Sound.tone Sound.Square 659 150)   -- E5
             , Sound.volume 80 (Sound.tone Sound.Square 784 150)   -- G5
@@ -135,30 +204,34 @@ winSfx =
             , Sound.volume 80 (Sound.tone Sound.Square 880 150)   -- A5
             , Sound.volume 80 (Sound.tone Sound.Square 988 150)   -- B5
             , Sound.volume 90 (Sound.tone Sound.Square 1046 640)  -- C6, hold
-            ]
-        , Sound.sequence
+            ])
+        , Sound.decay 300 58 (Sound.sequence
             [ Sound.volume 46 (Sound.tone Sound.Triangle 131 770)  -- C3
             , Sound.volume 46 (Sound.tone Sound.Triangle 196 770)  -- G3
             , Sound.volume 52 (Sound.tone Sound.Triangle 131 790)  -- C3
-            ]
-        , Sound.sequence
+            ])
+        , Sound.pan 34 (Sound.decay 420 72 (Sound.sequence
             [ Sound.volume 26 (Sound.tone Sound.Triangle 330 770)  -- E4
             , Sound.volume 26 (Sound.tone Sound.Triangle 392 770)  -- G4
             , Sound.volume 30 (Sound.tone Sound.Triangle 330 790)  -- E4
-            ]
+            ]))
         ]
 
 
 -- the sad-trombone fall: the lose jingle at full time (a descending minor line
--- sliding into the cellar).
+-- sliding into the cellar). Every note sags as it is held (Sound.decay to 62% of
+-- its own level) - the joke IS deflation, and a line of notes that each hold
+-- their level to the end is the one shape that cannot deflate.
 loseSfx : Sound
 loseSfx =
-    Sound.sequence
-        [ Sound.volume 40 (Sound.tone Sound.Triangle 392 300)
-        , Sound.volume 46 (Sound.tone Sound.Triangle 349 300)
-        , Sound.volume 50 (Sound.tone Sound.Triangle 294 320)
-        , Sound.volume 48 (Sound.sweep 175 (Sound.tone Sound.Triangle 262 760))
-        ]
+    Sound.decay 240 62
+        (Sound.sequence
+            [ Sound.volume 40 (Sound.tone Sound.Triangle 392 300)
+            , Sound.volume 46 (Sound.tone Sound.Triangle 349 300)
+            , Sound.volume 50 (Sound.tone Sound.Triangle 294 320)
+            , Sound.volume 48 (Sound.sweep 175 (Sound.tone Sound.Triangle 262 760))
+            ]
+        )
 
 
 -- the HALF-TIME whistle: a single, steady referee's peep, same character as the
@@ -166,7 +239,7 @@ loseSfx =
 -- than the drawn-out full-time blast.
 halftimeSfx : Sound
 halftimeSfx =
-    Sound.volume 74 (Sound.tone Sound.Square 2400 430)
+    Sound.volume 74 (Sound.decay 110 78 (Sound.tone Sound.Square 2400 430))
 
 
 -- Crowd beds (Sound.glide holds each as a steady wash). ALL the noise beds share one live source: the runtime

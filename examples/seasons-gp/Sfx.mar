@@ -7,14 +7,54 @@ import Balance exposing (..)
 import Types exposing (..)
 
 
--- The engine is a Sub: a Sound.glide, ONE continuously-held triangle
--- oscillator that the sound runtime slides in place (Sound.glide keys ignore
--- freq, so a new pitch each frame glides the same node: see soundBedSet), a
--- smooth rev with no clicks/crossfade. The pitch simulates a 2-SPEED GEARBOX:
--- within each gear the "rpm" climbs, then at the single shift it dips and climbs
--- again, and because the runtime glides the transition, it sounds like a quick
--- downshift rather than a step. The gear floor creeps up so 2nd sits higher.
--- Volume tracks speed (kept fairly low). Mute via Sound.setMuted.
+-- WHERE it happened, as a stereo position, from a lateral offset in world units
+-- (a lane is 350 wide and the road runs to +/-720). The camera sits behind the
+-- car looking straight down the road, so a rival going by on your right really
+-- is on your right and a verge under your left wheels really is on your left:
+-- here pan is information, not decoration. Modest on purpose - +/-40 out at a
+-- full lane, so nothing ever jumps to one ear - and only the two cues that
+-- happen to one SIDE of the car are placed. Everything else is centre and stays
+-- centre: the crash and the tyres are your own car, the gantry and the clock are
+-- race control, and the engine bed is the car you are sitting in (a panned
+-- engine would just make the whole game lean).
+panOf : Int -> Int
+panOf dx =
+    iclamp (0 - 40) 40 (dx * 40 // 700)
+
+
+-- The engine is a Sub: a Sound.glide, a continuously-held pair of triangle
+-- oscillators that the sound runtime slides in place (Sound.glide keys ignore
+-- freq, so a new pitch each frame glides the same nodes: see soundBedSet), a
+-- smooth rev with no clicks/crossfade.
+--
+-- TWO triangles, not one, and the second is 22 cents sharp of the first. That is
+-- what a motor is and a single oscillator is not: two copies a few cents apart
+-- beat against each other, and the beat rate is their interval in HERTZ, so it
+-- climbs with the revs the way a real engine's throb does - about three quarters
+-- of a beat a second down at idle, better than two a second at the top of second
+-- gear. The partner sits at just over half the lead's level, so the pair costs
+-- the bed almost none of the headroom it was deliberately keeping.
+--
+-- Both voices carry the same freq and the same length, so the held identity
+-- (which drops freq precisely so a glide can retune) is stable frame to frame:
+-- the runtime keeps ONE pair of oscillators alive for the whole race and slides
+-- both. What the engine does NOT get is a decay: a held source has no note to
+-- fall along, only a level, and the level here is the throttle. Nor a sine under
+-- it - a triangle's fundamental is already most of what it is, so doubling it
+-- would add loudness and no weight.
+engineVoices : Int -> Int -> Sound
+engineVoices hz vol =
+    Sound.chord
+        [ Sound.volume vol (Sound.tone Sound.Triangle hz 400)
+        , Sound.detune 22 (Sound.volume (vol * 11 // 20) (Sound.tone Sound.Triangle hz 400))
+        ]
+
+
+-- The pitch simulates a 2-SPEED GEARBOX: within each gear the "rpm" climbs, then
+-- at the single shift it dips and climbs again, and because the runtime glides
+-- the transition, it sounds like a quick downshift rather than a step. The gear
+-- floor creeps up so 2nd sits higher. Volume tracks speed (kept fairly low).
+-- Mute via Sound.setMuted.
 engineSound : Int -> Sound
 engineSound speed =
     let
@@ -24,18 +64,18 @@ engineSound speed =
         within = speed - gear * gw               -- position inside the gear
         hz = 60 + gear * 45 + within * 3 // 5     -- climbs within a gear, small dip at the one shift
     in
-    Sound.volume (9 + speed // 20) (Sound.tone Sound.Triangle hz 400)
+    engineVoices hz (9 + speed // 20)
 
 
 -- What the engine bed should sound like right now. On the grid (countT > 0) the
 -- car is in neutral: the pitch and volume follow the throttle blip (rev) with no
 -- gears and no motion. Once the lights go out it's the gearbox tracking speed.
--- Both are a single triangle voice, so the runtime glides seamlessly from the
--- last rev pitch into the launch: no restart, no click.
+-- Both are the same pair of triangle voices, so the runtime glides seamlessly
+-- from the last rev pitch into the launch: no restart, no click.
 engineNote : Model -> Sound
 engineNote m =
     if m.countT > 0 then
-        Sound.volume (9 + m.rev // 7) (Sound.tone Sound.Triangle (60 + m.rev * 3 // 2) 400)
+        engineVoices (60 + m.rev * 3 // 2) (9 + m.rev // 7)
     else
         engineSound m.speed
 
@@ -44,56 +84,100 @@ cueSound : Cue -> Sound
 cueSound cue =
     case cue of
         CueLight ->
-            Sound.volume 50 (Sound.duty 50 (Sound.tone Sound.Square (Sound.a 4) 120))
+            -- a gantry lamp coming on: struck, then burning. The fall is what
+            -- says a lamp was switched rather than a tone opened.
+            Sound.volume 50 (Sound.decay 70 40 (Sound.duty 50 (Sound.tone Sound.Square (Sound.a 4) 120)))
 
         CueGo ->
-            Sound.volume 55 (Sound.duty 50 (Sound.tone Sound.Square (Sound.a 5) 340))
+            -- lights out: the same lamp tone an octave up, but this one is
+            -- RELEASED instead of held - it rings all the way down while you
+            -- launch, so the start is an event that ends rather than a beep that
+            -- stops.
+            Sound.volume 55 (Sound.decay 300 0 (Sound.duty 50 (Sound.tone Sound.Square (Sound.a 5) 340)))
 
         CueCrash ->
+            -- The one sound in the game with real mass. It was hiss plus a saw
+            -- sweep, both held flat for a quarter second and then cut: the shape
+            -- of a burst of noise, not of a car hitting a car. Two changes. Every
+            -- layer now falls away from its own strike, which is what losing
+            -- energy sounds like. And a SINE drops 170 down to 46 underneath it,
+            -- which is the thump you feel: the noise is the crumple and the saw
+            -- is the metal, but a sawtooth keeps its energy in harmonics, so on a
+            -- laptop or a phone the saw survives and its fundamental does not,
+            -- and the hit had no body at all. Each layer sets its own volume,
+            -- because volume patches the LAST voice of a chord while decay
+            -- patches every one.
             Sound.chord
-                [ Sound.volume 85 (Sound.tone Sound.Noise 0 300)
-                , Sound.volume 60 (Sound.sweep 50 (Sound.tone Sound.Sawtooth 320 260))
+                [ Sound.volume 85 (Sound.decay 240 0 (Sound.tone Sound.Noise 0 300))
+                , Sound.volume 60 (Sound.decay 200 0 (Sound.sweep 50 (Sound.tone Sound.Sawtooth 320 260)))
+                , Sound.volume 62 (Sound.decay 150 0 (Sound.sweep 46 (Sound.tone Sound.Sine 170 220)))
                 ]
 
-        CueSkid ->
-            Sound.volume 26 (Sound.tone Sound.Noise 0 45)
+        CueSkid dx ->
+            -- wheels on the verge, one grain at a time. A 45ms rectangle of noise
+            -- fired every fourth tick is a stutter; the same tick falling to a
+            -- third of itself in 16ms is a piece of grit, and a run of them is
+            -- gravel. Placed on the side the car actually fell off, which is also
+            -- the way you have to steer to get back on.
+            Sound.pan (panOf dx) (Sound.volume 26 (Sound.decay 16 34 (Sound.tone Sound.Noise 0 45)))
 
-        CueWhoosh ->
-            -- a car flashing past at speed: a doppler down-sweep + a noise swish
-            Sound.chord
-                [ Sound.volume 32 (Sound.sweep 190 (Sound.tone Sound.Sawtooth 560 260))
-                , Sound.volume 22 (Sound.sweep 40 (Sound.tone Sound.Noise 0 240))
-                ]
+        CueWhoosh dx ->
+            -- a car flashing past at speed: a doppler down-sweep + a noise swish.
+            -- It fires the instant the rival draws level, so all of it is the car
+            -- LEAVING: it should fall away, and now it does. Placed on the side it
+            -- went by, which is the one thing about a pass the picture cannot tell
+            -- you at the moment it happens, because by then the car is off the
+            -- bottom of the screen.
+            Sound.pan (panOf dx)
+                (Sound.decay 210 0
+                    (Sound.chord
+                        [ Sound.volume 32 (Sound.sweep 190 (Sound.tone Sound.Sawtooth 560 260))
+                        , Sound.volume 22 (Sound.sweep 40 (Sound.tone Sound.Noise 0 240))
+                        ]))
 
         CueScreech ->
-            -- tyres losing grip: a wavering high squeal over a scrubbing noise
-            Sound.chord
-                [ Sound.volume 24 (Sound.vibrato 45 15 (Sound.tone Sound.Square 1150 220))
-                , Sound.volume 20 (Sound.tone Sound.Noise 0 220)
-                ]
+            -- tyres losing grip: a wavering high squeal over a scrubbing noise.
+            -- A tyre at the limit does not hold one level, it grabs and gives, so
+            -- each burst blooms and settles back instead of sitting square, and
+            -- the bursts run together into a scrub that breathes. Centre: this is
+            -- your own front tyres, right underneath you.
+            Sound.decay 90 55
+                (Sound.chord
+                    [ Sound.volume 24 (Sound.vibrato 45 15 (Sound.tone Sound.Square 1150 220))
+                    , Sound.volume 20 (Sound.tone Sound.Noise 0 220)
+                    ])
 
         CueCheck ->
+            -- three struck notes instead of three gates: each falls away from its
+            -- own attack the way anything plucked does, and the last one rings
+            -- out rather than being cut off mid-note.
             Sound.sequence
-                [ Sound.duty 25 (Sound.tone Sound.Square (Sound.g 5) 80)
-                , Sound.duty 25 (Sound.tone Sound.Square (Sound.c 6) 80)
-                , Sound.duty 25 (Sound.tone Sound.Square (Sound.e 6) 200)
+                [ Sound.decay 60 22 (Sound.duty 25 (Sound.tone Sound.Square (Sound.g 5) 80))
+                , Sound.decay 60 22 (Sound.duty 25 (Sound.tone Sound.Square (Sound.c 6) 80))
+                , Sound.decay 180 0 (Sound.duty 25 (Sound.tone Sound.Square (Sound.e 6) 200))
                 ]
 
         CueYear ->
+            -- the same hand as the checkpoint fanfare, one bar longer: four
+            -- plucked steps up and a last note that rings down to nothing under
+            -- its own vibrato.
             Sound.sequence
-                [ Sound.duty 25 (Sound.tone Sound.Square (Sound.c 5) 80)
-                , Sound.duty 25 (Sound.tone Sound.Square (Sound.e 5) 80)
-                , Sound.duty 25 (Sound.tone Sound.Square (Sound.g 5) 80)
-                , Sound.duty 25 (Sound.tone Sound.Square (Sound.c 6) 90)
-                , Sound.vibrato 20 7 (Sound.duty 50 (Sound.tone Sound.Square (Sound.e 6) 320))
+                [ Sound.decay 60 22 (Sound.duty 25 (Sound.tone Sound.Square (Sound.c 5) 80))
+                , Sound.decay 60 22 (Sound.duty 25 (Sound.tone Sound.Square (Sound.e 5) 80))
+                , Sound.decay 60 22 (Sound.duty 25 (Sound.tone Sound.Square (Sound.g 5) 80))
+                , Sound.decay 70 22 (Sound.duty 25 (Sound.tone Sound.Square (Sound.c 6) 90))
+                , Sound.decay 300 10 (Sound.vibrato 20 7 (Sound.duty 50 (Sound.tone Sound.Square (Sound.e 6) 320)))
                 ]
 
         CueBeep ->
-            Sound.volume 45 (Sound.duty 50 (Sound.tone Sound.Square (Sound.e 5) 70))
+            -- the last-ten-seconds tick. A clock ticks; it does not hum.
+            Sound.volume 45 (Sound.decay 45 15 (Sound.duty 50 (Sound.tone Sound.Square (Sound.e 5) 70)))
 
         CueOver ->
+            -- the clock beat you: three triangles walking down, each one falling
+            -- away, the last dying out entirely instead of being switched off.
             Sound.sequence
-                [ Sound.tone Sound.Triangle (Sound.c 4) 220
-                , Sound.tone Sound.Triangle (Sound.g 3) 220
-                , Sound.vibrato 18 5 (Sound.tone Sound.Triangle (Sound.e 3) 600)
+                [ Sound.decay 170 18 (Sound.tone Sound.Triangle (Sound.c 4) 220)
+                , Sound.decay 170 18 (Sound.tone Sound.Triangle (Sound.g 3) 220)
+                , Sound.decay 520 0 (Sound.vibrato 18 5 (Sound.tone Sound.Triangle (Sound.e 3) 600))
                 ]

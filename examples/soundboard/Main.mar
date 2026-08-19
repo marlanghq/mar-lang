@@ -12,11 +12,19 @@ import UI exposing (navigationStack, navigationTitle, form, section, header, but
 -- the same number of milliseconds (the math is in each piece's comment).
 -- Sound.loop repeats each voice at its own length, so equal totals keep
 -- the channels phase-locked forever; unequal ones drift apart.
+-- Shaping is safe here: decay, pan and Sine all leave duration alone. A new
+-- LAYER is what can break it, so every layer added below matches its
+-- neighbours to the millisecond. tools/check-tunes.mjs counts them.
 --
 -- It also showcases the sound DX helpers:
 --   * pitch helpers: Sound.e 5 instead of the magic number 659 (no Hz table)
 --   * the pack      - Sound.duty / vibrato / arp (arp doubles as chord stab)
 --   * Sound.chord / Sound.sequence: layer voices / string cells back-to-back
+--   * Sound.decay   - a note that falls away instead of holding flat: the
+--                     difference between a struck thing and a rectangle
+--   * Sound.Sine    - the fundamental with nothing on top: the body under a
+--                     kick, the weight under a sawtooth bass
+--   * Sound.pan     - where a voice sits between the ears (see Ping-pong)
 --
 -- Run: mar dev examples/soundboard   (tap a button, audio needs one gesture)
 
@@ -110,9 +118,15 @@ ewN units hz =
     hn 30 hz (units * 160)
 
 
+-- A sawtooth carries its energy in the harmonics, so the gallop has plenty of
+-- shape and no body at all. A sine at the same pitch, about half as loud, IS
+-- the body. Both layers are 160ms, so the equal-totals rule still holds.
 ewB : Int -> Sound
 ewB hz =
-    Sound.volume 20 (Sound.tone Sound.Sawtooth hz 160)
+    Sound.chord
+        [ Sound.volume 20 (Sound.tone Sound.Sawtooth hz 160)
+        , Sound.volume 9 (Sound.tone Sound.Sine hz 160)
+        ]
 
 
 -- bass bar: R R o R | R o 5 R  (o = octave, 5 = fifth), 8 eighths = 1280ms
@@ -130,27 +144,41 @@ ewStab base extras =
     Sound.volume 15 (Sound.arp extras (Sound.duty 25 (Sound.tone Sound.Square base 160)))
 
 
--- stabs answer on beats 2 and 4: . . X . | . . X . = 1280ms
+-- stabs answer on beats 2 and 4: . . X . | . . X . = 1280ms, and they answer
+-- from the RIGHT. Two square parts in the same register fight in the middle
+-- however good the waves are; a third of the way apart both are audible.
 ewStabBar : Int -> List Int -> Sound
 ewStabBar base extras =
+    Sound.pan 38
+        (Sound.sequence
+            [ Sound.rest 320, ewStab base extras, Sound.rest 160
+            , Sound.rest 320, ewStab base extras, Sound.rest 160
+            ]
+        )
+
+
+-- Still a chip kick: this is an NES track, so the wave stays a triangle and
+-- only the envelope changes. The decay is the thump.
+ewKick : Sound
+ewKick =
     Sound.sequence
-        [ Sound.rest 320, ewStab base extras, Sound.rest 160
-        , Sound.rest 320, ewStab base extras, Sound.rest 160
+        [ Sound.decay 60 0
+            (Sound.volume 62 (Sound.sweep 44 (Sound.tone Sound.Triangle 150 85)))
+        , Sound.rest 75
         ]
 
 
-ewKick : Sound
-ewKick =
-    Sound.sequence [ Sound.volume 62 (Sound.sweep 44 (Sound.tone Sound.Triangle 150 85)), Sound.rest 75 ]
-
-
+-- Sound.decay patches EVERY voice it is given, so one call shapes the crack
+-- and the body together: both fall to nothing, which is what a snare does.
 ewSnare : Sound
 ewSnare =
     Sound.sequence
-        [ Sound.chord
-            [ Sound.volume 38 (Sound.tone Sound.Noise 0 70)
-            , Sound.volume 15 (Sound.sweep 130 (Sound.tone Sound.Triangle 200 40))
-            ]
+        [ Sound.decay 45 0
+            (Sound.chord
+                [ Sound.volume 38 (Sound.tone Sound.Noise 0 70)
+                , Sound.volume 15 (Sound.sweep 130 (Sound.tone Sound.Triangle 200 40))
+                ]
+            )
         , Sound.rest 90
         ]
 
@@ -162,7 +190,10 @@ ewHat =
 
 ewOpen : Sound
 ewOpen =
-    Sound.sequence [ Sound.volume 16 (Sound.tone Sound.Noise 0 95), Sound.rest 65 ]
+    Sound.sequence
+        [ Sound.decay 70 0 (Sound.volume 16 (Sound.tone Sound.Noise 0 95))
+        , Sound.rest 65
+        ]
 
 
 ewRest : Sound
@@ -187,9 +218,12 @@ ewSnareFill =
     Sound.sequence [ ewRest, ewRest, ewSnare, ewRest, ewSnare, ewSnare, ewSnare, ewSnare ]
 
 
+-- Hats sit a little LEFT, opposite the stabs. Lead, bass, kick and snare all
+-- stay in the middle: that is where the weight of a mix belongs.
 ewHatBar : Sound
 ewHatBar =
-    Sound.sequence [ ewHat, ewHat, ewHat, ewHat, ewHat, ewHat, ewHat, ewOpen ]
+    Sound.pan (0 - 32)
+        (Sound.sequence [ ewHat, ewHat, ewHat, ewHat, ewHat, ewHat, ewHat, ewOpen ])
 
 
 emberwake : Sound
@@ -281,20 +315,28 @@ emberwake =
 -- Chords: G Em C D | G Em Am D | C D Bm Em | C Am D7 G
 
 
--- melody note, duration in 160ms units (quarter = 2 units, bar = 6)
+-- melody note, duration in 160ms units (quarter = 2 units, bar = 6). A struck
+-- tine speaks and then settles back, so the note falls to about half and holds
+-- there instead of sitting at full until the next one starts.
 mgN : Int -> Int -> Sound
 mgN units hz =
-    sing 32 hz (units * 160)
+    Sound.decay 460 45 (sing 32 hz (units * 160))
 
 
 mgBass : Int -> Sound
 mgBass hz =
-    Sound.sequence [ tb 24 hz 320, Sound.rest 640 ]
+    Sound.sequence [ Sound.decay 260 8 (tb 24 hz 320), Sound.rest 640 ]
 
 
+-- The two "pah" plucks answer from opposite sides of the box, and each one is
+-- plucked rather than held. Melody and bass stay in the middle.
 mgPah : Int -> Int -> Sound
 mgPah lo hi =
-    Sound.sequence [ Sound.rest 320, sv 12 lo 320, sv 12 hi 320 ]
+    Sound.sequence
+        [ Sound.rest 320
+        , Sound.pan (0 - 26) (Sound.decay 220 0 (sv 12 lo 320))
+        , Sound.pan 26 (Sound.decay 220 0 (sv 12 hi 320))
+        ]
 
 
 moonglass : Sound
@@ -344,25 +386,34 @@ moonglass =
 -- ride / kick / snare kit. Chords: A A A A | D D A A | E D A E.
 
 
+-- one lead note: a 25% pulse that speaks and then leans back, which is what a
+-- player does with a note in a shuffle. Every lead note in the tune goes
+-- through here, so the whole line breathes from one number.
+ckLd : Int -> Int -> Sound
+ckLd hz ms =
+    Sound.decay 240 55 (ld 30 hz ms)
+
+
 -- one swung pair: a long note then a short one (200 + 100 = one beat)
 ckSw : Int -> Int -> Sound
 ckSw a b =
-    Sound.sequence [ ld 30 a 200, ld 30 b 100 ]
+    Sound.sequence [ ckLd a 200, ckLd b 100 ]
 
 
 ckQ : Int -> Sound
 ckQ hz =
-    ld 30 hz 300
+    ckLd hz 300
 
 
 ckH : Int -> Sound
 ckH hz =
-    ld 30 hz 600
+    ckLd hz 600
 
 
+-- an upright bass is PLUCKED: it lands and it is already fading.
 ckWalk : Int -> Sound
 ckWalk hz =
-    tb 26 hz 300
+    Sound.decay 190 20 (tb 26 hz 300)
 
 
 -- one comp hit: rest, then a 100ms chord stab on the swung offbeat
@@ -374,19 +425,29 @@ ckComp base third fifth =
         ]
 
 
+-- The comping sits to the RIGHT and the ride to the LEFT, the way a trio
+-- records: the lead has the middle, and the bass and drums hold it down there.
 ckCompBar : Int -> Int -> Int -> Sound
 ckCompBar base third fifth =
-    Sound.sequence [ ckComp base third fifth, ckComp base third fifth, ckComp base third fifth, ckComp base third fifth ]
+    Sound.pan 36
+        (Sound.sequence [ ckComp base third fifth, ckComp base third fifth, ckComp base third fifth, ckComp base third fifth ])
 
 
 ckKick : Sound
 ckKick =
-    Sound.sequence [ Sound.volume 52 (Sound.sweep 46 (Sound.tone Sound.Triangle 140 80)), Sound.rest 220 ]
+    Sound.sequence
+        [ Sound.decay 55 0
+            (Sound.volume 52 (Sound.sweep 46 (Sound.tone Sound.Triangle 140 80)))
+        , Sound.rest 220
+        ]
 
 
 ckSnare : Sound
 ckSnare =
-    Sound.sequence [ Sound.volume 32 (Sound.tone Sound.Noise 0 60), Sound.rest 240 ]
+    Sound.sequence
+        [ Sound.decay 40 0 (Sound.volume 32 (Sound.tone Sound.Noise 0 60))
+        , Sound.rest 240
+        ]
 
 
 -- one swung ride beat: ting......ti (long hit then a soft short one)
@@ -400,7 +461,7 @@ ckRide =
 
 ckRideBar : Sound
 ckRideBar =
-    Sound.sequence [ ckRide, ckRide, ckRide, ckRide ]
+    Sound.pan (0 - 30) (Sound.sequence [ ckRide, ckRide, ckRide, ckRide ])
 
 
 ckKickBar : Sound
@@ -488,28 +549,48 @@ alleycatSwing =
 -- soft noise wave washes in at the end of each cycle.
 
 
+-- Each 16th is struck and gone, so the arpeggio bubbles instead of buzzing:
+-- ninety milliseconds of flat sawtooth is the most synthetic sound there is.
 utA : Int -> Sound
 utA hz =
-    Sound.volume 13 (Sound.tone Sound.Sawtooth hz 90)
+    Sound.decay 65 0 (Sound.volume 13 (Sound.tone Sound.Sawtooth hz 90))
 
 
--- one bar of 16th-note arpeggio: up (R 5 o 3) and back, twice = 1440ms
+-- one bar of 16th-note arpeggio: up (R 5 o 3) and back, twice = 1440ms. The
+-- arpeggio moves a little LEFT so it stops sitting on top of the lead, which
+-- sings in the same register. Only a little: it is the engine of the piece and
+-- it runs for twenty-three seconds, so a wide placement would read as the music
+-- being off to one side rather than as two parts unmasking.
 utArpBar : Int -> Int -> Int -> Int -> Sound
 utArpBar root fifth oct third =
-    Sound.sequence
-        [ utA root, utA fifth, utA oct, utA third, utA oct, utA fifth, utA root, utA fifth
-        , utA root, utA fifth, utA oct, utA third, utA oct, utA fifth, utA root, utA fifth
-        ]
+    Sound.pan (0 - 22)
+        (Sound.sequence
+            [ utA root, utA fifth, utA oct, utA third, utA oct, utA fifth, utA root, utA fifth
+            , utA root, utA fifth, utA oct, utA third, utA oct, utA fifth, utA root, utA fifth
+            ]
+        )
+
+
+utBass : Int -> Int -> Sound
+utBass hz ms =
+    Sound.decay 430 45 (tb 26 hz ms)
 
 
 utBassBar : Int -> Int -> Sound
 utBassBar root oct =
-    Sound.sequence [ tb 26 root 720, tb 26 root 360, tb 26 oct 360 ]
+    Sound.sequence [ utBass root 720, utBass root 360, utBass oct 360 ]
 
 
+-- The heartbeat. A SINE has no harmonics at all, so swept down it is felt
+-- rather than heard, and the fast decay is the thump: that is a kick, where a
+-- triangle at the same pitch would still read as a note.
 utKick : Sound
 utKick =
-    Sound.sequence [ Sound.volume 58 (Sound.sweep 42 (Sound.tone Sound.Triangle 150 85)), Sound.rest 635 ]
+    Sound.sequence
+        [ Sound.decay 70 0
+            (Sound.volume 58 (Sound.sweep 42 (Sound.tone Sound.Sine 150 85)))
+        , Sound.rest 635
+        ]
 
 
 utKickBar : Sound
@@ -517,10 +598,16 @@ utKickBar =
     Sound.sequence [ utKick, utKick ]
 
 
--- one 4-bar cycle of the wash: silence, then a wave rolls in = 5760ms
-utWash : Sound
-utWash =
-    Sound.sequence [ Sound.rest 4320, Sound.volume 8 (Sound.tone Sound.Noise 0 720), Sound.rest 720 ]
+-- one 4-bar cycle of the wash: silence, then a wave rolls in = 5760ms. It
+-- arrives from a different side each cycle, which is the whole trick: nothing
+-- about the sound changes, only where it is.
+utWash : Int -> Sound
+utWash side =
+    Sound.sequence
+        [ Sound.rest 4320
+        , Sound.pan side (Sound.volume 8 (Sound.tone Sound.Noise 0 720))
+        , Sound.rest 720
+        ]
 
 
 undertow : Sound
@@ -590,30 +677,39 @@ undertow =
             , utKickBar, utKickBar, utKickBar, utKickBar
             , utKickBar, utKickBar, utKickBar, utKickBar
             ]
-        , Sound.sequence [ utWash, utWash, utWash, utWash ]
+        , Sound.sequence
+            [ utWash (0 - 55), utWash 55, utWash (0 - 55), utWash 55 ]
         ]
 
 
 -- ===== Drum Kit: "Session Groove" =====
--- A real-kit groove, no Atari booms: pitched-down triangle KICK, layered SNARE
--- (noise crack + a low triangle body), closed/open HATS, ghost notes, three
--- pitched TOMS, a snare-and-toms FILL, and a tight kick+snare+splash button
--- ending (the splash is short and quiet: a "tss", not an explosion).
+-- A real-kit groove, no Atari booms: a SINE kick (the wave with nothing on top
+-- of the fundamental, so it lands as weight instead of as a note), layered
+-- SNARE (noise crack + a low triangle body), closed/open HATS, ghost notes,
+-- three pitched TOMS, a snare-and-toms FILL, and a tight kick+snare+splash
+-- button ending (the splash is short and quiet: a "tss", not an explosion).
+-- Every hit falls away on its own envelope: percussion IS a decay curve.
 -- Eighth = 200ms, bar = 1600ms; pattern: A B A B, fill, A, hit.
 
 
 dkKick : Sound
 dkKick =
-    Sound.sequence [ Sound.volume 70 (Sound.sweep 45 (Sound.tone Sound.Triangle 150 85)), Sound.rest 115 ]
+    Sound.sequence
+        [ Sound.decay 90 0
+            (Sound.volume 70 (Sound.sweep 45 (Sound.tone Sound.Sine 150 85)))
+        , Sound.rest 115
+        ]
 
 
 dkSnare : Sound
 dkSnare =
     Sound.sequence
-        [ Sound.chord
-            [ Sound.volume 44 (Sound.tone Sound.Noise 0 80)
-            , Sound.volume 18 (Sound.sweep 130 (Sound.tone Sound.Triangle 190 45))
-            ]
+        [ Sound.decay 60 0
+            (Sound.chord
+                [ Sound.volume 44 (Sound.tone Sound.Noise 0 80)
+                , Sound.volume 18 (Sound.sweep 130 (Sound.tone Sound.Triangle 190 45))
+                ]
+            )
         , Sound.rest 120
         ]
 
@@ -636,14 +732,22 @@ dkHat2 =
         ]
 
 
+-- the open hat is the one that CLOSES: it washes and is shut off
 dkOpen : Sound
 dkOpen =
-    Sound.sequence [ Sound.volume 19 (Sound.tone Sound.Noise 0 120), Sound.rest 80 ]
+    Sound.sequence
+        [ Sound.decay 90 0 (Sound.volume 19 (Sound.tone Sound.Noise 0 120))
+        , Sound.rest 80
+        ]
 
 
 dkTom : Int -> Sound
 dkTom hz =
-    Sound.sequence [ Sound.volume 46 (Sound.sweep (hz - 40) (Sound.tone Sound.Triangle hz 75)), Sound.rest 125 ]
+    Sound.sequence
+        [ Sound.decay 60 0
+            (Sound.volume 46 (Sound.sweep (hz - 40) (Sound.tone Sound.Triangle hz 75)))
+        , Sound.rest 125
+        ]
 
 
 dkRest : Sound
@@ -677,12 +781,17 @@ snareBarB =
     Sound.sequence [ dkRest, dkGhost, dkSnare, dkRest, dkGhost, dkRest, dkSnare, dkRest ]
 
 
+-- the hats are off to one side of the kit; kick and snare are dead centre
 hatBar : Sound
 hatBar =
-    Sound.sequence [ dkHat, dkHat, dkHat, dkHat2, dkHat, dkHat, dkHat2, dkOpen ]
+    Sound.pan (0 - 24)
+        (Sound.sequence [ dkHat, dkHat, dkHat, dkHat2, dkHat, dkHat, dkHat2, dkOpen ])
 
 
--- the fill: half a bar of building snare 16ths, then a tom cascade hi > mid > low
+-- the fill: half a bar of building snare 16ths, then a tom cascade hi > mid >
+-- low, which is also a cascade ACROSS the kit. This is what pan is for in a
+-- kit: the toms are in three places, so you hear three drums and not one drum
+-- retuned three times. The snare rolls stay centre.
 fillBar : Sound
 fillBar =
     Sound.chord
@@ -690,7 +799,8 @@ fillBar =
         , Sound.sequence
             [ Sound.rest 400
             , dkR16, dkR16, dkR16, dkR16
-            , dkTom 230, dkTom 170, dkTom 125, Sound.rest 200
+            , Sound.pan 34 (dkTom 230), dkTom 170, Sound.pan (0 - 34) (dkTom 125)
+            , Sound.rest 200
             ]
         ]
 
@@ -727,49 +837,70 @@ pulse hz ms =
     Sound.duty 25 (Sound.tone Sound.Square hz ms)
 
 
+-- The second note RINGS OUT rather than stopping flat. A coin is a struck
+-- thing, and Sound.decay is what a struck thing does: fall, and keep falling.
 coinSfx : Sound
 coinSfx =
-    Sound.sequence [ pulse (Sound.b 5) 70, pulse (Sound.e 6) 150 ]
+    Sound.sequence
+        [ pulse (Sound.b 5) 70, Sound.decay 150 0 (pulse (Sound.e 6) 150) ]
 
 
 jumpSfx : Sound
 jumpSfx =
-    Sound.duty 25 (Sound.sweep (Sound.a 5) (Sound.tone Sound.Square (Sound.a 4) 170))
+    -- rises and eases off, instead of holding full until it is cut
+    Sound.decay 130 30
+        (Sound.duty 25 (Sound.sweep (Sound.a 5) (Sound.tone Sound.Square (Sound.a 4) 170)))
 
 
 laserSfx : Sound
 laserSfx =
-    Sound.sweep 180 (Sound.tone Sound.Sawtooth 1400 200)
+    -- "pew", not "peeew": the decay is the whole difference
+    Sound.decay 120 0 (Sound.sweep 180 (Sound.tone Sound.Sawtooth 1400 200))
 
 
 hitSfx : Sound
 hitSfx =
-    Sound.volume 70 (Sound.tone Sound.Noise 0 110)
+    Sound.decay 55 0 (Sound.volume 70 (Sound.tone Sound.Noise 0 110))
 
 
 boomSfx : Sound
 boomSfx =
-    Sound.volume 85 (Sound.tone Sound.Noise 0 520)
+    -- Noise on its own is hiss with no thump. The thump is a SINE dropped from
+    -- 150Hz to 40: no harmonics at all, so it is felt more than heard. Both
+    -- layers fall away, which is what an explosion does. (A one-shot, so the
+    -- layers are free to be different lengths; inside a loop they would not be.)
+    Sound.chord
+        [ Sound.decay 380 0 (Sound.volume 78 (Sound.tone Sound.Noise 0 520))
+        , Sound.decay 240 0
+            (Sound.volume 85 (Sound.sweep 40 (Sound.tone Sound.Sine 150 320)))
+        ]
 
 
 powerSfx : Sound
 powerSfx =
-    Sound.sequence [ pulse (Sound.c 5) 55, pulse (Sound.e 5) 55, pulse (Sound.g 5) 55, pulse (Sound.c 6) 200 ]
+    Sound.sequence
+        [ pulse (Sound.c 5) 55, pulse (Sound.e 5) 55, pulse (Sound.g 5) 55
+        , Sound.decay 190 0 (pulse (Sound.c 6) 200)
+        ]
 
 
 blipSfx : Sound
 blipSfx =
+    -- Left alone deliberately. Fifty milliseconds is shorter than any envelope
+    -- worth hearing: a decay here would cost a parameter and change nothing.
     Sound.volume 55 (pulse (Sound.g 5) 50)
 
 
 confirmSfx : Sound
 confirmSfx =
-    Sound.sequence [ pulse (Sound.e 5) 90, pulse (Sound.a 5) 170 ]
+    Sound.sequence
+        [ pulse (Sound.e 5) 90, Sound.decay 150 0 (pulse (Sound.a 5) 170) ]
 
 
 denySfx : Sound
 denySfx =
-    -- a thin (12%) buzzy two-note DOWN: the classic "nope"
+    -- a thin (12%) buzzy two-note DOWN: the classic "nope". No decay on this
+    -- one on purpose: the flat, unmoving buzz IS the refusal.
     Sound.sequence
         [ Sound.duty 12 (Sound.tone Sound.Square (Sound.e 4) 110)
         , Sound.duty 12 (Sound.tone Sound.Square (Sound.c 4) 220)
@@ -784,13 +915,41 @@ teleportSfx =
 
 arpSfx : Sound
 arpSfx =
-    -- a C-major shimmer from ONE voice (Sound.arp cycles C5, E5, G5 fast)
-    Sound.arp [ Sound.e 5, Sound.g 5 ] (Sound.tone Sound.Square (Sound.c 5) 320)
+    -- a C-major shimmer from ONE voice (Sound.arp cycles C5, E5, G5 fast),
+    -- struck and left to ring: the decay is what turns the buzz into a bell
+    Sound.decay 300 0
+        (Sound.arp [ Sound.e 5, Sound.g 5 ] (Sound.tone Sound.Square (Sound.c 5) 320))
 
 
 fanfareSfx : Sound
 fanfareSfx =
-    Sound.sequence [ pulse (Sound.g 5) 90, pulse (Sound.c 6) 90, pulse (Sound.e 6) 90, pulse (Sound.g 6) 280 ]
+    -- the last note settles to two thirds and holds there, the way a blown
+    -- instrument does: `Sound.decay ms level`, and the level is the point
+    Sound.sequence
+        [ pulse (Sound.g 5) 90, pulse (Sound.c 6) 90, pulse (Sound.e 6) 90
+        , Sound.decay 240 66 (pulse (Sound.g 6) 280)
+        ]
+
+
+-- One tick of the ping-pong, placed and struck. Sound.pan patches EVERY voice
+-- it is handed, so this could just as well have been written around the whole
+-- sequence below; here it is per tick, because each tick is somewhere else.
+ppTick : Int -> Int -> Sound
+ppTick side vol =
+    Sound.sequence
+        [ Sound.pan side (Sound.decay 90 0 (Sound.volume vol (pulse (Sound.e 6) 90)))
+        , Sound.rest 60
+        ]
+
+
+pingPongSfx : Sound
+pingPongSfx =
+    -- The one recipe here that is about STEREO: the same blip four times, each
+    -- one quieter, thrown left, right, left, right. -100 is hard left, 0 the
+    -- middle, 100 hard right. Mind the parentheses: once a function has been
+    -- applied, `Sound.pan -70 s` reads as a subtraction, so it is `(0 - 70)`.
+    Sound.sequence
+        [ ppTick (0 - 70) 55, ppTick 70 38, ppTick (0 - 70) 26, ppTick 70 16 ]
 
 
 -- ===== app =====
@@ -819,6 +978,7 @@ view model =
                 , button [] (Sfx teleportSfx) "🌀  Teleport"
                 , button [] (Sfx arpSfx) "🎵  Chord (arp)"
                 , button [] (Sfx fanfareSfx) "🎉  Fanfare"
+                , button [] (Sfx pingPongSfx) "🏓  Ping-pong (stereo)"
                 ]
             , section [ header "Music (tap to loop — a new pick stops the last)" ]
                 [ musicButton model 0 "🔥  Emberwake"

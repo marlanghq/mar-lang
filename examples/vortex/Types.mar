@@ -150,7 +150,16 @@ type alias Model =
 
 type Cue
     = CFire
-    | CHit Kind Int      -- what died, and the depth it died at
+      -- What died, the depth it died at, and where it was across the field:
+      -- a stereo place, negative to the left of the well and positive to the
+      -- right, kept well inside the -100..100 a pan can take.
+      --
+      -- It is worked out the moment the cue is RAISED, in `Sim`, because that
+      -- is the one place the web, the spin, the lean and the camera are all
+      -- in hand. `Sfx.placeOf` does the sum, but a cue that has been raised
+      -- carries a finished number, so it can still be sounded on its own with
+      -- no world attached to it.
+    | CHit Kind Int Int
     | CDie
     | CClear
 

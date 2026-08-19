@@ -22,42 +22,120 @@ import Types exposing (..)
 -- below is exactly 250 ms so a beat is two cells.
 
 
+-- --- the desk: where the parts stand ---
+--
+-- Kick, snare and bass stay CENTRE, and that is not laziness: low frequencies
+-- carry almost no directional information, so a placed bass only makes the
+-- whole piece lean. The two parts that actually mask each other are the bright
+-- ones: the hats and the arp shimmer are both narrow and both live up top, so
+-- they step out to opposite sides and each becomes audible on its own. The
+-- melody opens around the middle as a detuned pair (cueSound below), which
+-- leaves the centre of the tune still in the centre.
+--
+-- An Amiga would have thrown these hard to the walls (Paula panned its four
+-- channels 2 and 2, with nothing in between). This is played on a phone at
+-- arm's length or on headphones, so a third of the way out is where a part
+-- separates without the piece tipping over.
+
+
+hatPan : Int
+hatPan = 0 - 26
+
+
+arpPan : Int
+arpPan = 30
+
+
+leadPan : Int
+leadPan = 20
+
+
 -- --- the kit (recipes proven in the soundboard example: no Atari booms) ---
+--
+-- A struck thing loses energy in proportion to the energy it still has, and
+-- Sound.decay is that fall. Without it a drum is a rectangle that comes up and
+-- goes down, which is the loudest "this is synthetic" cue the engine has: a
+-- kick held at full level for 80 ms is not a kick, it is an organ key on a low
+-- note.
+--
+-- It is NOT on every hit here, and that is the point. A decay only says
+-- something on a hit long enough to have a tail: the kick (85 ms), the snare
+-- (80), the open hat (120). On the closed hats (30 and 26 ms), the ghost (40)
+-- and the sixteenth roll (45) it is inaudible as SHAPE and audible only as
+-- LEVEL, because a burst that short is already over before an envelope can say
+-- anything about it. Those four kept the shape they had.
+--
+-- The decayed hits were re-gained afterwards, which is what a desk does: the
+-- fall costs average energy, so the volume goes back up until the hit peaks
+-- where it used to. Measured against the previous version, every transient is
+-- within a decibel of where it was and the groove carries about 3 dB less
+-- average energy. That difference IS the dynamics.
+--
+-- Nothing below changes LENGTH, because decay is shaped inside the hit it
+-- wraps: every cell is still exactly 250 ms and the beat grid the level is
+-- built on is untouched.
 
 
+-- The sine is the kick's WEIGHT. A triangle sweeping 150 Hz to 45 has the right
+-- shape, but a triangle spends part of its energy on harmonics, and on a laptop
+-- speaker that reads as a click where a thump should be. The same sweep on a
+-- sine underneath, at 45% of the triangle, puts the fundamental back. The decay
+-- is the hit itself: full for an instant, then 18% for the rest of the note.
 drKick : Sound
 drKick =
-    Sound.sequence [ Sound.volume 55 (Sound.sweep 45 (Sound.tone Sound.Triangle 150 85)), Sound.rest 165 ]
+    Sound.sequence
+        [ Sound.decay 70 18
+            (Sound.chord
+                [ Sound.volume 55 (Sound.sweep 45 (Sound.tone Sound.Triangle 150 85))
+                , Sound.volume 26 (Sound.sweep 45 (Sound.tone Sound.Sine 150 85))
+                ]
+            )
+        , Sound.rest 165
+        ]
 
 
+-- Wires and shell, both falling: the noise cracks and the swept triangle rings
+-- under it for a few more milliseconds. decay patches EVERY voice of the chord,
+-- and it is clamped to each voice's own length, so one line shapes both.
 drSnare : Sound
 drSnare =
     Sound.sequence
-        [ Sound.chord
-            [ Sound.volume 36 (Sound.tone Sound.Noise 0 80)
-            , Sound.volume 15 (Sound.sweep 130 (Sound.tone Sound.Triangle 190 45))
-            ]
+        [ Sound.decay 55 18
+            (Sound.chord
+                [ Sound.volume 40 (Sound.tone Sound.Noise 0 80)
+                , Sound.volume 17 (Sound.sweep 130 (Sound.tone Sound.Triangle 190 45))
+                ]
+            )
         , Sound.rest 170
         ]
 
 
+-- The hats sit off to one side of centre, away from the arp. That placement is
+-- the whole change here: 30 ms of noise is already a tick, and an envelope on
+-- something that short only makes it quieter.
 drHat : Sound
 drHat =
-    Sound.sequence [ Sound.volume 11 (Sound.tone Sound.Noise 0 30), Sound.rest 220 ]
+    Sound.pan hatPan
+        (Sound.sequence [ Sound.volume 11 (Sound.tone Sound.Noise 0 30), Sound.rest 220 ])
 
 
 -- two sixteenths of hat in one eighth cell
 drHat2 : Sound
 drHat2 =
-    Sound.sequence
-        [ Sound.volume 11 (Sound.tone Sound.Noise 0 30), Sound.rest 95
-        , Sound.volume 9 (Sound.tone Sound.Noise 0 26), Sound.rest 99
-        ]
+    Sound.pan hatPan
+        (Sound.sequence
+            [ Sound.volume 11 (Sound.tone Sound.Noise 0 30), Sound.rest 95
+            , Sound.volume 9 (Sound.tone Sound.Noise 0 26), Sound.rest 99
+            ]
+        )
 
 
+-- the open hat: the hand comes off, so this one is long enough to RING, and the
+-- decay is what lets it ring down instead of stopping square
 drOpen : Sound
 drOpen =
-    Sound.sequence [ Sound.volume 15 (Sound.tone Sound.Noise 0 120), Sound.rest 130 ]
+    Sound.pan hatPan
+        (Sound.sequence [ Sound.decay 95 20 (Sound.volume 17 (Sound.tone Sound.Noise 0 120)), Sound.rest 130 ])
 
 
 -- a ghost note: a whisper of snare on the offbeat (one eighth cell)
@@ -81,29 +159,44 @@ r8 =
 
 
 -- --- bass: a syncopated Amiga-style line, triangle sub + a bite of saw ---
+--
+-- A tracker bass is PLUCKED, not held: the decay drops it to just over half in
+-- 130 ms and lets it sit there, which is what separates two repeated eighths
+-- into two notes instead of one long one. The triangle already carries the
+-- fundamental, so this line needs no sine under it; the saw is only the bite on
+-- top. It stays dead centre, where the weight of the groove belongs.
 
 
 bs : Int -> Sound
 bs hz =
     Sound.sequence
-        [ Sound.chord
-            [ Sound.volume 27 (Sound.tone Sound.Triangle hz 210)
-            , Sound.volume 6 (Sound.tone Sound.Sawtooth hz 210)
-            ]
+        [ Sound.decay 130 52
+            (Sound.chord
+                [ Sound.volume 30 (Sound.tone Sound.Triangle hz 210)
+                , Sound.volume 7 (Sound.tone Sound.Sawtooth hz 210)
+                ]
+            )
         , Sound.rest 40
         ]
 
 
 -- --- the tracker arpeggio: a chord cycled fast on one voice (Sound.arp),
 -- one shimmering quarter note per beat ---
+--
+-- On a real tracker this is a plucked sample being retriggered, so it rings
+-- down across the beat rather than sitting flat for 480 ms. It answers the hats
+-- from the other side of the image.
 
 
 ar : Int -> Int -> Int -> Sound
 ar hz third fifth =
-    Sound.sequence
-        [ Sound.volume 9 (Sound.arp [ third, fifth ] (Sound.duty 25 (Sound.tone Sound.Square hz 480)))
-        , Sound.rest 20
-        ]
+    Sound.pan arpPan
+        (Sound.sequence
+            [ Sound.decay 340 45
+                (Sound.volume 11 (Sound.arp [ third, fifth ] (Sound.duty 25 (Sound.tone Sound.Square hz 480))))
+            , Sound.rest 20
+            ]
+        )
 
 
 -- --- harmony: one chord per 8 beats. Sections 1-4 ride Am F C G; the last
@@ -317,51 +410,105 @@ leadEvents =
         ]
 
 
+-- one layer of the held note that ends the win jingle. Two of these, detuned
+-- against each other, are the whole difference between an oscillator and a
+-- thing being played.
+winTail : Sound
+winTail =
+    Sound.vibrato 22 6 (Sound.volume 17 (Sound.duty 25 (Sound.tone Sound.Square (Sound.a 5) 420)))
+
+
 cueSound : Cue -> Sound
 cueSound cue =
     case cue of
         CueDeath ->
-            -- the square shatters: a noise burst over a falling saw
+            -- The square shatters: a noise burst over a falling saw. An impact
+            -- is the clearest case there is for a decay, and this one had none:
+            -- 200 ms of hiss at a flat level is a sound effect, 200 ms of hiss
+            -- that collapses in the first 130 is a thing breaking.
+            --
+            -- The saw already falls to 55 Hz, but a saw keeps its energy in the
+            -- harmonics, so down there it was drawing the SHAPE of an impact
+            -- without any of its weight. A sine on the same sweep, at 45% of
+            -- the saw, is the weight. You hear this one a lot in this game;
+            -- worth it being a hit rather than a noise.
             Sound.chord
-                [ Sound.volume 30 (Sound.tone Sound.Noise 0 200)
-                , Sound.volume 24 (Sound.sweep 55 (Sound.tone Sound.Sawtooth 320 220))
+                [ Sound.decay 130 0 (Sound.volume 34 (Sound.tone Sound.Noise 0 200))
+                , Sound.decay 160 18 (Sound.volume 27 (Sound.sweep 55 (Sound.tone Sound.Sawtooth 320 220)))
+                , Sound.decay 160 12 (Sound.volume 12 (Sound.sweep 55 (Sound.tone Sound.Sine 320 220)))
                 ]
 
         CueCheck ->
+            -- two plucks, not two blocks: a flag you pass, not a tone you play
             Sound.sequence
-                [ Sound.volume 14 (Sound.duty 25 (Sound.tone Sound.Square (Sound.e 6) 60))
-                , Sound.volume 14 (Sound.duty 25 (Sound.tone Sound.Square (Sound.a 6) 90))
+                [ Sound.decay 45 25 (Sound.volume 16 (Sound.duty 25 (Sound.tone Sound.Square (Sound.e 6) 60)))
+                , Sound.decay 75 10 (Sound.volume 16 (Sound.duty 25 (Sound.tone Sound.Square (Sound.a 6) 90)))
                 ]
 
         CueWin ->
+            -- The three fanfare notes are struck and fall to about half, which
+            -- is what makes them read as played rather than switched on. The
+            -- last one is the payoff of the whole minute, so it gets what the
+            -- lead gets: a unison PAIR seven cents apart, opened to either side
+            -- of centre, falling slowly enough to breathe. Two beating copies
+            -- add in quadrature rather than arithmetically, so each layer sits
+            -- at 71% of the old single voice and the note stays the same size.
             Sound.sequence
-                [ Sound.volume 24 (Sound.duty 25 (Sound.tone Sound.Square (Sound.c 5) 120))
-                , Sound.volume 24 (Sound.duty 25 (Sound.tone Sound.Square (Sound.e 5) 120))
-                , Sound.volume 24 (Sound.duty 25 (Sound.tone Sound.Square (Sound.g 5) 120))
-                , Sound.vibrato 22 6 (Sound.volume 24 (Sound.duty 25 (Sound.tone Sound.Square (Sound.a 5) 420)))
+                [ Sound.decay 70 55 (Sound.volume 24 (Sound.duty 25 (Sound.tone Sound.Square (Sound.c 5) 120)))
+                , Sound.decay 70 55 (Sound.volume 24 (Sound.duty 25 (Sound.tone Sound.Square (Sound.e 5) 120)))
+                , Sound.decay 70 55 (Sound.volume 24 (Sound.duty 25 (Sound.tone Sound.Square (Sound.g 5) 120)))
+                , Sound.decay 260 62
+                    (Sound.chord
+                        [ Sound.pan (0 - leadPan) (Sound.detune (0 - 7) winTail)
+                        , Sound.pan leadPan (Sound.detune 7 winTail)
+                        ]
+                    )
                 ]
 
         CueLead hz ->
             -- the melody note, fired BY the world on the jump beat. LONG
-            -- (440 ms ≈ the whole beat), and it now rings out instead of
-            -- stopping flat: without an explicit release the engine gives a
-            -- voice 5 ms, which is only the floor below which a gain change
-            -- clicks. That held the note at full level for 435 ms and then
-            -- cut it, which is what made the high line sound dry.
+            -- (440 ms ≈ the whole beat), and it rings out instead of stopping
+            -- flat: without an explicit release the engine gives a voice 5 ms,
+            -- which is only the floor below which a gain change clicks. That
+            -- held the note at full level for 435 ms and then cut it, which is
+            -- what made the high line sound dry.
             --
-            -- 90 ms of release is about a fifth of the note: clearly a decay,
-            -- still short enough that a beat lands on silence rather than on
-            -- the tail of the note before it. Release is shaped INSIDE the
-            -- note (the ramp ends at its own duration, it does not extend
-            -- it), so all three voices stay exactly 440 ms and the chord
-            -- keeps its alignment.
+            -- 90 ms of release is about a fifth of the note, still short enough
+            -- that a beat lands on silence rather than on the tail of the note
+            -- before it. The decay is the other half of the same idea: the note
+            -- falls to 70% over its first 240 ms and holds there, so a held
+            -- note BREATHES instead of standing still. Both stages are shaped
+            -- INSIDE the note (their ramps end at its own duration, they do not
+            -- extend it), and both patch every voice of the chord, so all three
+            -- layers stay exactly 440 ms and the chord keeps its alignment.
             --
-            -- Two detuned duty-50 squares (chorus) over a sub-octave triangle.
-            Sound.chord
-                [ Sound.release 90 (Sound.vibrato 14 5 (Sound.volume 13 (Sound.duty 50 (Sound.tone Sound.Square hz 440))))
-                , Sound.release 90 (Sound.volume 9 (Sound.duty 50 (Sound.tone Sound.Square (hz + max 3 (hz // 90)) 440)))
-                , Sound.release 90 (Sound.volume 7 (Sound.tone Sound.Triangle (hz // 2) 440))
-                ]
+            -- The unison used to be spelled in Hz: a second square at
+            -- `hz + max 3 (hz // 90)`, which is roughly 16 cents SHARP of the
+            -- melody and pulls the pitch centre up with it. Sound.detune says
+            -- the same thing in the unit the ear actually uses, and says it
+            -- symmetrically: seven cents down and seven cents up, beating
+            -- against each other around a centre that is still the written
+            -- note. Panning the pair to either side turns that beat into WIDTH,
+            -- which is what makes two oscillators read as one instrument. The
+            -- sub-octave triangle stays dead centre, because that is where the
+            -- weight goes.
+            --
+            -- Each square sits at 12 rather than 13 and 9: two beating copies
+            -- are incoherent and add in quadrature, so a matched pair measures
+            -- about the same as the old lopsided one.
+            Sound.release 90
+                (Sound.decay 240 70
+                    (Sound.chord
+                        [ Sound.pan (0 - leadPan)
+                            (Sound.detune (0 - 7)
+                                (Sound.vibrato 14 5 (Sound.volume 12 (Sound.duty 50 (Sound.tone Sound.Square hz 440))))
+                            )
+                        , Sound.pan leadPan
+                            (Sound.detune 7 (Sound.volume 12 (Sound.duty 50 (Sound.tone Sound.Square hz 440))))
+                        , Sound.volume 7 (Sound.tone Sound.Triangle (hz // 2) 440)
+                        ]
+                    )
+                )
 
         CueBeat b ->
             -- one beat of the groove, built for exactly this world position

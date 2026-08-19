@@ -3,6 +3,8 @@ module Sfx exposing (..)
 -- The sounds, pitched by how far down the tube the event happened.
 
 import Balance exposing (..)
+import Camera exposing (..)
+import Lanes exposing (..)
 import Types exposing (..)
 import Sound
 
@@ -30,9 +32,57 @@ import Sound
 -- of them, and the level change came out shouting next to a kill at 22. Every
 -- voice came down by about the same fraction, which keeps the balance between
 -- them and only moves the whole thing.
+--
+-- ONE NOTE OF THE WALK-UP, AND IT IS PLUCKED. Held flat for its whole length
+-- and then cut off, a note is a rectangle, which is the loudest way a
+-- synthesiser announces that it is one. A struck thing loses energy in
+-- proportion to the energy it still has, so this one is full for an instant,
+-- down to a third of itself in 60ms, and rings there until the next arrives.
+-- Six of those in a row read as an instrument being played; six rectangles
+-- read as a counter being incremented.
 clearNote : Int -> Int -> Sound
 clearNote hz ms =
-    Sound.volume 16 (Sound.duty 25 (Sound.tone Sound.Square hz ms))
+    Sound.volume 16
+        (Sound.decay 60 30
+            (Sound.duty 25 (Sound.tone Sound.Square hz ms)))
+
+
+-- It settles rather than plucks: down to about two thirds and held there, so
+-- the note that the whole climb was for is still there under the landing.
+arrivalVoice : Sound
+arrivalVoice =
+    Sound.volume 10
+        (Sound.decay 300 62
+            (Sound.arp [ Sound.gs 6, Sound.b 6 ]
+                (Sound.duty 25 (Sound.tone Sound.Square (Sound.e 6) 540))))
+
+
+-- THE NOTE THE FANFARE ARRIVES ON, AND WHY THERE ARE TWO OF IT.
+--
+-- One oscillator playing one note is audibly one oscillator playing one note.
+-- Several players on the same line are never exactly in tune with each other,
+-- and the slow beating between them is most of what "an instrument" means to
+-- an ear. Two copies seven cents apart is that, and it costs one voice: the
+-- arpeggio runs E6 up to B6, where seven cents is five to eight beats a
+-- second, so over half a second it reads as shimmer and never as a wobble.
+--
+-- They are placed a quarter of the way out to each side, because a unison is
+-- layers that DIFFER: stacked in the middle they sum into one slightly odd
+-- voice, and spread they read as width. This is the only pan in the cue --
+-- the rush IS the level change and belongs straight in front of you, and a
+-- low note that leans is a piece that leans.
+--
+-- Ten each, not the seventeen the single note was mixed at, because two
+-- voices this close together ADD: at the top of a beat they are twenty and at
+-- the bottom they cancel, so the pair swells around where the one note sat
+-- instead of sitting on top of it. And `pan` patches EVERY voice it wraps, so
+-- the placing has to happen on each layer BEFORE the chord, not after it.
+arrival : Sound
+arrival =
+    Sound.chord
+        [ Sound.pan (0 - 24) arrivalVoice
+        , Sound.pan 24 (Sound.detune 7 arrivalVoice)
+        ]
 
 
 clearCue : Sound
@@ -41,6 +91,12 @@ clearCue =
         [ -- The tube. Flat for a beat, then a climb that keeps steepening,
           -- which is the curve the camera is riding: `holdPitch` is the
           -- moment before the floor drops out.
+          --
+          -- This one is deliberately NOT plucked, and neither is the wind
+          -- under it. A struck thing decays because it was given all its
+          -- energy at once; a fall is being given more of it every frame, and
+          -- taking the energy back out of the rush would leave the best move
+          -- in the game scored by something that had already given up.
           Sound.volume 15
             (Sound.attack 40
                 (Sound.lowCut 90
@@ -65,16 +121,31 @@ clearCue =
             , clearNote (Sound.e 5) 110
             , clearNote (Sound.gs 5) 110
             , clearNote (Sound.b 5) 110
-            , Sound.volume 17
-                (Sound.arp [ Sound.gs 6, Sound.b 6 ]
-                    (Sound.duty 25 (Sound.tone Sound.Square (Sound.e 6) 540)))
+            , arrival
             ]
 
         , -- And a low note under the arrival, so the landing has a floor.
+          --
+          -- Doubled with a sine at the same pitch, which is the half of a
+          -- floor a triangle cannot give you on its own. A triangle at E3 is
+          -- mostly heard through its harmonics, so on a small speaker it
+          -- lands as a soft beep where the weight was supposed to be; a sine
+          -- is the fundamental and nothing else. It is mixed at under half,
+          -- so what changes is the BODY of the note and not its pitch.
+          --
+          -- Both layers run the same 320ms, so this element still occupies
+          -- exactly the 320 it did and the four voices still end together at
+          -- 1500.
           Sound.sequence
             [ Sound.rest 1180
-            , Sound.volume 19
-                (Sound.release 200 (Sound.tone Sound.Triangle (Sound.e 3) 320))
+            , Sound.chord
+                [ Sound.volume 17
+                    (Sound.decay 90 55
+                        (Sound.release 200 (Sound.tone Sound.Triangle (Sound.e 3) 320)))
+                , Sound.volume 8
+                    (Sound.decay 110 40
+                        (Sound.release 200 (Sound.tone Sound.Sine (Sound.e 3) 320)))
+                ]
             ]
         ]
 
@@ -86,19 +157,77 @@ farness z =
     clamp 0 100 (z * 100 // zFar)
 
 
+-- How far out to the side the rim is allowed to place a sound. Modest on
+-- purpose: enough to tell one side of the well from the other, not enough to
+-- throw a kill out of one speaker.
+panEdge : Int
+panEdge = 40
+
+
+-- WHERE A KILL WAS, ACROSS THE FIELD.
+--
+-- Pan is information in this game and not decoration. A tube shooter is a
+-- ring seen end-on and the whole reading task is WHICH WAY ROUND something
+-- is; a kill is the one event whose position the eye can easily miss, because
+-- it is over in a few frames and it happens wherever the shot was, which is
+-- not necessarily where you were looking.
+--
+-- It follows the PICTURE, not the fiction. The camera never moves and the
+-- player reads the screen, so something that died on the left of the screen
+-- belongs on the left even when that is the lane you are standing in. That
+-- falls out of asking the real projection where the thing was: the same
+-- `project` the drawing uses, with the screen taken out of it (no offset,
+-- unit scale), so what comes back is web units about the middle and `webR`
+-- is the edge. Every rim in `Web` is symmetric about the origin in x -- ring,
+-- polygon, star, bowl and line alike -- and `camera` puts the shape's own box
+-- in the middle of the glass, so the two agree about where the middle is.
+--
+-- Depth then does the rest for free. On a ring the near rim spreads across
+-- most of the 40 and the far end collapses to about 6, because everything
+-- deep converges on the vanishing point -- and once the player has walked and
+-- the far end has leaned, deep kills lean WITH it instead of falling to
+-- nothing. Which is the picture, again: one place, read one way.
+placeOf : Model -> Int -> Int -> Int
+placeOf m lane z =
+    let
+        flat =
+            { cx = 0
+            , cy = 0
+            , scale = one
+            , spin = m.spin
+            , vx = m.leanX
+            , vy = m.leanY
+            , camZ = m.camZ
+            }
+
+        p = project flat (laneAt m.lanes lane).mid z
+    in
+    clamp (0 - panEdge) panEdge (p.x * panEdge // webR)
+
+
 -- The body of a kill: a burst, not a note. Noise instead of a square is the
 -- whole difference between a pop and a beep, and the high cut takes off what
 -- fizz is left. Mixed at 22 down to 14 so it sits above the shot (15) and well
--- under your own death (44): the reward should be louder than the action that
--- earns it and quieter than losing.
+-- under your own death (40 of hiss with a thump under it): the reward should
+-- be louder than the action that earns it and quieter than losing.
+--
+-- AND IT COLLAPSES. A burst held at full for sixty milliseconds and then let
+-- go is a block of noise: it says a LENGTH, which is the one thing an
+-- explosion does not have. Falling to almost nothing over the first third of
+-- it and hissing out from there is the same event with its energy spent at
+-- the front, which is where a struck thing spends it. The fall is shorter for
+-- a far kill because everything about a far kill is shorter -- and it stays
+-- the same third of the burst at both ends of the well, so a distant kill is
+-- a smaller copy of a near one rather than a differently shaped sound.
 hitPop : Int -> Sound
 hitPop f =
     Sound.volume (22 - f * 8 // 100)
         (Sound.attack 2
-            (Sound.release 18
-                (Sound.highCut 2600
-                    (Sound.sweep (140 + f * 120 // 100)
-                        (Sound.tone Sound.Noise (300 + f * 320 // 100) (80 - f * 35 // 100))))))
+            (Sound.decay (26 - f * 12 // 100) 6
+                (Sound.release 18
+                    (Sound.highCut 2600
+                        (Sound.sweep (140 + f * 120 // 100)
+                            (Sound.tone Sound.Noise (300 + f * 320 // 100) (80 - f * 35 // 100)))))))
 
 
 cue : Cue -> Sound
@@ -118,11 +247,26 @@ cue c =
             --   * and it was mixed at 22, louder than it has any business
             --     being next to a hit at 30. The reward should be louder than
             --     the action that earns it.
+            --
+            -- The fourth thing was the shape. It rose in 4ms, sat at full for
+            -- twenty, and let go: a little brick of tone, five times a second.
+            -- A discharge is not a held thing, it is a thing that leaves, so
+            -- now it peaks and drops to a fifth of itself almost at once and
+            -- the rest is tail. The peak is unchanged, so it still cuts
+            -- through; there is simply less of it, which is the whole
+            -- complaint this cue keeps answering.
+            --
+            -- It stays centred. Pan is for telling the player something they
+            -- do not already know, and where their own gun is is the one
+            -- thing they cannot get wrong; a sound this frequent sliding
+            -- about the field would only set the whole mix swimming every
+            -- time they walked.
             Sound.volume 15
-                (Sound.attack 4
-                    (Sound.release 30
-                        (Sound.highCut 3200
-                            (Sound.sweep 420 (Sound.tone Sound.Triangle 900 55)))))
+                (Sound.attack 3
+                    (Sound.decay 20 18
+                        (Sound.release 26
+                            (Sound.highCut 3200
+                                (Sound.sweep 420 (Sound.tone Sound.Triangle 900 55))))))
 
         -- A KILL SOUNDS LIKE WHERE IT HAPPENED, AND LIKE WHAT DIED.
         --
@@ -139,29 +283,66 @@ cue c =
         -- same thing at your feet is lower, longer and fuller. Two kills at
         -- different depths stop sounding alike, and the difference MEANS
         -- something, which a random detune never could.
-        CHit Flipper z ->
-            hitPop (farness z)
+        -- And it also sounds like WHERE ON THE SCREEN it happened: `p` is the
+        -- kill's own place across the field, worked out by `placeOf` from the
+        -- projection the picture is drawn with.
+        CHit Flipper z p ->
+            Sound.pan p (hitPop (farness z))
 
         -- The tanker gets the same pop with a second voice under it. Killing
         -- one is not the same event as killing a flipper: it splits, so the
         -- news is worse, and the ear should hear that before the eye finds the
         -- two halves.
-        CHit Tanker z ->
+        --
+        -- The thud is struck too, and harder than the pop above it: a coat
+        -- coming apart is one event, not a note. `pan` wrapping the chord
+        -- places BOTH layers, which is what is wanted here — the pop and the
+        -- thud are the same tanker in the same lane, and splitting them across
+        -- the field would be two things dying instead of one.
+        CHit Tanker z p ->
             let
                 f = farness z
             in
-            Sound.chord
-                [ hitPop f
-                , Sound.volume (16 - f * 6 // 100)
-                    (Sound.attack 3
-                        (Sound.release 40
-                            (Sound.lowCut 60
-                                (Sound.sweep (70 + f * 40 // 100)
-                                    (Sound.tone Sound.Triangle (150 + f * 90 // 100) (170 - f * 60 // 100))))))
-                ]
+            Sound.pan p
+                (Sound.chord
+                    [ hitPop f
+                    , Sound.volume (16 - f * 6 // 100)
+                        (Sound.attack 3
+                            (Sound.decay 60 25
+                                (Sound.release 40
+                                    (Sound.lowCut 60
+                                        (Sound.sweep (70 + f * 40 // 100)
+                                            (Sound.tone Sound.Triangle (150 + f * 90 // 100) (170 - f * 60 // 100)))))))
+                    ]
+                )
 
+        -- YOUR OWN DEATH, WHICH WAS A WALL OF HISS.
+        --
+        -- One noise voice held flat at 44 for four hundred milliseconds: the
+        -- loudest thing in the game and the least like an explosion, because
+        -- nothing about it fell. Now it is two voices and both collapse.
+        --
+        -- The noise is the debris: it collapses to a whisper over the first
+        -- 160 of its 420 milliseconds and hisses out from there, which is a
+        -- bang with wreckage behind it rather than a sheet of static someone
+        -- switched off. Under it a sine falling from 180 to 46 is the THUMP,
+        -- and it has to be a sine: noise on its own is hiss with nothing
+        -- beneath it, and the fundamental with no harmonics on top is exactly
+        -- what a body of low energy sounds like. Together they peak at 64
+        -- where the hiss alone was 44, which is still under the 70 at which
+        -- the bus's ceiling starts bending what it is handed.
+        --
+        -- Centred, and not because it is hard to place: because it is you. The
+        -- game has no idea where you are relative to yourself.
         CDie ->
-            Sound.volume 44 (Sound.sweep 60 (Sound.tone Sound.Noise 400 420))
+            Sound.chord
+                [ Sound.volume 40
+                    (Sound.decay 160 8
+                        (Sound.sweep 60 (Sound.tone Sound.Noise 400 420)))
+                , Sound.volume 24
+                    (Sound.decay 200 0
+                        (Sound.sweep 46 (Sound.tone Sound.Sine 180 300)))
+                ]
 
         CClear ->
             clearCue

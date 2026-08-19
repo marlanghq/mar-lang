@@ -705,8 +705,10 @@ collide m =
             , sparks = List.map (\f -> foeSpark m f) struck ++ m.sparks
             -- One cue per KILL rather than one per volley: the sound is about
             -- the creature now, so a shot that takes two of them at different
-            -- depths has to say so twice.
-            , sfx = List.map (\f -> CHit f.kind f.z) struck ++ m.sfx
+            -- depths has to say so twice. Each carries the place it happened
+            -- as well as the depth, so two kills on opposite sides of the web
+            -- arrive from opposite sides of the well.
+            , sfx = List.map (\f -> CHit f.kind f.z (placeOf m f.lane f.z)) struck ++ m.sfx
         }
 
 

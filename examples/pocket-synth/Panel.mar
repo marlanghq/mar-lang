@@ -140,10 +140,17 @@ sliderRect m id =
     else { x = colX m 1 + 8, y = y0 + rowH * 2 + 26, w = colW m - 16, h = 22 }
 
 
+-- ENSEMBLE (id 1) reads in CENTS, and the number on the panel is now the number
+-- the engine is given: Sound.detune takes cents, so the slider IS the control.
+-- It used to be a per-mille slice of the frequency that the synth turned into
+-- whole Hz, which meant the same setting was a different interval on every key
+-- (and rounded to nothing at the bottom of the keyboard). 50 cents at the top is
+-- half a semitone: past a chorus and into the deliberately-wrong territory UFO
+-- wants.
 sliderRange : Int -> { lo : Int, hi : Int }
 sliderRange id =
     if id == 0 then { lo = 5, hi = 95 }
-    else if id == 1 then { lo = 0, hi = 30 }
+    else if id == 1 then { lo = 0, hi = 50 }
     else if id == 2 then { lo = 80, hi = 1600 }
     else if id == 3 then { lo = 0 - 90, hi = 90 }
     else if id == 4 then { lo = 0, hi = 80 }

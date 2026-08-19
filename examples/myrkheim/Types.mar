@@ -61,6 +61,11 @@ type Cue
     | CClick
     | CFanfare
     | CTriumph
+      -- a cue plus where it happened, as a stereo position (-100 left ..
+      -- +100 right, and the sim never asks for more than a modest fraction
+      -- of that). Everything the world does is wrapped in one of these;
+      -- everything VIGDIS does is not, because it happens at the ears.
+    | CPan Int Cue
 
 
 type alias Actor =

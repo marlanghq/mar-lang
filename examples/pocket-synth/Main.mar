@@ -8,12 +8,24 @@ module Main exposing (main)
 -- control maps 1:1 onto a Sound combinator, so the panel is also a live
 -- diagram of the audio engine:
 --
---   WAVE            -> Sound.tone's wave (Square / Triangle / Sawtooth / Noise)
+--   WAVE            -> Sound.tone's wave (Square / Triangle / Sawtooth / Noise).
+--                      Sound.Sine is the fifth and has no button: it is not a
+--                      timbre you reach for here, it is what the SUB layer is
+--                      MADE of, and giving it a button would offer a keyboard
+--                      voice with no harmonics to shape (see subLayer)
 --   PULSE           -> Sound.duty (square pulse width: the PWM knob)
 --   OCTAVE          -> transposes the keyboard
---   ENSEMBLE        -> two extra voices detuned ± (Juno-style chorus)
---   SUB             -> a sub-octave triangle under every note
---   LENGTH          -> note duration (the envelope, chip style)
+--   ENSEMBLE        -> Sound.detune: two extra voices a fixed number of CENTS
+--                      either side. On a held or plucked patch Sound.pan then
+--                      spreads that pair left and right, because an ensemble is
+--                      players in a room; on a STRUCK one it does not, because
+--                      there it is the two or three strings of one piano note,
+--                      and those are in one place (see buildNote for both)
+--   SUB             -> a sub-octave SINE under every note: the fundamental with
+--                      nothing on top, which is what body is made of
+--   LENGTH          -> note duration, and with it the span the envelope falls
+--                      across (Sound.decay for the fall, Sound.release for the
+--                      tail): how long a struck or plucked note RINGS
 --   BEND            -> Sound.sweep (pitch glides up or down across the note)
 --   LFO DEPTH/RATE  -> Sound.vibrato (cents, Hz): off for struck notes
 --   ARP             -> a real arpeggiator: Sound.sequence of chord tones, looped
@@ -31,15 +43,26 @@ module Main exposing (main)
 --
 -- "Struck" presets (GRAND, E-PIANO, BELL) build the note from a brief hammer tick
 -- over layers of staggered length, each one DECAYING from the moment it is
--- struck (Sound.release, one call per layer, matched to that layer's own span).
--- The shortest layer is an octave up, so brightness falls before body does, and
--- the note thins out as it fades the way a real string does.
+-- struck (Sound.decay then Sound.release, one pair per layer, matched to that
+-- layer's own span). The shortest layer is an octave up, so brightness falls
+-- before body does, and the note thins out as it fades the way a real string
+-- does. The decay stage is why the fall has two rates rather than one: a hammer
+-- dumps most of its energy immediately and what is left rings on slowly, so the
+-- note has a knock AND a tail. PLUCK patches fall too, across the whole note.
+--
+-- HELD patches (organ, strings, pads) do not, and cannot: they reach the sound
+-- through Sound.voice, which holds one source for as long as the key is down and
+-- so has no span to fall along. That is the one shape of this instrument the
+-- envelope cannot draw, and it is stated in oscVoice rather than left to be
+-- discovered.
 --
 -- A note sounds for as long as its key is HELD, not a fixed length: each held
 -- key contributes a Sound subscription, recomputed from the Model, so pressing
 -- starts it and releasing stops it. SUSTAIN patches (organ, strings, pads) hold
--- via Sound.loop while down; the rest ring out once like a piano (Sound.once,
--- which the runtime fades cleanly when you lift the key early). Polyphony is the
+-- via Sound.voice while down, and the ones that re-attack as they hold (an
+-- arpeggio, a mandolin ROLL) via Sound.loop; the rest ring out once like a piano
+-- (Sound.once, which the runtime fades cleanly when you lift the key early).
+-- heldSound is where those three lifetimes are chosen. Polyphony is the
 -- natural kind: the held voices are read straight off two input MIRRORS:
 -- Canvas.watchPointers (every finger on the canvas: one note per finger, and a
 -- finger sliding across keys bends its own note: glissando) and Keyboard.watch

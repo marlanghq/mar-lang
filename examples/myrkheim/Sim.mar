@@ -24,6 +24,32 @@ emit model =
         )
 
 
+-- WHERE a noise came from, as a stereo position for Sound.pan.
+--
+-- The camera's right-hand vector is the raycaster's view plane: turn the
+-- facing a quarter turn and you have it. So this lateral is the SAME number
+-- that decides which column a sprite is drawn in (Draw.project reaches it
+-- through the inverse of the same matrix), and a varg you can see on the
+-- left of the screen barks on the left. Nothing has to be kept in sync for
+-- that to hold: it falls out of using the camera the renderer uses.
+--
+-- Divided by the distance, so this is the SINE of the bearing and not the
+-- offset: something far away and a little to the left is a little to the
+-- left, not hard left. Capped well short of the ends, because in a corridor
+-- a hard pan stops being a direction and becomes an effect. Front and back
+-- both land in the middle, which is what stereo can honestly say.
+panOf : Model -> Int -> Int -> Int
+panOf m x y =
+    let
+        d = dirAt m.heading
+        relX = x - m.px
+        relY = y - m.py
+        lat = d.x * relY - d.y * relX
+        far = max k1 (octDist relX relY)
+    in
+    iclamp (0 - 45) 45 (((45 * lat) // k1) // far)
+
+
 update : Msg -> Model -> (Model, Cmd Msg)
 update msg model =
     case msg of
@@ -906,7 +932,7 @@ isAwake st =
 hurtActorN : Model -> Actor -> Int -> Model
 hurtActorN m t dmg =
     if t.kind == 4 && t.st == AChase then
-        { m | sfx = CClank :: m.sfx, combatT = 200 }
+        { m | sfx = CPan (panOf m t.x t.y) CClank :: m.sfx, combatT = 200 }
     else
         hurtActorRaw m t dmg
 
@@ -950,8 +976,13 @@ hurtActorRaw m t dmg =
         , items = List.concat [ m.items, drops ]
         , kills = m.kills + (if killed then 1 else 0)
         , combatT = 200
-        -- a varg (wolf, kind 3) yelps when it dies; the draugr-kin grunt
-        , sfx = (if killed then (if t.kind == 3 then CYelp else CDieD) else CHitF) :: m.sfx
+        -- a varg (wolf, kind 3) yelps when it dies; the draugr-kin grunt.
+        -- Both come from the body, not from you: a spear thrown into the
+        -- dark answers from the side it landed on.
+        , sfx =
+            CPan (panOf m t.x t.y)
+                (if killed then (if t.kind == 3 then CYelp else CDieD) else CHitF)
+                :: m.sfx
     }
 
 
@@ -1050,7 +1081,7 @@ stepActor m acc a0 =
                 if a.kind == 2 then
                     { acc2
                         | newItems = { kind = 0, x = a.x, y = a.y, taken = False } :: acc2.newItems
-                        , cues = CBell :: acc2.cues
+                        , cues = CPan (panOf m a.x a.y) CBell :: acc2.cues
                     }
                 else
                     acc2
@@ -1076,7 +1107,7 @@ stepActor m acc a0 =
             if sees || packCall then
                 { acc1
                     | acs = { a | st = AChase } :: acc1.acs
-                    , cues = (if a.kind == 3 then CHowl else CGroan) :: acc1.cues
+                    , cues = CPan (panOf m a.x a.y) (if a.kind == 3 then CHowl else CGroan) :: acc1.cues
                     , alert = True
                 }
             else
@@ -1133,7 +1164,7 @@ windupResolve m acc a d relX relY =
         { acc
             | acs = { a | st = ARec (if a.kind == 5 then 38 else if a.kind == 6 then 30 else 34) } :: acc.acs
             , bolts = List.concat [ thrown, acc.bolts ]
-            , cues = CBolt :: acc.cues
+            , cues = CPan (panOf m a.x a.y) CBolt :: acc.cues
         }
     else
         let
@@ -1183,14 +1214,14 @@ draugrChase m acc a d relX relY =
     in
     -- the Jarl calls the dead at 16 and 8 HP, once each
     if isJarl && a.hp <= 16 && acc.s1 == False then
-        { acc | acs = { a | st = ASum 60 } :: acc.acs, s1 = True, cues = CJarl :: acc.cues }
+        { acc | acs = { a | st = ASum 60 } :: acc.acs, s1 = True, cues = CPan (panOf m a.x a.y) CJarl :: acc.cues }
     else if isJarl && a.hp <= 8 && acc.s2 == False then
-        { acc | acs = { a | st = ASum 60 } :: acc.acs, s2 = True, cues = CJarl :: acc.cues }
+        { acc | acs = { a | st = ASum 60 } :: acc.acs, s2 = True, cues = CPan (panOf m a.x a.y) CJarl :: acc.cues }
     else if d < (if isJarl then 900 else 760) then
         -- the plain draugr swings briskly (34 ticks ~0.57s): readable, but
         -- you dodge by moving, not by strolling backward. Skjald keeps her
         -- long telegraph (the shield window IS her design); the Jarl is fair
-        { acc | acs = { a | st = AWind (if a.kind == 4 then 46 else if a.kind == 0 then 34 else 42) } :: acc.acs, cues = CGroan :: acc.cues }
+        { acc | acs = { a | st = AWind (if a.kind == 4 then 46 else if a.kind == 0 then 34 else 42) } :: acc.acs, cues = CPan (panOf m a.x a.y) CGroan :: acc.cues }
     else if d > 15360 then
         { acc | acs = { a | st = ASleep } :: acc.acs }
     else
@@ -1228,7 +1259,7 @@ wraithChase m acc a d relX relY =
                 && losClear m.grid a.x a.y m.px m.py
     in
     if wantsFire then
-        { acc | acs = { a3 | st = AWind 42 } :: acc.acs, cues = CWhine :: acc.cues, seed = s2 }
+        { acc | acs = { a3 | st = AWind 42 } :: acc.acs, cues = CPan (panOf m a3.x a3.y) CWhine :: acc.cues, seed = s2 }
     else
         { acc | acs = a3 :: acc.acs, seed = s2 }
 
@@ -1256,7 +1287,7 @@ archerChase m acc a d relX relY =
                 && losClear m.grid a.x a.y m.px m.py
     in
     if wantsFire then
-        { acc | acs = { a2 | st = AWind 30 } :: acc.acs, cues = CWhine :: acc.cues }
+        { acc | acs = { a2 | st = AWind 30 } :: acc.acs, cues = CPan (panOf m a2.x a2.y) CWhine :: acc.cues }
     else
         { acc | acs = a2 :: acc.acs }
 
@@ -1266,7 +1297,7 @@ archerChase m acc a d relX relY =
 vargChase : Model -> ActAcc -> Actor -> Int -> Int -> Int -> ActAcc
 vargChase m acc a d relX relY =
     if d < 860 then
-        { acc | acs = { a | st = AWind 22 } :: acc.acs, cues = CSnarl :: acc.cues }
+        { acc | acs = { a | st = AWind 22 } :: acc.acs, cues = CPan (panOf m a.x a.y) CSnarl :: acc.cues }
     else if d > 17408 then
         { acc | acs = { a | st = ASleep } :: acc.acs }
     else
@@ -1284,7 +1315,7 @@ vargChase m acc a d relX relY =
         in
         { acc
             | acs = a2 :: acc.acs
-            , cues = if barks then CBark :: acc.cues else acc.cues
+            , cues = if barks then CPan (panOf m a2.x a2.y) CBark :: acc.cues else acc.cues
         }
 
 
@@ -1321,7 +1352,7 @@ volvaChase m acc a0 d relX relY =
                     && losClear m.grid a.x a.y m.px m.py
         in
         if wantsFire then
-            { acc | acs = { a3 | st = AWind 36 } :: acc.acs, cues = CWhine :: acc.cues }
+            { acc | acs = { a3 | st = AWind 36 } :: acc.acs, cues = CPan (panOf m a3.x a3.y) CWhine :: acc.cues }
         else
             { acc | acs = a3 :: acc.acs }
 
@@ -1351,7 +1382,7 @@ blinkAway m acc a =
         Just c ->
             { acc
                 | acs = { a | x = c.cx * k1 + 512, y = c.cy * k1 + 512, bt = 170, st = AWind 30 } :: acc.acs
-                , cues = CBlink :: acc.cues
+                , cues = CPan (panOf m (c.cx * k1 + 512) (c.cy * k1 + 512)) CBlink :: acc.cues
                 , seed = s2
             }
 
@@ -1449,9 +1480,9 @@ stepPBolts m =
 
                         Nothing ->
                             if cellCode == 6 then
-                                { acc | cracks = { cx = nx // k1, cy = ny // k1 } :: acc.cracks, cues = CClank :: acc.cues }
+                                { acc | cracks = { cx = nx // k1, cy = ny // k1 } :: acc.cracks, cues = CPan (panOf m nx ny) CClank :: acc.cues }
                             else if cellCode > 0 || b.t <= 1 then
-                                { acc | cues = CClank :: acc.cues }
+                                { acc | cues = CPan (panOf m nx ny) CClank :: acc.cues }
                             else
                                 { acc | bs = { b | x = nx, y = ny, t = b.t - 1 } :: acc.bs }
         r = List.foldl step { bs = [], hits = [], boomAt = [], cues = [], cracks = [] } m.pbolts
@@ -1467,7 +1498,7 @@ stepPBolts m =
 explode : Boom -> Model -> Model
 explode b m =
     let
-        m1 = { m | booms = b :: m.booms, sfx = CBoom :: m.sfx, combatT = 200 }
+        m1 = { m | booms = b :: m.booms, sfx = CPan (panOf m b.x b.y) CBoom :: m.sfx, combatT = 200 }
         near =
             List.filter
                 (\a -> isDead a.st == False && octDist (a.x - b.x) (a.y - b.y) < 2048)

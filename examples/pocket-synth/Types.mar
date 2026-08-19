@@ -24,8 +24,9 @@ type alias Patch =
     { wave : Int        -- 0 square, 1 triangle, 2 sawtooth, 3 noise
     , duty : Int        -- square pulse width %, 5..95
     , oct : Int         -- keyboard transpose, -2..2
-    , det : Int         -- ensemble detune, 0..30 (per-mille of pitch)
-    , sub : Bool        -- sub-octave triangle layer
+    , det : Int         -- ensemble detune, 0..50 CENTS (Sound.detune's own unit,
+                        --   so one setting is the same interval on every key)
+    , sub : Bool        -- sub-octave SINE layer (see subLayer: weight, not tone)
     , len : Int         -- note length ms, 80..1600 (arp on: also the step speed)
     , bend : Int        -- pitch bend %, -90..90 (0 = none)
     , vibD : Int        -- LFO depth in cents, 0..80

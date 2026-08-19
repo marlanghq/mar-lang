@@ -50,7 +50,7 @@ type Cue
     = CuePlay
     | CueSpell
     | CueAtk
-    | CueHit
+    | CueHit Int                   -- impact, and where on the table it landed
     | CueHurt
     | CueHeal
     | CueDraw
@@ -408,6 +408,7 @@ deriveAnims souA before after mv =
                 tIx =
                     if tStr == "h" then -1 else Maybe.withDefault 0 (String.toInt tStr)
                 moverBoard = if mv.byA then before.a.board else before.b.board
+                defBoard = if mv.byA then before.b.board else before.a.board
                 atkCid = Maybe.withDefault 0 (Maybe.map (\sl -> sl.cid) (Shared.nth s moverBoard))
                 hits =
                     if tIx < 0 then
@@ -423,7 +424,7 @@ deriveAnims souA before after mv =
                     , hits
                     , lifeNums
                     ]
-            , cues = [ CueAtk, CueHit ]
+            , cues = [ CueAtk, CueHit (blowPan defBoard tIx) ]
             }
 
         _ ->
@@ -802,75 +803,136 @@ send model d data =
 -- ====================================================================
 
 
+-- Where a blow landed, as a stereo position. Both rows are drawn ACROSS
+-- a 640-wide table centred on 320, so the game already knows where a
+-- hit happened and the ear can know it too: the impact arrives from the
+-- card it broke. Deliberately gentle (a full board spans about 40 of the
+-- 200 available): this places the blow, it does not throw it across the
+-- room. Hero portraits sit at the same x on both sides, so a face hit is
+-- always the same nudge left.
+blowPan : List Shared.Slot -> Int -> Int
+blowPan defBoard tIx =
+    let
+        hero = heroPos False
+        cx =
+            if tIx < 0 then
+                hero.x + slotW // 2
+
+            else
+                slotX (Shared.max 1 (List.length defBoard)) tIx + slotW // 2
+    in
+    (cx - 320) * 40 // 320
+
+
+-- The table's voice. Everything here is struck, plucked or shouted, so
+-- everything here DECAYS: without that stage a note holds flat for its
+-- whole length and comes back down, which is the one thing no real card,
+-- claw or drum does. The palette stays NES on purpose (pulse, triangle,
+-- noise) -- the point is a better chiptune, not a different one.
 cueSound : Cue -> Sound
 cueSound c =
     case c of
         CuePlay ->
+            -- a card put down: the thud of the board and the slap of the
+            -- cardboard, which die at very different speeds.
             Sound.chord
-                [ Sound.volume 22 (Sound.sweep 40 (Sound.tone Sound.Triangle 190 90))
-                , Sound.volume 12 (Sound.tone Sound.Noise 0 50)
+                [ Sound.decay 80 0 (Sound.volume 22 (Sound.sweep 40 (Sound.tone Sound.Triangle 190 90)))
+                , Sound.decay 22 0 (Sound.volume 12 (Sound.tone Sound.Noise 0 50))
                 ]
 
         CueSpell ->
-            Sound.sequence
-                [ Sound.volume 14 (Sound.duty 25 (Sound.tone Sound.Square 620 60))
-                , Sound.volume 16 (Sound.duty 25 (Sound.tone Sound.Square 830 60))
-                , Sound.volume 18 (Sound.duty 25 (Sound.tone Sound.Square 1040 90))
-                ]
+            -- three pulses up. Plucked, so they read as three sparks and
+            -- not as one 210ms tone that changes pitch twice.
+            Sound.decay 55 12
+                (Sound.sequence
+                    [ Sound.volume 14 (Sound.duty 25 (Sound.tone Sound.Square 620 60))
+                    , Sound.volume 16 (Sound.duty 25 (Sound.tone Sound.Square 830 60))
+                    , Sound.volume 18 (Sound.duty 25 (Sound.tone Sound.Square 1040 90))
+                    ])
 
         CueAtk ->
-            Sound.volume 18 (Sound.sweep 320 (Sound.tone Sound.Sawtooth 240 110))
+            -- the lunge, which fires together with the impact below. Rising
+            -- pitch and falling loudness is a thing going past you; flat
+            -- loudness for 110ms was a buzzer.
+            Sound.decay 90 20 (Sound.volume 18 (Sound.sweep 320 (Sound.tone Sound.Sawtooth 240 110)))
 
-        CueHit ->
-            Sound.chord
-                [ Sound.volume 26 (Sound.tone Sound.Noise 0 90)
-                , Sound.volume 18 (Sound.sweep 50 (Sound.tone Sound.Triangle 130 120))
-                ]
+        CueHit p ->
+            -- the loudest event in the game, and the only one the table can
+            -- place: it comes from the card that took it. The crack cuts
+            -- fast, the body keeps falling under it. The sine is that body:
+            -- a triangle at 130Hz has shape and no weight, so on a laptop
+            -- speaker the blow used to be all crack and no thump.
+            Sound.pan p
+                (Sound.chord
+                    [ Sound.decay 40 0 (Sound.volume 26 (Sound.tone Sound.Noise 0 90))
+                    , Sound.decay 105 0 (Sound.volume 18 (Sound.sweep 50 (Sound.tone Sound.Triangle 130 120)))
+                    , Sound.decay 120 0 (Sound.volume 9 (Sound.sweep 46 (Sound.tone Sound.Sine 165 130)))
+                    ])
 
         CueHurt ->
             Sound.volume 24 (Sound.sweep 55 (Sound.tone Sound.Triangle 100 160))
 
         CueHeal ->
-            Sound.sequence
-                [ Sound.volume 14 (Sound.tone Sound.Triangle 520 70)
-                , Sound.volume 16 (Sound.tone Sound.Triangle 780 120)
-                ]
+            -- the one thing here that is not struck: it swells and settles
+            -- rather than dying, so it holds at better than half.
+            Sound.decay 95 55
+                (Sound.sequence
+                    [ Sound.volume 14 (Sound.tone Sound.Triangle 520 70)
+                    , Sound.volume 16 (Sound.tone Sound.Triangle 780 120)
+                    ])
 
         CueDraw ->
-            Sound.volume 10 (Sound.sweep 200 (Sound.tone Sound.Triangle 300 50))
+            -- a card leaving the deck: a flick of paper, not a beep.
+            Sound.decay 32 0 (Sound.volume 10 (Sound.sweep 200 (Sound.tone Sound.Triangle 300 50)))
 
         CueTurn ->
-            Sound.sequence
-                [ Sound.volume 16 (Sound.tone Sound.Triangle 440 80)
-                , Sound.volume 20 (Sound.tone Sound.Triangle 660 140)
-                ]
+            -- your turn. Two notes that ring under the banner instead of
+            -- standing at full height and stopping.
+            Sound.decay 120 45
+                (Sound.sequence
+                    [ Sound.volume 16 (Sound.tone Sound.Triangle 440 80)
+                    , Sound.volume 20 (Sound.tone Sound.Triangle 660 140)
+                    ])
 
         CueWin ->
+            -- the one moment the game gets to be music. The arpeggio is
+            -- plucked; the last chord blooms and holds, and its top note is
+            -- TWO voices a few cents apart pushed to opposite sides, which
+            -- is what a chorus physically is. The fifth stays in the middle
+            -- so the chord has a centre to lean on.
             Sound.sequence
-                [ Sound.volume 18 (Sound.duty 25 (Sound.tone Sound.Square 523 110))
-                , Sound.volume 20 (Sound.duty 25 (Sound.tone Sound.Square 659 110))
-                , Sound.volume 22 (Sound.duty 25 (Sound.tone Sound.Square 784 110))
-                , Sound.chord
-                    [ Sound.volume 24 (Sound.tone Sound.Triangle 1047 420)
-                    , Sound.volume 14 (Sound.tone Sound.Triangle 784 420)
-                    ]
+                [ Sound.decay 90 15 (Sound.volume 18 (Sound.duty 25 (Sound.tone Sound.Square 523 110)))
+                , Sound.decay 90 15 (Sound.volume 20 (Sound.duty 25 (Sound.tone Sound.Square 659 110)))
+                , Sound.decay 90 15 (Sound.volume 22 (Sound.duty 25 (Sound.tone Sound.Square 784 110)))
+                , Sound.decay 340 45
+                    (Sound.chord
+                        [ Sound.pan (0 - 30) (Sound.volume 22 (Sound.tone Sound.Triangle 1047 420))
+                        , Sound.volume 14 (Sound.tone Sound.Triangle 784 420)
+                        , Sound.pan 30 (Sound.detune 8 (Sound.volume 16 (Sound.tone Sound.Triangle 1047 420)))
+                        ])
                 ]
 
         CueLose ->
-            Sound.sequence
-                [ Sound.volume 18 (Sound.tone Sound.Triangle 330 160)
-                , Sound.volume 16 (Sound.tone Sound.Triangle 262 160)
-                , Sound.volume 14 (Sound.tone Sound.Triangle 196 300)
-                ]
+            -- three notes down, each sagging as it goes. Dry and centred on
+            -- purpose: the win gets the wide chord, the loss does not.
+            Sound.decay 140 28
+                (Sound.sequence
+                    [ Sound.volume 18 (Sound.tone Sound.Triangle 330 160)
+                    , Sound.volume 16 (Sound.tone Sound.Triangle 262 160)
+                    , Sound.volume 14 (Sound.tone Sound.Triangle 196 300)
+                    ])
 
         CueClick ->
             Sound.volume 10 (Sound.tone Sound.Square 240 25)
 
         CueErr ->
-            Sound.sequence
-                [ Sound.volume 14 (Sound.duty 25 (Sound.tone Sound.Square 180 60))
-                , Sound.volume 12 (Sound.duty 25 (Sound.tone Sound.Square 140 90))
-                ]
+            -- a refusal. Kept buzzing (it holds at 55%), but with an accent
+            -- at the front so it lands like a door that will not open.
+            Sound.decay 45 55
+                (Sound.sequence
+                    [ Sound.volume 14 (Sound.duty 25 (Sound.tone Sound.Square 180 60))
+                    , Sound.volume 12 (Sound.duty 25 (Sound.tone Sound.Square 140 90))
+                    ])
 
 
 -- ====================================================================

@@ -97,16 +97,45 @@ oscVoice p vol hz =
 
         wobbled =
             if p.vibD > 0 then Sound.vibrato p.vibD p.vibR bent else bent
+
+        shaped = shapeCuts p (Sound.volume vol wobbled)
     in
-    shapeCuts p (Sound.volume vol wobbled)
+    -- PLUCK: a note that rings ONCE has to lose energy, and until Sound.decay
+    -- existed this branch had no way to say so. It was a rectangle: full level
+    -- from the first millisecond to the last and then a 5ms cut, which is the
+    -- single loudest "this is synthetic" cue the instrument had. The PLUCK preset
+    -- was 240ms of that, and so was every patch you plucked with the VOICE button.
+    -- One exponential across the note's own span is what a plucked string does,
+    -- and it makes LENGTH mean what the label says: how long it rings.
+    --
+    -- Only when the note has its own span. A HELD patch reaches the sound through
+    -- Sound.voice / Sound.glide, which hold ONE node for as long as the key is
+    -- down: that path has no per-note clock to fall along, so it honours a decay's
+    -- LEVEL and not its time. Asking for a decay there would not fade anything, it
+    -- would just land the organ quieter. Same rule the rest of this file follows:
+    -- what the note does is a function of the patch parameters, and `sustain` is
+    -- the parameter that decides whether there is a span to decay across.
+    if p.sustain then
+        shaped
+
+    else
+        Sound.decay p.len 0 shaped
 
 
--- a quiet sub-octave triangle, for body under the fundamental
+-- a quiet sub-octave SINE, for body under the fundamental.
+--
+-- It was a triangle, because a triangle was the closest thing to a sine the
+-- engine had. That is not a small difference down here: a triangle's odd
+-- partials at 1/9 and 1/25 land right where the NOTE's own fundamental is, so
+-- the layer was adding a second, reedier tone next to the note instead of weight
+-- underneath it. A sine has nothing but the fundamental, which is the whole job
+-- of this layer -- and on a laptop speaker it is the difference between a bass
+-- with a body and a bass with only a shape.
 subLayer : Patch -> Int -> Sound
 subLayer p hz =
     shapeCuts p
         (Sound.volume (p.vol * 55 // 100)
-            (Sound.tone Sound.Triangle (max 33 (hz // 2)) p.len))
+            (Sound.tone Sound.Sine (max 33 (hz // 2)) p.len))
 
 
 -- a hammer-struck note: a short bright transient (the strike) over a body of
@@ -117,31 +146,53 @@ subLayer p hz =
 -- The lengths were staggered but each layer held FLAT at full level and then
 -- stopped, so the note was a rectangle that dropped in three audible steps and
 -- cut off. A rectangle is an organ, not a string, no matter how many of them you
--- stack. The decay is one call per layer: `Sound.release ms` on a note that is
--- `ms` long puts the whole note inside its own release ramp, and the runtime
--- ramps exponentially, which is the curve a struck string actually follows.
+-- stack. Putting the whole note inside its own release ramp (`Sound.release ms`
+-- on a note `ms` long) fixed that: the runtime ramps exponentially, which is the
+-- curve a struck string follows.
+--
+-- What one ramp cannot say is that a struck thing falls at TWO rates. An
+-- exponential is a constant rate in dB, so the note leaves at exactly the speed
+-- it arrives -- and a hammer does not do that. It dumps its energy in the first
+-- fraction of a second, the knock you hear as the felt leaves the string, and
+-- what is left falls more slowly from there. That is the stage `Sound.decay`
+-- adds: fall to 18% of this layer's own level inside the first 12% of its span,
+-- then let the release carry it down across the other 88%.
+--
+-- Worth being exact about what that buys, because the note is the same length
+-- either way and therefore has the same total distance to fall. It buys the two
+-- rates, and only that. A tenth of the way in, the single ramp still had the
+-- note at about 40% of its peak; it is at 24% now, having spent 15 of its 80 dB
+-- in the first 12% of the span and left the other 65 to be spread across the
+-- remaining 88%. So the strike separates from the body -- and everything after
+-- the knock sits a few dB quieter than it did, which is the cost, and which is
+-- also what a note that has already spent its energy is supposed to sound like.
+--
+-- The two numbers are written as percentages of `ms` on purpose: every layer
+-- here has a different span, and an envelope stage that outlives its own note
+-- (or ends before it) is the one way to get this wrong. Neither call changes the
+-- note's DURATION, which is what ROLL mode (struck + held, which LOOPS this) is
+-- owed: a loop repeats on its longest voice, so the re-strike lands exactly
+-- where it landed before the envelope existed.
 struckBody : Patch -> Int -> Int -> Int -> Sound
 struckBody p vol hz ms =
     let
         base = shapeDuty p (Sound.tone (waveOf p.wave) hz ms)
     in
     shapeCuts p
-      (Sound.release ms
-        (Sound.volume vol
+      (Sound.release (ms * 88 // 100)
+        (Sound.decay (ms * 12 // 100) 18
+          (Sound.volume vol
             (if p.bend == 0 then
                 base
 
              else
                 Sound.sweep (max 20 (hz * (100 + p.bend) // 100)) base
             )
-        ))
+          )))
 
 
 struckLayers : Patch -> Int -> List Sound
 struckLayers p hz =
-    let
-        detHz = max 1 (hz * p.det // 1000)
-    in
     List.concat
         [ -- the strike: one short bright transient. Never doubled and never
           -- bent: a hammer hits once, and detuning the attack would smear the
@@ -167,8 +218,13 @@ struckLayers p hz =
             -- hair apart on purpose, and the beating between them is why a piano
             -- sounds big instead of sounding like an organ. Push it and you get
             -- honky-tonk. Only the body doubles: the strings are the body.
-            [ struckBody p (p.vol * 45 // 100) (hz + detHz) p.len
-            , struckBody p (p.vol * 45 // 100) (hz - detHz) p.len
+            --
+            -- The strings stay in one PLACE, though, unlike the ensemble in the
+            -- plain branch below: a string course is three wires a centimetre
+            -- apart, not three players sitting apart, so this pair is not spread
+            -- in stereo. Same combinator, different physical claim.
+            [ Sound.detune p.det (struckBody p (p.vol * 45 // 100) hz p.len)
+            , Sound.detune (0 - p.det) (struckBody p (p.vol * 45 // 100) hz p.len)
             ]
 
           else
@@ -183,6 +239,14 @@ struckLayers p hz =
 -- Split out only so its length is written once: the layer's release has to match
 -- its own span, and a decay that outlives its note (or ends before it) is the
 -- one way to get this wrong.
+--
+-- ONE rate here, where the body just got two, and that is not an oversight: this
+-- layer IS the brightness leaving, and a fall you are meant to hear happening
+-- has to be spread across the whole span. Give it the body's sharp head and its
+-- top end is gone in the first 50ms -- a second click stacked on the 30ms strike
+-- -- and the note stops thinning gradually, which is the only thing this layer
+-- was added to do. The body can afford a knock because something else (this) is
+-- still carrying the tone; the brightness has nothing behind it.
 octaveLayer : Patch -> Int -> Sound
 octaveLayer p hz =
     let
@@ -207,12 +271,21 @@ arpSteps mode =
     else [ 1000 ]
 
 
--- one arpeggiator step: a short patch-shaped note at `ratio` of the base pitch
+-- one arpeggiator step: a short patch-shaped note at `ratio` of the base pitch.
+--
+-- Each step is PLAYED, not merely switched on: it falls to 35% of its level over
+-- the first half of the step and holds there. Every step was a flat block before,
+-- and a run of flat blocks at one level is a siren that changes pitch -- the note
+-- boundaries were audible only because the pitch moved. With a fall in each step
+-- the run has a pulse, so it reads as an instrument being played fast. It stops
+-- at 35% rather than at silence because these steps are the accompaniment: fall
+-- to nothing and the run turns into a stutter with gaps in it.
 arpStepSound : Patch -> Int -> Int -> Int -> Sound
 arpStepSound p stepLen hz ratio =
     shapeCuts p
-        (Sound.volume p.vol
-            (shapeDuty p (Sound.tone (waveOf p.wave) (max 20 (hz * ratio // 1000)) stepLen)))
+        (Sound.decay (stepLen * 50 // 100) 35
+            (Sound.volume p.vol
+                (shapeDuty p (Sound.tone (waveOf p.wave) (max 20 (hz * ratio // 1000)) stepLen))))
 
 
 buildNote : Patch -> Int -> Sound
@@ -236,12 +309,24 @@ buildNote p hz0 =
             -- this through Sound.loop, and every voice of a looped sound has to
             -- total exactly the same ms: otherwise the channels slip a little
             -- further apart on each pass until they are playing different music.
+            --
+            -- And it obeys the same rule the sub obeys in the branches below.
+            -- HELD, the run loops and the pedal re-articulates with it on every
+            -- pass, which is exactly what a pedal does. Played ONCE it has to
+            -- leave with the run rather than sitting flat under the last step and
+            -- stopping: the steps all fall now, and a pedal that does not is the
+            -- one flat thing left in the sound. Sound.release changes no voice's
+            -- span, so both voices of this chord still total the same ms.
+            let
+                runMs = stepLen * List.length steps
+
+                pedal =
+                    Sound.volume (p.vol * 55 // 100)
+                        (Sound.tone Sound.Sine (max 33 (hz // 2)) runMs)
+            in
             Sound.chord
                 [ run
-                , Sound.volume (p.vol * 55 // 100)
-                    (Sound.tone Sound.Triangle
-                        (max 33 (hz // 2))
-                        (stepLen * List.length steps))
+                , if p.sustain then pedal else Sound.release runMs pedal
                 ]
 
         else
@@ -251,27 +336,81 @@ buildNote p hz0 =
         Sound.chord
             (List.concat
                 [ struckLayers p hz
-                  -- the sub decays with the note here, and only here: under a
-                  -- SUSTAIN patch the same layer has to hold flat for as long as
-                  -- the key is down, which is why the decay lives at this call
-                  -- and not inside subLayer.
+                  -- the sub falls with the note it is under, which is a
+                  -- different test in each of the two branches that use it: a
+                  -- hammered note falls even in ROLL mode, where it re-strikes
+                  -- while you hold it, so this call is unconditional, while the
+                  -- plain branch below falls only when the note is not held. That
+                  -- is why the envelope lives at the call sites and not inside
+                  -- subLayer: subLayer is the LAYER, this is what happens to it.
+                  --
+                  -- One even fall, deliberately, where the BODY above it now
+                  -- knocks first and rings after: the bottom of a struck note is
+                  -- the part that does NOT lose energy quickly. A thick low
+                  -- string carries far more of it and sheds it slowly, so giving
+                  -- the sub the same sharp head as the body would take away the
+                  -- weight this layer exists to provide.
                 , if p.sub then [ Sound.release p.len (subLayer p hz) ] else []
                 ])
 
     else
-        let
-            detHz = max 1 (hz * p.det // 1000)
-        in
         Sound.chord
             (List.concat
                 [ [ oscVoice p p.vol hz ]
                 , if p.det > 0 then
-                    [ oscVoice p (p.vol * 45 // 100) (hz + detHz)
-                    , oscVoice p (p.vol * 45 // 100) (hz - detHz)
+                    -- ENSEMBLE, and here it really is several PLAYERS: strings, a
+                    -- lead doubled by a second synth, a choir. Two things follow
+                    -- from that and they are the whole of this branch.
+                    --
+                    -- They are apart in TUNING by a fixed interval, which is what
+                    -- Sound.detune says in cents. The old spelling asked for two
+                    -- extra oscillators at hz +/- (a per-mille slice of hz) in
+                    -- whole Hz, and integer Hz has no resolution for a few cents
+                    -- down here: at ENSEMBLE 6 that slice truncated to 0 on the
+                    -- bottom key and had to be floored at 1 Hz, so one setting
+                    -- was 13 cents on the lowest key, 5 in the middle of the
+                    -- keyboard and 7 at the top, jumping about by whole cents
+                    -- every time the truncation crossed another Hz (9 at G4,
+                    -- between the last two, so it did not even move in one
+                    -- direction). An ensemble is a constant RATIO, not a constant
+                    -- number of Hz -- that is why it sounds the same in every
+                    -- register when real players do it -- and cents ARE that
+                    -- ratio, so the setting finally means one thing everywhere.
+                    --
+                    -- And they are apart in SPACE. Two voices this close in pitch
+                    -- mask each other completely in mono, which is why a unison
+                    -- can sound thick and yet somehow still be one thing; move
+                    -- them 35% apart and the beating opens out across the stereo
+                    -- field, which is what a section physically sounds like. The
+                    -- centre voice and the sub stay dead centre: they are the
+                    -- note, the pair is the crowd around it.
+                    [ Sound.pan (0 - 35) (Sound.detune p.det (oscVoice p (p.vol * 45 // 100) hz))
+                    , Sound.pan 35 (Sound.detune (0 - p.det) (oscVoice p (p.vol * 45 // 100) hz))
                     ]
                   else
                     []
-                , if p.sub then [ subLayer p hz ] else []
+                , if p.sub then
+                    -- The sub goes where the voice above it goes. Held, it holds:
+                    -- that is the organ pedal, and it is what this layer did
+                    -- everywhere until the oscillator learned to decay. Rung
+                    -- ONCE, it has to leave with the note, or the weight outlasts
+                    -- the thing it was supposed to be underneath and then stops
+                    -- on its own -- the one rectangle left in the patch, and the
+                    -- easiest of all of them to hear, because it is the lowest
+                    -- and it is the last thing still sounding.
+                    --
+                    -- One even fall, like the struck branch and unlike the
+                    -- oscillator, for the reason given up there: the bottom of a
+                    -- note is the part that does not knock.
+                    [ if p.sustain then
+                        subLayer p hz
+
+                      else
+                        Sound.release p.len (subLayer p hz)
+                    ]
+
+                  else
+                    []
                 ])
 
 

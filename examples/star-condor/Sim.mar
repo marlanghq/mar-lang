@@ -69,6 +69,21 @@ emit model =
         )
 
 
+-- Where a blast sits in the stereo field, from a fixed-point world x.
+--
+-- The camera never moves and the whole fight happens inside one 320px frame,
+-- so the listener IS the screen and an enemy popping against the left edge
+-- genuinely popped on the left. That is the only reason this exists: it is
+-- information about the fight, not width for its own sake. Capped at 45 out of
+-- 100 so a kill at the very edge leans rather than jumps, and so a wave coming
+-- apart across the screen spreads into separate blasts instead of one smear.
+-- Anything that happens AT the ship (guns, pickups, taking a hit, the Condor's
+-- own death) stays centred and never calls this.
+panAt : Int -> Int
+panAt x =
+    iclamp (0 - 45) 45 (((x // fp) - gameW // 2) * 45 // (gameW // 2))
+
+
 -- enter a stage intro (and its jingle)
 toIntro : Int -> Model -> Model
 toIntro s m =
@@ -308,8 +323,10 @@ stepBossFall m =
                     oy = modBy 32 (m1.st * 41) - 16
                 in
                 { m1
+                    -- each blast of the boss's fall is offset around its hull,
+                    -- and the sound follows the same offset the sparks do
                     | parts = List.concat [ burst (b.x + ox * fp) (b.y + oy * fp) (modBy 3 (m1.st // 14)), m1.parts ]
-                    , sfx = CBoomK (modBy 5 (m1.st // 14)) :: m1.sfx
+                    , sfx = CBoomK (modBy 5 (m1.st // 14)) (panAt (b.x + ox * fp)) :: m1.sfx
                 }
             else
                 m1
@@ -323,8 +340,10 @@ stepDying m =
         m2 =
             if modBy 16 m1.st == 0 && m1.st < 80 then
                 { m1
+                    -- centre, not panAt: this wreck is the player, and the
+                    -- distance between the player and the player is zero
                     | parts = List.concat [ burst (m1.px * fp) (m1.py * fp) (modBy 3 (m1.st // 16)), m1.parts ]
-                    , sfx = CBoomK (modBy 5 (m1.st // 16)) :: m1.sfx
+                    , sfx = CBoomK (modBy 5 (m1.st // 16)) 0 :: m1.sfx
                 }
             else
                 m1
@@ -744,7 +763,7 @@ collideBullets m =
         , score = m.score + gained
         , sfx =
             List.concat
-                [ List.map (\f -> CBoomK f.kind) killed
+                [ List.map (\f -> CBoomK f.kind (panAt f.x)) killed
                 , if List.any wasHit alive then [ CHitFoe ] else []
                 , if List.length bossBlocks > 0 then [ CHitFoe ] else []
                 , if List.length bossHits > 0 then [ CHit ] else []

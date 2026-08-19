@@ -55,8 +55,16 @@ drKick : Sound
 drKick =
     Sound.sequence
         [ Sound.chord
-            [ Sound.volume 62 (Sound.sweep 42 (Sound.tone Sound.Triangle 160 85))
-            , Sound.volume 18 (Sound.tone Sound.Noise 0 25)
+            -- the chip voice: a triangle dropped 160 -> 42 Hz, decaying the
+            -- way a struck skin does instead of sitting there for 85ms
+            [ Sound.decay 62 4 (Sound.volume 62 (Sound.sweep 42 (Sound.tone Sound.Triangle 160 85)))
+            -- the beater click
+            , Sound.decay 16 0 (Sound.volume 18 (Sound.tone Sound.Noise 0 25))
+            -- and a quiet sine on the same drop: the triangle is what you
+            -- HEAR, this is the part you feel. Kept well under the triangle
+            -- so the kit still reads chiptune, and shorter than 85ms so the
+            -- 250ms cell length does not move.
+            , Sound.decay 60 0 (Sound.volume 26 (Sound.sweep 44 (Sound.tone Sound.Sine 158 80)))
             ]
         , Sound.rest 165
         ]
@@ -65,45 +73,48 @@ drKick =
 drSnare : Sound
 drSnare =
     Sound.sequence
-        [ Sound.chord
-            [ Sound.volume 38 (Sound.tone Sound.Noise 0 90)
-            , Sound.volume 18 (Sound.sweep 120 (Sound.tone Sound.Triangle 200 45))
-            ]
+        [ Sound.decay 45 8
+            (Sound.chord
+                [ Sound.volume 38 (Sound.tone Sound.Noise 0 90)
+                , Sound.volume 18 (Sound.sweep 120 (Sound.tone Sound.Triangle 200 45))
+                ])
         , Sound.rest 160
         ]
 
 
 drGhost : Sound
 drGhost =
-    Sound.sequence [ Sound.volume 12 (Sound.tone Sound.Noise 0 40), Sound.rest 210 ]
+    Sound.sequence [ Sound.decay 26 5 (Sound.volume 12 (Sound.tone Sound.Noise 0 40)), Sound.rest 210 ]
 
 
 drHat : Sound
 drHat =
-    Sound.sequence [ Sound.volume 12 (Sound.tone Sound.Noise 0 28), Sound.rest 222 ]
+    Sound.sequence [ Sound.decay 20 3 (Sound.volume 12 (Sound.tone Sound.Noise 0 28)), Sound.rest 222 ]
 
 
 drHat2 : Sound
 drHat2 =
     Sound.sequence
-        [ Sound.volume 12 (Sound.tone Sound.Noise 0 28), Sound.rest 97
-        , Sound.volume 9 (Sound.tone Sound.Noise 0 24), Sound.rest 101
+        [ Sound.decay 20 3 (Sound.volume 12 (Sound.tone Sound.Noise 0 28)), Sound.rest 97
+        , Sound.decay 18 3 (Sound.volume 9 (Sound.tone Sound.Noise 0 24)), Sound.rest 101
         ]
 
 
+-- the open hat is the one cymbal with room to ring, so it gets the long fall
 drOpen : Sound
 drOpen =
-    Sound.sequence [ Sound.volume 14 (Sound.tone Sound.Noise 0 120), Sound.rest 130 ]
+    Sound.sequence [ Sound.decay 105 2 (Sound.volume 14 (Sound.tone Sound.Noise 0 120)), Sound.rest 130 ]
 
 
 -- end-of-cycle snare fill: three rising hits into the next bar
 drFill : Sound
 drFill =
-    Sound.sequence
-        [ Sound.volume 26 (Sound.tone Sound.Noise 0 55), Sound.rest 70
-        , Sound.volume 32 (Sound.tone Sound.Noise 0 55), Sound.rest 70
-        , Sound.volume 40 (Sound.sweep 110 (Sound.tone Sound.Triangle 230 55)), Sound.rest 195
-        ]
+    Sound.decay 40 6
+        (Sound.sequence
+            [ Sound.volume 26 (Sound.tone Sound.Noise 0 55), Sound.rest 70
+            , Sound.volume 32 (Sound.tone Sound.Noise 0 55), Sound.rest 70
+            , Sound.volume 40 (Sound.sweep 110 (Sound.tone Sound.Triangle 230 55)), Sound.rest 195
+            ])
 
 
 r8 : Sound
@@ -111,12 +122,16 @@ r8 =
     Sound.rest 250
 
 
+-- The bass is PLUCKED, not held: the saw edge is the pick and dies inside the
+-- first breath, the triangle body settles to a third of itself and sings the
+-- rest of the beat. Both stay dead centre: low frequencies carry no
+-- directional information, and a panned bass only makes the piece lean.
 bassC : Int -> Sound
 bassC hz =
     Sound.sequence
         [ Sound.chord
-            [ Sound.volume 30 (Sound.tone Sound.Triangle hz 205)
-            , Sound.volume 8 (Sound.tone Sound.Sawtooth hz 205)
+            [ Sound.decay 150 38 (Sound.volume 30 (Sound.tone Sound.Triangle hz 205))
+            , Sound.decay 70 0 (Sound.volume 8 (Sound.tone Sound.Sawtooth hz 205))
             ]
         , Sound.rest 45
         ]
@@ -125,7 +140,7 @@ bassC hz =
 arpC : Int -> Int -> Int -> Sound
 arpC hz third fifth =
     Sound.sequence
-        [ Sound.volume 10 (Sound.arp [ third, fifth ] (Sound.duty 25 (Sound.tone Sound.Square hz 470)))
+        [ Sound.decay 380 45 (Sound.volume 10 (Sound.arp [ third, fifth ] (Sound.duty 25 (Sound.tone Sound.Square hz 470))))
         , Sound.rest 30
         ]
 
@@ -222,14 +237,30 @@ grooveBeat key =
                 p2 r8 (bassC rootO)
         arps =
             if inBoss == False && build >= 2 then
-                [ arpC rootO third fifth ]
+                -- the arp sits in the lead's octave, so it comes out from
+                -- under the melody instead of fighting it in the middle
+                [ Sound.pan 30 (arpC rootO third fifth) ]
             else
                 []
     in
-    Sound.chord (List.concat [ [ kick, snare, hat, bass ], arps ])
+    -- The stereo picture, and the whole of it: kick, snare and bass CENTRE
+    -- (they carry the pulse and the low end), the cymbals off to one side the
+    -- way a kit actually stands, the arp opposite them, the melody down the
+    -- middle. Two moves, both modest.
+    Sound.chord (List.concat [ [ kick, snare, Sound.pan (0 - 26) hat, bass ], arps ])
 
 
--- one eighth of lead melody: singing triangle + square edge (0 = rest)
+-- One eighth of lead melody: singing triangle + square edge (0 = rest).
+--
+-- The two layers used to be the SAME note twice, which is one oscillator with
+-- the volume turned up. Now the square is the plucked edge that states the
+-- pitch and gets out of the way, and it sits eight cents sharp of the triangle
+-- so the pair beats against itself for the length of the attack: that slow
+-- disagreement is what an ensemble physically is, and it is the difference
+-- between a lead that reads as an instrument and one that reads as a tone
+-- generator. Eight cents is deliberate restraint: enough to thicken, not
+-- enough to sound out of tune against the bass. Detune patches the LAST voice,
+-- so it is written on the square itself rather than around the chord.
 melNote : Int -> Sound
 melNote hz =
     if hz == 0 then
@@ -237,11 +268,70 @@ melNote hz =
     else
         Sound.sequence
             [ Sound.chord
-                [ Sound.vibrato 10 5 (Sound.volume 24 (Sound.tone Sound.Triangle hz 235))
-                , Sound.volume 8 (Sound.duty 50 (Sound.tone Sound.Square hz 120))
+                [ Sound.decay 165 72 (Sound.vibrato 10 5 (Sound.volume 24 (Sound.tone Sound.Triangle hz 235)))
+                , Sound.decay 85 12 (Sound.detune 8 (Sound.volume 8 (Sound.duty 50 (Sound.tone Sound.Square hz 120))))
                 ]
             , Sound.rest 15
             ]
+
+
+-- An enemy comes apart. The flavour is the kind; WHERE it lands in the stereo
+-- field is the caller's business, so this stays centred and cueSound places it.
+--
+-- Every one of the five is a struck thing, so every one of them now falls
+-- instead of holding: a blast that keeps its level for 180ms and then stops is
+-- the single loudest tell that a game is synthesised. The sustain levels are
+-- small but never zero, because a fall all the way to silence is a pluck and
+-- an explosion wants a tail.
+boomK : Int -> Sound
+boomK k =
+    if k == 0 then
+        -- drone: the classic mid pop
+        Sound.decay 165 7
+            (Sound.chord
+                [ Sound.volume 34 (Sound.tone Sound.Noise 0 180)
+                , Sound.volume 26 (Sound.sweep 40 (Sound.tone Sound.Triangle 250 160))
+                ])
+    else if k == 1 then
+        -- Diver: sharp crack with a falling whistle. Two decays, not one: the
+        -- crack is gone in 70ms while the whistle has to survive its whole
+        -- fall, and a single wrapper would have cut the whistle off at the knees.
+        Sound.chord
+            [ Sound.decay 70 4 (Sound.volume 30 (Sound.tone Sound.Noise 0 90))
+            , Sound.decay 230 3 (Sound.volume 20 (Sound.sweep 90 (Sound.tone Sound.Sawtooth 900 260)))
+            ]
+    else if k == 2 then
+        -- Floater: deep slow whomp. The bottom voice was a sawtooth at 90 Hz,
+        -- where a sawtooth is all harmonics and no fundamental: shape without
+        -- body. As a sine it is the whomp the name promised, so it can also
+        -- carry a little more level.
+        Sound.decay 290 6
+            (Sound.chord
+                [ Sound.volume 40 (Sound.tone Sound.Noise 0 260)
+                , Sound.volume 32 (Sound.sweep 30 (Sound.tone Sound.Triangle 160 320))
+                , Sound.volume 22 (Sound.sweep 44 (Sound.tone Sound.Sine 96 240))
+                ])
+    else if k == 3 then
+        -- zig: metallic clank
+        Sound.decay 130 5
+            (Sound.chord
+                [ Sound.volume 26 (Sound.tone Sound.Noise 0 120)
+                , Sound.volume 16 (Sound.arp [ 620, 480 ] (Sound.duty 25 (Sound.tone Sound.Square 830 180)))
+                , Sound.volume 16 (Sound.sweep 60 (Sound.tone Sound.Triangle 300 160))
+                ])
+    else
+        -- pinata: a festive crack and rising sparkle, each note now a struck
+        -- bell rather than a held beep
+        Sound.decay 110 4
+            (Sound.chord
+                [ Sound.volume 30 (Sound.tone Sound.Noise 0 120)
+                , Sound.sequence
+                    [ Sound.volume 18 (Sound.duty 25 (Sound.tone Sound.Square (Sound.c 6) 50))
+                    , Sound.volume 18 (Sound.duty 25 (Sound.tone Sound.Square (Sound.e 6) 50))
+                    , Sound.volume 18 (Sound.duty 25 (Sound.tone Sound.Square (Sound.g 6) 50))
+                    , Sound.volume 18 (Sound.duty 25 (Sound.tone Sound.Square 2093 140))
+                    ]
+                ])
 
 
 cueSound : Cue -> Sound
@@ -254,119 +344,127 @@ cueSound cue =
             Sound.sequence [ melNote hzA, melNote hzB ]
 
         CShot w ->
+            -- Autofire means these three play about three times a second for
+            -- ten stages, so they are the sounds that decide whether the game
+            -- is tiring. A flat 70ms block repeated that often is a buzzer; the
+            -- same pitch shape with the energy dumped into the first instant is
+            -- a gun. Nothing here is panned: the gun is on the ship, and the
+            -- ship is where the player is sitting.
             if w == 0 then
-                Sound.chord
-                    [ Sound.volume 15 (Sound.sweep 900 (Sound.duty 25 (Sound.tone Sound.Square 1300 70)))
-                    , Sound.volume 6 (Sound.sweep 500 (Sound.tone Sound.Triangle 2400 45))
-                    ]
+                Sound.decay 50 6
+                    (Sound.chord
+                        [ Sound.volume 15 (Sound.sweep 900 (Sound.duty 25 (Sound.tone Sound.Square 1300 70)))
+                        , Sound.volume 6 (Sound.sweep 500 (Sound.tone Sound.Triangle 2400 45))
+                        ])
             else if w == 1 then
-                Sound.chord
-                    [ Sound.volume 15 (Sound.sweep 260 (Sound.duty 12 (Sound.tone Sound.Square 680 85)))
-                    , Sound.volume 7 (Sound.tone Sound.Noise 0 30)
-                    ]
+                Sound.decay 60 5
+                    (Sound.chord
+                        [ Sound.volume 15 (Sound.sweep 260 (Sound.duty 12 (Sound.tone Sound.Square 680 85)))
+                        , Sound.volume 7 (Sound.tone Sound.Noise 0 30)
+                        ])
             else
-                Sound.chord
-                    [ Sound.volume 14 (Sound.sweep 620 (Sound.tone Sound.Triangle 340 95))
-                    , Sound.volume 5 (Sound.vibrato 35 10 (Sound.tone Sound.Square 510 80))
-                    ]
+                Sound.decay 78 10
+                    (Sound.chord
+                        [ Sound.volume 14 (Sound.sweep 620 (Sound.tone Sound.Triangle 340 95))
+                        , Sound.volume 5 (Sound.vibrato 35 10 (Sound.tone Sound.Square 510 80))
+                        ])
 
         CHit ->
-            Sound.chord
-                [ Sound.volume 28 (Sound.tone Sound.Noise 0 45)
-                , Sound.volume 14 (Sound.sweep 300 (Sound.duty 25 (Sound.tone Sound.Square 900 35)))
-                ]
+            Sound.decay 32 5
+                (Sound.chord
+                    [ Sound.volume 28 (Sound.tone Sound.Noise 0 45)
+                    , Sound.volume 14 (Sound.sweep 300 (Sound.duty 25 (Sound.tone Sound.Square 900 35)))
+                    ])
 
         CHitFoe ->
             -- the "I am doing damage" tick for tough enemies
-            Sound.chord
-                [ Sound.volume 18 (Sound.tone Sound.Noise 0 30)
-                , Sound.volume 12 (Sound.sweep 480 (Sound.duty 25 (Sound.tone Sound.Square 1500 35)))
-                ]
+            Sound.decay 26 5
+                (Sound.chord
+                    [ Sound.volume 18 (Sound.tone Sound.Noise 0 30)
+                    , Sound.volume 12 (Sound.sweep 480 (Sound.duty 25 (Sound.tone Sound.Square 1500 35)))
+                    ])
 
-        CBoomK k ->
-            if k == 0 then
-                -- drone: the classic mid pop
-                Sound.chord
-                    [ Sound.volume 34 (Sound.tone Sound.Noise 0 180)
-                    , Sound.volume 26 (Sound.sweep 40 (Sound.tone Sound.Triangle 250 160))
-                    ]
-            else if k == 1 then
-                -- diver: sharp crack with a falling whistle
-                Sound.chord
-                    [ Sound.volume 30 (Sound.tone Sound.Noise 0 90)
-                    , Sound.volume 20 (Sound.sweep 90 (Sound.tone Sound.Sawtooth 900 260))
-                    ]
-            else if k == 2 then
-                -- floater: deep slow whomp
-                Sound.chord
-                    [ Sound.volume 40 (Sound.tone Sound.Noise 0 260)
-                    , Sound.volume 32 (Sound.sweep 30 (Sound.tone Sound.Triangle 160 320))
-                    , Sound.volume 12 (Sound.sweep 45 (Sound.tone Sound.Sawtooth 90 240))
-                    ]
-            else if k == 3 then
-                -- zig: metallic clank
-                Sound.chord
-                    [ Sound.volume 26 (Sound.tone Sound.Noise 0 120)
-                    , Sound.volume 16 (Sound.arp [ 620, 480 ] (Sound.duty 25 (Sound.tone Sound.Square 830 180)))
-                    , Sound.volume 16 (Sound.sweep 60 (Sound.tone Sound.Triangle 300 160))
-                    ]
-            else
-                -- pinata: a festive crack and rising sparkle
-                Sound.chord
-                    [ Sound.volume 30 (Sound.tone Sound.Noise 0 120)
-                    , Sound.sequence
-                        [ Sound.volume 18 (Sound.duty 25 (Sound.tone Sound.Square (Sound.c 6) 50))
-                        , Sound.volume 18 (Sound.duty 25 (Sound.tone Sound.Square (Sound.e 6) 50))
-                        , Sound.volume 18 (Sound.duty 25 (Sound.tone Sound.Square (Sound.g 6) 50))
-                        , Sound.volume 18 (Sound.duty 25 (Sound.tone Sound.Square 2093 140))
-                        ]
-                    ]
+        CBoomK k place ->
+            -- The one place pan is INFORMATION here: the playfield is a fixed
+            -- 320px frame with the listener at the screen, the game knows
+            -- exactly where each wreck is, and up to sixteen foes can come
+            -- apart at once. Placed, they stay individually audible; stacked in
+            -- the middle they are one smear. `place` is 0 when the caller has
+            -- no honest position to give, and pan 0 is the old sound exactly.
+            Sound.pan place (boomK k)
 
         CShipBoom ->
-            -- the Condor goes down: rolling multi-blast with a deep floor
-            Sound.chord
-                [ Sound.volume 60 (Sound.tone Sound.Noise 0 700)
-                , Sound.volume 46 (Sound.sweep 24 (Sound.tone Sound.Triangle 190 620))
-                , Sound.volume 30 (Sound.sweep 36 (Sound.tone Sound.Sawtooth 130 480))
-                , Sound.sequence [ Sound.rest 180, Sound.volume 40 (Sound.tone Sound.Noise 0 420) ]
-                , Sound.sequence [ Sound.rest 360, Sound.volume 30 (Sound.tone Sound.Noise 0 320) ]
-                , Sound.sequence [ Sound.rest 90, Sound.volume 24 (Sound.tone Sound.Triangle 62 600) ]
-                ]
+            -- The Condor goes down: rolling multi-blast with a deep floor.
+            -- Stays dead centre. The wreck is the player.
+            --
+            -- One decay covers the whole pile because each stage clamps to its
+            -- own note: the 700ms roar falls over 700, the 320ms afterblast
+            -- over 320, so every layer keeps its own shape and the sequence
+            -- reads as ONE event collapsing rather than six rectangles that
+            -- happen to overlap.
+            Sound.decay 600 5
+                (Sound.chord
+                    [ Sound.volume 60 (Sound.tone Sound.Noise 0 700)
+                    , Sound.volume 46 (Sound.sweep 24 (Sound.tone Sound.Triangle 190 620))
+                    , Sound.volume 30 (Sound.sweep 36 (Sound.tone Sound.Sawtooth 130 480))
+                    , Sound.sequence [ Sound.rest 180, Sound.volume 40 (Sound.tone Sound.Noise 0 420) ]
+                    , Sound.sequence [ Sound.rest 360, Sound.volume 30 (Sound.tone Sound.Noise 0 320) ]
+                    -- the floor was a triangle sitting flat at 62 Hz, which is a
+                    -- drone, not a blast. A sine DROPPING is the part of an
+                    -- explosion you feel rather than hear, and a sine is the only
+                    -- wave with nothing on top to buzz against the noise above it.
+                    , Sound.sequence [ Sound.rest 90, Sound.volume 30 (Sound.sweep 42 (Sound.tone Sound.Sine 112 600)) ]
+                    ])
 
         CBigBoom ->
-            Sound.chord
-                [ Sound.volume 58 (Sound.tone Sound.Noise 0 520)
-                , Sound.volume 42 (Sound.sweep 30 (Sound.tone Sound.Triangle 220 480))
-                , Sound.volume 26 (Sound.sweep 45 (Sound.tone Sound.Sawtooth 150 380))
-                , Sound.sequence [ Sound.rest 140, Sound.volume 34 (Sound.tone Sound.Noise 0 300) ]
-                , Sound.sequence [ Sound.rest 60, Sound.volume 20 (Sound.tone Sound.Triangle (Sound.a 2) 400) ]
-                ]
+            Sound.decay 460 5
+                (Sound.chord
+                    [ Sound.volume 58 (Sound.tone Sound.Noise 0 520)
+                    , Sound.volume 42 (Sound.sweep 30 (Sound.tone Sound.Triangle 220 480))
+                    , Sound.volume 26 (Sound.sweep 45 (Sound.tone Sound.Sawtooth 150 380))
+                    , Sound.sequence [ Sound.rest 140, Sound.volume 34 (Sound.tone Sound.Noise 0 300) ]
+                    , Sound.sequence [ Sound.rest 60, Sound.volume 26 (Sound.sweep 46 (Sound.tone Sound.Sine 124 400)) ]
+                    ])
 
         CStar ->
-            Sound.sequence
-                [ Sound.volume 22 (Sound.duty 25 (Sound.tone Sound.Square (Sound.c 6) 55))
-                , Sound.volume 22 (Sound.duty 25 (Sound.tone Sound.Square (Sound.e 6) 55))
-                , Sound.chord
-                    [ Sound.volume 24 (Sound.duty 25 (Sound.tone Sound.Square (Sound.g 6) 150))
-                    , Sound.volume 10 (Sound.vibrato 14 6 (Sound.tone Sound.Triangle (Sound.e 6) 160))
-                    ]
-                ]
+            -- The bell of the genre. Three struck notes, so all three now ring
+            -- and die: the two grace notes decay across their own 55ms and the
+            -- landing note over 130 of its 150, which is the difference between
+            -- a chime and "beep beep beeep". Picked up AT the ship, so centre.
+            Sound.decay 130 6
+                (Sound.sequence
+                    [ Sound.volume 22 (Sound.duty 25 (Sound.tone Sound.Square (Sound.c 6) 55))
+                    , Sound.volume 22 (Sound.duty 25 (Sound.tone Sound.Square (Sound.e 6) 55))
+                    , Sound.chord
+                        [ Sound.volume 24 (Sound.duty 25 (Sound.tone Sound.Square (Sound.g 6) 150))
+                        , Sound.volume 10 (Sound.vibrato 14 6 (Sound.tone Sound.Triangle (Sound.e 6) 160))
+                        ]
+                    ])
 
         CHeal ->
-            -- an energy cell hums back to life
-            Sound.chord
-                [ Sound.volume 22 (Sound.arp [ Sound.e 5, Sound.a 5, Sound.cs 6 ] (Sound.tone Sound.Triangle (Sound.a 4) 340))
-                , Sound.volume 10 (Sound.sweep 900 (Sound.duty 50 (Sound.tone Sound.Square 320 240)))
-                ]
+            -- An energy cell hums back to life. This one is NOT struck, so it
+            -- keeps most of itself: it settles to two thirds and holds, which
+            -- gives it an edge to arrive on without turning the hum into a pluck.
+            Sound.decay 270 62
+                (Sound.chord
+                    [ Sound.volume 22 (Sound.arp [ Sound.e 5, Sound.a 5, Sound.cs 6 ] (Sound.tone Sound.Triangle (Sound.a 4) 340))
+                    , Sound.volume 10 (Sound.sweep 900 (Sound.duty 50 (Sound.tone Sound.Square 320 240)))
+                    ])
 
         CHurt ->
-            Sound.chord
-                [ Sound.volume 40 (Sound.tone Sound.Noise 0 220)
-                , Sound.volume 34 (Sound.sweep 55 (Sound.tone Sound.Sawtooth 340 280))
-                , Sound.volume 16 (Sound.sweep 70 (Sound.duty 25 (Sound.tone Sound.Square 190 240)))
-                ]
+            Sound.decay 200 6
+                (Sound.chord
+                    [ Sound.volume 40 (Sound.tone Sound.Noise 0 220)
+                    , Sound.volume 34 (Sound.sweep 55 (Sound.tone Sound.Sawtooth 340 280))
+                    , Sound.volume 16 (Sound.sweep 70 (Sound.duty 25 (Sound.tone Sound.Square 190 240)))
+                    ])
 
         CWarn ->
+            -- LEFT ALONE, deliberately. A klaxon is the one thing in the game
+            -- that is genuinely a rectangle: it is not struck, nothing about it
+            -- loses energy, and it is supposed to sit on your chest at a
+            -- constant level until you look up. Adding a decay here would make
+            -- it politer, which is the opposite of the job.
             Sound.sequence
                 [ Sound.chord
                     [ Sound.volume 30 (Sound.duty 50 (Sound.tone Sound.Square 145 190))
@@ -382,6 +480,10 @@ cueSound cue =
                 ]
 
         CTurbineCharge ->
+            -- LEFT ALONE. This is a machine winding UP, and every stage of it
+            -- is already going somewhere: two rising sweeps and a stab that
+            -- arrives late. A decay pulls in the opposite direction from a
+            -- charge, so it would fight the one thing the cue is for.
             Sound.chord
                 [ Sound.volume 24 (Sound.sweep 940 (Sound.vibrato 22 7 (Sound.tone Sound.Sawtooth 120 900)))
                 , Sound.volume 14 (Sound.sweep 520 (Sound.tone Sound.Triangle 70 900))
@@ -392,67 +494,83 @@ cueSound cue =
                 ]
 
         CTurbineBeam ->
-            Sound.chord
-                [ Sound.volume 34 (Sound.tone Sound.Noise 0 520)
-                , Sound.volume 32 (Sound.sweep 90 (Sound.tone Sound.Sawtooth 760 650))
-                , Sound.volume 24 (Sound.vibrato 35 10 (Sound.tone Sound.Triangle 92 700))
-                ]
+            -- The discharge: a hard front edge, then a beam that HOLDS while it
+            -- is firing. Half decay, half sustain, which is what the stage was
+            -- invented for and what neither attack nor release could say.
+            Sound.decay 430 52
+                (Sound.chord
+                    [ Sound.volume 34 (Sound.tone Sound.Noise 0 520)
+                    , Sound.volume 32 (Sound.sweep 90 (Sound.tone Sound.Sawtooth 760 650))
+                    , Sound.volume 24 (Sound.vibrato 35 10 (Sound.tone Sound.Triangle 92 700))
+                    ])
 
         CJIntro ->
-            Sound.sequence
-                [ Sound.volume 20 (Sound.duty 25 (Sound.tone Sound.Square (Sound.a 4) 95))
-                , Sound.volume 20 (Sound.duty 25 (Sound.tone Sound.Square (Sound.cs 5) 95))
-                , Sound.chord
-                    [ Sound.volume 22 (Sound.duty 25 (Sound.tone Sound.Square (Sound.e 5) 240))
-                    , Sound.volume 12 (Sound.tone Sound.Triangle (Sound.a 3) 260)
-                    ]
-                ]
+            -- The four jingles all get the same light touch: a fall to about
+            -- half, no further. This is what a chip fanfare did on the real
+            -- hardware, where the pulse channel ran a volume envelope under
+            -- every note, and it keeps the notes ringing instead of standing.
+            -- Falling to zero here would sound like a music box, which is a
+            -- different game.
+            Sound.decay 190 55
+                (Sound.sequence
+                    [ Sound.volume 20 (Sound.duty 25 (Sound.tone Sound.Square (Sound.a 4) 95))
+                    , Sound.volume 20 (Sound.duty 25 (Sound.tone Sound.Square (Sound.cs 5) 95))
+                    , Sound.chord
+                        [ Sound.volume 22 (Sound.duty 25 (Sound.tone Sound.Square (Sound.e 5) 240))
+                        , Sound.volume 12 (Sound.tone Sound.Triangle (Sound.a 3) 260)
+                        ]
+                    ])
 
         CJClear ->
-            Sound.chord
-                [ Sound.sequence
-                    [ Sound.volume 24 (Sound.duty 25 (Sound.tone Sound.Square (Sound.c 5) 120))
-                    , Sound.volume 24 (Sound.duty 25 (Sound.tone Sound.Square (Sound.e 5) 120))
-                    , Sound.volume 24 (Sound.duty 25 (Sound.tone Sound.Square (Sound.g 5) 120))
-                    , Sound.vibrato 16 6 (Sound.volume 26 (Sound.duty 25 (Sound.tone Sound.Square (Sound.a 5) 450)))
-                    ]
-                , Sound.sequence
-                    [ Sound.volume 18 (Sound.tone Sound.Triangle (Sound.c 3) 240)
-                    , Sound.volume 18 (Sound.tone Sound.Triangle (Sound.g 3) 240)
-                    , Sound.volume 20 (Sound.tone Sound.Triangle (Sound.a 3) 420)
-                    ]
-                ]
+            Sound.decay 260 58
+                (Sound.chord
+                    [ Sound.sequence
+                        [ Sound.volume 24 (Sound.duty 25 (Sound.tone Sound.Square (Sound.c 5) 120))
+                        , Sound.volume 24 (Sound.duty 25 (Sound.tone Sound.Square (Sound.e 5) 120))
+                        , Sound.volume 24 (Sound.duty 25 (Sound.tone Sound.Square (Sound.g 5) 120))
+                        , Sound.vibrato 16 6 (Sound.volume 26 (Sound.duty 25 (Sound.tone Sound.Square (Sound.a 5) 450)))
+                        ]
+                    , Sound.sequence
+                        [ Sound.volume 18 (Sound.tone Sound.Triangle (Sound.c 3) 240)
+                        , Sound.volume 18 (Sound.tone Sound.Triangle (Sound.g 3) 240)
+                        , Sound.volume 20 (Sound.tone Sound.Triangle (Sound.a 3) 420)
+                        ]
+                    ])
 
         CJOver ->
-            Sound.chord
-                [ Sound.sequence
-                    [ Sound.volume 22 (Sound.duty 12 (Sound.tone Sound.Square (Sound.e 4) 180))
-                    , Sound.volume 22 (Sound.duty 12 (Sound.tone Sound.Square (Sound.c 4) 180))
-                    , Sound.vibrato 8 4 (Sound.volume 24 (Sound.duty 12 (Sound.tone Sound.Square (Sound.a 3) 420)))
-                    ]
-                , Sound.sequence
-                    [ Sound.rest 360
-                    , Sound.volume 20 (Sound.tone Sound.Triangle (Sound.a 2) 430)
-                    ]
-                ]
+            Sound.decay 240 52
+                (Sound.chord
+                    [ Sound.sequence
+                        [ Sound.volume 22 (Sound.duty 12 (Sound.tone Sound.Square (Sound.e 4) 180))
+                        , Sound.volume 22 (Sound.duty 12 (Sound.tone Sound.Square (Sound.c 4) 180))
+                        , Sound.vibrato 8 4 (Sound.volume 24 (Sound.duty 12 (Sound.tone Sound.Square (Sound.a 3) 420)))
+                        ]
+                    , Sound.sequence
+                        [ Sound.rest 360
+                        , Sound.volume 20 (Sound.tone Sound.Triangle (Sound.a 2) 430)
+                        ]
+                    ])
 
         CJEnd ->
-            Sound.chord
-                [ Sound.sequence
-                    [ Sound.volume 24 (Sound.duty 50 (Sound.tone Sound.Square (Sound.a 4) 200))
-                    , Sound.volume 24 (Sound.duty 50 (Sound.tone Sound.Square (Sound.c 5) 200))
-                    , Sound.volume 24 (Sound.duty 50 (Sound.tone Sound.Square (Sound.e 5) 200))
-                    , Sound.vibrato 14 5 (Sound.volume 28 (Sound.duty 50 (Sound.tone Sound.Square (Sound.a 5) 800)))
-                    ]
-                , Sound.sequence
-                    [ Sound.volume 24 (Sound.tone Sound.Triangle (Sound.a 2) 700)
-                    , Sound.volume 24 (Sound.tone Sound.Triangle (Sound.e 3) 700)
-                    ]
-                , Sound.sequence
-                    [ Sound.rest 600
-                    , Sound.volume 12 (Sound.arp [ Sound.c 6, Sound.e 6 ] (Sound.duty 25 (Sound.tone Sound.Square (Sound.a 5) 500)))
-                    ]
-                ]
+            Sound.decay 320 60
+                (Sound.chord
+                    [ Sound.sequence
+                        [ Sound.volume 24 (Sound.duty 50 (Sound.tone Sound.Square (Sound.a 4) 200))
+                        , Sound.volume 24 (Sound.duty 50 (Sound.tone Sound.Square (Sound.c 5) 200))
+                        , Sound.volume 24 (Sound.duty 50 (Sound.tone Sound.Square (Sound.e 5) 200))
+                        , Sound.vibrato 14 5 (Sound.volume 28 (Sound.duty 50 (Sound.tone Sound.Square (Sound.a 5) 800)))
+                        ]
+                    , Sound.sequence
+                        [ Sound.volume 24 (Sound.tone Sound.Triangle (Sound.a 2) 700)
+                        , Sound.volume 24 (Sound.tone Sound.Triangle (Sound.e 3) 700)
+                        ]
+                    , Sound.sequence
+                        [ Sound.rest 600
+                        , Sound.volume 12 (Sound.arp [ Sound.c 6, Sound.e 6 ] (Sound.duty 25 (Sound.tone Sound.Square (Sound.a 5) 500)))
+                        ]
+                    ])
 
         CBlip ->
-            Sound.volume 20 (Sound.duty 25 (Sound.tone Sound.Square (Sound.g 5) 60))
+            -- the menu click: 60ms of square, but a CLICK now instead of a
+            -- 60ms tone. You hear this one more than any other single sound.
+            Sound.decay 48 4 (Sound.volume 20 (Sound.duty 25 (Sound.tone Sound.Square (Sound.g 5) 60)))

@@ -14,6 +14,14 @@ defaultPatch =
 -- Twelve voices in two rows. Struck patches (piano, e-piano, bell) get a hammer
 -- tick over a body that fades continuously from the strike onward, so they DECAY
 -- like a real string instead of holding flat like the others.
+--
+-- `det` is in CENTS here (STRINGS 20, LEAD 10, UFO 43) and used to be a
+-- per-mille slice of the frequency. The three numbers were re-derived rather than
+-- re-tuned by ear: a per-mille of frequency is 1.73 cents, so each setting lands
+-- within a cent of the RATIO the old arithmetic was asking for (12 -> 20.6,
+-- 6 -> 10.4, 25 -> 42.8). What it could not do was deliver that ratio: whole-Hz
+-- steps rounded it to something different on every key, so these are the
+-- intervals the presets always meant and now get everywhere on the keyboard.
 presets : List Preset
 presets =
     [ { name = "GRAND"
@@ -31,10 +39,17 @@ presets =
       , patch = { wave = 0, duty = 50, oct = 0, det = 0, sub = True, len = 1400, bend = 0, vibD = 4, vibR = 6, arp = 0, vol = 40, struck = False, sustain = True, glide = False, lowCut = 0, highCut = 4000 }
       }
     , { name = "STRINGS"
-      , patch = { wave = 2, duty = 50, oct = 0, det = 12, sub = False, len = 1500, bend = 0, vibD = 10, vibR = 5, arp = 0, vol = 38, struck = False, sustain = True, glide = False, lowCut = 120, highCut = 3000 }
+      , patch = { wave = 2, duty = 50, oct = 0, det = 20, sub = False, len = 1500, bend = 0, vibD = 10, vibR = 5, arp = 0, vol = 38, struck = False, sustain = True, glide = False, lowCut = 120, highCut = 3000 }
       }
+      -- PLUCK is nearly twice as long as it was, and that is the DECAY stage
+      -- paying for itself. At 240ms it was not short because a pluck is short; it
+      -- was short because the note was a rectangle, and a long rectangle is an
+      -- organ blip, so the only way to make this read as a pluck was to cut it
+      -- off before the ear noticed it was flat. It falls exponentially across its
+      -- own length now, so length buys RING instead of buying flatness, and the
+      -- string can be left to sound.
     , { name = "PLUCK"
-      , patch = { wave = 1, duty = 50, oct = 1, det = 0, sub = False, len = 240, bend = 0 - 30, vibD = 0, vibR = 5, arp = 0, vol = 62, struck = False, sustain = False, glide = False, lowCut = 0, highCut = 0 }
+      , patch = { wave = 1, duty = 50, oct = 1, det = 0, sub = False, len = 420, bend = 0 - 30, vibD = 0, vibR = 5, arp = 0, vol = 62, struck = False, sustain = False, glide = False, lowCut = 0, highCut = 0 }
       }
       -- The old BASS was an accidental raspberry, and each ingredient earned it:
       -- a narrow 38% pulse an octave down (thin and reedy where you want body),
@@ -77,10 +92,10 @@ presets =
       -- an octave up cuts through, a little ensemble thickens it, and the deep
       -- vibrato is what makes a lead sing rather than sit there.
     , { name = "LEAD"
-      , patch = { wave = 0, duty = 25, oct = 1, det = 6, sub = False, len = 1300, bend = 0, vibD = 18, vibR = 6, arp = 0, vol = 50, struck = False, sustain = True, glide = False, lowCut = 0, highCut = 0 }
+      , patch = { wave = 0, duty = 25, oct = 1, det = 10, sub = False, len = 1300, bend = 0, vibD = 18, vibR = 6, arp = 0, vol = 50, struck = False, sustain = True, glide = False, lowCut = 0, highCut = 0 }
       }
     , { name = "UFO"
-      , patch = { wave = 2, duty = 50, oct = 0, det = 25, sub = False, len = 1300, bend = 80, vibD = 80, vibR = 11, arp = 0, vol = 40, struck = False, sustain = True, glide = False, lowCut = 0, highCut = 0 }
+      , patch = { wave = 2, duty = 50, oct = 0, det = 43, sub = False, len = 1300, bend = 80, vibD = 80, vibR = 11, arp = 0, vol = 40, struck = False, sustain = True, glide = False, lowCut = 0, highCut = 0 }
       }
     ]
 

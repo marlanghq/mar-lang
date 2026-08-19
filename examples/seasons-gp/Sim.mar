@@ -387,7 +387,9 @@ stepSpeed m =
     in
     { m
         | speed = s2
-        , sfx = if skid then CueSkid :: m.sfx else m.sfx
+        -- the scrub carries the car's own offset, so it is heard on the side the
+        -- wheels actually left the road
+        , sfx = if skid then CueSkid m.playerX :: m.sfx else m.sfx
     }
 
 
@@ -536,8 +538,10 @@ stepRivals m =
         -- with you: the whoosh fires right then. (Culling must never un-count a
         -- pass; a crash can still let a rival repass, which counts back down.)
         line = m.camZ + passPlane
+        crossing =
+            List.filter (\r -> r.counted == False && r.z < line) kept
         crossedFwd =
-            List.length (List.filter (\r -> r.counted == False && r.z < line) kept)
+            List.length crossing
         crossedBack =
             List.length (List.filter (\r -> r.counted && r.z > line) kept)
         counted =
@@ -549,8 +553,15 @@ stepRivals m =
                 )
                 kept
         delta = crossedFwd - crossedBack
-        -- passing a car at speed earns a doppler whoosh
-        sfx2 = if crossedFwd > 0 && m.speed > 150 then CueWhoosh :: m.sfx else m.sfx
+        -- passing a car at speed earns a doppler whoosh, carrying the rival's
+        -- offset from us so it is heard going by on the side it went by
+        sfx2 =
+            case List.head crossing of
+                Nothing ->
+                    m.sfx
+
+                Just r ->
+                    if m.speed > 150 then CueWhoosh (r.x - m.playerX) :: m.sfx else m.sfx
     in
     if m.camZ >= m.nextSpawnAt && List.length counted < 8 then
         let
