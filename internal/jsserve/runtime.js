@@ -1754,6 +1754,20 @@
   const rampSec = (ms) => Math.max(SOUND_MIN_RAMP_MS, ms == null ? 0 : ms) / 1000;
   const voiceAttackSec = (v) => rampSec(v.attack);
   const voiceReleaseSec = (v) => rampSec(v.release);
+  // The decay stage. Unlike attack and release it has an OFF value: 0 means the
+  // voice never asked for one, and then the envelope is exactly what it was
+  // before this existed (attack, hold at full, release). So no sound in the repo
+  // moved when decay landed. `rampSec`'s click floor only applies once a decay
+  // has actually been asked for.
+  const voiceDecaySec = (v) => (v.decay > 0 ? rampSec(v.decay) : 0);
+  // The level a decay falls TO, as a fraction of the voice's own peak. Floored at
+  // the same 0.0002 `pk` uses, because an exponential ramp cannot reach zero:
+  // `Sound.decay 260 0` means "fall to silence", and silence here is the floor.
+  const voiceSustain = (v, pk) =>
+    Math.max(0.0002, pk * Math.max(0, Math.min(100, v.sustain == null ? 100 : v.sustain)) / 100);
+  // The level a HELD source settles at. Same sustain level, but only when a decay
+  // was asked for — without one the voice holds at its peak, as it always did.
+  const heldLevel = (v, pk) => (v.decay > 0 ? voiceSustain(v, pk) : Math.max(0.0002, pk));
   let audioCtx = null, masterGain = null, noiseBuf = null, noiseBuf2 = null;
   // The bus sums voices LINEARLY, and nothing downstream was catching the result:
   // an app that sounds several things at once could ask for more than full scale
@@ -1797,6 +1811,31 @@
     ws.oversample = '2x';                          // the bend makes harmonics; do not alias them
     return ws;
   }
+  // Sound.Wave -> oscillator, in ONE place. The one-shot path and the held path
+  // each used to carry their own copy of this mapping, written as a ternary with
+  // a `square` fallback — which is a trap, not a default: a new member of
+  // Sound.Wave rendered as a SQUARE rather than failing, silently, in two files
+  // that had to be found separately. Sine walked into exactly that. One table
+  // now, and an unknown tag is a thrown error instead of a wrong timbre.
+  const OSC_TYPE = { Square: 'square', Triangle: 'triangle', Sawtooth: 'sawtooth', Sine: 'sine' };
+  // Duty is a pulse WIDTH: only the square has a pulse to widen. The other three
+  // shapes ignore it, which is why this is a predicate and not `wave === Square`
+  // — the tag can also be the internal 'Rest', handled before we get here.
+  const dutyApplies = (v) => !(v.wave === 'Triangle' || v.wave === 'Sawtooth' || v.wave === 'Sine');
+  const setOscWave = (ctx, node, v) => {
+    if (dutyApplies(v) && v.duty && v.duty !== 50) {
+      node.setPeriodicWave(dutyWave(ctx, v.duty));
+    } else {
+      const t = OSC_TYPE[v.wave];
+      if (!t) throw new Error('Sound: unknown wave ' + v.wave);
+      node.type = t;
+    }
+    // Sound.detune: a fixed offset in cents. `detune` is an AudioParam and
+    // vibrato CONNECTS its LFO into the same one; a connected input sums with the
+    // intrinsic value, so the static offset and the wobble compose on their own
+    // with nothing to reconcile.
+    if (v.detune) node.detune.value = v.detune;
+  };
   let dutyWaveCache = {};   // Sound.duty pulse-width -> band-limited PeriodicWave
   let soundMuted = false;
   let soundMasterLevel = 0.35;   // Sound.master 0..100 -> gain; 0.35 is the default headroom (~master 70)
@@ -1981,9 +2020,18 @@
     // attack, and an attack longer than half the note cannot swallow it whole.
     const atk = Math.min(dur / 2, Math.max(0.0005, voiceAttackSec(v)));
     const rel = Math.min(dur - atk, voiceReleaseSec(v));
+    // Sound.decay: fall from the peak to a held level, in the space the attack
+    // and the release leave behind. A struck thing loses energy in proportion to
+    // the energy it still has, so this is exponential like the other two stages —
+    // it is the shape the ear is calibrated on, and its absence is what made
+    // every note read as a rectangle. `decay 0` keeps `dec` at 0 and `sus` at the
+    // peak, which is byte-for-byte the old three-event envelope.
+    const dec = Math.min(voiceDecaySec(v), Math.max(0, dur - atk - rel));
+    const sus = dec > 0 ? voiceSustain(v, pk) : pk;
     g.gain.setValueAtTime(0.0001, t0);
     g.gain.exponentialRampToValueAtTime(pk, t0 + atk);                // attack
-    g.gain.setValueAtTime(pk, t0 + Math.max(atk, dur - rel));         // hold at level
+    if (dec > 0) g.gain.exponentialRampToValueAtTime(sus, t0 + atk + dec);  // decay
+    g.gain.setValueAtTime(sus, t0 + Math.max(atk + dec, dur - rel));  // hold at level
     g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);           // release to silence
     let node;
     if (v.wave === 'Noise') {
@@ -2001,6 +2049,12 @@
       const nf = Math.max(1, v.freq || 440);
       const noiseRate = (f) => Math.max(0.05, Math.min(8, Math.max(1, f) / 440));
       node.playbackRate.setValueAtTime(noiseRate(nf), t0);
+      // Sound.detune on noise. An AudioBufferSourceNode has a `detune` param
+      // too, and the spec folds it into the rate as playbackRate * 2^(cents/1200)
+      // — which is what detuning a CLIP means. iOS reaches the same number from
+      // the other side, by scaling the sample-and-hold frequency, so a detuned
+      // noise agrees across the two without either doing the arithmetic twice.
+      if (v.detune) node.detune.value = v.detune;
       // Everything below is guarded on a REAL pitch having been asked for.
       // freq 0 is how every game in the repo writes noise, and it means "no
       // pitch": those keep the flat clip they always had, so bend and vibrato
@@ -2031,11 +2085,7 @@
       }
     } else {
       node = ctx.createOscillator();
-      // Sound.duty: variable pulse width for Square (12/25/50/75%). A non-50 duty
-      // swaps in a custom PeriodicWave; Triangle/Sawtooth ignore it.
-      const isSquare = !(v.wave === 'Triangle' || v.wave === 'Sawtooth');
-      if (isSquare && v.duty && v.duty !== 50) node.setPeriodicWave(dutyWave(ctx, v.duty));
-      else node.type = v.wave === 'Triangle' ? 'triangle' : v.wave === 'Sawtooth' ? 'sawtooth' : 'square';
+      setOscWave(ctx, node, v);   // wave + duty + detune, shared with the held path
       const f0 = Math.max(1, v.freq || 440);
       if (v.arp && v.arp.length) {
         // Sound.arp: step the pitch fast through [base, ...arp] on ONE oscillator
@@ -2114,7 +2164,15 @@
       // Fade in over the voice's own attack. This used to be a hardcoded 400ms:
       // right for a drone that starts once a session, and half a second of lag on
       // anything started per event, like a key. The number lives in the value now.
-      g.gain.exponentialRampToValueAtTime(Math.max(0.0002, peak), at + Math.max(0.0005, voiceAttackSec(v)));
+      //
+      // A held source arrives at the voice's SUSTAIN level, not its peak, which is
+      // what a sustain level means for something with no end. What it cannot
+      // honour is the decay TIME: this path holds one node at one level and has no
+      // per-note clock to fall along, and inventing one would rebuild the note
+      // renderer inside the bed — the exact drift sound-envelope.md was written to
+      // stop. So the level is honoured and the time is not, stated here rather
+      // than discovered: for a decay you can hear, use Sound.play / loop / once.
+      g.gain.exponentialRampToValueAtTime(heldLevel(v, peak), at + Math.max(0.0005, voiceAttackSec(v)));
       let node, extra = [];
       if (v.wave === 'Noise') {
         // TWO decorrelated noise layers summed into a trim gain, then through
@@ -2140,11 +2198,7 @@
         extra.push(nb);
       } else {
         node = ctx.createOscillator();
-        // Sound.duty: the same band-limited pulse the one-shot path uses, so a
-        // narrow pulse keeps its reedy timbre instead of flattening to a square.
-        const isSquare = !(v.wave === 'Triangle' || v.wave === 'Sawtooth');
-        if (isSquare && v.duty && v.duty !== 50) node.setPeriodicWave(dutyWave(ctx, v.duty));
-        else node.type = v.wave === 'Triangle' ? 'triangle' : v.wave === 'Sawtooth' ? 'sawtooth' : 'square';
+        setOscWave(ctx, node, v);   // the same wave + duty + detune the one-shot uses
         node.frequency.setValueAtTime(Math.max(1, v.freq || 440), at);
         // Sound.vibrato: no stop time, so the wobble breathes for as long as the
         // bed lives. Driven on `detune` (cents) precisely so soundGlideTo can glide
@@ -2233,7 +2287,10 @@
           // Big time-constant = the level lags HEAVILY, following only the slow
           // trend and ignoring per-event jumps. That lag is what a BED is: a level
           // that tracks each event is heard as a rhythm, not as a background.
-          rec.gain.gain.setTargetAtTime(peak, t, levelSec == null ? BED_RELEVEL_SEC : levelSec);
+          // heldLevel, not peak: a held voice that asked for a sustain level is
+          // sitting AT that level, and retargeting to the raw peak would jump it
+          // back to full the first time anything glided it.
+          rec.gain.gain.setTargetAtTime(heldLevel(v, peak), t, levelSec == null ? BED_RELEVEL_SEC : levelSec);
         } catch (e) {}
       }
       // PITCH: glide the SAME oscillator to the voice's new freq (oscillators only
@@ -2258,35 +2315,78 @@
   }
   // Sound.loop REPLAYS a Sound seamlessly forever (melodies / background music),
   // unlike the bed which holds. A Sound is already a flat, fully-timed schedule
-  // (each voice has delayMs + ms), so we just re-schedule the whole voice list
-  // once per PERIOD = the sound's natural length (max voice end). A look-ahead
-  // ("two clocks") scheduler drives it: a coarse setInterval wakes ~33x/s and,
-  // while the next iteration falls inside the horizon, books all its voices on
-  // the WebAudio clock at sample-accurate absolute times. The audio clock keeps
-  // running even when the tab is backgrounded (unlike Time.every), so the music
-  // doesn't stall. Voices route through a private loopGain (not masterGain) so
-  // stop() can fade the whole track out cleanly. Loop voices are exempt from the
-  // SFX voice pool: music is never starved by effects.
+  // (each voice has delayMs + ms). A look-ahead ("two clocks") scheduler drives
+  // it: a coarse setInterval wakes ~33x/s and books, on the WebAudio clock at
+  // sample-accurate absolute times, everything that comes due inside the next
+  // `horizon`. The audio clock keeps running even when the tab is backgrounded
+  // (unlike Time.every), so the music doesn't stall. Voices route through a
+  // private loopGain (not masterGain) so stop() can fade the whole track out
+  // cleanly. Loop voices are exempt from the SFX voice pool: music is never
+  // starved by effects.
+  //
+  // IT BOOKS A SLICE, NOT A PERIOD, and that distinction is the whole point.
+  // This used to advance by the sound's full length and, on each step, book
+  // EVERY voice in it. That is fine for a four-bar jingle and quietly fatal for
+  // a score: Iron Meridian's pieces are three minutes long and carry ~3000
+  // sounding voices, and booking them in one synchronous burst measured 197 ms
+  // of node building in the running game — twelve dropped frames, once at the
+  // start of a mission and again every time the loop came round. The cost is not
+  // in the music, it is in scheduling a period's worth of it at a time. Now the
+  // voices are sorted by onset and a cursor walks them, so a tick books the
+  // handful actually due (typically single digits) and the burst is gone
+  // whatever the piece costs.
   function soundLoopStart(snd) {
     const ctx = ensureAudio();
     if (!ctx || soundMuted || !snd || !snd.voices || snd.voices.length === 0) return null;
+    // The period comes from ALL voices, rests included: a trailing Sound.rest is
+    // how a piece pads its last bar, and dropping it would shorten the loop.
     let periodMs = 0;
     for (const v of snd.voices) periodMs = Math.max(periodMs, (v.delayMs || 0) + (v.ms || 0));
     if (periodMs <= 0) return null;
+    // Rests are then dropped from the CURSOR: scheduleVoice ignores them anyway,
+    // and they are typically half the list, so carrying them would double the
+    // walk for nothing. Sorted by onset, which is what makes a cursor possible.
+    const due = snd.voices
+      .filter((v) => v.wave !== 'Rest')
+      .map((v) => ({ v, at: (v.delayMs || 0) / 1000 }))
+      .sort((a, b) => a.at - b.at);
+    if (due.length === 0) return null;          // a loop of pure silence
     const period = periodMs / 1000;
     const loopGain = ctx.createGain();
     loopGain.gain.value = 1;
     loopGain.connect(masterGain);
-    const state = { timer: null, gain: loopGain, next: ctx.currentTime + 0.06, period, voices: snd.voices };
+    // `origin` is the audio time at which the CURRENT pass through `due` began;
+    // `i` is how far into that pass the cursor has booked. Together they are the
+    // playhead. soundLoopStop only ever touches `timer` and `gain`.
+    const state = { timer: null, gain: loopGain, origin: ctx.currentTime + 0.06, i: 0, period, due };
     const horizon = 0.14;    // schedule this far ahead (s)
+    const wrap = () => { if (state.i >= state.due.length) { state.origin += state.period; state.i = 0; } };
     const tick = () => {
       if (!audioCtx) return;
-      // While muted, keep the timer alive but book nothing, and hold `next` at
-      // the present so unmuting resumes smoothly (no burst to "catch up").
-      if (soundMuted) { state.next = audioCtx.currentTime + 0.06; return; }
-      while (state.next < audioCtx.currentTime + horizon) {
-        for (const v of state.voices) scheduleVoice(audioCtx, v, state.next, loopGain);
-        state.next += state.period;
+      const now = audioCtx.currentTime;
+      // While muted, keep the timer alive but book nothing, and hold the playhead
+      // at the present so unmuting resumes from the top rather than bursting to
+      // catch up. (Same behaviour as before: an unmute restarts the piece.)
+      if (soundMuted) { state.origin = now + 0.06; state.i = 0; return; }
+      // Anything already past is SKIPPED, not booked. A backgrounded tab
+      // throttles setInterval, so a tick can arrive long after the last one, and
+      // Web Audio clamps a start time in the past to "now" — booking the missed
+      // stretch would fire all of it at once, which is precisely the burst this
+      // scheduler exists to avoid. Terminates because every iteration advances
+      // either the cursor or the origin.
+      for (;;) {
+        wrap();
+        if (state.origin + state.due[state.i].at >= now) break;
+        state.i++;
+      }
+      // Then book what is due inside the horizon. A period SHORTER than the
+      // horizon simply wraps more than once here, same as the old loop did.
+      for (;;) {
+        wrap();
+        const d = state.due[state.i];
+        if (state.origin + d.at >= now + horizon) break;
+        scheduleVoice(audioCtx, d.v, state.origin, loopGain);
+        state.i++;
       }
     };
     tick();
@@ -4150,6 +4250,7 @@
     def('Sound.Square', VCtor('Square'));
     def('Sound.Triangle', VCtor('Triangle'));
     def('Sound.Sawtooth', VCtor('Sawtooth'));
+    def('Sound.Sine', VCtor('Sine'));
     def('Sound.Noise', VCtor('Noise'));
     def('Canvas.Translate', native(2, args => VCtor('Translate', args.slice())));
     def('Canvas.Scale', native(2, args => VCtor('Scale', args.slice())));
@@ -5216,12 +5317,20 @@
       try {
         return JSON.stringify(((snd && snd.voices) || []).map(v => [
           v.wave, withFreq ? v.freq : 0, v.ms, v.endFreq, v.holdMs, v.delayMs,
-          v.duty, v.vibDepth, v.vibRate, v.arp, v.lowCut, v.highCut, v.attack, v.release]));
+          v.duty, v.vibDepth, v.vibRate, v.arp, v.lowCut, v.highCut, v.attack, v.release,
+          // A different envelope is a different sound, so decay and its sustain
+          // level belong in the identity exactly as attack and release do.
+          v.decay, v.sustain,
+          // detune is TIMBRE, not the live pitch. `withFreq` drops freq so a
+          // Sound.glide can retune one live source; a detune is the fixed offset
+          // that says WHICH layer of a unison this is, so changing it is a new
+          // voice — the same call `duty` makes, two entries up.
+          v.detune]));
       } catch (e) { return 'x'; }
     };
     // tone : Wave -> Int -> Int -> Sound  (wave, freq Hz, duration ms)
     const soundToneImpl = native(3, ([wave, freq, ms]) =>
-      mkSound([{ wave: (wave && wave.tag) || 'Square', freq: freq.n, ms: ms.n, endFreq: 0, holdMs: 0, volume: 60, delayMs: 0, duty: 0, vibDepth: 0, vibRate: 0, arp: null, lowCut: 0, highCut: 0, attack: 0, release: 0 }]));
+      mkSound([{ wave: (wave && wave.tag) || 'Square', freq: freq.n, ms: ms.n, endFreq: 0, holdMs: 0, volume: 60, delayMs: 0, duty: 0, vibDepth: 0, vibRate: 0, arp: null, lowCut: 0, highCut: 0, attack: 0, release: 0, decay: 0, sustain: 100, detune: 0 }]));
     def('soundTone', soundToneImpl); def('Sound.tone', soundToneImpl);
     // volume / sweep patch the LAST voice built (so they chain onto a tone).
     const patchLast = (snd, f) => { const vs = cloneVoices(snd); if (vs.length) f(vs[vs.length - 1]); return mkSound(vs); };
@@ -5243,6 +5352,17 @@
     def('soundAttack', soundAttackImpl); def('Sound.attack', soundAttackImpl);
     const soundReleaseImpl = native(2, ([ms, snd]) => patchAll(snd, v => { v.release = Math.max(0, ms.n); }));
     def('soundRelease', soundReleaseImpl); def('Sound.release', soundReleaseImpl);
+    // decay : the third stage. `decay ms level` falls from full volume to `level`
+    // percent of it, then holds there until the release. patchAll for the same
+    // reason attack and release are: a chord is one note on several oscillators.
+    //
+    // `decay 0 _` is off, and off is exactly the old shape — that is what let this
+    // land without moving a single existing sound.
+    const soundDecayImpl = native(3, ([ms, level, snd]) => patchAll(snd, v => {
+      v.decay = Math.max(0, ms.n);
+      v.sustain = Math.max(0, Math.min(100, level.n));
+    }));
+    def('soundDecay', soundDecayImpl); def('Sound.decay', soundDecayImpl);
     // lowCut / highCut : tone shaping. Separate combinators because a sound
     // usually wants only ONE end trimmed (wind cuts the lows, a sound heard
     // through a wall cuts the highs), and a single band-pass form would force a
@@ -5260,6 +5380,17 @@
     // pitch fast through these extra Hz + the base (chiptune "chord" on one voice).
     const soundDutyImpl = native(2, ([pct, snd]) => patchLast(snd, v => { v.duty = Math.max(1, Math.min(99, pct.n)); }));
     def('soundDuty', soundDutyImpl); def('Sound.duty', soundDutyImpl);
+    // detune : signed cents on THIS voice. patchLast, unlike the envelope: a
+    // unison is layers that differ, so patching them all would defeat it.
+    //
+    // Clamped to +/- 2400 (two octaves). Past that the number has stopped being a
+    // detune and become a transpose, which `Sound.tone`'s own pitch already says
+    // better — and the clamp keeps a typo from producing an inaudible note in one
+    // runtime and a sub-hertz crawl in the other.
+    const soundDetuneImpl = native(2, ([cents, snd]) => patchLast(snd, v => {
+      v.detune = Math.max(-2400, Math.min(2400, cents.n));
+    }));
+    def('soundDetune', soundDetuneImpl); def('Sound.detune', soundDetuneImpl);
     const soundVibratoImpl = native(3, ([depth, rate, snd]) => patchLast(snd, v => { v.vibDepth = Math.max(0, depth.n); v.vibRate = Math.max(1, rate.n); }));
     def('soundVibrato', soundVibratoImpl); def('Sound.vibrato', soundVibratoImpl);
     const soundArpImpl = native(2, ([list, snd]) => patchLast(snd, v => { v.arp = ((list && list.xs) || []).map(x => x.n); }));
@@ -5288,7 +5419,13 @@
     });
     def('soundSequence', soundSequenceImpl); def('Sound.sequence', soundSequenceImpl);
     // rest : Int -> Sound  (silence of `ms`; occupies time in a sequence, no voice).
-    const soundRestImpl = native(1, ([ms]) => mkSound([{ wave: 'Rest', freq: 0, ms: ms.n, endFreq: 0, holdMs: 0, volume: 0, delayMs: 0 }]));
+    // A rest carries the SAME field set a tone does, defaults included. It is
+    // silent either way, so this is not audible -- but iOS reads a missing
+    // `sustain` as 100 (the "unasked" value) while a field absent here reads as
+    // 0, and the two runtimes then disagreed about what a rest IS. The sound
+    // conformance corpus caught exactly that. A field that exists on one side
+    // only is the bug this corpus is for.
+    const soundRestImpl = native(1, ([ms]) => mkSound([{ wave: 'Rest', freq: 0, ms: ms.n, endFreq: 0, holdMs: 0, volume: 0, delayMs: 0, decay: 0, sustain: 100, detune: 0 }]));
     def('soundRest', soundRestImpl); def('Sound.rest', soundRestImpl);
     // play : Sound -> Cmd msg  (fire once).
     const soundPlayImpl = native(1, ([snd]) => VEffect(() => { soundPlayNow(snd); return VUnit(); }, 'soundPlay'));
@@ -9920,6 +10057,89 @@
     return a ? a.value : null;
   }
 
+  // ---- safe-area insets, for the watchSize mirror ----
+  //
+  // env(safe-area-inset-*) exists only in CSS: there is no JS API for it. So a
+  // probe element carries the four values as padding and getComputedStyle reads
+  // them back in px.
+  //
+  // The probe is position:ABSOLUTE, and that is load-bearing. On iOS a
+  // position:fixed element is itself inset to the safe area, and env() read from
+  // inside one returns 0 -- the same fact that forces the UI shell's status-bar
+  // strip to be position:sticky rather than fixed. A fixed probe would therefore
+  // report a notch-free phone on every phone.
+  //
+  // .mar-canvas deliberately takes NO inset padding of its own (a game's picture
+  // should reach the glass), which is exactly why the numbers have to reach the
+  // app instead.
+  let safeAreaProbe = null;
+  function safeAreaInsets() {
+    if (typeof document === 'undefined' || !document.body) return { top: 0, right: 0, bottom: 0, left: 0 };
+    if (!safeAreaProbe || !safeAreaProbe.isConnected) {
+      safeAreaProbe = document.createElement('div');
+      safeAreaProbe.setAttribute('aria-hidden', 'true');
+      safeAreaProbe.style.cssText =
+        'position:absolute;top:0;left:0;width:0;height:0;visibility:hidden;pointer-events:none;' +
+        'padding-top:env(safe-area-inset-top);padding-right:env(safe-area-inset-right);' +
+        'padding-bottom:env(safe-area-inset-bottom);padding-left:env(safe-area-inset-left);';
+      document.body.appendChild(safeAreaProbe);
+    }
+    const cs = getComputedStyle(safeAreaProbe);
+    const px = (v) => Math.max(0, Math.round(parseFloat(v) || 0));
+    return {
+      top: px(cs.paddingTop), right: px(cs.paddingRight),
+      bottom: px(cs.paddingBottom), left: px(cs.paddingLeft),
+    };
+  }
+
+  // Every mounted canvas that is watching its box. An element is added when its
+  // ResizeObserver is attached and dropped when the emit finds it detached, so
+  // the set cannot pin a removed canvas alive.
+  const canvasBoxWatchers = new Set();
+
+  // Deliver { w, h, top, right, bottom, left } if anything in it changed. The
+  // key dedupes: the observer and the orientation listener both call this, and
+  // a rotation that only moves the notch must produce exactly one message.
+  function emitCanvasBox(el) {
+    if (!el.isConnected) { canvasBoxWatchers.delete(el); return; }
+    const w = el.clientWidth | 0, h = el.clientHeight | 0;
+    const ins = safeAreaInsets();
+    const key = w + 'x' + h + ':' + ins.top + ',' + ins.right + ',' + ins.bottom + ',' + ins.left;
+    if (key === el.__lastBox) return;
+    el.__lastBox = key;
+    const tagger = canvasAttrValue(el.__marView, 'watchSize');
+    if (tagger && currentDispatch) {
+      currentDispatch(apply(tagger, VRecord({
+        w: VInt(w), h: VInt(h),
+        top: VInt(ins.top), right: VInt(ins.right),
+        bottom: VInt(ins.bottom), left: VInt(ins.left),
+      }, ['w', 'h', 'top', 'right', 'bottom', 'left'])));
+    }
+  }
+
+  // A rotation settles over a few frames on iOS: the event fires before the
+  // layout and before env() reports the new side, so re-read a handful of times
+  // across ~half a second. emitCanvasBox dedupes, so the extra reads are free.
+  function rereadCanvasBoxes() {
+    let n = 0;
+    const tick = () => {
+      canvasBoxWatchers.forEach(emitCanvasBox);
+      if (++n < 6) setTimeout(tick, 90);
+    };
+    tick();
+  }
+  // Guarded on the METHOD, not just on `window`. Not every host that defines a
+  // window defines a whole one: the offline audio harness in the iron-meridian
+  // tools stubs a window with no event API, and an unguarded call there does not
+  // degrade -- it throws at load and takes the entire runtime with it.
+  if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+    window.addEventListener('orientationchange', rereadCanvasBoxes);
+    if (window.screen && window.screen.orientation &&
+        typeof window.screen.orientation.addEventListener === 'function') {
+      window.screen.orientation.addEventListener('change', rereadCanvasBoxes);
+    }
+  }
+
   // ---- Canvas pointer MIRROR (Canvas.watchPointers) ----
   // Per-canvas table of pressed pointers (touch contacts + mouse/pen with a
   // button down), keyed by the platform pointerId, each carrying a small stable
@@ -10089,21 +10309,25 @@
           currentDispatch(apply(apply(tagger, VInt(Math.round(ev.deltaX))), VInt(Math.round(ev.deltaY))));
         }
       }, { passive: false });
-      // Resize → redraw + watchSize({ w, h } as (w, h)). ResizeObserver fires
-      // once on observe, seeding the real box size into the model immediately:
-      // the size mirror's "seed on subscribe" contract.
+      // Resize → redraw + watchSize({ w, h, top, right, bottom, left }).
+      // ResizeObserver fires once on observe, seeding the real box into the
+      // model immediately: the size mirror's "seed on subscribe" contract.
+      //
+      // The insets ride along because they usually change at the same moment
+      // the box does -- turning a phone upright does both -- and the observer
+      // already fires then, since .mar-canvas is 100%/100dvh.
+      //
+      // The exception is the whole reason the insets exist: rotating a phone
+      // 180 degrees, landscape-left to landscape-right, leaves the box byte for
+      // byte identical and moves the notch from one side to the other. No
+      // ResizeObserver fires, so left/right would stay swapped -- wrong on
+      // exactly one device held exactly one way, which is the failure ADR 0034
+      // exists to prevent. canvasBoxWatchers lets an orientation change re-emit
+      // the same box with the new insets.
       if (typeof ResizeObserver !== 'undefined') {
-        el.__canvasRO = new ResizeObserver(() => {
-          drawCanvas(el);
-          const w = el.clientWidth | 0, h = el.clientHeight | 0;
-          if (w === el.__lastW && h === el.__lastH) return;
-          el.__lastW = w; el.__lastH = h;
-          const tagger = canvasAttrValue(el.__marView, 'watchSize');
-          if (tagger && currentDispatch) {
-            currentDispatch(apply(apply(tagger, VInt(w)), VInt(h)));
-          }
-        });
+        el.__canvasRO = new ResizeObserver(() => { drawCanvas(el); emitCanvasBox(el); });
         el.__canvasRO.observe(el);
+        canvasBoxWatchers.add(el);
       }
     }
     drawCanvas(el);
