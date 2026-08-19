@@ -1,0 +1,325 @@
+module Probe exposing (..)
+
+import Types exposing (..)
+import Balance exposing (..)
+import Maps exposing (..)
+import Missions exposing (..)
+import Sim exposing (..)
+
+
+-- A scenario harness for the hauler delivery bug: a refinery, something built
+-- flush against it, and one full hauler. Runs the REAL returnStep so the answer
+-- is about the game rather than about a replica of it.
+--
+-- Kept as a .in template, like probe.mar.in: two modules named Probe in the
+-- project directory would make `mar check` refuse to build.
+
+
+mapSide2 : Int
+mapSide2 = 14
+
+
+-- open ground everywhere, so nothing but the buildings blocks
+openTiles : Dict Int Int
+openTiles =
+    List.foldl
+        (\i acc -> Dict.insert i tRego acc)
+        Dict.empty
+        (List.range 0 (mapSide2 * mapSide2 - 1))
+
+
+player : Side
+player =
+    { id = 1, race = Compact, team = 1, human = True, credits = 0
+    , supUse = 0, supMax = 20, powUse = 0, powMade = 20
+    , sQueue = [], sProg = 0, sReady = 0 - 1
+    , uQueue = [], uProg = 0, superCd = 0, aggro = 100
+    , mind = { mode = 0, thinkAt = 0, waveAt = 0, waveSize = 0, buildIx = 0, targetX = 0, targetY = 0, scoutIx = 0 }
+    , alive = True
+    }
+
+
+-- 14x14 of open ground with one player side and no ore: a hauler that arrives
+-- has nowhere else to go, so a delivery is the only way credits can move.
+field : Game
+field =
+    { emptyGame
+        | mapW = mapSide2
+        , mapH = mapSide2
+        , tiles = openTiles
+        , sides = [ player ]
+    }
+
+
+-- Rock out every tile of the frame around the 3x2 refinery at (4,4): columns
+-- 3..7, rows 3..6, minus the footprint itself.
+sealed : Game -> Game
+sealed g =
+    List.foldl
+        (\c acc ->
+            if c.tx < 4 || c.tx > 6 || c.ty < 4 || c.ty > 5 then
+                { acc | tiles = Dict.insert (idxOf acc.mapW c.tx c.ty) tRock acc.tiles }
+            else
+                acc
+        )
+        g
+        (List.concatMap
+            (\tx -> List.map (\ty -> { tx = tx, ty = ty }) (List.range 3 6))
+            (List.range 3 7)
+        )
+
+
+-- one full hauler, dropped at a pixel and told to take the load home
+loaded : Int -> Int -> Game -> Game
+loaded px py g =
+    let
+        g2 = mkUnit 1 Hauler px py g
+    in
+    { g2 | units = List.map (\u -> { u | carry = 400, ord = OReturn }) g2.units }
+
+
+-- Run the real returnStep n times over the single unit in the game.
+type alias Run =
+    { g : Game, u : Unit }
+
+
+step1 : Run -> Run
+step1 st =
+    let
+        r = returnStep { g = st.g, out = [] } st.u
+    in
+    case r.out of
+        v :: _ -> { g = r.g, u = v }
+        [] -> st
+
+
+runN : Int -> Game -> Run
+runN n g =
+    case g.units of
+        [] ->
+            { g = g, u = { id = 0, side = 0, kind = Hauler, x = 0, y = 0, hp = 0, sh = 0, cd = 0, stun = 0, lastHit = 0, face = 0, ord = OIdle, tgt = TNone, flowKey = 0 - 1, stuck = 0, carry = 0 } }
+
+        u :: _ ->
+            List.foldl (\_ st -> step1 st) { g = { g | units = [] }, u = u } (List.range 1 n)
+
+
+outcome : String -> Run -> String
+outcome label r =
+    label
+        ++ " credits="
+        ++ String.fromInt (sideOf r.g 1).credits
+        ++ " carry="
+        ++ String.fromInt r.u.carry
+        ++ " alerts="
+        ++ String.fromInt (List.length r.g.alerts)
+
+
+-- CASE A, the reported bug. A refinery at (4,4) with a MotorPool built flush
+-- against its south edge, which is exactly what the old drop point sat on. The
+-- hauler starts NORTH of the refinery, the one direction the old code could
+-- never serve. Expect a deposit.
+caseA : String
+caseA =
+    outcome "flush-below "
+        (runN 400
+            (loaded 132 60
+                (mkBld 1 MotorPool 4 6 0
+                    (mkBld 1 Refinery 4 4 0 field)
+                )
+            )
+        )
+
+
+-- CASE B, a lone refinery approached from the north. Under the old geometry
+-- this failed too: the only servable tiles were the apron to the south, so a
+-- hauler arriving from above ground along the north wall.
+caseB : String
+caseB =
+    outcome "from-north  "
+        (runN 400 (loaded 132 60 (mkBld 1 Refinery 4 4 0 field)))
+
+
+-- CASE C, the ordinary case that has always worked: approach from the south.
+-- This is the regression guard on the rewrite.
+caseC : String
+caseC =
+    outcome "from-south  "
+        (runN 400 (loaded 132 190 (mkBld 1 Refinery 4 4 0 field)))
+
+
+-- CASE D, genuinely walled in on every side by terrain. Nothing can deliver, so
+-- the load stays put, but the game now SAYS so instead of standing there mute.
+caseD : String
+caseD =
+    outcome "sealed      "
+        (runN 400 (loaded 132 60 (sealed (mkBld 1 Refinery 4 4 0 field))))
+
+
+-- A SWEEP, which is the honest measurement. The freeze that strands a hauler
+-- lives in the wall slide, not only in the drop point, so one approach proves
+-- little: start from a ring of positions all the way around the refinery and
+-- count how many actually deliver.
+ringStart : Int -> { x : Int, y : Int }
+ringStart i =
+    let
+        per = 10
+        side = i // per
+        t = 240 * modBy per i // per
+    in
+    if side == 0 then { x = t, y = 0 }
+    else if side == 1 then { x = 240, y = t }
+    else if side == 2 then { x = 240 - t, y = 240 }
+    else { x = 0, y = 240 - t }
+
+
+sweep : Game -> String
+sweep g =
+    let
+        r =
+            List.foldl
+                (\i acc ->
+                    let
+                        p = ringStart i
+                        run = runN 900 (loaded p.x p.y g)
+                    in
+                    if run.u.carry == 0 then
+                        { ok = acc.ok + 1, bad = acc.bad }
+                    else
+                        { ok = acc.ok, bad = acc.bad + 1 }
+                )
+                { ok = 0, bad = 0 }
+                (List.range 0 39)
+    in
+    String.fromInt r.ok ++ "/" ++ String.fromInt (r.ok + r.bad)
+
+
+sweepLone : String
+sweepLone =
+    "sweep lone        " ++ sweep (mkBld 1 Refinery 4 4 0 field)
+
+
+sweepBelow : String
+sweepBelow =
+    "sweep flush-below " ++ sweep (mkBld 1 MotorPool 4 6 0 (mkBld 1 Refinery 4 4 0 field))
+
+
+sweepLeft : String
+sweepLeft =
+    "sweep flush-left  " ++ sweep (mkBld 1 MotorPool 1 4 0 (mkBld 1 Refinery 4 4 0 field))
+
+
+-- ===== the alert trigger =====
+--
+-- Same harness, pointed at the second complaint: the horn fired on damage to
+-- ANY unit anywhere, including one the player had sent out to attack.
+
+
+hurt : Duty -> Game -> Game
+hurt ord g =
+    let
+        g2 = mkUnit 1 Rifle 100 100 g
+        g3 = { g2 | units = List.map (\u -> { u | ord = ord }) g2.units }
+    in
+    case g3.units of
+        [] -> g3
+        u :: _ -> hitUnit 2 u.id 5 0 g3
+
+
+heard : String -> Game -> String
+heard label g =
+    label
+        ++ " alerts=" ++ String.fromInt (List.length g.alerts)
+        ++ " horns=" ++ String.fromInt (List.length g.cues)
+
+
+-- a unit the player sent to attack, taking the return fire that attacking earns
+attacking : String
+attacking =
+    heard "unit attacking  " (hurt (OAtkMove 200 200) field)
+
+
+-- a hauler being shot, which is the thing this alert most exists to say
+harvesting : String
+harvesting =
+    heard "unit harvesting " (hurt (OHarvest 7) field)
+
+
+-- idle at home
+idle : String
+idle =
+    heard "unit idle       " (hurt OIdle field)
+
+
+-- two hits in a row: the limiter has to swallow the second
+twice : String
+twice =
+    heard "two hits        " (hurt OIdle (hurt OIdle field))
+
+
+-- an under-attack ping and then the bot's wave horn: one horn between them,
+-- but the wave still gets its own line in the feed
+botToo : String
+botToo =
+    heard "hit then wave   "
+        (alertAt "Enemy forces inbound." 10 10 (klaxon (hurt OIdle field)))
+
+
+-- ===== the wall wedge =====
+--
+-- The stranding that has nothing to do with adjacency. A wall between the
+-- hauler and the refinery, and the hauler close enough that moveToward takes
+-- the straight-line shortcut instead of the flow field. The straight line
+-- points into the wall, the slide truncates to a zero-length step, and the old
+-- finishMove called that progress. The way around is open the whole time.
+wall : Game -> Game
+wall g =
+    List.foldl
+        (\tx acc -> { acc | tiles = Dict.insert (idxOf acc.mapW tx 2) tRock acc.tiles })
+        g
+        (List.range 3 7)
+
+
+-- hauler due north of the refinery with the wall in between
+walled : String
+walled =
+    let
+        r = runN 900 (loaded 132 36 (wall (mkBld 1 Refinery 4 4 0 field)))
+    in
+    "wall between"
+        ++ " carry=" ++ String.fromInt r.u.carry
+        ++ " at=" ++ String.fromInt (upx r.u) ++ "," ++ String.fromInt (upy r.u)
+        ++ " stuck=" ++ String.fromInt r.u.stuck
+        ++ " idle=" ++ (if r.u.ord == OIdle then "yes" else "no")
+
+
+-- and the same wall with NO way around it: the hauler must give up rather than
+-- grind, so it goes back to being a unit the player can re-task.
+boxed : Game -> Game
+boxed g =
+    List.foldl
+        (\tx acc -> { acc | tiles = Dict.insert (idxOf acc.mapW tx 2) tRock acc.tiles })
+        (List.foldl
+            (\ty acc -> { acc | tiles = Dict.insert (idxOf acc.mapW 2 ty) tRock (Dict.insert (idxOf acc.mapW 8 ty) tRock acc.tiles) })
+            g
+            (List.range 0 2)
+        )
+        (List.range 0 13)
+
+
+gaveUp : String
+gaveUp =
+    let
+        r = runN 900 (loaded 132 36 (boxed (mkBld 1 Refinery 4 4 0 field)))
+    in
+    "no way round"
+        ++ " carry=" ++ String.fromInt r.u.carry
+        ++ " idle=" ++ (if r.u.ord == OIdle then "yes" else "no")
+
+
+report : String
+report =
+    caseA ++ "\n" ++ caseB ++ "\n" ++ caseC ++ "\n" ++ caseD
+        ++ "\n" ++ sweepLone ++ "\n" ++ sweepBelow ++ "\n" ++ sweepLeft
+        ++ "\n" ++ attacking ++ "\n" ++ harvesting ++ "\n" ++ idle
+        ++ "\n" ++ twice ++ "\n" ++ botToo
+        ++ "\n" ++ walled ++ "\n" ++ gaveUp

@@ -537,10 +537,13 @@ launchWave p =
                 )
                 p.g
 
-        -- fair telegraph: the player hears the wave leave
+        -- Fair telegraph: the player hears the wave leave. The TEXT always goes
+        -- in the feed, because a wave launching is a distinct event worth
+        -- reading; only the horn goes through the shared limiter, so this and
+        -- the under-attack ping can no longer sound on top of each other.
         g3 =
             if hostile g2 p.s.id 1 then
-                alertAt "Enemy forces inbound." target.x target.y (cue CUnderAttack g2)
+                alertAt "Enemy forces inbound." target.x target.y (klaxon g2)
             else
                 g2
     in
