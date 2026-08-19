@@ -195,8 +195,8 @@ advanceFromScreen model =
 update : Msg -> Model -> (Model, Cmd Msg)
 update msg model =
     case msg of
-        Resized w h ->
-            ( { model | w = w, h = h }, Cmd.none )
+        Resized box ->
+            ( { model | w = box.w, h = box.h }, Cmd.none )
 
         Tick ->
             if model.paused then ( model, Cmd.none ) else emit (stepGame model)

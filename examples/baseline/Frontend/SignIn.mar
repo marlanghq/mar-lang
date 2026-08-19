@@ -41,7 +41,7 @@ type alias Model =
 type Msg
     = DraftChanged String
     | Submitted
-    | Resized Int Int
+    | Resized { w : Int, h : Int, top : Int, right : Int, bottom : Int, left : Int }
     | CodeRequested (Result Service.Error Auth.RequestOutcome)
 
 
@@ -56,8 +56,8 @@ update msg model =
         DraftChanged value ->
             ( { model | draft = value, error = Nothing }, Cmd.none )
 
-        Resized w _ ->
-            ( { model | w = w }, Cmd.none )
+        Resized box ->
+            ( { model | w = box.w }, Cmd.none )
 
         Submitted ->
             if model.busy then

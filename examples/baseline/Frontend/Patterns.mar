@@ -56,7 +56,7 @@ type Msg
     | GotSetup (Result Service.Error Shared.SetupState)
     | GotWindow (Result Service.Error Shared.Window)
     | DeviceChanged Device
-    | Resized Int Int
+    | Resized { w : Int, h : Int, top : Int, right : Int, bottom : Int, left : Int }
     | SpanPicked Int
 
 
@@ -111,8 +111,8 @@ update _ msg model =
         DeviceChanged device ->
             ( { model | dark = device.prefersDark }, Cmd.none )
 
-        Resized w _ ->
-            ( { model | w = w }, Cmd.none )
+        Resized box ->
+            ( { model | w = box.w }, Cmd.none )
 
         SpanPicked days ->
             ( { model | span = days }, Cmd.none )

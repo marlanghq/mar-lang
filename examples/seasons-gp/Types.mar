@@ -89,7 +89,7 @@ type alias Model =
 
 
 type Msg
-    = Resized Int Int
+    = Resized { w : Int, h : Int, top : Int, right : Int, bottom : Int, left : Int }
     | Tick
     | Tapped Int Int
     | Dragged Int Int

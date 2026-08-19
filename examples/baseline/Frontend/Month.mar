@@ -43,7 +43,7 @@ type Msg
     = GotNow Time
     | GotWindow (Result Service.Error Shared.Window)
     | DeviceChanged Device
-    | Resized Int Int
+    | Resized { w : Int, h : Int, top : Int, right : Int, bottom : Int, left : Int }
     | Tapped Int Int
     | PrevMonth
     | NextMonth
@@ -93,8 +93,8 @@ update _ msg model =
         DeviceChanged device ->
             ( { model | dark = device.prefersDark }, Cmd.none )
 
-        Resized w _ ->
-            ( { model | w = w }, Cmd.none )
+        Resized box ->
+            ( { model | w = box.w }, Cmd.none )
 
         PrevMonth ->
             ( shiftMonth (-1) model, Cmd.none )

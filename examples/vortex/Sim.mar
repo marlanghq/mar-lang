@@ -317,8 +317,8 @@ update msg model =
 step : Msg -> Model -> Model
 step msg m =
     case msg of
-        Resized w h ->
-            { m | w = max 1 w, h = max 1 h }
+        Resized box ->
+            { m | w = max 1 box.w, h = max 1 box.h }
 
         Tapped _ _ ->
             case m.phase of

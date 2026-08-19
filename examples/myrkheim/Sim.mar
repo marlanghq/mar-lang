@@ -27,8 +27,8 @@ emit model =
 update : Msg -> Model -> (Model, Cmd Msg)
 update msg model =
     case msg of
-        Resized w h ->
-            ( { model | w = w, h = h }, Cmd.none )
+        Resized box ->
+            ( { model | w = box.w, h = box.h }, Cmd.none )
 
         Tick ->
             case model.mode of

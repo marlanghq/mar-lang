@@ -95,7 +95,7 @@ type Msg
     | Played (Result Service.Error Shared.MoveResult)
     | Tick Time
     | Poll Time
-    | Resized Int Int
+    | Resized { w : Int, h : Int, top : Int, right : Int, bottom : Int, left : Int }
     | Tapped Int Int
 
 
@@ -122,8 +122,8 @@ init _ params =
 update : Shared.User -> { id : Int } -> Msg -> Model -> (Model, Cmd Msg)
 update _ _ msg model =
     case msg of
-        Resized w h ->
-            ( { model | w = w, h = h }, Cmd.none )
+        Resized box ->
+            ( { model | w = box.w, h = box.h }, Cmd.none )
 
         Fetched (Ok (Shared.PartidaOk d)) ->
             ( absorb d model, Cmd.none )

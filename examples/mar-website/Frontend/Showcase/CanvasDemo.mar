@@ -43,7 +43,7 @@ type alias Model =
 
 
 type Msg
-    = Resized Int Int
+    = Resized { w : Int, h : Int, top : Int, right : Int, bottom : Int, left : Int }
     | Tapped Int Int
     | Tick Time
 
@@ -55,8 +55,8 @@ init = ({ w = 340, dots = [], ang = Math.degrees 0 }, Cmd.none)
 update : Msg -> Model -> (Model, Cmd Msg)
 update msg model =
     case msg of
-        Resized w _ ->
-            ({ model | w = w }, Cmd.none)
+        Resized box ->
+            ( { model | w = box.w }, Cmd.none)
 
         Tapped x y ->
             ({ model | dots = List.concat [ model.dots, [ { x = x, y = y } ] ] }, Cmd.none)

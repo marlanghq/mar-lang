@@ -379,12 +379,12 @@ update msg model =
 step : Msg -> Model -> Model
 step msg m =
     case msg of
-        Resized w h ->
+        Resized box ->
             -- A canvas that is not on screen reports zero, and a zero here is
             -- not a small matrix: it is a DIVISOR of zero two functions later.
             -- Clamping at the boundary keeps every derived number sane instead
             -- of hunting for the one place that divides.
-            { m | w = max 1 w, h = max 1 h }
+            { m | w = max 1 box.w, h = max 1 box.h }
 
         Tapped _ _ ->
             case m.phase of

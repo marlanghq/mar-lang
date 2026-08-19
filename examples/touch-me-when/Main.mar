@@ -74,7 +74,7 @@ type alias Model =
 
 
 type Msg
-    = Resized Int Int     -- canvas reported its box size
+    = Resized { w : Int, h : Int, top : Int, right : Int, bottom : Int, left : Int }   -- canvas reported its box
     | Morph               -- Playing tick: re-roll both shapes
     | Resume              -- Celebrating tick: green shown, deal a new round
     | Spawned Round       -- Random produced the next pair
@@ -120,8 +120,8 @@ init =
 update : Msg -> Model -> (Model, Cmd Msg)
 update msg model =
     case msg of
-        Resized w h ->
-            ( { model | w = w, h = h }, Cmd.none )
+        Resized box ->
+            ( { model | w = box.w, h = box.h }, Cmd.none )
 
         Morph ->
             ( model, newRound )      -- only fires while Playing (see subscriptions)

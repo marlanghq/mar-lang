@@ -200,7 +200,7 @@ type alias Model =
 
 type Msg
     = Tick
-    | Resized Int Int
+    | Resized { w : Int, h : Int, top : Int, right : Int, bottom : Int, left : Int }
     | Tapped Int Int
     | Pointers (List { id : Int, x : Int, y : Int })
     | KeysChanged { down : List Keyboard.Key }
