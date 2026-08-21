@@ -8,7 +8,7 @@ import Types exposing (..)
 
 defaultPatch : Patch
 defaultPatch =
-    { wave = 1, duty = 50, oct = 0, det = 0, sub = True, len = 1500, bend = 0, vibD = 0, vibR = 5, arp = 0, vol = 60, struck = True, sustain = False, glide = False, lowCut = 0, highCut = 0 }
+    { wave = 1, duty = 50, oct = 0, det = 0, sub = True, len = 1500, bend = 0, vibD = 0, vibR = 5, tremD = 0, tremR = 6, arp = 0, vol = 60, struck = True, sustain = False, glide = False, lowCut = 0, highCut = 0 }
 
 
 -- Twelve voices in two rows. Struck patches (piano, e-piano, bell) get a hammer
@@ -25,21 +25,23 @@ defaultPatch =
 presets : List Preset
 presets =
     [ { name = "GRAND"
-      , patch = { wave = 1, duty = 50, oct = 0, det = 0, sub = True, len = 1600, bend = 0, vibD = 0, vibR = 5, arp = 0, vol = 62, struck = True, sustain = False, glide = False, lowCut = 0, highCut = 0 }
+      , patch = { wave = 1, duty = 50, oct = 0, det = 0, sub = True, len = 1600, bend = 0, vibD = 0, vibR = 5, tremD = 0, tremR = 6, arp = 0, vol = 62, struck = True, sustain = False, glide = False, lowCut = 0, highCut = 0 }
       }
-      -- vibD was 7 here and did nothing: struck notes never reached the LFO. It
-      -- is 0 now rather than wired, because Sound.vibrato wobbles the PITCH and
-      -- the electric-piano sound that 7 was reaching for is TREMOLO: amplitude,
-      -- not pitch. Pitch wobble on a struck note reads as warped tape, not as a
-      -- Rhodes. The honest fix is a Sound.tremolo the module does not have yet.
+      -- The Rhodes wobble, and it is TREMOLO: amplitude, not pitch. This used to
+      -- ask for `vibD = 7`, which is a pitch wobble and reads as warped tape
+      -- rather than as an electric piano -- and it did nothing anyway, because
+      -- struck notes never reached the LFO. It sat at 0 with a comment saying the
+      -- honest fix was a Sound.tremolo the module did not have. It has one now.
+      -- 32% at 5 Hz is the shallow, quick throb of the real instrument; the depth
+      -- only ever takes away, so the note still peaks where `vol` puts it.
     , { name = "E-PIANO"
-      , patch = { wave = 0, duty = 30, oct = 0, det = 0, sub = False, len = 950, bend = 0, vibD = 0, vibR = 5, arp = 0, vol = 52, struck = True, sustain = False, glide = False, lowCut = 0, highCut = 3500 }
+      , patch = { wave = 0, duty = 30, oct = 0, det = 0, sub = False, len = 950, bend = 0, vibD = 0, vibR = 5, tremD = 32, tremR = 5, arp = 0, vol = 52, struck = True, sustain = False, glide = False, lowCut = 0, highCut = 3500 }
       }
     , { name = "ORGAN"
-      , patch = { wave = 0, duty = 50, oct = 0, det = 0, sub = True, len = 1400, bend = 0, vibD = 4, vibR = 6, arp = 0, vol = 40, struck = False, sustain = True, glide = False, lowCut = 0, highCut = 4000 }
+      , patch = { wave = 0, duty = 50, oct = 0, det = 0, sub = True, len = 1400, bend = 0, vibD = 4, vibR = 6, tremD = 0, tremR = 6, arp = 0, vol = 40, struck = False, sustain = True, glide = False, lowCut = 0, highCut = 4000 }
       }
     , { name = "STRINGS"
-      , patch = { wave = 2, duty = 50, oct = 0, det = 20, sub = False, len = 1500, bend = 0, vibD = 10, vibR = 5, arp = 0, vol = 38, struck = False, sustain = True, glide = False, lowCut = 120, highCut = 3000 }
+      , patch = { wave = 2, duty = 50, oct = 0, det = 20, sub = False, len = 1500, bend = 0, vibD = 10, vibR = 5, tremD = 0, tremR = 6, arp = 0, vol = 38, struck = False, sustain = True, glide = False, lowCut = 120, highCut = 3000 }
       }
       -- PLUCK is nearly twice as long as it was, and that is the DECAY stage
       -- paying for itself. At 240ms it was not short because a pluck is short; it
@@ -49,7 +51,7 @@ presets =
       -- own length now, so length buys RING instead of buying flatness, and the
       -- string can be left to sound.
     , { name = "PLUCK"
-      , patch = { wave = 1, duty = 50, oct = 1, det = 0, sub = False, len = 420, bend = 0 - 30, vibD = 0, vibR = 5, arp = 0, vol = 62, struck = False, sustain = False, glide = False, lowCut = 0, highCut = 0 }
+      , patch = { wave = 1, duty = 50, oct = 1, det = 0, sub = False, len = 420, bend = 0 - 30, vibD = 0, vibR = 5, tremD = 0, tremR = 6, arp = 0, vol = 62, struck = False, sustain = False, glide = False, lowCut = 0, highCut = 0 }
       }
       -- The old BASS was an accidental raspberry, and each ingredient earned it:
       -- a narrow 38% pulse an octave down (thin and reedy where you want body),
@@ -60,13 +62,13 @@ presets =
       -- glide, and a note long enough that holding one reads as held, not
       -- pulsing.
     , { name = "BASS"
-      , patch = { wave = 0, duty = 50, oct = 0 - 1, det = 0, sub = True, len = 1300, bend = 0, vibD = 0, vibR = 5, arp = 0, vol = 55, struck = False, sustain = True, glide = False, lowCut = 0, highCut = 1200 }
+      , patch = { wave = 0, duty = 50, oct = 0 - 1, det = 0, sub = True, len = 1300, bend = 0, vibD = 0, vibR = 5, tremD = 0, tremR = 6, arp = 0, vol = 55, struck = False, sustain = True, glide = False, lowCut = 0, highCut = 1200 }
       }
     , { name = "WOBBLE"
-      , patch = { wave = 0, duty = 12, oct = 0 - 1, det = 0, sub = True, len = 1000, bend = 0, vibD = 60, vibR = 4, arp = 0, vol = 55, struck = False, sustain = True, glide = False, lowCut = 0, highCut = 900 }
+      , patch = { wave = 0, duty = 12, oct = 0 - 1, det = 0, sub = True, len = 1000, bend = 0, vibD = 60, vibR = 4, tremD = 0, tremR = 6, arp = 0, vol = 55, struck = False, sustain = True, glide = False, lowCut = 0, highCut = 900 }
       }
     , { name = "BELL"
-      , patch = { wave = 1, duty = 50, oct = 1, det = 0, sub = False, len = 1100, bend = 0, vibD = 0, vibR = 5, arp = 0, vol = 46, struck = True, sustain = False, glide = False, lowCut = 0, highCut = 0 }
+      , patch = { wave = 1, duty = 50, oct = 1, det = 0, sub = False, len = 1100, bend = 0, vibD = 0, vibR = 5, tremD = 0, tremR = 6, arp = 0, vol = 46, struck = True, sustain = False, glide = False, lowCut = 0, highCut = 0 }
       }
       -- Was CHIME, a THIRD arpeggio next to ARP UP (the maj7 pattern is still a
       -- press of the ARP button away). NOI was the only oscillator with no
@@ -80,10 +82,10 @@ presets =
       -- on/off ratio of a SQUARE's cycle, and noise has no cycle. The panel dims
       -- it here rather than letting you move a control that does nothing.
     , { name = "SURF"
-      , patch = { wave = 3, duty = 50, oct = 0, det = 0, sub = False, len = 1400, bend = 0, vibD = 0, vibR = 5, arp = 0, vol = 45, struck = False, sustain = True, glide = False, lowCut = 0, highCut = 0 }
+      , patch = { wave = 3, duty = 50, oct = 0, det = 0, sub = False, len = 1400, bend = 0, vibD = 0, vibR = 5, tremD = 0, tremR = 6, arp = 0, vol = 45, struck = False, sustain = True, glide = False, lowCut = 0, highCut = 0 }
       }
     , { name = "ARP UP"
-      , patch = { wave = 0, duty = 50, oct = 0, det = 0, sub = False, len = 900, bend = 0, vibD = 0, vibR = 5, arp = 1, vol = 48, struck = False, sustain = True, glide = False, lowCut = 0, highCut = 0 }
+      , patch = { wave = 0, duty = 50, oct = 0, det = 0, sub = False, len = 900, bend = 0, vibD = 0, vibR = 5, tremD = 0, tremR = 6, arp = 1, vol = 48, struck = False, sustain = True, glide = False, lowCut = 0, highCut = 0 }
       }
       -- Was ARP OCT, a second arpeggio next to ARP UP (and CHIME is a third):
       -- three of twelve slots spent on one idea, and the octave pattern is still
@@ -92,10 +94,10 @@ presets =
       -- an octave up cuts through, a little ensemble thickens it, and the deep
       -- vibrato is what makes a lead sing rather than sit there.
     , { name = "LEAD"
-      , patch = { wave = 0, duty = 25, oct = 1, det = 10, sub = False, len = 1300, bend = 0, vibD = 18, vibR = 6, arp = 0, vol = 50, struck = False, sustain = True, glide = False, lowCut = 0, highCut = 0 }
+      , patch = { wave = 0, duty = 25, oct = 1, det = 10, sub = False, len = 1300, bend = 0, vibD = 18, vibR = 6, tremD = 0, tremR = 6, arp = 0, vol = 50, struck = False, sustain = True, glide = False, lowCut = 0, highCut = 0 }
       }
     , { name = "UFO"
-      , patch = { wave = 2, duty = 50, oct = 0, det = 43, sub = False, len = 1300, bend = 80, vibD = 80, vibR = 11, arp = 0, vol = 40, struck = False, sustain = True, glide = False, lowCut = 0, highCut = 0 }
+      , patch = { wave = 2, duty = 50, oct = 0, det = 43, sub = False, len = 1300, bend = 80, vibD = 80, vibR = 11, tremD = 0, tremR = 6, arp = 0, vol = 40, struck = False, sustain = True, glide = False, lowCut = 0, highCut = 0 }
       }
     ]
 

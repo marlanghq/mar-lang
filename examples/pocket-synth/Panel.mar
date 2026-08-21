@@ -140,6 +140,13 @@ sliderRect m id =
     else { x = colX m 1 + 8, y = y0 + rowH * 2 + 26, w = colW m - 16, h = 22 }
 
 
+-- The two LFO sliders are the PITCH one. They used to read "LFO DEPTH" / "LFO
+-- RATE", which was unambiguous while there was one LFO; a patch can now ask for
+-- a loudness wobble too (Sound.tremolo, see E-PIANO), and that one is set by the
+-- preset rather than by a slider -- this panel's geometry is seven controls in
+-- three columns, and a knob nobody can reach is worth less than a label that
+-- says which wobble the knob it has is for.
+--
 -- ENSEMBLE (id 1) reads in CENTS, and the number on the panel is now the number
 -- the engine is given: Sound.detune takes cents, so the slider IS the control.
 -- It used to be a per-mille slice of the frequency that the synth turned into
@@ -186,8 +193,8 @@ sliderName id =
     else if id == 1 then "ENSEMBLE"
     else if id == 2 then "LENGTH"
     else if id == 3 then "BEND"
-    else if id == 4 then "LFO DEPTH"
-    else if id == 5 then "LFO RATE"
+    else if id == 4 then "VIB DEPTH"
+    else if id == 5 then "VIB RATE"
     else "VOLUME"
 
 

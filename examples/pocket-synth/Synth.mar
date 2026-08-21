@@ -66,10 +66,10 @@ shapeDuty p s =
     if p.wave == 0 then Sound.duty p.duty s else s
 
 
--- The patch's TONE, applied to one voice. Sound.lowCut / Sound.highCut patch the
--- LAST voice of a Sound, so this belongs at each single-voice construction site,
--- never on an assembled chord: on a chord it would filter one layer and leave
--- the rest bright.
+-- The patch's TONE, applied to one voice. It belongs at each single-voice
+-- construction site rather than on an assembled chord: the sub and the octave
+-- layer are shaped differently from the oscillator on purpose, and one filter
+-- around the assembled note would flatten all three to the same colour.
 --
 -- These are set per PRESET and not by a slider, and that is a framework limit
 -- rather than taste: a held voice's identity includes its cuts, so moving a
@@ -288,8 +288,32 @@ arpStepSound p stepLen hz ratio =
                 (shapeDuty p (Sound.tone (waveOf p.wave) (max 20 (hz * ratio // 1000)) stepLen))))
 
 
+-- The two wobbles are different instruments, not two settings of one: vibrato
+-- moves the PITCH (a singer's tone, a warped tape) and tremolo moves the
+-- LOUDNESS (an electric piano, a Leslie). A patch can ask for either or both.
+--
+-- Tremolo is applied to the FINISHED note rather than inside a layer, and that
+-- placement is the whole of it. A struck patch is five or six layers -- strike,
+-- two bodies, an ensemble pair, an octave -- and a Rhodes throbs as one
+-- instrument, not as six things each breathing on its own. `Sound.tremolo`
+-- patches every voice it is given and both runtimes start the LFO at the note's
+-- own start, so one call here puts every layer in step.
+--
+-- It also has to be here to reach the struck path at all: `oscVoice` is the
+-- PLAIN branch, and the comment on E-PIANO records exactly this trap being
+-- walked into once already, with vibrato.
+withTremolo : Patch -> Sound -> Sound
+withTremolo p snd =
+    if p.tremD > 0 then Sound.tremolo p.tremD p.tremR snd else snd
+
+
 buildNote : Patch -> Int -> Sound
 buildNote p hz0 =
+    withTremolo p (buildVoices p hz0)
+
+
+buildVoices : Patch -> Int -> Sound
+buildVoices p hz0 =
     let
         hz = shiftHz p.oct hz0
     in
