@@ -137,10 +137,10 @@ bassC hz =
         ]
 
 
-arpC : Int -> Int -> Int -> Sound
-arpC hz third fifth =
+arpC : Int -> List Int -> Sound
+arpC hz shape =
     Sound.sequence
-        [ Sound.decay 380 45 (Sound.volume 10 (Sound.arp [ third, fifth ] (Sound.duty 25 (Sound.tone Sound.Square hz 470))))
+        [ Sound.decay 380 45 (Sound.volume 10 (Sound.arp shape (Sound.duty 25 (Sound.tone Sound.Square hz 470))))
         , Sound.rest 30
         ]
 
@@ -179,10 +179,12 @@ grooveBeat key =
             else if bar == 1 then Sound.f 3
             else if bar == 2 then Sound.d 4
             else Sound.g 3
-        third =
-            if bar == 0 then Sound.c 4 else if bar == 1 then Sound.a 3 else if bar == 2 then Sound.f 4 else Sound.b 3
-        fifth =
-            if bar == 0 then Sound.e 4 else if bar == 1 then Sound.c 4 else if bar == 2 then Sound.a 4 else Sound.d 4
+        -- The arpeggio's shape, in semitones above whatever root the bar is on:
+        -- Am and Dm are minor, F and G are major. Written as intervals rather
+        -- than as three spelled notes because that is what the chord IS, and it
+        -- follows the root without being respelled.
+        shape =
+            if bar == 0 || bar == 2 then [ 3, 7 ] else [ 4, 7 ]
         kick =
             if inBoss then
                 if k == 0 || k == 2 then p2 drKick drKick else p2 r8 drKick
@@ -239,7 +241,7 @@ grooveBeat key =
             if inBoss == False && build >= 2 then
                 -- the arp sits in the lead's octave, so it comes out from
                 -- under the melody instead of fighting it in the middle
-                [ Sound.pan 30 (arpC rootO third fifth) ]
+                [ Sound.pan 30 (arpC rootO shape) ]
             else
                 []
     in
@@ -259,8 +261,9 @@ grooveBeat key =
 -- disagreement is what an ensemble physically is, and it is the difference
 -- between a lead that reads as an instrument and one that reads as a tone
 -- generator. Eight cents is deliberate restraint: enough to thicken, not
--- enough to sound out of tune against the bass. Detune patches the LAST voice,
--- so it is written on the square itself rather than around the chord.
+-- enough to sound out of tune against the bass. It is written on the square
+-- itself rather than around the chord because a unison is layers that DIFFER:
+-- one detune over the pair would move both and leave nothing to beat against.
 melNote : Int -> Sound
 melNote hz =
     if hz == 0 then
@@ -316,7 +319,11 @@ boomK k =
         Sound.decay 130 5
             (Sound.chord
                 [ Sound.volume 26 (Sound.tone Sound.Noise 0 120)
-                , Sound.volume 16 (Sound.arp [ 620, 480 ] (Sound.duty 25 (Sound.tone Sound.Square 830 180)))
+                -- The clank was three frequencies picked by ear, not a chord;
+                -- as intervals they are a fourth and a sixth down. The last step
+                -- lands about half a semitone above where it used to, which is
+                -- nothing under 120 ms of noise.
+                , Sound.volume 16 (Sound.arp [ 0 - 5, 0 - 9 ] (Sound.duty 25 (Sound.tone Sound.Square 830 180)))
                 , Sound.volume 16 (Sound.sweep 60 (Sound.tone Sound.Triangle 300 160))
                 ])
     else
@@ -447,7 +454,7 @@ cueSound cue =
             -- gives it an edge to arrive on without turning the hum into a pluck.
             Sound.decay 270 62
                 (Sound.chord
-                    [ Sound.volume 22 (Sound.arp [ Sound.e 5, Sound.a 5, Sound.cs 6 ] (Sound.tone Sound.Triangle (Sound.a 4) 340))
+                    [ Sound.volume 22 (Sound.arp [ 7, 12, 16 ] (Sound.tone Sound.Triangle (Sound.a 4) 340))
                     , Sound.volume 10 (Sound.sweep 900 (Sound.duty 50 (Sound.tone Sound.Square 320 240)))
                     ])
 
@@ -489,7 +496,7 @@ cueSound cue =
                 , Sound.volume 14 (Sound.sweep 520 (Sound.tone Sound.Triangle 70 900))
                 , Sound.sequence
                     [ Sound.rest 380
-                    , Sound.volume 18 (Sound.arp [ 440, 554, 659 ] (Sound.duty 25 (Sound.tone Sound.Square 330 500)))
+                    , Sound.volume 18 (Sound.arp [ 5, 9, 12 ] (Sound.duty 25 (Sound.tone Sound.Square 330 500)))
                     ]
                 ]
 
@@ -566,7 +573,7 @@ cueSound cue =
                         ]
                     , Sound.sequence
                         [ Sound.rest 600
-                        , Sound.volume 12 (Sound.arp [ Sound.c 6, Sound.e 6 ] (Sound.duty 25 (Sound.tone Sound.Square (Sound.a 5) 500)))
+                        , Sound.volume 12 (Sound.arp [ 3, 7 ] (Sound.duty 25 (Sound.tone Sound.Square (Sound.a 5) 500)))
                         ]
                     ])
 

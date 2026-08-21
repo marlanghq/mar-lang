@@ -8,12 +8,21 @@ import UI exposing (navigationStack, navigationTitle, form, section, header, but
 -- (invented for this example: melody, harmony, bass and drums as
 -- independent chip voices), and a full drum-kit groove.
 --
--- The one hard rule of the tunes: EVERY voice in a piece totals exactly
+-- The one house rule of the tunes: EVERY voice in a piece totals exactly
 -- the same number of milliseconds (the math is in each piece's comment).
--- Sound.loop repeats each voice at its own length, so equal totals keep
--- the channels phase-locked forever; unequal ones drift apart.
--- Shaping is safe here: decay, pan and Sine all leave duration alone. A new
--- LAYER is what can break it, so every layer added below matches its
+-- What that buys is a loop with no HOLE in it: one cycle of Sound.loop is the
+-- piece's own full length, and a voice that stops early leaves silence in its
+-- channel until the cycle comes round.
+--
+-- It does NOT stop the parts drifting, which is what this comment used to say
+-- and what several files in this repo still repeat. An older scheduler repeated
+-- each voice at its own length, and there the arithmetic was load bearing. The
+-- one in runtime.js today books every voice once per period from a shared
+-- origin, so two voices 300 ms apart in length stay exactly in step for as long
+-- as the loop runs (measured: TestLoopKeepsUnequalVoicesLocked).
+--
+-- Shaping is safe here either way: decay, pan and Sine all leave duration alone.
+-- A new LAYER is what changes a total, so every layer added below matches its
 -- neighbours to the millisecond. tools/check-tunes.mjs counts them.
 --
 -- It also showcases the sound DX helpers:
@@ -138,21 +147,22 @@ ewBassBar root oct fifth =
         ]
 
 
--- one chord stab: the whole triad as ONE fast-cycled arp voice, 160ms
+-- one chord stab: the whole triad as ONE fast-cycled arp voice, 160ms. The
+-- shape is in semitones above the root, so minor is [ 3, 7 ] wherever it lands.
 ewStab : Int -> List Int -> Sound
-ewStab base extras =
-    Sound.volume 15 (Sound.arp extras (Sound.duty 25 (Sound.tone Sound.Square base 160)))
+ewStab base shape =
+    Sound.volume 15 (Sound.arp shape (Sound.duty 25 (Sound.tone Sound.Square base 160)))
 
 
 -- stabs answer on beats 2 and 4: . . X . | . . X . = 1280ms, and they answer
 -- from the RIGHT. Two square parts in the same register fight in the middle
 -- however good the waves are; a third of the way apart both are audible.
 ewStabBar : Int -> List Int -> Sound
-ewStabBar base extras =
+ewStabBar base shape =
     Sound.pan 38
         (Sound.sequence
-            [ Sound.rest 320, ewStab base extras, Sound.rest 160
-            , Sound.rest 320, ewStab base extras, Sound.rest 160
+            [ Sound.rest 320, ewStab base shape, Sound.rest 160
+            , Sound.rest 320, ewStab base shape, Sound.rest 160
             ]
         )
 
@@ -251,22 +261,22 @@ emberwake =
             ]
         , -- STABS: same 16-bar chord ride
           Sound.sequence
-            [ ewStabBar (Sound.e 4) [ Sound.g 4, Sound.b 4 ]
-            , ewStabBar (Sound.e 4) [ Sound.g 4, Sound.b 4 ]
-            , ewStabBar (Sound.c 4) [ Sound.e 4, Sound.g 4 ]
-            , ewStabBar (Sound.d 4) [ Sound.fs 4, Sound.a 4 ]
-            , ewStabBar (Sound.e 4) [ Sound.g 4, Sound.b 4 ]
-            , ewStabBar (Sound.c 4) [ Sound.e 4, Sound.g 4 ]
-            , ewStabBar (Sound.g 3) [ Sound.b 3, Sound.d 4 ]
-            , ewStabBar (Sound.d 4) [ Sound.fs 4, Sound.a 4 ]
-            , ewStabBar (Sound.e 4) [ Sound.g 4, Sound.b 4 ]
-            , ewStabBar (Sound.c 4) [ Sound.e 4, Sound.g 4 ]
-            , ewStabBar (Sound.a 3) [ Sound.c 4, Sound.e 4 ]
-            , ewStabBar (Sound.b 3) [ Sound.ds 4, Sound.fs 4 ]
-            , ewStabBar (Sound.e 4) [ Sound.g 4, Sound.b 4 ]
-            , ewStabBar (Sound.c 4) [ Sound.e 4, Sound.g 4 ]
-            , ewStabBar (Sound.d 4) [ Sound.fs 4, Sound.a 4 ]
-            , ewStabBar (Sound.e 4) [ Sound.g 4, Sound.b 4 ]
+            [ ewStabBar (Sound.e 4) [ 3, 7 ]
+            , ewStabBar (Sound.e 4) [ 3, 7 ]
+            , ewStabBar (Sound.c 4) [ 4, 7 ]
+            , ewStabBar (Sound.d 4) [ 4, 7 ]
+            , ewStabBar (Sound.e 4) [ 3, 7 ]
+            , ewStabBar (Sound.c 4) [ 4, 7 ]
+            , ewStabBar (Sound.g 3) [ 4, 7 ]
+            , ewStabBar (Sound.d 4) [ 4, 7 ]
+            , ewStabBar (Sound.e 4) [ 3, 7 ]
+            , ewStabBar (Sound.c 4) [ 4, 7 ]
+            , ewStabBar (Sound.a 3) [ 3, 7 ]
+            , ewStabBar (Sound.b 3) [ 4, 7 ]
+            , ewStabBar (Sound.e 4) [ 3, 7 ]
+            , ewStabBar (Sound.c 4) [ 4, 7 ]
+            , ewStabBar (Sound.d 4) [ 4, 7 ]
+            , ewStabBar (Sound.e 4) [ 3, 7 ]
             ]
         , -- BASS: root / octave / fifth gallop, same chords
           Sound.sequence
@@ -417,20 +427,20 @@ ckWalk hz =
 
 
 -- one comp hit: rest, then a 100ms chord stab on the swung offbeat
-ckComp : Int -> Int -> Int -> Sound
-ckComp base third fifth =
+ckComp : Int -> List Int -> Sound
+ckComp base shape =
     Sound.sequence
         [ Sound.rest 200
-        , Sound.volume 14 (Sound.arp [ third, fifth ] (Sound.duty 25 (Sound.tone Sound.Square base 100)))
+        , Sound.volume 14 (Sound.arp shape (Sound.duty 25 (Sound.tone Sound.Square base 100)))
         ]
 
 
 -- The comping sits to the RIGHT and the ride to the LEFT, the way a trio
 -- records: the lead has the middle, and the bass and drums hold it down there.
-ckCompBar : Int -> Int -> Int -> Sound
-ckCompBar base third fifth =
+ckCompBar : Int -> List Int -> Sound
+ckCompBar base shape =
     Sound.pan 36
-        (Sound.sequence [ ckComp base third fifth, ckComp base third fifth, ckComp base third fifth, ckComp base third fifth ])
+        (Sound.sequence [ ckComp base shape, ckComp base shape, ckComp base shape, ckComp base shape ])
 
 
 ckKick : Sound
@@ -495,18 +505,18 @@ alleycatSwing =
             ]
         , -- COMPS: A A A A | D D A A | E D A E
           Sound.sequence
-            [ ckCompBar (Sound.a 3) (Sound.cs 4) (Sound.e 4)
-            , ckCompBar (Sound.a 3) (Sound.cs 4) (Sound.e 4)
-            , ckCompBar (Sound.a 3) (Sound.cs 4) (Sound.e 4)
-            , ckCompBar (Sound.a 3) (Sound.cs 4) (Sound.e 4)
-            , ckCompBar (Sound.d 4) (Sound.fs 4) (Sound.a 4)
-            , ckCompBar (Sound.d 4) (Sound.fs 4) (Sound.a 4)
-            , ckCompBar (Sound.a 3) (Sound.cs 4) (Sound.e 4)
-            , ckCompBar (Sound.a 3) (Sound.cs 4) (Sound.e 4)
-            , ckCompBar (Sound.e 4) (Sound.gs 4) (Sound.b 4)
-            , ckCompBar (Sound.d 4) (Sound.fs 4) (Sound.a 4)
-            , ckCompBar (Sound.a 3) (Sound.cs 4) (Sound.e 4)
-            , ckCompBar (Sound.e 4) (Sound.gs 4) (Sound.b 4)
+            [ ckCompBar (Sound.a 3) [ 4, 7 ]
+            , ckCompBar (Sound.a 3) [ 4, 7 ]
+            , ckCompBar (Sound.a 3) [ 4, 7 ]
+            , ckCompBar (Sound.a 3) [ 4, 7 ]
+            , ckCompBar (Sound.d 4) [ 4, 7 ]
+            , ckCompBar (Sound.d 4) [ 4, 7 ]
+            , ckCompBar (Sound.a 3) [ 4, 7 ]
+            , ckCompBar (Sound.a 3) [ 4, 7 ]
+            , ckCompBar (Sound.e 4) [ 4, 7 ]
+            , ckCompBar (Sound.d 4) [ 4, 7 ]
+            , ckCompBar (Sound.a 3) [ 4, 7 ]
+            , ckCompBar (Sound.e 4) [ 4, 7 ]
             ]
         , -- WALKING BASS: four quarters per bar, chromatic walk in bar 8
           Sound.sequence
@@ -913,12 +923,28 @@ teleportSfx =
     Sound.vibrato 60 18 (Sound.sweep 200 (Sound.tone Sound.Sawtooth 900 340))
 
 
+-- The two wobbles, side by side, because the difference is the whole point:
+-- vibrato moves the PITCH and tremolo moves the LOUDNESS. Same wave, same note,
+-- same rate: one warbles and one throbs. A sine is used here so nothing but the
+-- modulation is audible -- on a richer wave the harmonics do some of the talking.
+tremoloSfx : Sound
+tremoloSfx =
+    Sound.tremolo 60 7 (Sound.volume 34 (Sound.tone Sound.Sine (Sound.a 3) 1400))
+
+
+vibratoSfx : Sound
+vibratoSfx =
+    Sound.vibrato 45 7 (Sound.volume 34 (Sound.tone Sound.Sine (Sound.a 3) 1400))
+
+
 arpSfx : Sound
 arpSfx =
-    -- a C-major shimmer from ONE voice (Sound.arp cycles C5, E5, G5 fast),
-    -- struck and left to ring: the decay is what turns the buzz into a bell
+    -- a C-major shimmer from ONE voice (Sound.arp cycles the root, the third
+    -- and the fifth fast), struck and left to ring: the decay is what turns the
+    -- buzz into a bell. The steps are semitones ABOVE the note it is given, so
+    -- [ 4, 7 ] is "major triad" and reads the same over any root.
     Sound.decay 300 0
-        (Sound.arp [ Sound.e 5, Sound.g 5 ] (Sound.tone Sound.Square (Sound.c 5) 320))
+        (Sound.arp [ 4, 7 ] (Sound.tone Sound.Square (Sound.c 5) 320))
 
 
 fanfareSfx : Sound
@@ -977,6 +1003,8 @@ view model =
                 , button [] (Sfx denySfx) "🚫  Deny"
                 , button [] (Sfx teleportSfx) "🌀  Teleport"
                 , button [] (Sfx arpSfx) "🎵  Chord (arp)"
+                , button [] (Sfx vibratoSfx) "〰️  Vibrato (pitch wobble)"
+                , button [] (Sfx tremoloSfx) "🔆  Tremolo (loudness wobble)"
                 , button [] (Sfx fanfareSfx) "🎉  Fanfare"
                 , button [] (Sfx pingPongSfx) "🏓  Ping-pong (stereo)"
                 ]

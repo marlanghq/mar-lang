@@ -53,7 +53,7 @@ arrivalVoice : Sound
 arrivalVoice =
     Sound.volume 10
         (Sound.decay 300 62
-            (Sound.arp [ Sound.gs 6, Sound.b 6 ]
+            (Sound.arp [ 4, 7 ]
                 (Sound.duty 25 (Sound.tone Sound.Square (Sound.e 6) 540))))
 
 

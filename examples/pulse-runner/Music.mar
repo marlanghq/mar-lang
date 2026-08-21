@@ -188,12 +188,12 @@ bs hz =
 -- from the other side of the image.
 
 
-ar : Int -> Int -> Int -> Sound
-ar hz third fifth =
+ar : Int -> List Int -> Sound
+ar hz shape =
     Sound.pan arpPan
         (Sound.sequence
             [ Sound.decay 340 45
-                (Sound.volume 11 (Sound.arp [ third, fifth ] (Sound.duty 25 (Sound.tone Sound.Square hz 480))))
+                (Sound.volume 11 (Sound.arp shape (Sound.duty 25 (Sound.tone Sound.Square hz 480))))
             , Sound.rest 20
             ]
         )
@@ -203,28 +203,30 @@ ar hz third fifth =
 -- two swap the G for the E dominant to push toward the finish ---
 
 
+-- `sh` is the arpeggio's shape in semitones above `ab`, which is what a chord
+-- quality is: minor is [ 3, 7 ] and major is [ 4, 7 ], whatever the root.
 type alias GChord =
-    { r : Int, o : Int, f : Int, ab : Int, a3 : Int, a5 : Int }
+    { r : Int, o : Int, f : Int, ab : Int, sh : List Int }
 
 
 chAm : GChord
-chAm = { r = Sound.a 2, o = Sound.a 3, f = Sound.e 3, ab = Sound.a 3, a3 = Sound.c 4, a5 = Sound.e 4 }
+chAm = { r = Sound.a 2, o = Sound.a 3, f = Sound.e 3, ab = Sound.a 3, sh = [ 3, 7 ] }
 
 
 chF : GChord
-chF = { r = Sound.f 2, o = Sound.f 3, f = Sound.c 3, ab = Sound.f 3, a3 = Sound.a 3, a5 = Sound.c 4 }
+chF = { r = Sound.f 2, o = Sound.f 3, f = Sound.c 3, ab = Sound.f 3, sh = [ 4, 7 ] }
 
 
 chC : GChord
-chC = { r = Sound.c 3, o = Sound.c 4, f = Sound.g 3, ab = Sound.c 4, a3 = Sound.e 4, a5 = Sound.g 4 }
+chC = { r = Sound.c 3, o = Sound.c 4, f = Sound.g 3, ab = Sound.c 4, sh = [ 4, 7 ] }
 
 
 chG : GChord
-chG = { r = Sound.g 2, o = Sound.g 3, f = Sound.d 3, ab = Sound.g 3, a3 = Sound.b 3, a5 = Sound.d 4 }
+chG = { r = Sound.g 2, o = Sound.g 3, f = Sound.d 3, ab = Sound.g 3, sh = [ 4, 7 ] }
 
 
 chE : GChord
-chE = { r = Sound.e 2, o = Sound.e 3, f = Sound.b 2, ab = Sound.e 4, a3 = Sound.gs 4, a5 = Sound.b 4 }
+chE = { r = Sound.e 2, o = Sound.e 3, f = Sound.b 2, ab = Sound.e 4, sh = [ 4, 7 ] }
 
 
 chordAt : Int -> Int -> GChord
@@ -312,7 +314,7 @@ grooveBeat b =
             else
                 p2 r8 (bs c.o)
         arps =
-            if sec >= 3 then [ ar c.ab c.a3 c.a5 ] else []
+            if sec >= 3 then [ ar c.ab c.sh ] else []
     in
     Sound.chord (List.concat [ [ kick, snare, hat, bass ], arps ])
 

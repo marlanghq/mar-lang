@@ -104,9 +104,10 @@ cueSound cue =
             -- which is the thump you feel: the noise is the crumple and the saw
             -- is the metal, but a sawtooth keeps its energy in harmonics, so on a
             -- laptop or a phone the saw survives and its fundamental does not,
-            -- and the hit had no body at all. Each layer sets its own volume,
-            -- because volume patches the LAST voice of a chord while decay
-            -- patches every one.
+            -- and the hit had no body at all. Each layer sets its own volume
+            -- because each layer is a different part of the impact; one volume
+            -- around the chord would set all three to the same level and flatten
+            -- the balance being described here.
             Sound.chord
                 [ Sound.volume 85 (Sound.decay 240 0 (Sound.tone Sound.Noise 0 300))
                 , Sound.volume 60 (Sound.decay 200 0 (Sound.sweep 50 (Sound.tone Sound.Sawtooth 320 260)))

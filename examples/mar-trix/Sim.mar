@@ -693,17 +693,18 @@ cue n =
 
         5 ->
             -- Four rows at once: a real chord, five voices of the SAME length,
-            -- because voices of different lengths drift apart on a loop and
-            -- the habit is worth keeping even where it cannot bite.
+            -- so the whole thing lands and leaves together rather than one voice
+            -- hanging on past the others.
             --
             -- Three things changed, and all three are the chord becoming a
             -- struck OBJECT instead of four tones switched on together.
             --
-            -- LEVEL, per voice. `Sound.volume` patches the LAST voice only, so
-            -- the old `volume 52 (chord [...])` reached the top A and left the
-            -- other three at the default 60: the brightest note in the chord was
+            -- LEVEL, per voice. The old `volume 52 (chord [...])` reached the
+            -- top A and left the other three at the default 60 -- back when a
+            -- volume touched one voice -- so the brightest note in the chord was
             -- also the loudest, which is the recipe for shrill. The levels now
-            -- fall as the pitch rises, and five voices read as one chord.
+            -- fall as the pitch rises, stated on each voice, and five voices
+            -- read as one chord.
             --
             -- DECAY, per voice, faster the higher it sits. A struck string loses
             -- its top first: a chord whose voices all die together is a patch,
@@ -721,12 +722,8 @@ cue n =
                 , clearVoice (Sound.a 5) 38 200
                 ]
 
-        -- The level-up fanfare, which was not one: `Sound.arp` takes its extra
-        -- pitches in HERTZ, so [ 0, 4, 7, 12 ] asked for four steps at twelve
-        -- hertz and below — silence, with a C5 blinking through it ten times a
-        -- second. Written as notes it is the major arpeggio it always meant to
-        -- be, and doubled nine cents apart because a fanfare is the one place in
-        -- this game where WIDE is the point.
+        -- The level-up fanfare, doubled nine cents apart because a fanfare is
+        -- the one place in this game where WIDE is the point.
         6 -> Sound.chord [ levelVoice 32, Sound.detune 9 (levelVoice 28) ]
 
         -- The run ending: seven hundred milliseconds of pitch falling out of
@@ -770,7 +767,7 @@ levelVoice : Int -> Sound
 levelVoice vol =
     Sound.decay 210 25
         (Sound.volume vol
-            (Sound.arp [ Sound.e 5, Sound.g 5, Sound.c 6 ]
+            (Sound.arp [ 4, 7, 12 ]
                 (Sound.tone Sound.Square (Sound.c 5) 260)
             )
         )
