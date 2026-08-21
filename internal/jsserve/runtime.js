@@ -1785,31 +1785,60 @@
   // so full scale can be approached and never passed. Same category as
   // SOUND_MIN_RAMP_MS: not house style, a floor (here a ceiling) past which the
   // output stops being a faithful rendering of what was asked for.
-  // A WaveShaper maps its INPUT RANGE -1..+1 across the whole table, so the table
-  // has to be built over -1..+1 too. Building it over a wider span silently
-  // rescales the transfer function: a first draft spanned -2..+2 and therefore
-  // doubled every quiet signal and saturated everything else, which is the exact
-  // opposite of transparent. Input past ±1 clamps to the end of the table, so the
-  // value there is the hard limit: it is deliberately below 1.
+  // A WaveShaper maps its INPUT RANGE -1..+1 across the whole table, and anything
+  // past that CLAMPS to the end entry. So a table built plainly over -1..+1 stops
+  // being a ceiling exactly where a ceiling starts to matter: every peak above 1
+  // comes out at the same 0.9285, flat. That is hard limiting, the thing this
+  // exists to avoid, and it is also a divergence — iOS computes the tanh directly
+  // and keeps bending, so the same overdriven chord measured up to 0.64 dB apart
+  // on the two runtimes, with a different SHAPE on each.
+  //
+  // The fix is to cover a wider input range and pay for it at the input: the
+  // table spans ±CEILING_SPAN and a fixed gain of 1/CEILING_SPAN sits in front of
+  // it, so table index still means "input", just over a wider domain. An earlier
+  // draft widened the span WITHOUT that gain, which is why the comment used to
+  // warn against it: on its own it doubles every quiet signal and saturates the
+  // rest. The gain is the missing half, not a workaround for it.
+  //
+  // The table grows with the span so the resolution below full scale is exactly
+  // what it was, and 2 is enough: ceiling(2) is 0.99990, within 0.001 dB of the
+  // asymptote, so clamping past there costs nothing anyone can hear.
   const CEILING_KNEE = 0.7;
+  const CEILING_SPAN = 2;
+  const ceilingAt = (x) => {
+    const a = Math.abs(x), k = CEILING_KNEE;
+    const y = a <= k ? a : k + (1 - k) * Math.tanh((a - k) / (1 - k));
+    return x < 0 ? -y : y;
+  };
   function soundCeilingCurve() {
-    const n = 4096, c = new Float32Array(n);
-    for (let i = 0; i < n; i++) {
-      const x = (i / (n - 1)) * 2 - 1;            // the table spans the input range
-      const a = Math.abs(x), k = CEILING_KNEE;
-      const y = a <= k ? a : k + (1 - k) * Math.tanh((a - k) / (1 - k));
-      c[i] = x < 0 ? -y : y;
-    }
+    const n = 4096 * CEILING_SPAN, c = new Float32Array(n);
+    for (let i = 0; i < n; i++) c[i] = ceilingAt(((i / (n - 1)) * 2 - 1) * CEILING_SPAN);
     return c;
   }
-  // Exposed so the ceiling's two promises can be tested as pure arithmetic,
-  // without an AudioContext: see TestMasterCeilingIsSoftAndTransparent.
-  if (typeof globalThis !== 'undefined') globalThis.__marSoundCeilingCurve = soundCeilingCurve;
+  // Exposed so the ceiling's promises can be tested as pure arithmetic, without
+  // an AudioContext: see TestMasterCeilingIsSoftAndTransparent. `__marSoundCeilingAt`
+  // answers what the shaper does to a given INPUT — table lookup, pre-gain and
+  // clamping included — so a test asks the runtime rather than re-deriving the
+  // index arithmetic and agreeing with itself.
+  if (typeof globalThis !== 'undefined') {
+    globalThis.__marSoundCeilingCurve = soundCeilingCurve;
+    globalThis.__marSoundCeilingAt = (x) => {
+      const c = soundCeilingCurve(), n = c.length;
+      const scaled = Math.max(-1, Math.min(1, x / CEILING_SPAN));
+      return c[Math.max(0, Math.min(n - 1, Math.round(((scaled + 1) / 2) * (n - 1))))];
+    };
+  }
+  // Returns the HEAD of the ceiling chain: whatever connects here is scaled into
+  // the shaper's domain first.
   function soundCeiling(ctx) {
     const ws = ctx.createWaveShaper();
     ws.curve = soundCeilingCurve();
     ws.oversample = '2x';                          // the bend makes harmonics; do not alias them
-    return ws;
+    ws.connect(ctx.destination);
+    const pre = ctx.createGain();
+    pre.gain.value = 1 / CEILING_SPAN;
+    pre.connect(ws);
+    return pre;
   }
   // Sound.Wave -> oscillator, in ONE place. The one-shot path and the held path
   // each used to carry their own copy of this mapping, written as a ternary with
@@ -1822,6 +1851,9 @@
   // shapes ignore it, which is why this is a predicate and not `wave === Square`
   // — the tag can also be the internal 'Rest', handled before we get here.
   const dutyApplies = (v) => !(v.wave === 'Triangle' || v.wave === 'Sawtooth' || v.wave === 'Sine');
+  // Vibrato is a wobble in PITCH, so it needs a pitch to wobble. Every wave has
+  // one except noise, where freq 0 is the way an app says "no pitch asked for".
+  const vibratoApplies = (v) => v.wave !== 'Noise' || v.freq > 0;
   const setOscWave = (ctx, node, v) => {
     if (dutyApplies(v) && v.duty && v.duty !== 50) {
       node.setPeriodicWave(dutyWave(ctx, v.duty));
@@ -1839,7 +1871,13 @@
   let dutyWaveCache = {};   // Sound.duty pulse-width -> band-limited PeriodicWave
   let soundMuted = false;
   let soundMasterLevel = 0.35;   // Sound.master 0..100 -> gain; 0.35 is the default headroom (~master 70)
-  try { soundMuted = (typeof localStorage !== 'undefined' && localStorage.getItem('marMuted') === '1'); } catch (e) {}
+  // Mute is APP state, not engine state. This used to boot from a `marMuted`
+  // key in localStorage that nothing in the framework ever wrote, so it was half
+  // a feature: an app calling Sound.setMuted did not persist it, a stale value
+  // left by anything else on the origin silently booted the app muted, and the
+  // model had no way to see or override either. Mar has no storage API, so the
+  // key could not even be written from Mar code. An app that wants mute to
+  // persist owns that decision and calls Sound.setMuted itself.
   function ensureAudio() {
     if (typeof window === 'undefined') return null;
     if (!audioCtx) {
@@ -1848,7 +1886,7 @@
       audioCtx = new AC();
       masterGain = audioCtx.createGain();
       masterGain.gain.value = soundMuted ? 0 : soundMasterLevel;   // headroom so stacked voices don't clip
-      masterGain.connect(soundCeiling(audioCtx)).connect(audioCtx.destination);
+      masterGain.connect(soundCeiling(audioCtx));
     }
     if (audioCtx.state === 'suspended') { try { audioCtx.resume(); } catch (e) {} }
     return audioCtx;
@@ -1956,6 +1994,42 @@
     if (!noiseBuf2) noiseBuf2 = makeNoiseLoop(ctx, 4.9);
     return noiseBuf2;
   }
+  // The tremolo LFO. A plain OscillatorNode sine starts at phase 0, which is
+  // VALUE 0: a note would begin half-faded and rise into its own attack. A
+  // cosine starts at +1, so the note speaks at its written level and the wobble
+  // only ever takes away from there. One harmonic, real[1] = 1: that IS a cosine.
+  let cosWaveCache = null;
+  function cosineWave(ctx) {
+    if (!cosWaveCache) {
+      const real = new Float32Array([0, 1]), imag = new Float32Array([0, 0]);
+      cosWaveCache = ctx.createPeriodicWave(real, imag);
+    }
+    return cosWaveCache;
+  }
+  // Sound.tremolo, as a gain the LFO rides. Returns the node to put BETWEEN the
+  // voice's shaping and its envelope, or null when the voice asked for none.
+  //
+  // Depth is a percentage OF the voice's level and it only attenuates: the gain
+  // sits at 1 - d/2 and the LFO swings ±d/2 around it, so the peak is exactly
+  // the level the voice was written at and the trough is (1 - d) of it. Depth
+  // 100 therefore touches silence and nothing can come out LOUDER than it says
+  // — which is what keeps the headroom argument for the master ceiling true.
+  function soundTremoloGain(ctx, v, dest, t0, stopAt) {
+    if (!(v.tremDepth > 0)) return null;
+    const d = Math.max(0, Math.min(100, v.tremDepth)) / 100;
+    const tg = ctx.createGain();
+    tg.gain.value = 1 - d / 2;
+    tg.connect(dest);
+    const lfo = ctx.createOscillator();
+    lfo.setPeriodicWave(cosineWave(ctx));
+    lfo.frequency.setValueAtTime(Math.max(1, v.tremRate || 6), t0);
+    const lg = ctx.createGain();
+    lg.gain.value = d / 2;
+    lfo.connect(lg).connect(tg.gain);
+    lfo.start(t0);
+    if (stopAt != null) lfo.stop(stopAt);
+    return { node: tg, lfo };
+  }
   // Sound.duty: a band-limited pulse of width d (0..1) as a WebAudio PeriodicWave.
   // The nth harmonic of a duty-d pulse is (2/nπ)·sin(nπd): at d=0.5 the even
   // harmonics vanish, i.e. it reduces to a plain square. 12.5% is thin/nasal, 25%
@@ -2056,7 +2130,14 @@
     // A rest (Sound.rest) occupies time in a sequence but emits nothing.
     if (v.wave === 'Rest') return;
     const t0 = at + (v.delayMs || 0) / 1000;
-    const dur = Math.max(0.02, (v.ms || 100) / 1000);
+    // `|| 0`, not `|| 100`. A voice whose length is genuinely 0 used to fall
+    // through to a 100 ms default here, which disagreed with everything around
+    // it: iOS plays it for the 20 ms floor, and this file's own loop scheduler
+    // measures the cycle with `v.ms || 0`, so such a voice sounded for five
+    // times the span its own loop had reserved and ran into the next pass. The
+    // floor below is the documented rule -- anything shorter than 20 ms is
+    // played as 20 ms -- and it is the only rule there should be.
+    const dur = Math.max(0.02, (v.ms || 0) / 1000);
     const peak = Math.max(0, Math.min(100, v.volume == null ? 60 : v.volume)) / 100;
     const pk = Math.max(0.0002, peak);
     const g = ctx.createGain();
@@ -2100,17 +2181,26 @@
       const nf = Math.max(1, v.freq || 440);
       const noiseRate = (f) => Math.max(0.05, Math.min(8, Math.max(1, f) / 440));
       node.playbackRate.setValueAtTime(noiseRate(nf), t0);
-      // Sound.detune on noise. An AudioBufferSourceNode has a `detune` param
-      // too, and the spec folds it into the rate as playbackRate * 2^(cents/1200)
-      // — which is what detuning a CLIP means. iOS reaches the same number from
-      // the other side, by scaling the sample-and-hold frequency, so a detuned
-      // noise agrees across the two without either doing the arithmetic twice.
-      if (v.detune) node.detune.value = v.detune;
       // Everything below is guarded on a REAL pitch having been asked for.
       // freq 0 is how every game in the repo writes noise, and it means "no
-      // pitch": those keep the flat clip they always had, so bend and vibrato
-      // stay inert for them exactly as before.
+      // pitch": those keep the flat clip they always had, so every pitch word
+      // stays inert for them.
+      //
+      // `detune` is INSIDE that guard, and it did not use to be. An unpitched
+      // clip has no pitch to shift, and iOS agrees — there freq 0 selects
+      // full-band white noise, which no cents offset can move. On the web the
+      // same call resampled the clip, so `Sound.detune 600` on the noise every
+      // game in this repo writes came out as a different timbre in the browser
+      // and as nothing at all on the phone. Nobody had written it yet: all 1166
+      // noise voices in the repo are unpitched and none is detuned.
       if (v.freq > 0) {
+        // Sound.detune on a pitched clip. An AudioBufferSourceNode has a
+        // `detune` param too, and the spec folds it into the rate as
+        // playbackRate * 2^(cents/1200) — which is what detuning a CLIP means.
+        // iOS reaches the same number from the other side, by scaling the
+        // sample-and-hold frequency, so a detuned noise agrees across the two
+        // without either doing the arithmetic twice.
+        if (v.detune) node.detune.value = v.detune;
         // Sound.sweep on noise. The oscillator branch ramps `frequency`; here
         // the same glide is a ramp of the resample rate, which is what pitch
         // MEANS for a noise clip. A falling one is the classic explosion.
@@ -2118,20 +2208,6 @@
           const hold = Math.min(dur, Math.max(0, (v.holdMs || 0) / 1000));
           if (hold > 0) node.playbackRate.setValueAtTime(noiseRate(nf), t0 + hold);
           node.playbackRate.linearRampToValueAtTime(noiseRate(v.endFreq), t0 + dur);
-        }
-        // Sound.vibrato on noise. The oscillator branch drives `detune`, which
-        // is already in cents; playbackRate is a ratio, so the depth converts
-        // to a ratio delta around the base rate. Without this the iOS side
-        // (whose sample-and-hold reads the shared, already-vibrato'd freq)
-        // would wobble and the web would not.
-        if (v.vibDepth && v.vibDepth > 0) {
-          const lfo = ctx.createOscillator();
-          lfo.frequency.setValueAtTime(Math.max(1, v.vibRate || 6), t0);
-          const lg = ctx.createGain();
-          lg.gain.setValueAtTime(noiseRate(nf) * (Math.pow(2, v.vibDepth / 1200) - 1), t0);
-          lfo.connect(lg).connect(node.playbackRate);
-          lfo.start(t0);
-          lfo.stop(t0 + dur + 0.03);
         }
       }
     } else {
@@ -2142,9 +2218,23 @@
         // Sound.arp: step the pitch fast through [base, ...arp] on ONE oscillator
         // (the classic chiptune "chord" from a single channel). ~50 Hz = one step
         // per frame. Mutually exclusive with sweep/hold.
-        const seq = [f0].concat(v.arp.map(x => Math.max(1, x)));
-        let i = 0;
-        for (let t = t0; t < t0 + dur; t += 0.02, i++) node.frequency.setValueAtTime(seq[i % seq.length], t);
+        // The offsets are SEMITONES from this voice's own pitch, so the step
+        // list is derived from f0 rather than read as frequencies. That is what
+        // the reference has always said and what makes an arpeggio survive
+        // Sound.transpose: the whole figure moves with the note it belongs to.
+        const seq = [f0].concat(v.arp.map(x => Math.max(1, Math.round(f0 * Math.pow(2, x / 12)))));
+        // Each step time is computed from its INDEX, not accumulated. Adding
+        // 0.02 repeatedly walks off the grid -- the sixth step lands at
+        // 0.12000000000000001 -- so a boundary falls a hair later here than it
+        // does on iOS, where the step is `Int(ts / 0.02)` from the note's own
+        // clock. One step of an arpeggio either way is 20 ms of a different
+        // note, and the playback conformance harness reads it as the two
+        // runtimes disagreeing, which they now do not.
+        for (let i = 0; ; i++) {
+          const t = t0 + i * 0.02;
+          if (t >= t0 + dur) break;
+          node.frequency.setValueAtTime(seq[i % seq.length], t);
+        }
       } else {
         node.frequency.setValueAtTime(f0, t0);
         if (v.endFreq && v.endFreq !== v.freq) {
@@ -2155,28 +2245,58 @@
           node.frequency.linearRampToValueAtTime(Math.max(1, v.endFreq), t0 + dur);
         }
       }
-      // Sound.vibrato: a sine LFO on detune (cents), so the wobble is musical and
-      // independent of pitch. depth = cents, rate = Hz.
-      if (v.vibDepth && v.vibDepth > 0) {
-        const lfo = ctx.createOscillator();
-        lfo.frequency.setValueAtTime(Math.max(1, v.vibRate || 6), t0);
-        const lg = ctx.createGain();
-        lg.gain.setValueAtTime(v.vibDepth, t0);
-        lfo.connect(lg).connect(node.detune);
-        lfo.start(t0);
-        lfo.stop(t0 + dur + 0.03);
-      }
     }
-    node.connect(soundFilterChain(ctx, v, g));
-    node.start(t0);
+    // Sound.vibrato: a sine LFO on `detune` (cents), so the wobble is musical
+    // and independent of pitch. depth = cents, rate = Hz.
+    //
+    // ONE block for both branches, because both nodes expose the same `detune`
+    // param in the same unit. The noise branch used to carry its own copy that
+    // modulated `playbackRate` by `rate * (2^(depth/1200) - 1)` — a linear
+    // approximation of the ratio, and only an approximation: it is symmetric in
+    // RATE where this is symmetric in CENTS, so a 60-cent wobble came out
+    // +60/-62 there against +60/-60 here and on iOS, and a 1200-cent one asked
+    // for rate 0 on the way down. Unreachable today (no app plays pitched
+    // noise) and wrong on both counts, so it is gone rather than fixed.
+    if (vibratoApplies(v) && v.vibDepth > 0) {
+      const lfo = ctx.createOscillator();
+      lfo.frequency.setValueAtTime(Math.max(1, v.vibRate || 6), t0);
+      const lg = ctx.createGain();
+      lg.gain.setValueAtTime(v.vibDepth, t0);
+      lfo.connect(lg).connect(node.detune);
+      lfo.start(t0);
+      lfo.stop(t0 + dur + 0.03);
+    }
+    // Sound.tremolo sits AFTER the tone shaping and before the envelope, where
+    // a tremolo pedal sits: amplitude modulation makes sidebands, and a filter
+    // in front of it would be shaping the note rather than the wobble.
+    const trem = soundTremoloGain(ctx, v, g, t0, t0 + dur + 0.03);
+    node.connect(soundFilterChain(ctx, v, trem ? trem.node : g));
+    // A noise source starts PAST the clip's fade-in. makeNoiseLoop tapers the
+    // first and last 4 ms of the buffer so the seam is inaudible when it wraps,
+    // which a held bed needs and a one-shot does not: starting at offset 0 put
+    // that ramp on the front of every noise hit in every app, so a hit began at
+    // exactly zero and took 4 ms to arrive. On a 55 ms hit that is the first 7%
+    // of the note, up to 4.8 dB down, and iOS has no such taper -- the same
+    // explosion had a softer edge in the browser than on the phone. The offset
+    // costs nothing: one point of a 6.3 second clip of noise is as good as
+    // another.
+    if (v.wave === 'Noise') node.start(t0, 0.01); else node.start(t0);
     node.stop(t0 + dur + 0.03);
   }
+  // This one DOES skip while muted, unlike the three persistent sources: a
+  // one-shot has no future to be resumed into, so not creating nodes nobody can
+  // hear is free and correct.
   function soundPlayNow(snd) {
     const ctx = ensureAudio();
     if (!ctx || soundMuted || !snd || !snd.voices) return;
     const at = ctx.currentTime + 0.02;
     for (const v of snd.voices) scheduleVoice(ctx, v, at);
   }
+  // Exposed for tests. scheduleVoice is the unit: hand it a voice, a start time
+  // and a destination of your own and it builds exactly what the browser would
+  // be given, which is what the playback conformance driver reads back. See
+  // internal/conformance/sound_playback.go and TestZeroLengthNoteIsTheDocumentedFloor.
+  if (typeof globalThis !== 'undefined') globalThis.__marTestScheduleVoice = scheduleVoice;
   // The start of a HELD source, behind both Sound.voice and Sound.glide: each
   // voice becomes ONE continuous node held at a steady level (fades in on start,
   // out on stop), NOT a re-triggered grain. So an organ key stays flat with no
@@ -2203,7 +2323,9 @@
   // own a note's span.
   function soundHeldStart(snd) {
     const ctx = ensureAudio();
-    if (!ctx || soundMuted || !snd || !snd.voices) return { nodes: [] };
+    // Not guarded on soundMuted: see soundLoopStart. A held voice that never
+    // started cannot be resumed by unmuting.
+    if (!ctx || !snd || !snd.voices) return { nodes: [] };
     const at = ctx.currentTime + 0.02;
     const nodes = [];
     for (const v of snd.voices) {
@@ -2225,6 +2347,15 @@
       // than discovered: for a decay you can hear, use Sound.play / loop / once.
       g.gain.exponentialRampToValueAtTime(heldLevel(v, peak), at + Math.max(0.0005, voiceAttackSec(v)));
       let node, extra = [];
+      // Sound.tremolo on a held source: the same gain the one-shot path builds,
+      // with no stop time, so the wobble breathes for as long as the bed lives —
+      // exactly the lifetime rule vibrato follows two branches down.
+      const tremHead = (voice, at0, dst, keep) => {
+        const t = soundTremoloGain(ctx, voice, dst, at0, null);
+        if (!t) return dst;
+        keep.push(t.lfo);   // soundHeldStop stops every extra alongside the node
+        return t.node;
+      };
       if (v.wave === 'Noise') {
         // TWO decorrelated noise layers summed into a trim gain, then through
         // whatever shaping the Sound value asked for. The layers are different
@@ -2235,7 +2366,7 @@
         // The 0.7 trim offsets the ~+3dB of summing two noise sources.
         const nmix = ctx.createGain();
         nmix.gain.value = 0.7;
-        nmix.connect(soundFilterChain(ctx, v, g));
+        nmix.connect(soundFilterChain(ctx, v, tremHead(v, at, g, extra)));
         node = ctx.createBufferSource();
         node.buffer = soundNoiseBuffer(ctx);
         node.loop = true;
@@ -2263,7 +2394,7 @@
           lfo.start(at);
           extra.push(lfo);   // soundHeldStop stops every extra alongside the node
         }
-        node.connect(soundFilterChain(ctx, v, g));
+        node.connect(soundFilterChain(ctx, v, tremHead(v, at, g, extra)));
       }
       node.start(at);
       // `_peak` and `_attackEnd` exist for soundGlideTo, and they are not
@@ -2274,6 +2405,10 @@
     }
     return { nodes };
   }
+  // Exposed for tests, like scheduleVoice above: a held source is the other
+  // half of what this file plays, and the playback conformance driver reads its
+  // graph the same way. See internal/conformance/sound_playback.go.
+  if (typeof globalThis !== 'undefined') globalThis.__marTestHeldStart = soundHeldStart;
   function soundHeldStop(h) {
     if (!h || !h.nodes || !audioCtx) return;
     const t = audioCtx.currentTime;
@@ -2386,14 +2521,28 @@
   // voices are sorted by onset and a cursor walks them, so a tick books the
   // handful actually due (typically single digits) and the burst is gone
   // whatever the piece costs.
+  // NOT guarded on soundMuted, and that is the fix for a bug you could hear: it
+  // used to return null while muted, and because `setMuted` only ramps the
+  // master gain -- it does not restart subscriptions -- the reconciler went on
+  // believing this sub was running. Unmuting could never bring it back, so a
+  // game with one background track and a mute toggle stayed silent for the rest
+  // of the session. The master gain already silences it; `tick` below still
+  // books nothing while muted, so the cost of running is a timer.
   function soundLoopStart(snd) {
     const ctx = ensureAudio();
-    if (!ctx || soundMuted || !snd || !snd.voices || snd.voices.length === 0) return null;
+    if (!ctx || !snd || !snd.voices || snd.voices.length === 0) return null;
     // The period comes from ALL voices, rests included: a trailing Sound.rest is
     // how a piece pads its last bar, and dropping it would shorten the loop.
     let periodMs = 0;
     for (const v of snd.voices) periodMs = Math.max(periodMs, (v.delayMs || 0) + (v.ms || 0));
-    if (periodMs <= 0) return null;
+    // A FLOOR on the cycle, the same 50 ms iOS has always had. It is the loop's
+    // version of the 20 ms floor on a note: past a point a period stops being a
+    // rhythm and becomes a rate, and a Sound built from zero-length voices would
+    // ask this scheduler for hundreds of starts a second. Without it the two
+    // runtimes disagreed twice over -- a 40 ms cycle ran 25% faster here, and a
+    // Sound whose voices all had length 0 was silence here and a 20 Hz buzz
+    // there.
+    periodMs = Math.max(50, periodMs);
     // Rests are then dropped from the CURSOR: scheduleVoice ignores them anyway,
     // and they are typically half the list, so carrying them would double the
     // walk for nothing. Sorted by onset, which is what makes a cursor possible.
@@ -2444,6 +2593,10 @@
     state.timer = setInterval(tick, 30);
     return state;
   }
+  // Exposed for tests: the scheduler is the only part of this file whose
+  // behaviour is a function of TIME, so a test needs to hold the clock and call
+  // the tick itself. See TestLoopKeepsUnequalVoicesLocked.
+  if (typeof globalThis !== 'undefined') globalThis.__marTestLoopStart = soundLoopStart;
   function soundLoopStop(state) {
     if (!state) return;
     if (state.timer) { clearInterval(state.timer); state.timer = null; }
@@ -2483,7 +2636,9 @@
   // and loop (repeats forever).
   function soundOnceStart(snd) {
     const ctx = ensureAudio();
-    if (!ctx || soundMuted || !snd || !snd.voices || snd.voices.length === 0) return null;
+    // Not guarded on soundMuted: see soundLoopStart. A sub that never started
+    // cannot be resumed by unmuting.
+    if (!ctx || !snd || !snd.voices || snd.voices.length === 0) return null;
     const g = ctx.createGain();
     g.gain.value = 1;
     g.connect(masterGain);
@@ -5368,7 +5523,8 @@
       try {
         return JSON.stringify(((snd && snd.voices) || []).map(v => [
           v.wave, withFreq ? v.freq : 0, v.ms, v.endFreq, v.holdMs, v.delayMs,
-          v.duty, v.vibDepth, v.vibRate, v.arp, v.lowCut, v.highCut, v.attack, v.release,
+          v.duty, v.vibDepth, v.vibRate, v.tremDepth, v.tremRate, v.arp, v.lowCut, v.highCut,
+          v.attack, v.release,
           // A different envelope is a different sound, so decay and its sustain
           // level belong in the identity exactly as attack and release do.
           v.decay, v.sustain,
@@ -5388,24 +5544,30 @@
     };
     // tone : Wave -> Int -> Int -> Sound  (wave, freq Hz, duration ms)
     const soundToneImpl = native(3, ([wave, freq, ms]) =>
-      mkSound([{ wave: (wave && wave.tag) || 'Square', freq: freq.n, ms: ms.n, endFreq: 0, holdMs: 0, volume: 60, delayMs: 0, duty: 0, vibDepth: 0, vibRate: 0, arp: null, lowCut: 0, highCut: 0, attack: 0, release: 0, decay: 0, sustain: 100, detune: 0, pan: 0 }]));
+      mkSound([{ wave: (wave && wave.tag) || 'Square', freq: freq.n, ms: ms.n, endFreq: 0, holdMs: 0, volume: 60, delayMs: 0, duty: 0, vibDepth: 0, vibRate: 0, tremDepth: 0, tremRate: 0, arp: null, lowCut: 0, highCut: 0, attack: 0, release: 0, decay: 0, sustain: 100, detune: 0, pan: 0 }]));
     def('soundTone', soundToneImpl); def('Sound.tone', soundToneImpl);
-    // volume / sweep patch the LAST voice built (so they chain onto a tone).
-    const patchLast = (snd, f) => { const vs = cloneVoices(snd); if (vs.length) f(vs[vs.length - 1]); return mkSound(vs); };
-    const soundVolumeImpl = native(2, ([n, snd]) => patchLast(snd, v => { v.volume = Math.max(0, Math.min(100, n.n)); }));
+    const patchAll = (snd, f) => { const vs = cloneVoices(snd); vs.forEach(f); return mkSound(vs); };
+    // ONE RULE: a combinator patches EVERY voice. `patchLast` is gone.
+    //
+    // It used to be split -- volume, duty, detune, sweep, holdPitch, lowCut,
+    // highCut, vibrato and arp touched only the last voice, everything else
+    // touched all of them -- and nothing in the type or the reference said
+    // which. `highCut 3600 (chord [saw, pulseA, pulseB])` filtered pulseB and
+    // left the other two open, silently. It was caught only because two takes of
+    // the same guitar part measured 1.2 dB apart, which two identical things
+    // cannot do.
+    const soundVolumeImpl = native(2, ([n, snd]) => patchAll(snd, v => { v.volume = Math.max(0, Math.min(100, n.n)); }));
     def('soundVolume', soundVolumeImpl); def('Sound.volume', soundVolumeImpl);
-    const soundSweepImpl = native(2, ([end, snd]) => patchLast(snd, v => { v.endFreq = end.n; }));
+    const soundSweepImpl = native(2, ([end, snd]) => patchAll(snd, v => { v.endFreq = end.n; }));
     def('soundSweep', soundSweepImpl); def('Sound.sweep', soundSweepImpl);
     // attack / release : the envelope, in ms. Carried by the VOICE so every
     // playback path renders the same shape: `once` and `loop` ramp it inside the
     // note's own span, `hold` fades in on start and out when the sub stops.
     //
-    // These patch EVERY voice, not just the last one like volume/duty do. A chord
-    // is one note played on several oscillators: if only the last layer took the
-    // attack, the others would still jump, so the note would both click and speak
-    // twice. Per-layer envelopes are still expressible: shape a tone BEFORE
-    // putting it in the chord.
-    const patchAll = (snd, f) => { const vs = cloneVoices(snd); vs.forEach(f); return mkSound(vs); };
+    // A chord is one note played on several oscillators: if only one layer took
+    // the attack, the others would still jump, so the note would both click and
+    // speak twice. Per-layer envelopes are still expressible, the same way every
+    // per-layer setting is: shape a tone BEFORE putting it in the chord.
     const soundAttackImpl = native(2, ([ms, snd]) => patchAll(snd, v => { v.attack = Math.max(0, ms.n); }));
     def('soundAttack', soundAttackImpl); def('Sound.attack', soundAttackImpl);
     const soundReleaseImpl = native(2, ([ms, snd]) => patchAll(snd, v => { v.release = Math.max(0, ms.n); }));
@@ -5440,34 +5602,96 @@
     // usually wants only ONE end trimmed (wind cuts the lows, a sound heard
     // through a wall cuts the highs), and a single band-pass form would force a
     // sentinel for "leave this side alone". They stack when you want both.
-    const soundLowCutImpl = native(2, ([hz, snd]) => patchLast(snd, v => { v.lowCut = Math.max(0, hz.n); }));
+    const soundLowCutImpl = native(2, ([hz, snd]) => patchAll(snd, v => { v.lowCut = Math.max(0, hz.n); }));
     def('soundLowCut', soundLowCutImpl); def('Sound.lowCut', soundLowCutImpl);
-    const soundHighCutImpl = native(2, ([hz, snd]) => patchLast(snd, v => { v.highCut = Math.max(0, hz.n); }));
+    const soundHighCutImpl = native(2, ([hz, snd]) => patchAll(snd, v => { v.highCut = Math.max(0, hz.n); }));
     def('soundHighCut', soundHighCutImpl); def('Sound.highCut', soundHighCutImpl);
     // hold : keep the pitch flat for the first `ms`, THEN let a `sweep` glide it
     // over the remaining time (one seamless wave: sits, then bends). No-op without a sweep.
-    const soundHoldPitchImpl = native(2, ([ms, snd]) => patchLast(snd, v => { v.holdMs = Math.max(0, ms.n); }));
+    const soundHoldPitchImpl = native(2, ([ms, snd]) => patchAll(snd, v => { v.holdMs = Math.max(0, ms.n); }));
     def('soundHoldPitch', soundHoldPitchImpl); def('Sound.holdPitch', soundHoldPitchImpl);
     // Expressiveness pack. duty : Square pulse width % (12/25/50/75, Square only).
     // vibrato : sine wobble on the pitch (depth cents, rate Hz). arp : cycle the
     // pitch fast through these extra Hz + the base (chiptune "chord" on one voice).
-    const soundDutyImpl = native(2, ([pct, snd]) => patchLast(snd, v => { v.duty = Math.max(1, Math.min(99, pct.n)); }));
+    const soundDutyImpl = native(2, ([pct, snd]) => patchAll(snd, v => { v.duty = Math.max(1, Math.min(99, pct.n)); }));
     def('soundDuty', soundDutyImpl); def('Sound.duty', soundDutyImpl);
-    // detune : signed cents on THIS voice. patchLast, unlike the envelope: a
-    // unison is layers that differ, so patching them all would defeat it.
+    // detune : signed cents.
+    //
+    // A unison is layers that DIFFER, so the way to write one is a chord of two
+    // separately detuned tones -- not one detune over both, which now (correctly)
+    // moves them together.
     //
     // Clamped to +/- 2400 (two octaves). Past that the number has stopped being a
     // detune and become a transpose, which `Sound.tone`'s own pitch already says
     // better — and the clamp keeps a typo from producing an inaudible note in one
     // runtime and a sub-hertz crawl in the other.
-    const soundDetuneImpl = native(2, ([cents, snd]) => patchLast(snd, v => {
+    const soundDetuneImpl = native(2, ([cents, snd]) => patchAll(snd, v => {
       v.detune = Math.max(-2400, Math.min(2400, cents.n));
     }));
     def('soundDetune', soundDetuneImpl); def('Sound.detune', soundDetuneImpl);
-    const soundVibratoImpl = native(3, ([depth, rate, snd]) => patchLast(snd, v => { v.vibDepth = Math.max(0, depth.n); v.vibRate = Math.max(1, rate.n); }));
+    const soundVibratoImpl = native(3, ([depth, rate, snd]) => patchAll(snd, v => { v.vibDepth = Math.max(0, depth.n); v.vibRate = Math.max(1, rate.n); }));
+    // tremolo : the wobble in LOUDNESS, as vibrato is the wobble in pitch. Depth
+    // is a percentage of the voice's own level rather than cents, because that
+    // is the unit amplitude has; rate is Hz, as there. Clamped at 100, past
+    // which there is nothing left to take away.
+    const soundTremoloImpl = native(3, ([depth, rate, snd]) => patchAll(snd, v => { v.tremDepth = Math.max(0, Math.min(100, depth.n)); v.tremRate = Math.max(1, rate.n); }));
+    def('soundTremolo', soundTremoloImpl); def('Sound.tremolo', soundTremoloImpl);
     def('soundVibrato', soundVibratoImpl); def('Sound.vibrato', soundVibratoImpl);
-    const soundArpImpl = native(2, ([list, snd]) => patchLast(snd, v => { v.arp = ((list && list.xs) || []).map(x => x.n); }));
+    // arp : SEMITONE OFFSETS from the voice's own pitch, cycled fast on one
+    // oscillator -- the chiptune trick for a chord from a single channel. They
+    // used to be absolute Hz while the reference said semitones; relative is
+    // both the documented API and the correct one, because it distributes over a
+    // chord and it survives Sound.transpose. With absolute Hz a transposed
+    // passage moved its base note and left the arpeggio standing in the old key.
+    const soundArpImpl = native(2, ([list, snd]) => patchAll(snd, v => {
+      v.arp = ((list && list.xs) || []).map(x => x.n);
+    }));
     def('soundArp', soundArpImpl); def('Sound.arp', soundArpImpl);
+    // gain : a percentage OF the current level, so it lowers a part without
+    // touching the balance inside it. `volume` is absolute and cannot say this.
+    const soundGainImpl = native(2, ([pct, snd]) => patchAll(snd, v => {
+      const cur = v.volume == null ? 60 : v.volume;
+      v.volume = Math.max(0, Math.min(100, Math.round(cur * Math.max(0, pct.n) / 100)));
+    }));
+    def('soundGain', soundGainImpl); def('Sound.gain', soundGainImpl);
+    // sweepBy : bend by a musical distance rather than to a fixed frequency, so
+    // a chord keeps its intervals. A rest has no pitch and is left alone.
+    const soundSweepByImpl = native(2, ([cents, snd]) => patchAll(snd, v => {
+      if (!v.freq) return;
+      v.endFreq = Math.max(1, Math.round(v.freq * Math.pow(2, cents.n / 1200)));
+    }));
+    def('soundSweepBy', soundSweepByImpl); def('Sound.sweepBy', soundSweepByImpl);
+    // transpose : the same passage, n semitones away. Moves the pitch and any
+    // sweep target with it; the arpeggio is offsets and therefore already moves.
+    // A rest and an unpitched noise voice (freq 0) both stay where they are.
+    const soundTransposeImpl = native(2, ([semis, snd]) => patchAll(snd, v => {
+      const r = Math.pow(2, semis.n / 12);
+      if (v.freq) v.freq = Math.max(1, Math.round(v.freq * r));
+      if (v.endFreq) v.endFreq = Math.max(1, Math.round(v.endFreq * r));
+    }));
+    def('soundTranspose', soundTransposeImpl); def('Sound.transpose', soundTransposeImpl);
+    // stretch : the same passage at a percentage of its speed. 50 is half speed,
+    // 200 is double. EVERY time in the voice scales -- its length, its place in
+    // the sequence, and its envelope -- because a note played at half speed is a
+    // longer note, not a short note that arrives late.
+    const soundStretchImpl = native(2, ([pct, snd]) => patchAll(snd, v => {
+      const k = Math.max(1, pct.n) / 100;
+      const at = (x) => Math.max(0, Math.round((x || 0) / k));
+      // Scale the END of the note, not its LENGTH. Rounding each duration on its
+      // own breaks the one invariant a chord has -- every voice must span the
+      // same total ms -- because two voices that ended together can round apart
+      // by a millisecond, and under Sound.loop that millisecond accumulates on
+      // every pass until the parts are playing different music. Rounding the
+      // absolute end time instead gives every voice that ended at T the same
+      // new end, so a chord that was square stays square.
+      const start = v.delayMs || 0;
+      const end = start + (v.ms || 0);
+      v.delayMs = at(start);
+      v.ms = Math.max(1, at(end) - v.delayMs);
+      v.holdMs = at(v.holdMs);
+      v.attack = at(v.attack); v.release = at(v.release); v.decay = at(v.decay);
+    }));
+    def('soundStretch', soundStretchImpl); def('Sound.stretch', soundStretchImpl);
     // chord : layer voices together. sequence : back-to-back, each part delayed
     // by the running total of the previous parts' lengths.
     const soundChordImpl = native(1, ([list]) => {
@@ -5498,7 +5722,7 @@
     // 0, and the two runtimes then disagreed about what a rest IS. The sound
     // conformance corpus caught exactly that. A field that exists on one side
     // only is the bug this corpus is for.
-    const soundRestImpl = native(1, ([ms]) => mkSound([{ wave: 'Rest', freq: 0, ms: ms.n, endFreq: 0, holdMs: 0, volume: 0, delayMs: 0, decay: 0, sustain: 100, detune: 0, pan: 0 }]));
+    const soundRestImpl = native(1, ([ms]) => mkSound([{ wave: 'Rest', freq: 0, ms: ms.n, endFreq: 0, holdMs: 0, volume: 0, delayMs: 0, tremDepth: 0, tremRate: 0, decay: 0, sustain: 100, detune: 0, pan: 0 }]));
     def('soundRest', soundRestImpl); def('Sound.rest', soundRestImpl);
     // play : Sound -> Cmd msg  (fire once).
     const soundPlayImpl = native(1, ([snd]) => VEffect(() => { soundPlayNow(snd); return VUnit(); }, 'soundPlay'));
@@ -5521,7 +5745,12 @@
     // sounding, not just new plays); master sets a 0..100 volume.
     const soundSetMutedImpl = native(1, ([b]) => VEffect(() => { soundMuted = !!(b && b.b); applyMaster(); return VUnit(); }, 'soundSetMuted'));
     def('soundSetMuted', soundSetMutedImpl); def('Sound.setMuted', soundSetMutedImpl);
-    const soundMasterImpl = native(1, ([n]) => VEffect(() => { soundMasterLevel = Math.max(0, Math.min(100, (n && n.n) || 0)) / 100 * 0.5; applyMaster(); return VUnit(); }, 'soundMaster'));
+    // Sound.master 100 is the DEFAULT level, not louder than it. It used to map
+    // to 0.5 against a default of 0.35, so a settings screen with a 0..100 slider
+    // sitting at 100 -- which is where every settings screen sits -- shipped the
+    // game 3.1 dB louder than it was mixed and ate the headroom the ceiling is
+    // budgeted against. The safe value should not be an odd number.
+    const soundMasterImpl = native(1, ([n]) => VEffect(() => { soundMasterLevel = Math.max(0, Math.min(100, (n && n.n) || 0)) / 100 * 0.35; applyMaster(); return VUnit(); }, 'soundMaster'));
     def('soundMaster', soundMasterImpl); def('Sound.master', soundMasterImpl);
     // Note helpers: Sound.<name> octave -> Hz (equal temperament, A4 = 440). The
     // arg to mkPitch is the semitone above C. Kills the magic-Hz table for melodies.

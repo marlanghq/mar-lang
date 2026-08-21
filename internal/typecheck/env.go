@@ -679,9 +679,36 @@ func baseBindings() map[string]Type {
 	}
 	// Sound.tone : Sound.Wave -> Int -> Int -> Sound  (wave, freq Hz, ms)
 	out["soundTone"] = TArrow{From: TSoundWave, To: TArrow{From: TInt, To: TArrow{From: TInt, To: TSound}}}
-	// Sound.volume / Sound.sweep : Int -> Sound -> Sound  (0..100 / end freq Hz)
+	// EVERY combinator below patches EVERY voice of the sound it is given. There
+	// is one rule and no exceptions, which there did not use to be: volume, duty,
+	// detune, sweep, holdPitch, lowCut, highCut, vibrato and arp each patched only
+	// the LAST voice, while attack, release, decay and pan patched all of them.
+	// Nothing in the type said which, so `highCut 3600 (chord [a, b, c])` filtered
+	// one voice of three, compiled, ran, and sounded wrong. It was found by two
+	// takes of the same guitar part measuring 1.2 dB apart.
+	//
+	// "Last" was never a semantics anyone chose: it is what worked because `tone`
+	// returns one voice and the common shape wraps it immediately, where last and
+	// all are the same thing.
+
+	// Sound.volume : Int -> Sound -> Sound  (0..100, the peak level; absolute)
 	out["soundVolume"] = TArrow{From: TInt, To: TArrow{From: TSound, To: TSound}}
+	// Sound.gain : Int -> Sound -> Sound  (percent OF the current level).
+	//
+	// The one thing the absolute `volume` cannot say: quieter without touching
+	// the internal balance. Ducking a whole part under dialogue needed it, and
+	// without it the only way was to rewrite every volume in the part. It is also
+	// what lets `volume` be patchAll without flattening a mix.
+	out["soundGain"] = TArrow{From: TInt, To: TArrow{From: TSound, To: TSound}}
+	// Sound.sweep : Int -> Sound -> Sound  (glide to this ABSOLUTE frequency).
+	// On a chord every voice converges on the same note, which is a real effect
+	// and rarely the intended one -- for a chord that keeps its intervals, see
+	// sweepBy.
 	out["soundSweep"] = TArrow{From: TInt, To: TArrow{From: TSound, To: TSound}}
+	// Sound.sweepBy : Int -> Sound -> Sound  (glide by this many CENTS).
+	// Relative, so it distributes over a chord: every voice bends the same
+	// musical distance and the harmony survives.
+	out["soundSweepBy"] = TArrow{From: TInt, To: TArrow{From: TSound, To: TSound}}
 	// Tone shaping: cut everything below / above a frequency. Two separate
 	// combinators rather than one band-pass because you usually want only one
 	// end (wind wants a low cut, a muffled sound wants a high cut), and a single
@@ -754,9 +781,26 @@ func baseBindings() map[string]Type {
 	out["soundDetune"] = TArrow{From: TInt, To: TArrow{From: TSound, To: TSound}}
 	// Sound.vibrato : Int -> Int -> Sound -> Sound  (depth in cents, rate in Hz).
 	out["soundVibrato"] = TArrow{From: TInt, To: TArrow{From: TInt, To: TArrow{From: TSound, To: TSound}}}
-	// Sound.arp : List Int -> Sound -> Sound  (cycle the pitch fast through these Hz
-	//   plus the base: the classic chiptune arpeggio "chord" on one voice).
+	out["soundTremolo"] = TArrow{From: TInt, To: TArrow{From: TInt, To: TArrow{From: TSound, To: TSound}}}
+	// Sound.arp : List Int -> Sound -> Sound  (cycle the pitch fast through these
+	//   SEMITONE OFFSETS plus the base: the chiptune arpeggio "chord" on one voice).
+	//
+	// The offsets used to be absolute Hz, while the reference has always said
+	// semitones. Relative is the better API for two reasons beyond the doc being
+	// true: it distributes over a chord, and it survives Sound.transpose -- with
+	// absolute Hz a transposed passage moved its base note and left its arpeggio
+	// standing in the old key.
 	out["soundArp"] = TArrow{From: TList(TInt), To: TArrow{From: TSound, To: TSound}}
+	// Sound.transpose : Int -> Sound -> Sound  (signed SEMITONES).
+	// Sound.stretch : Int -> Sound -> Sound  (percent of the current speed; 50 is
+	//   half speed, 200 is double).
+	//
+	// A passage is a value, and until these existed there was no way to say "the
+	// same passage, a tone higher" or "the same passage, faster" -- so a game that
+	// raises its siege music per wave threaded a transposition and a tempo through
+	// every note lookup by hand, which is six places to forget it.
+	out["soundTranspose"] = TArrow{From: TInt, To: TArrow{From: TSound, To: TSound}}
+	out["soundStretch"] = TArrow{From: TInt, To: TArrow{From: TSound, To: TSound}}
 	// Sound.chord / Sound.sequence : List Sound -> Sound  (layer / string together)
 	out["soundChord"] = TArrow{From: TList(TSound), To: TSound}
 	out["soundSequence"] = TArrow{From: TList(TSound), To: TSound}
@@ -3867,7 +3911,9 @@ func qualifiedAliases(flat map[string]Type) map[string]Type {
 		"Device.canHover":    "deviceCanHover",
 		"Sound.tone":         "soundTone",
 		"Sound.volume":       "soundVolume",
+		"Sound.gain":         "soundGain",
 		"Sound.sweep":        "soundSweep",
+		"Sound.sweepBy":      "soundSweepBy",
 		"Sound.lowCut":       "soundLowCut",
 		"Sound.highCut":      "soundHighCut",
 		"Sound.holdPitch":    "soundHoldPitch",
@@ -3878,7 +3924,10 @@ func qualifiedAliases(flat map[string]Type) map[string]Type {
 		"Sound.duty":         "soundDuty",
 		"Sound.detune":       "soundDetune",
 		"Sound.vibrato":      "soundVibrato",
+		"Sound.tremolo":      "soundTremolo",
 		"Sound.arp":          "soundArp",
+		"Sound.transpose":    "soundTranspose",
+		"Sound.stretch":      "soundStretch",
 		"Sound.rest":         "soundRest",
 		"Sound.chord":        "soundChord",
 		"Sound.sequence":     "soundSequence",

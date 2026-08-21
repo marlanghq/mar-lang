@@ -109,6 +109,21 @@ crowded =
     Sound.release 40 (Sound.decay 900 20 (Sound.attack 30 (Sound.tone Sound.Square 440 80)))
 
 
+-- a note shorter than the floor, and one of no length at all. Anything under
+-- 20 ms is played as 20 ms, and the two runtimes have to floor it at the same
+-- place: the web used to read a length of exactly 0 as a hundred milliseconds,
+-- five times what the phone played and five times the space its own loop
+-- scheduler reserves for it.
+clipped : Sound
+clipped =
+    Sound.tone Sound.Square 440 5
+
+
+instant : Sound
+instant =
+    Sound.tone Sound.Triangle 330 0
+
+
 -- pitch over time: sweep, sweep with a hold, and the arp stepper
 swept : Sound
 swept =
@@ -120,9 +135,19 @@ held =
     Sound.holdPitch 90 (Sound.sweep 120 (Sound.tone Sound.Triangle 480 260))
 
 
+-- arp over a CHORD, which is what pins the unit. The offsets are SEMITONES from
+-- each voice's own pitch, so a major triad written once has to come back as one
+-- figure above 262 and the same figure above 131. Under the old absolute-Hz
+-- reading both voices would step through the same three frequencies and the
+-- octave between them would collapse.
 arpeggio : Sound
 arpeggio =
-    Sound.arp [ 330, 415, 495 ] (Sound.tone Sound.Square 262 240)
+    Sound.arp [ 4, 7 ]
+        (Sound.chord
+            [ Sound.tone Sound.Square 262 240
+            , Sound.tone Sound.Square 131 240
+            ]
+        )
 
 
 -- timbre: pulse width and the vibrato LFO
@@ -136,6 +161,20 @@ wobbly =
     Sound.vibrato 28 9 (Sound.tone Sound.Sawtooth 165 320)
 
 
+-- the other wobble: tremolo is amplitude where vibrato is pitch, and its depth
+-- is a PERCENTAGE rather than cents. Over a chord, so it also pins that both
+-- runtimes carry it per voice; clamped at 100, since past that there is nothing
+-- left to take away.
+throbbing : Sound
+throbbing =
+    Sound.tremolo 140 5
+        (Sound.chord
+            [ Sound.tone Sound.Triangle 220 900
+            , Sound.tone Sound.Triangle 330 900
+            ]
+        )
+
+
 -- the sine: the one wave with no harmonics, and the only one where duty is
 -- meaningless. Both runtimes have to route it as a sine and not fall back to a
 -- square, which is exactly what they used to do with an unknown tag.
@@ -144,8 +183,9 @@ pure =
     Sound.duty 25 (Sound.tone Sound.Sine 110 400)
 
 
--- detune: a unison, which is what it exists for. The two layers differ, so this
--- also pins that detune patches the LAST voice and not every voice.
+-- detune: a unison, which is what it exists for, written the way the one rule
+-- forces -- each layer detuned BEFORE it joins the chord, rather than one
+-- detune over the pair, which would now move both together and produce no beat.
 unison : Sound
 unison =
     Sound.chord
@@ -161,11 +201,19 @@ detunedNoise =
     Sound.detune 600 (Sound.tone Sound.Noise 300 120)
 
 
--- pan over a CHORD, which is the whole point of the fixture: pan patches every
--- voice, so both layers have to come back placed. Under patchLast, the shape
--- detune deliberately uses two fixtures up, the first voice would read 0 and
--- only the second would move. Every other patchAll fixture in this file wraps a
--- single tone, so before this one nothing here could tell the two apart.
+-- detune on noise that has NO pitch, which is how every noise voice in this repo
+-- is written. There is nothing to shift, and both runtimes have to agree about
+-- that: the web used to resample the clip anyway, so the same call changed the
+-- timbre in the browser and did nothing at all on the phone.
+detunedSilence : Sound
+detunedSilence =
+    Sound.detune 600 (Sound.tone Sound.Noise 0 200)
+
+
+-- pan over a CHORD: both layers have to come back placed. Kept as its own
+-- fixture because a combinator wrapping a chord is the shape that used to reach
+-- only the last voice, and most fixtures here wrap a single tone, where the two
+-- behaviours are indistinguishable.
 spread : Sound
 spread =
     Sound.pan 40
@@ -255,6 +303,84 @@ octaves =
         ]
 
 
+-- gain: a percentage OF what is already there, which is why it wraps a chord
+-- whose layers were mixed against each other first. Both come down by half and
+-- the balance between them survives -- the thing Sound.volume cannot express,
+-- because it would flatten both layers to one absolute level.
+quieted : Sound
+quieted =
+    Sound.gain 50
+        (Sound.chord
+            [ Sound.volume 80 (Sound.tone Sound.Square 262 300)
+            , Sound.volume 40 (Sound.tone Sound.Triangle 131 300)
+            ]
+        )
+
+
+-- sweepBy: a bend measured in cents rather than a destination in Hz, so the two
+-- layers keep their octave instead of both landing on one frequency. 700 cents
+-- is a fifth.
+bentUp : Sound
+bentUp =
+    Sound.sweepBy 700
+        (Sound.chord
+            [ Sound.tone Sound.Sawtooth 220 300
+            , Sound.tone Sound.Sawtooth 440 300
+            ]
+        )
+
+
+-- transpose: everything with a pitch moves by the same interval and nothing
+-- else does. The sweep target has to travel with its note (or the bend would
+-- widen), while the noise voice and the rest both carry freq 0 and have to come
+-- back untouched -- 0 is "no pitch", not "a very low one".
+moved : Sound
+moved =
+    Sound.transpose 5
+        (Sound.chord
+            [ Sound.sweep 440 (Sound.tone Sound.Square 220 300)
+            , Sound.tone Sound.Noise 0 300
+            , Sound.rest 300
+            ]
+        )
+
+
+-- stretch: EVERY time in the voice scales, not just the note length. The
+-- sequence bakes its delays at build time, so this pins that a stretched
+-- passage stays in time with itself instead of playing long notes at the old
+-- spacing. 50 is half speed; the envelope stretches with the note it shapes.
+slowed : Sound
+slowed =
+    Sound.stretch 50
+        (Sound.sequence
+            [ Sound.release 60 (Sound.attack 40 (Sound.tone Sound.Square 262 160))
+            , Sound.rest 80
+            , Sound.holdPitch 90 (Sound.sweep 262 (Sound.tone Sound.Triangle 392 240))
+            ]
+        )
+
+
+-- and the other direction, on the shape that catches stretch out: a CHORD whose
+-- two voices end together on numbers that do not divide. Every voice of a chord
+-- has to span the same total ms or a looped track walks a little further apart
+-- on every pass, so both runtimes have to round the same way AND have to round
+-- the END of the note rather than its length. These numbers are chosen so the
+-- two disagree: 100 + 805 rounds to 67 + 537 = 604 one way and to 603 the other,
+-- against a first voice that is 603 either way. A runtime that scales durations
+-- one at a time comes back one millisecond long here, and only here.
+hurried : Sound
+hurried =
+    Sound.stretch 150
+        (Sound.chord
+            [ Sound.decay 300 50 (Sound.tone Sound.Sawtooth 147 905)
+            , Sound.sequence
+                [ Sound.rest 100
+                , Sound.tone Sound.Square 294 805
+                ]
+            ]
+        )
+
+
 -- the shape a game actually writes: several layers, each nested, the second
 -- one starting only after the first has been going a while
 scene : Sound
@@ -275,10 +401,11 @@ scene =
 // run and a dropped fixture is a diff, not a shorter list nobody counted.
 var SoundFixtures = []string{
 	"plain", "triangle", "sawtooth", "noise", "rest",
-	"loud", "enveloped", "shortEnvelope",
-	"swept", "held", "arpeggio",
+	"loud", "enveloped", "shortEnvelope", "clipped", "instant",
+	"swept", "held", "arpeggio", "bentUp", "moved",
+	"quieted", "slowed", "hurried",
 	"struck", "settled", "crowded",
-	"pulsed", "wobbly", "pure", "unison", "detunedNoise",
+	"pulsed", "wobbly", "throbbing", "pure", "unison", "detunedNoise", "detunedSilence",
 	"spread", "hardLeft", "overPanned",
 	"cut", "cutFlipped",
 	"stacked", "ordered",
@@ -296,6 +423,6 @@ var SoundFixtures = []string{
 // only is exactly what this is for.
 var SoundFields = []string{
 	"wave", "freq", "ms", "endFreq", "holdMs", "volume", "delayMs",
-	"duty", "vibDepth", "vibRate", "arp", "lowCut", "highCut",
+	"duty", "vibDepth", "vibRate", "tremDepth", "tremRate", "arp", "lowCut", "highCut",
 	"attack", "release", "decay", "sustain", "detune", "pan",
 }
