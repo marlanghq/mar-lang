@@ -979,3 +979,111 @@ describe o =
 		t.Fatalf("qualified patterns must still participate in exhaustiveness, got: %v", err)
 	}
 }
+
+// An annotation is a promise the body has to keep.
+//
+// `bogus : a -> Int` over a body that only works on Int used to check clean,
+// because Unify happily solved a := Int and pass 4 stored a scheme that
+// quantified over `a` anyway — so every call site instantiated a fresh
+// variable and the Int was forgotten. `bogus "not a number"` checked too, and
+// the program died inside the addition at run time.
+func TestAnnotationMustNotBeMoreGeneralThanTheBody(t *testing.T) {
+	cases := []struct {
+		name string
+		src  string
+		want string
+	}{
+		{
+			name: "body pins a quantified variable to a concrete type",
+			src: "module M exposing (..)\n\n\nbogus : a -> Int\nbogus x =\n    x + 1\n",
+			want: "only works for",
+		},
+		{
+			name: "body collapses two quantified variables into one",
+			src: "module M exposing (..)\n\n\nsame : a -> b -> a\nsame x y =\n    x + y\n",
+			want: "two independent types",
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			mod, err := parser.Parse(c.src)
+			if err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			_, err = CheckModule(mod)
+			if err == nil {
+				t.Fatalf("this checked clean, which means an annotation is again promising "+
+					"more than its body delivers and every caller of it is about to be lied to:\n%s", c.src)
+			}
+			if !strings.Contains(err.Error(), c.want) {
+				t.Errorf("wrong diagnostic: got %q, want it to mention %q", err.Error(), c.want)
+			}
+		})
+	}
+}
+
+// An annotation that is HONEST, and one that is genuinely polymorphic, both
+// still have to pass: this is the half that a too-eager check would break.
+func TestHonestAnnotationsStillCheck(t *testing.T) {
+	for _, src := range []string{
+		"module M exposing (..)\n\n\nplus1 : Int -> Int\nplus1 x =\n    x + 1\n",
+		"module M exposing (..)\n\n\nid : a -> a\nid x =\n    x\n",
+		"module M exposing (..)\n\n\nfirst : a -> b -> a\nfirst x y =\n    x\n",
+		"module M exposing (..)\n\n\nwrap : a -> List a\nwrap x =\n    [ x ]\n",
+	} {
+		mod, err := parser.Parse(src)
+		if err != nil {
+			t.Fatalf("parse: %v", err)
+		}
+		if _, err := CheckModule(mod); err != nil {
+			t.Errorf("this should check and did not: %v\n%s", err, src)
+		}
+	}
+}
+
+// A `let` binds; it does not choose. A pattern that can fail has nowhere to go.
+func TestLetPatternsMustBeIrrefutable(t *testing.T) {
+	refutable := []string{
+		"    let\n        (Just x) =\n            Nothing\n    in\n    x\n",
+		"    let\n        [ a ] =\n            [ 1 ]\n    in\n    a\n",
+		"    let\n        (h :: rest) =\n            [ 1, 2 ]\n    in\n    h\n",
+		"    let\n        0 =\n            0\n    in\n    1\n",
+	}
+	for _, body := range refutable {
+		src := "module M exposing (..)\n\n\nmain : Int\nmain =\n" + body
+		mod, err := parser.Parse(src)
+		if err != nil {
+			t.Fatalf("parse: %v", err)
+		}
+		_, err = CheckModule(mod)
+		if err == nil {
+			t.Errorf("a refutable let pattern checked clean; it binds nothing at run time and "+
+				"surfaces at the use site as an unbound name:\n%s", src)
+			continue
+		}
+		if !strings.Contains(err.Error(), "can fail to match") {
+			t.Errorf("wrong diagnostic for a refutable let: %v", err)
+		}
+	}
+}
+
+// The irrefutable ones have to keep working, including nested inside a
+// single-constructor type, which is the case a blunt check would reject.
+func TestIrrefutableLetPatternsStillCheck(t *testing.T) {
+	prelude := "module M exposing (..)\n\n\ntype Box a\n    = Box a\n\n\nmain : Int\nmain =\n"
+	for _, body := range []string{
+		"    let\n        (Box n) =\n            Box 7\n    in\n    n\n",
+		"    let\n        ( a, b ) =\n            ( 1, 2 )\n    in\n    a + b\n",
+		"    let\n        { x } =\n            { x = 3, y = 4 }\n    in\n    x\n",
+		"    let\n        (Box ( a, b )) =\n            Box ( 5, 6 )\n    in\n    a + b\n",
+		"    let\n        n =\n            9\n    in\n    n\n",
+	} {
+		mod, err := parser.Parse(prelude + body)
+		if err != nil {
+			t.Fatalf("parse: %v", err)
+		}
+		if _, err := CheckModule(mod); err != nil {
+			t.Errorf("an irrefutable let pattern was rejected: %v\n%s", err, body)
+		}
+	}
+}

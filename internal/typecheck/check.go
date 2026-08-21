@@ -356,6 +356,10 @@ func CheckModuleWith(
 	annotations := map[string]Type{}
 	annotationBodies := map[string]Type{}
 	annotationVars := map[string][]int{}
+	// The name the SOURCE gave each variable, by id: a diagnostic about an
+	// annotation should quote the annotation, and the checker's own numbering
+	// means nothing to the person who wrote `a`.
+	annotationVarNames := map[int]string{}
 	for _, d := range mod.Decls {
 		if a, ok := d.(*ast.AnnotationDecl); ok {
 			scope := buildAnnotationScope(a.Type)
@@ -364,9 +368,11 @@ func CheckModuleWith(
 				return nil, errorf(a.Pos, "in annotation %s: %v", a.Name, err)
 			}
 			ids := make([]int, 0, len(scope))
-			for _, id := range scope {
+			for varName, id := range scope {
 				ids = append(ids, id)
+				annotationVarNames[id] = varName
 			}
+			sort.Ints(ids)
 			annotationBodies[a.Name] = t
 			annotationVars[a.Name] = ids
 			if len(ids) > 0 {
@@ -446,6 +452,19 @@ func CheckModuleWith(
 			if err := Unify(tInferred, annot, s); err != nil {
 				return nil, errorf(v.Pos, "%s: %v", v.Name, err)
 			}
+			// THE ANNOTATION'S TYPE VARIABLES HAVE TO SURVIVE THE BODY.
+			//
+			// Unify is happy to solve `a := Int` when the annotation says `a`
+			// and the body only works on Int -- and the scheme stored for
+			// callers in pass 4 still QUANTIFIES over `a`, so Instantiate hands
+			// every call site a fresh variable and the Int is forgotten. That
+			// made `bogus : a -> Int` over a body of `x + 1` check clean, and
+			// `bogus "not a number"` check clean after it, and then die at run
+			// time inside the addition. A signature is a promise the compiler
+			// is supposed to hold the body to; this is where it was not.
+			if err := annotationStaysGeneral(v.Name, annotationVars[v.Name], annotationVarNames, s); err != nil {
+				return nil, errorf(v.Pos, "%v", err)
+			}
 			// Service.declare's path literal carries typed `{name:Type}`
 			// params that must name fields of the request type. Validate
 			// them here, where the annotation has fixed req/resp.
@@ -461,6 +480,8 @@ func CheckModuleWith(
 			}
 		}
 	}
+
+	// (see annotationStaysGeneral, below)
 
 	// --- Pass 4: generalize and store ---
 	for _, d := range mod.Decls {
@@ -985,4 +1006,54 @@ func buildCtorType(args []Type, result Type) Type {
 		t = TArrow{From: args[i], To: t}
 	}
 	return t
+}
+
+// annotationStaysGeneral holds a declaration to the signature it was given.
+//
+// An annotation's named type variables are universally quantified: `id : a ->
+// a` promises to work for EVERY a, and the scheme stored for callers says so.
+// So after the body has been unified against the annotation, each of those
+// variables must still be a variable -- if solving the body pinned one to a
+// concrete type, the body is less general than the signature and every caller
+// is about to be lied to.
+//
+// Two ways to break the promise, and both are caught here:
+//
+//   bogus : a -> Int      the body forces a := Int, so `a` is no longer "any a"
+//   bogus x = x + 1
+//
+//   same : a -> b -> a    the body forces a and b to be the same variable,
+//   same x y = x + y      so the two names in the signature are one type
+//
+// The second is why the images are compared against each other and not only
+// against concreteness: collapsing two quantified variables into one is the
+// same loss of generality, arriving by a different route.
+func annotationStaysGeneral(name string, vars []int, names map[int]string, s *Subst) error {
+	if len(vars) == 0 {
+		return nil
+	}
+	show := func(id int) string {
+		if n, ok := names[id]; ok {
+			return n
+		}
+		return TVar{ID: id}.String()
+	}
+	seen := map[int]int{} // resolved var id -> the annotation var that got there first
+	for _, id := range vars {
+		resolved := s.Apply(TVar{ID: id})
+		rv, stillVar := resolved.(TVar)
+		if !stillVar {
+			return fmt.Errorf("%s: the annotation says this works for any `%s`, but the body only works for `%s`. "+
+				"Either narrow the annotation by writing `%s` where it says `%s`, or make the body work for every type",
+				name, show(id), resolved, resolved, show(id))
+		}
+		if first, clash := seen[rv.ID]; clash && first != id {
+			return fmt.Errorf("%s: the annotation gives `%s` and `%s` as two independent types, "+
+				"but the body forces them to be the same one. Use one name for both in the annotation, "+
+				"or keep them apart in the body",
+				name, show(first), show(id))
+		}
+		seen[rv.ID] = id
+	}
+	return nil
 }

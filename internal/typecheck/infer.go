@@ -397,6 +397,22 @@ func inferLet(n *ast.ELet, env *TypeEnv, s *Subst) (Type, error) {
 				return nil, errorf(b.Pattern.Position(),
 					"let pattern doesn't match the bound value's type: %v", uerr)
 			}
+			// A `let` binds, it does not choose. A pattern that can FAIL to
+			// match has no branch to fall through to, so `let (Just x) =
+			// Nothing in x` used to check clean, bind nothing at all, and
+			// surface at the use site as `unbound name: x` -- a checked
+			// program going wrong at runtime, and pointing somewhere else
+			// while it did it.
+			//
+			// Irrefutable is the same question exhaustiveness asks, so the
+			// answer comes from the same place: a pattern is irrefutable when
+			// it is the only shape its type has.
+			if bad, why := refutableLetPattern(b.Pattern, s.Apply(tBound), cur, s); bad != nil {
+				return nil, errorf(bad.Position(),
+					"this `let` pattern can fail to match%s. A `let` has nowhere to go when it "+
+						"does, so only patterns that match every value are allowed here: use a "+
+						"`case` if the value might be something else", why)
+			}
 			cur = newEnv
 		}
 	}
@@ -771,6 +787,70 @@ func inferPattern(p ast.Pattern, env *TypeEnv, s *Subst) (Type, *TypeEnv, error)
 
 // bindPattern adds bindings from a pattern in an irrefutable context
 // (`let` binders; not `case` branches). Today: PVar, PWildcard, and
+// refutableLetPattern answers whether a `let` binder can fail, and names the
+// shape it would fail on. It returns the offending sub-pattern, so the error
+// lands on `Just x` rather than on the whole binding.
+//
+// Irrefutable means: this pattern is the ONLY shape a value of this type can
+// have. Names, wildcards and unit always are. A tuple is, when every member is.
+// A record pattern is, because it names fields rather than choosing between
+// alternatives. A constructor is only when its type has exactly one, and then
+// only if its arguments are irrefutable in turn -- `let (Box (Just n)) = b` is
+// still a choice, made one level down.
+//
+// Literals, lists and cons are never irrefutable: `[ a, b ]` is a claim about
+// the length, and `0` is a claim about the value.
+func refutableLetPattern(p ast.Pattern, t Type, env *TypeEnv, s *Subst) (ast.Pattern, string) {
+	switch pat := p.(type) {
+	case *ast.PVar, *ast.PWildcard, *ast.PUnit, *ast.PRecord:
+		return nil, ""
+	case *ast.PTuple:
+		tt, ok := s.Apply(t).(TTuple)
+		if !ok || len(tt.Members) != len(pat.Members) {
+			return nil, "" // shape mismatch: Unify has already said so
+		}
+		for i, m := range pat.Members {
+			if bad, why := refutableLetPattern(m, tt.Members[i], env, s); bad != nil {
+				return bad, why
+			}
+		}
+		return nil, ""
+	case *ast.PCtor:
+		sigs, complete := typeSignature(s.Apply(t), env)
+		if !complete {
+			// The checker cannot enumerate this type, so it cannot promise the
+			// pattern covers it.
+			return p, ""
+		}
+		if len(sigs) != 1 || sigs[0].key != pat.Name {
+			others := make([]string, 0, len(sigs))
+			for _, sig := range sigs {
+				if sig.key != pat.Name {
+					others = append(others, sig.show)
+				}
+			}
+			if len(others) > 0 {
+				return p, ": the value could also be " + strings.Join(others, " or ")
+			}
+			return p, ""
+		}
+		if len(sigs[0].args) != len(pat.Args) {
+			return nil, "" // arity mismatch: already reported
+		}
+		for i, a := range pat.Args {
+			if bad, why := refutableLetPattern(a, sigs[0].args[i], env, s); bad != nil {
+				return bad, why
+			}
+		}
+		return nil, ""
+	case *ast.PList:
+		return p, ": a list pattern is a claim about the length"
+	case *ast.PCons:
+		return p, ": an empty list would not match"
+	}
+	return p, ": a literal pattern only matches that one value"
+}
+
 // PRecord. Refutable patterns (PCtor, PList, PCons, PInt …) are caught
 // at the `let`-checking layer above and never reach here.
 //
