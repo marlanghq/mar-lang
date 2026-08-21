@@ -556,3 +556,23 @@ func TestIntegerLiteralsStopAtFiftyThreeBits(t *testing.T) {
 		})
 	}
 }
+
+// `\ -> e` is not a lambda, and letting it parse was a soundness hole rather
+// than an oddity: inferLambda folds parameter types onto the body's type, so
+// with no parameters it handed back the BODY's type while the evaluator still
+// built a closure. `\ -> False` had type Bool and evaluated to a function, and
+// `if` took the else branch without a word.
+func TestLambdaNeedsAtLeastOneParameter(t *testing.T) {
+	_, err := Parse("module M exposing (..)\n\n\nisReady : Bool\nisReady =\n    \\ -> False\n")
+	if err == nil {
+		t.Fatal("`\\ -> False` parsed; it type-checks as Bool and evaluates to a function, " +
+			"which is a checked program going wrong at run time")
+	}
+	if !strings.Contains(err.Error(), "no parameters") {
+		t.Errorf("wrong diagnostic: %v", err)
+	}
+	// The ordinary lambda has to keep parsing.
+	if _, err := Parse("module M exposing (..)\n\n\nf : Int -> Int\nf =\n    \\ x -> x + 1\n"); err != nil {
+		t.Errorf("a normal lambda stopped parsing: %v", err)
+	}
+}

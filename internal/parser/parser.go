@@ -1194,6 +1194,24 @@ func (p *parser) parseLambda() (ast.Expr, error) {
 		}
 		lam.Params = append(lam.Params, pat)
 	}
+	// A lambda with NO parameters is not a lambda, and letting it through was a
+	// soundness hole rather than an oddity: inferLambda folds the parameter
+	// types onto the body's type, so with an empty list it hands back the BODY's
+	// type while the evaluator still builds a closure. `\ -> False` then has type
+	// Bool and evaluates to a function, and `if` takes the else branch without a
+	// word. Two of the three runtimes answer silently wrong; the Go one reports
+	// an internal error saying a checked program cannot reach this state.
+	//
+	// There is nothing to rescue here -- a zero-argument function is a value in
+	// this language, so `\ -> e` can only ever be a typo for `e`.
+	if len(lam.Params) == 0 {
+		return nil, &Error{
+			Line:   tok.Line,
+			Column: tok.Column,
+			Message: "this lambda has no parameters: `\\ x -> ...` needs at least one, " +
+				"and a value that takes no arguments is just the value itself",
+		}
+	}
 	if _, err := p.expect(lexer.KindArrow); err != nil {
 		return nil, err
 	}
