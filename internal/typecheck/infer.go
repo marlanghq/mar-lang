@@ -321,6 +321,12 @@ func inferBinop(n *ast.EBinop, env *TypeEnv, s *Subst) (Type, error) {
 }
 
 func inferLambda(n *ast.ELambda, env *TypeEnv, s *Subst) (Type, error) {
+	// All the parameters bind at once, so they are one group: `f x x = x`
+	// used to keep the second silently. Function declarations desugar to a
+	// lambda before they get here, so this covers both spellings.
+	if err := checkPatternNames(n.Params...); err != nil {
+		return nil, err
+	}
 	// Bind each param to a fresh variable.
 	bodyEnv := env
 	paramTypes := make([]Type, len(n.Params))
@@ -364,6 +370,19 @@ func inferIf(n *ast.EIf, env *TypeEnv, s *Subst) (Type, error) {
 }
 
 func inferLet(n *ast.ELet, env *TypeEnv, s *Subst) (Type, error) {
+	// One let block is one group: its bindings share a namespace, so
+	// `a = 1` followed by `a = 2` is not shadowing, it is a name written
+	// twice with the first copy unreachable. Nesting a second `let`, or
+	// binding the same name in an inner scope, is untouched by this — the
+	// group is this block and nothing else.
+	blockPats := make([]ast.Pattern, 0, len(n.Bindings))
+	for _, b := range n.Bindings {
+		blockPats = append(blockPats, b.Pattern)
+	}
+	if err := checkPatternNames(blockPats...); err != nil {
+		return nil, err
+	}
+
 	cur := env
 	for _, b := range n.Bindings {
 		// IsBind (`x <- effect` syntax) currently checks like a regular
@@ -564,6 +583,12 @@ func inferCase(n *ast.ECase, env *TypeEnv, s *Subst) (Type, error) {
 
 	var tResult Type
 	for i, branch := range n.Branches {
+		// One branch's pattern is one group. `( x, x )` used to bind the
+		// second x and drop the first, while reading like a claim that the
+		// two halves are equal — the one thing it did not mean.
+		if err := checkPatternNames(branch.Pattern); err != nil {
+			return nil, err
+		}
 		// Bind pattern variables. For now, give each PVar a fresh type and
 		// unify against tSubject for trivial patterns. Constructor patterns
 		// are not yet fully supported.

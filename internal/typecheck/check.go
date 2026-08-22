@@ -197,6 +197,14 @@ func CheckModuleWith(
 		}
 	}
 
+	// Two declarations of one name is a whole-module question, so it is
+	// asked here: before Pass 1 overwrites the first declaration with the
+	// second, and long before orderValueDecls indexes a deduplicated list
+	// by slot and panics. See duplicates.go.
+	if err := checkDuplicateDecls(mod); err != nil {
+		return nil, err
+	}
+
 	// Claim every name this module declares BEFORE any body is converted.
 	// Dependency order handles the common case, but mutually recursive types
 	// have no order that works: whichever is built first references the other
@@ -367,6 +375,7 @@ func CheckModuleWith(
 			if err != nil {
 				return nil, errorf(a.Pos, "in annotation %s: %v", a.Name, err)
 			}
+			t = stampConstrainedVarNames(t, scope)
 			ids := make([]int, 0, len(scope))
 			for varName, id := range scope {
 				ids = append(ids, id)
@@ -1019,15 +1028,27 @@ func buildCtorType(args []Type, result Type) Type {
 //
 // Two ways to break the promise, and both are caught here:
 //
-//   bogus : a -> Int      the body forces a := Int, so `a` is no longer "any a"
-//   bogus x = x + 1
+//	bogus : a -> Int      the body forces a := Int, so `a` is no longer "any a"
+//	bogus x = x + 1
 //
-//   same : a -> b -> a    the body forces a and b to be the same variable,
-//   same x y = x + y      so the two names in the signature are one type
+//	same : a -> b -> a    the body forces a and b to be the same variable,
+//	same x y = x + y      so the two names in the signature are one type
 //
 // The second is why the images are compared against each other and not only
 // against concreteness: collapsing two quantified variables into one is the
 // same loss of generality, arriving by a different route.
+//
+// There is a third, quieter route, and it arrives by CONSTRAINT rather than
+// by type:
+//
+//	sortAny : List a -> List a      the body needs `a` to be comparable, so
+//	sortAny xs = List.sort xs       this does not work for every a either
+//
+// The variable is still a variable, so the two checks above pass it. The
+// signature is a lie all the same, and it was a load-bearing one: the scheme
+// stored for callers dropped the constraint, so `sortAny` accepted a list of
+// records and handed the runtime something it cannot order. Mar can spell
+// this — `List comparable -> List comparable` — so the fix is to say it.
 func annotationStaysGeneral(name string, vars []int, names map[int]string, s *Subst) error {
 	if len(vars) == 0 {
 		return nil
@@ -1055,5 +1076,93 @@ func annotationStaysGeneral(name string, vars []int, names map[int]string, s *Su
 		}
 		seen[rv.ID] = id
 	}
+	// Constraints last, so that a body which both collapses two variables
+	// AND constrains them reports the collapse: `same : a -> b -> a` over
+	// `x + y` is more usefully described as two names forced into one than
+	// as a missing `number`.
+	for _, id := range vars {
+		rv, stillVar := s.Apply(TVar{ID: id}).(TVar)
+		if !stillVar {
+			continue
+		}
+		declared, _ := constrainedVarKind(show(id))
+		if rv.Constraint != KindAny && rv.Constraint != declared {
+			return fmt.Errorf("%s: the annotation says this works for any `%s`, but the body needs `%s` to be %s. "+
+				"Write `%s` where the annotation says `%s`, and the signature will be true",
+				name, show(id), show(id), kindNoun(rv.Constraint), kindVarName(rv.Constraint), show(id))
+		}
+	}
 	return nil
+}
+
+// constrainedVarNames are the type-variable names that mean more than "any
+// type". They are Elm's, and they exist because some signatures cannot be
+// written honestly without them: `List.sort : List comparable -> List
+// comparable` is the truth about that function, and `List a -> List a` is
+// not. A trailing number distinguishes several of the same kind, so
+// `comparable` and `comparable2` are two different comparable variables.
+//
+// Without a spelling for this, an annotation could quietly promise more than
+// its body delivers: `sortAny : List a -> List a` over a body that sorts was
+// accepted, republished as `List a`, and let a caller hand it a list of
+// records — which the runtime then could not order.
+func constrainedVarKind(name string) (Kind, bool) {
+	base := strings.TrimRight(name, "0123456789")
+	switch base {
+	case "comparable":
+		return KindComparable, true
+	case "number":
+		return KindNumber, true
+	case "appendable":
+		return KindAppendable, true
+	}
+	return KindAny, false
+}
+
+// stampConstrainedVarNames gives the vars named `comparable` / `number` /
+// `appendable` the Kind their name claims. convertTypeExpr builds every
+// annotation variable unconstrained because it works from names and IDs
+// alone; this puts the constraint back on afterwards, which keeps the
+// knowledge in one place rather than threading a second map through the
+// converter.
+func stampConstrainedVarNames(t Type, scope map[string]int) Type {
+	var m map[int]Type
+	for name, id := range scope {
+		if k, ok := constrainedVarKind(name); ok {
+			if m == nil {
+				m = map[int]Type{}
+			}
+			m[id] = TVar{ID: id, Constraint: k}
+		}
+	}
+	if m == nil {
+		return t
+	}
+	return substituteVars(t, m)
+}
+
+// kindNoun and kindVarName put a Kind into a sentence: what the body needs,
+// and the name that says so in an annotation.
+func kindNoun(k Kind) string {
+	switch k {
+	case KindComparable:
+		return "comparable"
+	case KindNumber:
+		return "a number"
+	case KindAppendable:
+		return "appendable"
+	}
+	return "restricted"
+}
+
+func kindVarName(k Kind) string {
+	switch k {
+	case KindComparable:
+		return "comparable"
+	case KindNumber:
+		return "number"
+	case KindAppendable:
+		return "appendable"
+	}
+	return "a"
 }

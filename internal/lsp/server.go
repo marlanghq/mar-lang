@@ -18,9 +18,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"sort"
 	"strconv"
 	"strings"
@@ -150,6 +152,31 @@ func (s *Server) loop() error {
 }
 
 func (s *Server) handle(msg *message) {
+	// The editor is the one process the user does not restart. A panic
+	// anywhere under here — the parser, the checker, the project loader —
+	// used to take the whole server down with it, and vscode-mar sets no
+	// custom error handler, so five of those retire language support for
+	// the window. One bad keystroke should cost the user one stale
+	// response, not their tooling, so a panic ends this MESSAGE and
+	// nothing more.
+	defer func() {
+		rec := recover()
+		if rec == nil {
+			return
+		}
+		log.Printf("mar-lsp: internal error handling %s: %v\n%s", msg.Method, rec, debug.Stack())
+		if len(msg.ID) > 0 {
+			_ = s.writeRaw(map[string]any{
+				"jsonrpc": "2.0",
+				"id":      json.RawMessage(msg.ID),
+				"error": rpcError{
+					Code:    -32603,
+					Message: fmt.Sprintf("internal error in the Mar language server while handling %s: %v", msg.Method, rec),
+				},
+			})
+		}
+	}()
+
 	switch msg.Method {
 	case "initialize":
 		s.handleInitialize(msg)
@@ -276,17 +303,44 @@ func (s *Server) scanWorkspace(p initializeParams) {
 				return nil
 			}
 			uri := "file://" + path
+			// Build outside the lock, and survive a file the compiler
+			// cannot handle. This walk runs in its own goroutine, so a
+			// panic here was not reachable by the per-message recover in
+			// handle: one unopened bad file anywhere in the workspace
+			// ended the whole language server. Building outside the lock
+			// is the other half of that — s.mu is released with a plain
+			// call here, so a panic under it would have left it held and
+			// deadlocked every later request.
+			idx := indexFileSafely(uri, string(content))
+			if idx == nil {
+				return nil
+			}
 			s.mu.Lock()
 			// Don't override an already-open (in-editor, possibly
 			// edited) document with disk content.
 			if _, alreadyIndexed := s.idx[uri]; !alreadyIndexed {
 				s.docs[uri] = string(content)
-				s.idx[uri] = BuildIndex(uri, string(content))
+				s.idx[uri] = idx
 			}
 			s.mu.Unlock()
 			return nil
 		})
 	}
+}
+
+// indexFileSafely builds a document index, answering nil for a file that
+// makes the compiler panic instead of letting the panic escape. The eager
+// workspace scan indexes files the user has not opened and cannot see, so
+// "skip this one and keep going" is the only behaviour that leaves the rest
+// of the project navigable.
+func indexFileSafely(uri, content string) (idx *DocIndex) {
+	defer func() {
+		if rec := recover(); rec != nil {
+			log.Printf("mar-lsp: skipping %s while scanning the workspace: internal error: %v\n%s", uri, rec, debug.Stack())
+			idx = nil
+		}
+	}()
+	return BuildIndex(uri, content)
 }
 
 // --- Document lifecycle ---

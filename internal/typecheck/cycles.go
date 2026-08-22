@@ -183,6 +183,16 @@ func orderValueDecls(mod *ast.Module) {
 		visit(v)
 	}
 
+	// The DFS emits one entry per distinct NAME while slots counts one per
+	// declaration, so a module that declares a value twice would leave
+	// `ordered` short and this loop would index past its end. That is now
+	// impossible — checkDuplicateDecls rejects the module before we get
+	// here — but orderValueDecls rewrites the tree the runtimes execute, so
+	// it declines to rewrite anything it cannot rewrite completely rather
+	// than reordering a prefix and leaving the rest as it found it.
+	if len(ordered) != len(slots) {
+		return
+	}
 	for n, i := range slots {
 		mod.Decls[i] = ordered[n]
 	}

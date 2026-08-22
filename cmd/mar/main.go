@@ -22,6 +22,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	goruntime "runtime"
+	"runtime/debug"
 	"strings"
 	"time"
 
@@ -721,6 +722,23 @@ var (
 )
 
 func main() {
+	// A compiler bug should read like a bug report, not like a core dump.
+	// Every subcommand routes through here, so one boundary turns a Go
+	// stack trace into a sentence the user can act on — while the stack
+	// itself still reaches stderr, where it is worth something. Note this
+	// is the CLI boundary only: a panic inside the library still panics
+	// under `go test`, with its stack intact, which is where that stack
+	// is actually useful.
+	defer func() {
+		if rec := recover(); rec != nil {
+			fmt.Fprintf(os.Stderr, "\n%v\n%s\n", rec, debug.Stack())
+			fprintError("%s", fmt.Sprintf("internal error: %v\n"+
+				"This is a bug in Mar rather than in your code. The full details are above;\n"+
+				"please report them at https://github.com/marlanghq/mar-lang/issues", rec))
+			os.Exit(2)
+		}
+	}()
+
 	if len(os.Args) < 2 {
 		fmt.Fprintln(os.Stderr)
 		usage()
@@ -1237,7 +1255,23 @@ func runDev(path string, noOpen bool) int {
 	// compile loads + evaluates the project, capturing the served state
 	// into lp. Returns a friendly error message instead of panicking so
 	// the watcher can recover from compile errors during development.
-	compile := func() error {
+	compile := func() (err error) {
+		// The sentence above was an aspiration until now: a compile
+		// ERROR was returned and shown in the banner, but a compiler
+		// PANIC escaped past the watcher goroutine and took the
+		// listener down with it, so a typo in a .mar file could end
+		// the dev session. Turn it into the same friendly failure the
+		// banner already knows how to show, and keep the previous good
+		// build serving. The stack goes to stderr, where a bug report
+		// can find it.
+		defer func() {
+			if rec := recover(); rec != nil {
+				fmt.Fprintf(os.Stderr, "internal compiler error: %v\n%s\n", rec, debug.Stack())
+				err = fmt.Errorf("internal compiler error: %v\n"+
+					"This is a bug in Mar rather than in your code; the full stack is on stderr", rec)
+			}
+		}()
+
 		// Hot-reload re-runs compile; clear every package-level
 		// registry that shouldn't survive across reloads (entity
 		// table, migration cache, Path enum types). See
