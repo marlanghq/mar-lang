@@ -147,3 +147,125 @@ func TestWireRejectsANonObjectWhereARecordIsDeclared(t *testing.T) {
 		t.Error("a bare string where a record is declared should be rejected")
 	}
 }
+
+// The lenient half of this file was where the reachable 500s lived. Each of
+// these was measured against a real server before it was a test: the check
+// said yes, and the handler then received something it had not been checked
+// against.
+
+func TestMaybeAbsentBecomesNothing(t *testing.T) {
+	s := WireShape{Kind: WireRecord, Fields: []WireField{
+		{Name: "note", Shape: WireShape{Kind: WireMaybe, Elem: &WireShape{Kind: WireString}}},
+	}}
+	// Absent is legal...
+	if err := CheckWire(rec(), s); err != nil {
+		t.Fatalf("a missing optional field is Nothing: %v", err)
+	}
+	// ...and permitting it is only half the rule: the field has to BE there
+	// afterwards, because the handler reads it whether or not it was sent.
+	out, ok := CoerceWire(rec(), s).(VRecord)
+	if !ok {
+		t.Fatalf("expected a record, got %T", CoerceWire(rec(), s))
+	}
+	got, present := out.Fields["note"]
+	if !present {
+		t.Fatal("the optional field was accepted and then not supplied")
+	}
+	if c, ok := got.(VCtor); !ok || c.Tag != "Nothing" {
+		t.Fatalf("note = %v, want Nothing", got)
+	}
+}
+
+func TestMaybeNullBecomesNothing(t *testing.T) {
+	// `null` decodes to VUnit. It means Nothing, and has to arrive as one.
+	s := WireShape{Kind: WireMaybe, Elem: &WireShape{Kind: WireString}}
+	if err := CheckWire(VUnit{}, s); err != nil {
+		t.Fatalf("null is Nothing: %v", err)
+	}
+	if c, ok := CoerceWire(VUnit{}, s).(VCtor); !ok || c.Tag != "Nothing" {
+		t.Fatalf("null coerced to %v, want Nothing", CoerceWire(VUnit{}, s))
+	}
+}
+
+func TestMaybeRejectsRawValue(t *testing.T) {
+	// An unwrapped value used to be waved through and then failed inside the
+	// handler, which is the outcome this file exists to remove.
+	s := WireShape{Kind: WireMaybe, Elem: &WireShape{Kind: WireString}}
+	if err := CheckWire(VString{V: "raw"}, s); err == nil {
+		t.Fatal("a raw value is not a Maybe")
+	}
+}
+
+func TestDecimalAcceptsAnIntAndProducesOne(t *testing.T) {
+	// JSON has one number type, so 3 for a Decimal field means 3. Accepting
+	// it without producing a Decimal was a 500 inside Decimal.toString.
+	s := WireShape{Kind: WireDecimal}
+	if err := CheckWire(VInt{V: 3}, s); err != nil {
+		t.Fatalf("an Int is a legal Decimal on the wire: %v", err)
+	}
+	if _, ok := CoerceWire(VInt{V: 3}, s).(VDecimal); !ok {
+		t.Fatalf("coerced to %T, want VDecimal", CoerceWire(VInt{V: 3}, s))
+	}
+}
+
+func TestAllOptionalRecordAcceptsAnEmptyBody(t *testing.T) {
+	// An empty body assembles to VUnit before the check sees it. A record
+	// whose fields are all optional is satisfied by `{}` — this was a live
+	// false rejection: "the request should be an object, got nothing".
+	s := WireShape{Kind: WireRecord, Fields: []WireField{
+		{Name: "note", Shape: WireShape{Kind: WireMaybe, Elem: &WireShape{Kind: WireString}}},
+	}}
+	body := EmptyBodyAsRecord(VUnit{}, s)
+	if err := CheckWire(body, s); err != nil {
+		t.Fatalf("an all-optional record accepts an empty body: %v", err)
+	}
+	out, ok := CoerceWire(body, s).(VRecord)
+	if !ok {
+		t.Fatalf("expected a record, got %T", CoerceWire(body, s))
+	}
+	if c, ok := out.Fields["note"].(VCtor); !ok || c.Tag != "Nothing" {
+		t.Fatalf("note = %v, want Nothing", out.Fields["note"])
+	}
+}
+
+func TestRequiredFieldStillMissing(t *testing.T) {
+	// The other half: reading VUnit as an empty object must not turn a
+	// missing REQUIRED field into a pass, and the message names the field.
+	s := WireShape{Kind: WireRecord, Fields: []WireField{
+		{Name: "n", Shape: WireShape{Kind: WireInt}},
+	}}
+	err := CheckWire(EmptyBodyAsRecord(VUnit{}, s), s)
+	if err == nil {
+		t.Fatal("a required field is still required")
+	}
+	if !strings.Contains(err.Error(), "`n`") {
+		t.Fatalf("the message must name the field, got: %v", err)
+	}
+}
+
+func TestUnitIgnoresUnknownFields(t *testing.T) {
+	// Records ignore extras deliberately, so `()` has to as well: it is one
+	// rule, and the two halves disagreed.
+	if err := CheckWire(rec("anything", VInt{V: 1}), WireShape{Kind: WireUnit}); err != nil {
+		t.Fatalf("a `()` request ignores what it does not declare: %v", err)
+	}
+}
+
+func TestCtorRejectsATagTheTypeDoesNotDeclare(t *testing.T) {
+	s := WireShape{Kind: WireCtor, Tags: []string{"Draft", "Sent"}}
+	if err := CheckWire(VCtor{Tag: "Sent"}, s); err != nil {
+		t.Fatalf("a declared tag passes: %v", err)
+	}
+	err := CheckWire(VCtor{Tag: "Purple"}, s)
+	if err == nil {
+		t.Fatal("an undeclared tag reached a `case` the checker had proved total")
+	}
+	for _, want := range []string{"Draft", "Sent", "Purple"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("the message must name the legal set and what arrived, got: %v", err)
+		}
+	}
+	if err := CheckWire(VString{V: "Sent"}, s); err == nil {
+		t.Fatal("a bare string is not a constructor on the wire")
+	}
+}

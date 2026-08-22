@@ -1,103 +1,76 @@
 package project
 
 import (
+	"strings"
+
 	"mar/internal/ast"
 	"mar/internal/runtime"
 	"mar/internal/typecheck"
 )
 
 // This package is the one place that can see both a checked type and a runtime
-// value, so it is where the declared request type is reduced to the shape the
-// dispatcher checks incoming JSON against. The runtime cannot do it (it does
-// not import the typechecker: ADR 0016) and the typechecker will not (it does
-// not know what a service dispatcher is).
+// value, so it is where the declared request type gets attached to the service
+// the dispatcher will check bodies against. The reduction itself lives in
+// internal/typecheck, next to the types it reads, because JSON.decode needs
+// exactly the same reduction and two copies of it would drift apart quietly.
 //
 // This only works because EVERY load path type-checks, including the deployed
 // one: see ADR 0017. Deriving it here while some path skipped checking would
-// give a guard that exists under `mar dev` and vanishes on deploy, which is
-// worse than no guard at all.
-//
-// The reduction is deliberately lossy. It answers one question: "could this
-// decoded JSON have come from a value of the declared type?", and anything it
-// cannot answer becomes WireAny rather than a guess, because a wrong 422 on a
-// valid request is worse than the 500 this replaces.
+// give a guard that exists under `mar dev` and vanishes on deploy — or, as it
+// turned out, the reverse: the dev loader passed a literal nil where the
+// checked types belonged, so the guard was live in production and absent on
+// every developer's machine for a month.
 
 // stampServiceShape records the declared request shape on a service value, so
 // the dispatcher can reject a malformed body with a 422 that names the field
 // instead of letting the handler fail somewhere downstream.
-func stampServiceShape(svc runtime.VService, t typecheck.Type) runtime.VService {
+func stampServiceShape(svc runtime.VService, t typecheck.Type, tags typecheck.CtorLookup) runtime.VService {
 	if svc.InputShape != nil || t == nil {
 		return svc
 	}
-	con, ok := stripForall(t).(typecheck.TCon)
+	con, ok := typecheck.StripForall(t).(typecheck.TCon)
 	if !ok || con.Name != "Service" || len(con.Args) != 2 {
 		return svc
 	}
-	s := wireShapeOf(con.Args[0], 0)
+	s := typecheck.WireShapeOf(con.Args[0], tags)
 	svc.InputShape = &s
 	return svc
 }
 
-func stripForall(t typecheck.Type) typecheck.Type {
-	if f, ok := t.(typecheck.TForall); ok {
-		return stripForall(f.Body)
-	}
-	return t
-}
-
-// wireShapeOf walks a checked type into a shape. depth stops a recursive type
-// from expanding forever: a request is a wire format, so anything that deep is
-// not something to be asserting about anyway.
-func wireShapeOf(t typecheck.Type, depth int) runtime.WireShape {
-	if depth > 6 {
-		return runtime.WireShape{Kind: runtime.WireAny}
-	}
-	switch n := stripForall(t).(type) {
-	case typecheck.TUnit:
-		return runtime.WireShape{Kind: runtime.WireUnit}
-
-	case typecheck.TRecord:
-		// An OPEN record ({ r | x : Int }) constrains the fields it names and
-		// nothing else, which is what checking a named field at a time already
-		// does, so it needs no special case.
-		fields := make([]runtime.WireField, 0, len(n.Order))
-		for _, name := range n.Order {
-			fields = append(fields, runtime.WireField{
-				Name:  name,
-				Shape: wireShapeOf(n.Fields[name], depth+1),
-			})
+// ctorsFromModules builds the lookup out of the module ASTs the loader already
+// has in hand, which is the cheapest place the constructor names and their
+// arities both exist. A canonical name splits at its LAST dot: a module name
+// has dots in it (`Frontend.Home`) and a type name does not.
+func ctorsFromModules(modulesByName map[string]*ast.Module) typecheck.CtorLookup {
+	return func(canonical string) ([]string, bool) {
+		dot := strings.LastIndex(canonical, ".")
+		if dot < 0 {
+			return nil, false
 		}
-		return runtime.WireShape{Kind: runtime.WireRecord, Fields: fields}
-
-	case typecheck.TCon:
-		switch n.Name {
-		case "Int":
-			return runtime.WireShape{Kind: runtime.WireInt}
-		case "String":
-			return runtime.WireShape{Kind: runtime.WireString}
-		case "Bool":
-			return runtime.WireShape{Kind: runtime.WireBool}
-		case "Char":
-			return runtime.WireShape{Kind: runtime.WireChar}
-		case "Decimal":
-			return runtime.WireShape{Kind: runtime.WireDecimal}
-		case "Time":
-			return runtime.WireShape{Kind: runtime.WireTime}
-		case "List":
-			if len(n.Args) == 1 {
-				elem := wireShapeOf(n.Args[0], depth+1)
-				return runtime.WireShape{Kind: runtime.WireList, Elem: &elem}
-			}
-		case "Maybe":
-			if len(n.Args) == 1 {
-				elem := wireShapeOf(n.Args[0], depth+1)
-				return runtime.WireShape{Kind: runtime.WireMaybe, Elem: &elem}
-			}
+		mod, ok := modulesByName[canonical[:dot]]
+		if !ok {
+			return nil, false
 		}
+		typeName := canonical[dot+1:]
+		for _, d := range mod.Decls {
+			ct, ok := d.(*ast.CustomTypeDecl)
+			if !ok || ct.Name != typeName || len(ct.Params) > 0 {
+				continue
+			}
+			names := make([]string, 0, len(ct.Constructors))
+			for _, c := range ct.Constructors {
+				if len(c.Args) > 0 {
+					return nil, false
+				}
+				names = append(names, c.Name)
+			}
+			if len(names) == 0 {
+				return nil, false
+			}
+			return names, true
+		}
+		return nil, false
 	}
-	// Type variables, custom unions, tuples, functions: not this package's
-	// business to assert about. See the note at the top.
-	return runtime.WireShape{Kind: runtime.WireAny}
 }
 
 // declaredTypes indexes a module's checked value types by bare name, which is
@@ -107,4 +80,29 @@ func declaredTypes(all map[string]map[string]typecheck.Type, mod *ast.Module) ma
 		return nil
 	}
 	return all[joinName(mod.Name)]
+}
+
+// declaredTypesFlat is the same thing for the loader that carries its checked
+// types in one flat `Module.value` map rather than grouped by module. It exists
+// because the dev/build path had the types in hand and passed a literal nil
+// instead, so every shape was stamped as "check nothing" and the guard this
+// file exists for was present on deploy and absent under `mar dev` — exactly
+// the split ADR 0017 set out to avoid, pointing the other way.
+func declaredTypesFlat(all map[string]typecheck.Type, mod *ast.Module) map[string]typecheck.Type {
+	if all == nil {
+		return nil
+	}
+	prefix := joinName(mod.Name) + "."
+	out := map[string]typecheck.Type{}
+	for qualified, t := range all {
+		if !strings.HasPrefix(qualified, prefix) {
+			continue
+		}
+		bare := qualified[len(prefix):]
+		if strings.Contains(bare, ".") {
+			continue
+		}
+		out[bare] = t
+	}
+	return out
 }

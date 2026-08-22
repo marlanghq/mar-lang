@@ -2,7 +2,10 @@ package runtime
 
 import (
 	"fmt"
+	"math/big"
 	"strings"
+
+	"mar/internal/ast"
 )
 
 // A service request is the one value in a Mar program that the type system did
@@ -20,38 +23,30 @@ import (
 // not import the typechecker (types are erased at this boundary, see ADR 0016),
 // so the shape is derived at load time by internal/project, which already sits
 // on both sides, and stamped onto the service, next to its origin name.
-type WireShape struct {
-	Kind   WireKind
-	Fields []WireField // Record: declared fields, in declaration order
-	Elem   *WireShape  // List, Maybe: the element shape
-}
-
-type WireKind string
-
-const (
-	WireInt     WireKind = "Int"
-	WireString  WireKind = "String"
-	WireBool    WireKind = "Bool"
-	WireDecimal WireKind = "Decimal"
-	WireTime    WireKind = "Time"
-	WireChar    WireKind = "Char"
-	WireUnit    WireKind = "()"
-	WireList    WireKind = "List"
-	WireMaybe   WireKind = "Maybe"
-	WireRecord  WireKind = "Record"
-
-	// WireAny is the escape hatch, and it has to exist: a request type can
-	// legitimately be a custom union, a type variable, or something whose
-	// wire form this package should not be asserting. Checking nothing is
-	// the honest answer there, and it is strictly better than the previous
-	// behaviour, which checked nothing everywhere.
-	WireAny WireKind = "Any"
+// The shape vocabulary lives on the AST (internal/ast/wire.go) because the
+// typechecker writes it and the runtime reads it. These aliases keep it
+// spelled `runtime.WireShape` at every call site here, where the reader is
+// already thinking about values rather than trees.
+type (
+	WireShape = ast.WireShape
+	WireKind  = ast.WireKind
+	WireField = ast.WireField
 )
 
-type WireField struct {
-	Name  string
-	Shape WireShape
-}
+const (
+	WireInt     = ast.WireInt
+	WireString  = ast.WireString
+	WireBool    = ast.WireBool
+	WireDecimal = ast.WireDecimal
+	WireTime    = ast.WireTime
+	WireChar    = ast.WireChar
+	WireUnit    = ast.WireUnit
+	WireList    = ast.WireList
+	WireMaybe   = ast.WireMaybe
+	WireRecord  = ast.WireRecord
+	WireCtor    = ast.WireCtor
+	WireAny     = ast.WireAny
+)
 
 // CheckWire reports whether a decoded request matches the declared input type,
 // naming the exact field and what was wrong. The message is user-facing: it
@@ -95,6 +90,11 @@ func checkWireAt(v Value, s WireShape, path string) error {
 	case WireDecimal:
 		// An Int is a legal Decimal on the wire: JSON has one number type,
 		// and a client sending 3 for a Decimal field means 3, not an error.
+		// Accepting it was only half the job, though — the handler then got
+		// a VInt where it was checked against a Decimal, and died with
+		// `Decimal.toString: expected Decimal`. Accepting a value means
+		// making it into the value the handler was promised, so this one
+		// coerces rather than merely permits. See coerceWire.
 		switch v.(type) {
 		case VDecimal, VInt:
 		default:
@@ -107,28 +107,56 @@ func checkWireAt(v Value, s WireShape, path string) error {
 			return bad("a time (an ISO-8601 string under \"__time\")")
 		}
 	case WireUnit:
-		if _, ok := v.(VUnit); !ok {
+		// Anything that carries no declared field satisfies a `()` request,
+		// which means an object with unknown keys does too. Records already
+		// ignore extras a few lines down, deliberately and for a stated
+		// reason; `()` rejecting them was an accident of writing the simple
+		// case first, and it made the two halves of one rule disagree.
+		switch v.(type) {
+		case VUnit, VRecord:
+		default:
 			return bad("empty")
 		}
 
 	case WireMaybe:
-		// Absent and null both mean Nothing; the decoder has already made
-		// that a VCtor. Anything else has to match the element shape.
+		// Absent means Nothing. Everything else has to be a Maybe the
+		// decoder recognised, and its contents have to match.
+		//
+		// A raw `null` and a raw unwrapped value used to be waved through
+		// here, on the theory that leniency was the safe direction. It was
+		// not: both reach the handler as something that is not a Maybe, and
+		// `{"a":null}` and `{"a":7}` against a `Maybe Int` field were 500s,
+		// which is the outcome this whole file exists to remove.
 		if isWireAbsent(v) {
 			return nil
 		}
-		if c, ok := v.(VCtor); ok {
-			if c.Tag == "Nothing" {
+		c, ok := v.(VCtor)
+		if !ok {
+			return bad("a Maybe (leave the field out for Nothing)")
+		}
+		switch {
+		case c.Tag == "Nothing":
+			return nil
+		case c.Tag == "Just" && len(c.Args) == 1:
+			if s.Elem == nil {
 				return nil
 			}
-			if c.Tag == "Just" && len(c.Args) == 1 && s.Elem != nil {
-				return checkWireAt(c.Args[0], *s.Elem, path)
+			return checkWireAt(c.Args[0], *s.Elem, path)
+		}
+		return bad("a Maybe (leave the field out for Nothing)")
+
+	case WireCtor:
+		c, ok := v.(VCtor)
+		if !ok || len(c.Args) != 0 {
+			return bad("one of " + strings.Join(quoteEach(s.Tags), ", "))
+		}
+		for _, tag := range s.Tags {
+			if c.Tag == tag {
+				return nil
 			}
-			return nil
 		}
-		if s.Elem != nil {
-			return checkWireAt(v, *s.Elem, path)
-		}
+		return fmt.Errorf("%s should be one of %s, got `%s`",
+			where(), strings.Join(quoteEach(s.Tags), ", "), c.Tag)
 
 	case WireList:
 		l, ok := v.(VList)
@@ -171,6 +199,16 @@ func checkWireAt(v Value, s WireShape, path string) error {
 	return nil
 }
 
+// quoteEach renders a tag set the way the sender writes it on the wire, so
+// the message can be copied into a request rather than translated.
+func quoteEach(tags []string) []string {
+	out := make([]string, len(tags))
+	for i, t := range tags {
+		out[i] = "`" + t + "`"
+	}
+	return out
+}
+
 func joinWirePath(path, field string) string {
 	if path == "" {
 		return field
@@ -196,6 +234,8 @@ func wireDescribe(v Value) string {
 		return "nothing"
 	case VInt:
 		return "a whole number"
+	case VFloat:
+		return "a number"
 	case VDecimal:
 		return "a number"
 	case VString:
@@ -219,4 +259,103 @@ func wireDescribe(v Value) string {
 		return "`" + t.Tag + "`"
 	}
 	return "something else"
+}
+
+// CoerceWire makes a checked request into the value the handler was promised.
+//
+// Checking and coercing are two different jobs, and conflating them is what
+// made the Decimal case a 500: the check accepted `{"amount": 3}` for a
+// `Decimal` field, correctly, because JSON has one number type — and then
+// handed the handler a VInt, which died inside `Decimal.toString`. Accepting
+// a value has to mean producing the value that was accepted.
+//
+// It runs only after CheckWire has passed, so it never has to decide what a
+// mismatch means: anything it does not recognise it returns untouched.
+func CoerceWire(v Value, s WireShape) Value {
+	switch s.Kind {
+	case WireDecimal:
+		if i, ok := v.(VInt); ok {
+			return VDecimal{Coef: big.NewInt(i.V), Scale: 0}
+		}
+
+	case WireMaybe:
+		// `null` decodes to VUnit, and an absent field arrives as nothing at
+		// all. Both mean Nothing, and both used to be waved through the
+		// check and then handed to a handler that had been checked against
+		// a `Maybe` — a 500 on the most ordinary optional field there is.
+		// Permitting absence without producing the Nothing was only half a
+		// rule.
+		if isWireAbsent(v) {
+			return VCtor{Tag: "Nothing"}
+		}
+		if c, ok := v.(VCtor); ok && c.Tag == "Just" && len(c.Args) == 1 && s.Elem != nil {
+			return VCtor{Tag: "Just", Args: []Value{CoerceWire(c.Args[0], *s.Elem)}}
+		}
+
+	case WireList:
+		l, ok := v.(VList)
+		if !ok || s.Elem == nil {
+			return v
+		}
+		out := make([]Value, len(l.Elements))
+		for i, item := range l.Elements {
+			out[i] = CoerceWire(item, *s.Elem)
+		}
+		return VList{Elements: out}
+
+	case WireRecord:
+		rec, ok := v.(VRecord)
+		if !ok {
+			return v
+		}
+		fields := make(map[string]Value, len(rec.Fields))
+		for k, val := range rec.Fields {
+			fields[k] = val
+		}
+		order := append([]string(nil), rec.Order...)
+		for _, f := range s.Fields {
+			sub, present := fields[f.Name]
+			if !present {
+				// A declared optional field that nobody sent still has to
+				// BE there: the handler reads `req.note` whether or not the
+				// client wrote it, and a record without the key is not a
+				// record of the declared type.
+				if f.Shape.Kind == WireMaybe {
+					fields[f.Name] = VCtor{Tag: "Nothing"}
+					order = append(order, f.Name)
+				}
+				continue
+			}
+			fields[f.Name] = CoerceWire(sub, f.Shape)
+		}
+		return VRecord{Fields: fields, Order: order}
+	}
+	return v
+}
+
+// EmptyBodyAsRecord resolves an ambiguity that belongs to the service
+// assembler rather than to the check.
+//
+// A request with no fields to assemble comes out as VUnit, because the
+// assembler counts fields and cannot know whether the declared type is a
+// record or `()`. Against a record shape that VUnit is the `{}` it came from,
+// and a record whose fields are ALL optional is satisfied by `{}` — that was
+// a live false rejection, "the request should be an object, got nothing", on
+// a body that was correct.
+//
+// It is done here, at the one call site that has the ambiguity, rather than
+// inside CheckWire, so that the check can go on saying the true thing
+// everywhere else: `null` decoded at a record type is NOT an empty record,
+// and JSON.decode has to be told so.
+func EmptyBodyAsRecord(v Value, s WireShape) Value {
+	if s.Kind != WireRecord {
+		return v
+	}
+	if _, isRecord := v.(VRecord); isRecord {
+		return v
+	}
+	if !isWireAbsent(v) {
+		return v
+	}
+	return VRecord{Fields: map[string]Value{}}
 }

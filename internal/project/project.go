@@ -340,7 +340,7 @@ func loadIntoEnv(mod *ast.Module, modName string, rEnv *runtime.Env, modulesByNa
 			// And the declared request shape, so the dispatcher can turn a
 			// malformed body into a 422 naming the field rather than letting
 			// it reach a handler that was checked assuming otherwise.
-			val = stampServiceShape(svc, types[v.Name])
+			val = stampServiceShape(svc, types[v.Name], ctorsFromModules(modulesByName))
 		}
 		modEnv.Define(v.Name, val)
 		rEnv.Define(modName+"."+v.Name, val)

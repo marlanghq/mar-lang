@@ -169,10 +169,28 @@ func ExposedServiceToRoute(es VExposedService) Value {
 					// produce. Everything downstream was checked assuming it
 					// is a `req`, so it has to be made one here or the
 					// mismatch surfaces as a 500 from inside a builtin.
-					if svc.InputShape != nil {
-						if err := CheckWire(input, *svc.InputShape); err != nil {
-							return makeResp(422, fmt.Sprintf("invalid request: %v", err)), nil
+					//
+					// It runs AFTER the 401, not before. A 422 names the
+					// fields of the declared request type, so answering one
+					// to a caller who has not signed in hands out the shape
+					// of every protected endpoint to anyone who can reach
+					// it. Whether the body is well formed is none of an
+					// unauthenticated caller's business.
+					checkInput := func() (Value, bool) {
+						if svc.InputShape == nil {
+							return nil, true
 						}
+						// A body with nothing to assemble arrives as VUnit;
+						// against a record that is the `{}` it came from.
+						input = EmptyBodyAsRecord(input, *svc.InputShape)
+						if err := CheckWire(input, *svc.InputShape); err != nil {
+							return makeResp(422, fmt.Sprintf("invalid request: %v", err)), false
+						}
+						// Accepting a value means producing the value that
+						// was accepted: a JSON 3 for a Decimal field is
+						// legal, and has to reach the handler as a Decimal.
+						input = CoerceWire(input, *svc.InputShape)
+						return nil, true
 					}
 					handler := svc.Handler
 					if svc.RequiresUser {
@@ -185,6 +203,10 @@ func ExposedServiceToRoute(es VExposedService) Value {
 							return makeResp(401, "not authenticated"), nil
 						}
 						userVal := justUser.Args[0]
+
+						if resp, ok := checkInput(); !ok {
+							return resp, nil
+						}
 
 						// Role gate (Auth.requireRole). Mismatch → 403.
 						if svc.RequireRole != nil {
@@ -211,6 +233,9 @@ func ExposedServiceToRoute(es VExposedService) Value {
 							return serverErrorResponse(err), nil
 						}
 						return runHandlerEffect(eff)
+					}
+					if resp, ok := checkInput(); !ok {
+						return resp, nil
 					}
 					eff, err := Apply(handler, input)
 					if err != nil {
