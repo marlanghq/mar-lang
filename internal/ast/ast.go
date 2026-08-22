@@ -425,6 +425,17 @@ type EQualified struct {
 	// wants. The name is deliberately absent from the typecheck env, so
 	// the implementation it points at stays unwritable from Mar source.
 	Impl string
+
+	// Wire is the shape a decoded value has to have to be the type this
+	// occurrence promises, or nil when there is nothing to assert.
+	//
+	// `JSON.decode "..."` is typed `Result String User` at the CALL SITE
+	// and nowhere else, so the type is gone by the time the decoder runs
+	// and the decoder answered `Ok` for every input that was valid JSON —
+	// `Ok 42` at type `Result String User`, and then reading `.name` off
+	// it died inside the runtime. Writing the shape onto the occurrence is
+	// how the call site's type survives to meet the string it decodes.
+	Wire *WireShape
 }
 
 func (e *EQualified) exprNode()     {}

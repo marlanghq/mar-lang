@@ -90,6 +90,39 @@ func withImpl(m map[string]any, impl string) map[string]any {
 	return m
 }
 
+// serializeWireShape carries the call site's expected shape to the two
+// runtimes that read this tree. Nested, and omitted entirely when the checker
+// had nothing to assert — which is every node but a JSON.decode whose result
+// type somebody pinned — so the wire stays the size it was.
+//
+// Keys are absent rather than empty: a runtime that has not learned to read
+// this yet sees an ordinary EQualified and behaves exactly as it did before,
+// which is what keeps an older bundle from becoming a new outage.
+func serializeWireShape(s ast.WireShape) map[string]any {
+	m := map[string]any{"kind": string(s.Kind)}
+	if s.Elem != nil {
+		m["elem"] = serializeWireShape(*s.Elem)
+	}
+	if len(s.Fields) > 0 {
+		fields := make([]any, 0, len(s.Fields))
+		for _, f := range s.Fields {
+			fields = append(fields, map[string]any{
+				"name":  f.Name,
+				"shape": serializeWireShape(f.Shape),
+			})
+		}
+		m["fields"] = fields
+	}
+	if len(s.Tags) > 0 {
+		tags := make([]any, 0, len(s.Tags))
+		for _, t := range s.Tags {
+			tags = append(tags, t)
+		}
+		m["tags"] = tags
+	}
+	return m
+}
+
 func serializeExpr(e ast.Expr) any {
 	switch n := e.(type) {
 	case *ast.EInt:
@@ -120,7 +153,11 @@ func serializeExpr(e ast.Expr) any {
 	case *ast.ECtor:
 		return map[string]any{"kind": "ECtor", "module": n.Module, "name": n.Name}
 	case *ast.EQualified:
-		return withImpl(map[string]any{"kind": "EQualified", "module": n.Module, "name": n.Name}, n.Impl)
+		m := withImpl(map[string]any{"kind": "EQualified", "module": n.Module, "name": n.Name}, n.Impl)
+		if n.Wire != nil {
+			m["wire"] = serializeWireShape(*n.Wire)
+		}
+		return m
 	case *ast.ENegate:
 		return map[string]any{"kind": "ENegate", "inner": serializeExpr(n.Inner)}
 	case *ast.EApp:

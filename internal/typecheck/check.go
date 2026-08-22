@@ -541,7 +541,7 @@ func CheckModuleWith(
 	// runtime boundary, so a decision the checker made has to be written
 	// back into the tree to survive. Doing it on the node means the
 	// serializer carries it to the JS and Swift runtimes for free.
-	Elaborate(res.ExprTypes)
+	Elaborate(res.ExprTypes, CtorsFromEnv(valueEnv))
 
 	// Everything the runtimes cannot re-derive is now written into the
 	// tree. Mark it, so the evaluating and serializing sides can refuse a
@@ -567,7 +567,7 @@ func CheckModuleWith(
 // Infer directly, and a node it typed as Decimal has to be elaborated before
 // Eval sees it, or the type-checker and the runtime disagree: a disagreement
 // that shows up as `+: expected Int` on `1 + 1.50`.
-func Elaborate(exprTypes map[ast.Expr]Type) {
+func Elaborate(exprTypes map[ast.Expr]Type, tags CtorLookup) {
 	for e, t := range exprTypes {
 		switch n := e.(type) {
 		case *ast.EInt:
@@ -575,11 +575,38 @@ func Elaborate(exprTypes map[ast.Expr]Type) {
 				n.AsDecimal = true
 			}
 		case *ast.EQualified:
-			n.Impl = decimalImplFor(joinName(n.Module, n.Name), t)
+			name := joinName(n.Module, n.Name)
+			n.Impl = decimalImplFor(name, t)
+			if name == "JSON.decode" {
+				n.Wire = decodeShapeFor(t, tags)
+			}
 		case *ast.EVar:
 			n.Impl = decimalImplFor(n.Name, t)
 		}
 	}
+}
+
+// decodeShapeFor reads the result type off this occurrence of JSON.decode.
+//
+// The reference's own type is the instantiated arrow, `String -> Result String
+// a`, and `a` is whatever the call site pinned it to. When nothing pinned it —
+// `JSON.decode` passed around as a value, or a result nobody looked at — the
+// shape reduces to WireAny and there is nothing worth carrying, so the node
+// stays bare and the runtimes behave exactly as they did before this existed.
+func decodeShapeFor(t Type, tags CtorLookup) *ast.WireShape {
+	arrow, ok := t.(TArrow)
+	if !ok {
+		return nil
+	}
+	res, ok := arrow.To.(TCon)
+	if !ok || res.Name != "Result" || len(res.Args) != 2 {
+		return nil
+	}
+	s := WireShapeOf(res.Args[1], tags)
+	if s.Kind == ast.WireAny {
+		return nil
+	}
+	return &s
 }
 
 func isDecimalType(t Type) bool {

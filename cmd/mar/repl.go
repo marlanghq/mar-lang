@@ -182,7 +182,7 @@ func replEvalExpr(exprSrc string, tEnv *typecheck.TypeEnv, rEnv *runtime.Env, su
 	if err != nil {
 		return nil, nil, err
 	}
-	typecheck.Elaborate(subst.ExtractExprTypes())
+	typecheck.Elaborate(subst.ExtractExprTypes(), typecheck.CtorsFromEnv(tEnv))
 	v, err := runtime.Eval(vd.Body, rEnv)
 	if err != nil {
 		return nil, nil, err
@@ -207,7 +207,7 @@ func replBind(name, exprSrc string, tEnv *typecheck.TypeEnv, rEnv *runtime.Env, 
 	if err != nil {
 		return err
 	}
-	typecheck.Elaborate(subst.ExtractExprTypes())
+	typecheck.Elaborate(subst.ExtractExprTypes(), typecheck.CtorsFromEnv(tEnv))
 	v, err := runtime.Eval(vd.Body, rEnv)
 	if err != nil {
 		return err

@@ -104,13 +104,19 @@ func TestDecodedRecordOrderIsStable(t *testing.T) {
 	}
 }
 
-// The reachability proof, from real Mar source rather than a hand-built value.
+// This test used to prove the hole was reachable. It now proves it is shut,
+// and the module is unchanged.
 //
 // `JSON.decode : String -> Result String a` unifies `a` with whatever the call
 // site reads, so this module type-checks: the checker believes `user` has an
 // `email` because the code asks for one. Nothing between the JSON text and the
-// field read verifies that. This is the shape of program the message is for.
-func TestJSONDecodeReachesTheMissingFieldMessage(t *testing.T) {
+// field read used to verify that, and the failure surfaced as a runtime error
+// about records, from the field read, on a checked program.
+//
+// The call site's type now reaches the decoder, so the mismatch is answered
+// where a decode failure was always answered — `Err` — and the `Err` branch
+// this module already had is what runs.
+func TestJSONDecodeChecksAgainstTheCallSiteType(t *testing.T) {
 	src := `module M exposing (..)
 
 result : String
@@ -126,14 +132,23 @@ result =
 	if _, err := typecheck.CheckModule(mod); err != nil {
 		t.Fatalf("this module is supposed to type-check — that is the whole point: %v", err)
 	}
-	// Top-level values evaluate as the module loads, so the read fails here.
-	_, err = LoadModule(mod)
-	if err == nil {
-		t.Fatal("reading a field the JSON did not have should fail")
+	// Top-level values evaluate as the module loads. This used to be where
+	// the field read blew up; now the decode never produces the record.
+	m, err := LoadModule(mod)
+	if err != nil {
+		t.Fatalf("the mismatch belongs in the Err branch, not in a runtime error: %v", err)
 	}
-	for _, want := range []string{"record has no field `email`", "this record has: name"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("message does not contain %q:\n%v", want, err)
+	v, ok := m.Env.Lookup("result")
+	if !ok {
+		t.Fatal("result not bound")
+	}
+	got, ok := v.(VString)
+	if !ok {
+		t.Fatalf("expected a String, got %T", v)
+	}
+	for _, want := range []string{"missing the field", "email"} {
+		if !strings.Contains(got.V, want) {
+			t.Errorf("the Err says %q, which does not mention %q", got.V, want)
 		}
 	}
 }

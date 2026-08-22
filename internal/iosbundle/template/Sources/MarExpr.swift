@@ -20,6 +20,12 @@ indirect enum Expr {
     case `var`(String)
     case ctor(module: [String], name: String)
     case qualified(module: [String], name: String)
+    /// `JSON.decode` at a call site whose result type the checker pinned.
+    /// The shape rides on the node because the call site is the only place
+    /// that type exists; see MarWire.swift. Resolved at DECODE time, the
+    /// same way `impl` is, so the evaluator sees one case rather than a
+    /// qualified name it has to special-case.
+    case jsonDecode(shape: MarWireShape)
 
     case negate(Expr)
     case app(fn: Expr, arg: Expr)

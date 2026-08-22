@@ -92,6 +92,14 @@ func evalAt(e ast.Expr, env *Env, depth int) (Value, error) {
 		if v, ok := lookupElaborated(n.Impl, env); ok {
 			return v, nil
 		}
+		if n.Wire != nil {
+			// This occurrence of JSON.decode knows what it is decoding
+			// INTO, because the checker wrote the call site's type onto the
+			// node. Without it the decoder answered Ok for anything that
+			// was valid JSON, and the mismatch surfaced later, somewhere
+			// else, as a runtime error about a field.
+			return decodeWithShape(*n.Wire), nil
+		}
 		key := joinName(n.Module, n.Name)
 		if v, ok := env.Lookup(key); ok {
 			return v, nil

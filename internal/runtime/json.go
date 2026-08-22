@@ -481,3 +481,37 @@ func convertJSON(raw any) (Value, error) {
 	}
 	return nil, fmt.Errorf("JSON.decode: unsupported type %T", raw)
 }
+
+// decodeWithShape is JSON.decode at a call site whose result type the checker
+// knew. Same decoder, one more question asked afterwards: does the value that
+// came out match the type the caller is about to treat it as?
+//
+// The answer goes where a decode failure already goes — `Err` — so this needs
+// no new channel and no new vocabulary. `JSON.decode "42"` at type
+// `Result String User` used to be `Ok 42`, and reading `.name` off it died
+// inside the runtime with a message about records; now it is
+// `Err "the value should be an object, got a whole number"`, which is the
+// same sentence a bad request body gets.
+func decodeWithShape(shape WireShape) Value {
+	return nativeFn(1, func(args []Value) (Value, error) {
+		s, ok := args[0].(VString)
+		if !ok {
+			return nil, fmt.Errorf("JSON.decode: expected String")
+		}
+		v, err := decodeJSON(s.V)
+		if err != nil {
+			return VCtor{Tag: "Err", Args: []Value{VString{V: err.Error()}}}, nil
+		}
+		if err := CheckWire(v, shape); err != nil {
+			return VCtor{Tag: "Err", Args: []Value{VString{V: decodeShapeMessage(err)}}}, nil
+		}
+		return VCtor{Tag: "Ok", Args: []Value{CoerceWire(v, shape)}}, nil
+	})
+}
+
+// decodeShapeMessage says "the value" where a request says "the request". The
+// wording is otherwise identical on purpose: one decoder, one vocabulary, so
+// the sentence a developer learns from a 422 is the one they read here.
+func decodeShapeMessage(err error) string {
+	return strings.Replace(err.Error(), "the request", "the value", 1)
+}

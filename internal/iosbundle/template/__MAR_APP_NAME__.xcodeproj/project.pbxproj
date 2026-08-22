@@ -14,6 +14,7 @@
 		2A971678EACB5020F4613019 /* MarDecimal.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3E6B24402BFE4C86F6628838 /* MarDecimal.swift */; };
 		2CEBD3F805F7B14B80F13C54 /* MarEnv.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5AC6D6C31DA699017A49EC69 /* MarEnv.swift */; };
 		3261C4D120A0A85998999F24 /* APIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = B978C6A4C024308BE99BE1A3 /* APIClient.swift */; };
+		34107512D960020FE2233B04 /* MarWire.swift in Sources */ = {isa = PBXBuildFile; fileRef = E781E4F57603C4ADA03DC036 /* MarWire.swift */; };
 		493D3C02C5420E09DC9A9D58 /* MarPageRuntime.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49572645D20DFF429518E618 /* MarPageRuntime.swift */; };
 		4F5F61AC66A3FB62634EC9D5 /* MarSharedStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7514C4E0930E690C37F202EA /* MarSharedStore.swift */; };
 		4FA4A6208515E57314147BD2 /* MarEval.swift in Sources */ = {isa = PBXBuildFile; fileRef = D82563539CB5C35B24C312D6 /* MarEval.swift */; };
@@ -75,6 +76,7 @@
 		D26C201F6623B7F54954F499 /* Discovery.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Discovery.swift; sourceTree = "<group>"; };
 		D82563539CB5C35B24C312D6 /* MarEval.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarEval.swift; sourceTree = "<group>"; };
 		E73011F6F0CF37ADFC8EF5DC /* MarValue.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarValue.swift; sourceTree = "<group>"; };
+		E781E4F57603C4ADA03DC036 /* MarWire.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarWire.swift; sourceTree = "<group>"; };
 		F15A6A6A0C7D7381FC8AD2C4 /* MarInput.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarInput.swift; sourceTree = "<group>"; };
 		F2F47775647F77B2B2DBD640 /* MarKeychain.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarKeychain.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -140,6 +142,7 @@
 				7514C4E0930E690C37F202EA /* MarSharedStore.swift */,
 				188C4335F604FB991926BD68 /* MarSound.swift */,
 				E73011F6F0CF37ADFC8EF5DC /* MarValue.swift */,
+				E781E4F57603C4ADA03DC036 /* MarWire.swift */,
 			);
 			path = Sources;
 			sourceTree = "<group>";
@@ -247,6 +250,7 @@
 				4F5F61AC66A3FB62634EC9D5 /* MarSharedStore.swift in Sources */,
 				7D2DE8EFDDCD7D1944E69693 /* MarSound.swift in Sources */,
 				83074E905DC05A40B0E08DE3 /* MarValue.swift in Sources */,
+				34107512D960020FE2233B04 /* MarWire.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

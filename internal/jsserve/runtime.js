@@ -1020,6 +1020,169 @@
 
   // ---------- Eval ----------
 
+  // ---------- Shape checking ----------
+  //
+  // A decoded value was not produced by the type system, and the code that
+  // receives it was checked on the assumption that it has the declared
+  // type. These two functions are the comparison nobody was making. They
+  // are a port of CheckWire / CoerceWire in internal/runtime/wire.go, arm
+  // for arm and sentence for sentence: three runtimes answering the same
+  // question have to answer it the same way, and the corpus is what holds
+  // them to it.
+
+  function wireDescribe(v) {
+    if (v === undefined || v === null) return 'nothing';
+    switch (v.k) {
+      case 'I': return 'a whole number';
+      case 'F': return 'a number';
+      case 'De': return 'a number';
+      case 'S': return 'a string';
+      case 'B': return 'true or false';
+      case 'Ch': return 'a character';
+      case 'L': return 'a list';
+      case 'U': return 'nothing';
+      case 'TM': return 'a time';
+      case 'C': return '`' + v.tag + '`';
+      case 'R': return v.order.length === 0
+        ? 'an empty object'
+        : 'an object with ' + v.order.join(', ');
+    }
+    return 'something else';
+  }
+
+  function wireAbsent(v) {
+    return v === undefined || v === null || v.k === 'U';
+  }
+
+  function quoteEach(tags) {
+    return tags.map((t) => '`' + t + '`').join(', ');
+  }
+
+  // Returns null when the value fits the shape, or the sentence that says
+  // how it does not.
+  function checkWireAt(v, s, path) {
+    const where = path === '' ? 'the value' : '`' + path + '`';
+    const bad = (want) => where + ' should be ' + want + ', got ' + wireDescribe(v);
+
+    switch (s.kind) {
+      case 'Any': return null;
+      case 'Int': return v.k === 'I' ? null : bad('a whole number');
+      case 'String': return v.k === 'S' ? null : bad('a string');
+      case 'Bool': return v.k === 'B' ? null : bad('true or false');
+      case 'Char': return v.k === 'Ch' ? null : bad('a single character');
+      case 'Decimal':
+        // An Int is a legal Decimal on the wire: JSON has one number type.
+        return (v.k === 'De' || v.k === 'I') ? null : bad('a number');
+      case 'Time':
+        return v.k === 'TM' ? null : bad('a time (an ISO-8601 string under "__time")');
+      case '()':
+        // Records ignore what they do not declare, so `()` does too: it is
+        // one rule and the two halves used to disagree.
+        return (v.k === 'U' || v.k === 'R') ? null : bad('empty');
+
+      case 'Maybe': {
+        if (wireAbsent(v)) return null;
+        if (v.k !== 'C') return bad('a Maybe (leave the field out for Nothing)');
+        if (v.tag === 'Nothing') return null;
+        if (v.tag === 'Just' && v.args.length === 1) {
+          return s.elem ? checkWireAt(v.args[0], s.elem, path) : null;
+        }
+        return bad('a Maybe (leave the field out for Nothing)');
+      }
+
+      case 'Ctor': {
+        const tags = s.tags || [];
+        if (v.k !== 'C' || v.args.length !== 0) return bad('one of ' + quoteEach(tags));
+        if (tags.indexOf(v.tag) >= 0) return null;
+        return where + ' should be one of ' + quoteEach(tags) + ', got `' + v.tag + '`';
+      }
+
+      case 'List': {
+        if (v.k !== 'L') return bad('a list');
+        if (!s.elem) return null;
+        for (let i = 0; i < v.xs.length; i++) {
+          const err = checkWireAt(v.xs[i], s.elem, path + '[' + i + ']');
+          if (err) return err;
+        }
+        return null;
+      }
+
+      case 'Record': {
+        if (v.k !== 'R') return bad('an object');
+        const fields = s.fields || [];
+        for (const f of fields) {
+          if (!Object.prototype.hasOwnProperty.call(v.fields, f.name)) {
+            // A missing Maybe is Nothing; a missing anything else is the
+            // single most common wire bug, so it gets its own message.
+            if (f.shape.kind === 'Maybe') continue;
+            return where + ' is missing the field `' + f.name + '`';
+          }
+          const err = checkWireAt(v.fields[f.name], f.shape, path === '' ? f.name : path + '.' + f.name);
+          if (err) return err;
+        }
+        // Extra fields are allowed on purpose: a newer client sending a
+        // field this build does not know about should not be a rejection.
+        return null;
+      }
+    }
+    return null;
+  }
+
+  // Accepting a value means producing the value that was accepted: a JSON
+  // 3 for a Decimal field is legal and has to arrive as a Decimal, and a
+  // declared optional field nobody sent still has to BE there, because the
+  // code reads it whether or not it was written.
+  function coerceWire(v, s) {
+    switch (s.kind) {
+      case 'Decimal':
+        return v.k === 'I' ? VDec(BigInt(v.n), 0) : v;
+      case 'Maybe':
+        if (wireAbsent(v)) return VCtor('Nothing', []);
+        if (v.k === 'C' && v.tag === 'Just' && v.args.length === 1 && s.elem) {
+          return VCtor('Just', [coerceWire(v.args[0], s.elem)]);
+        }
+        return v;
+      case 'List':
+        if (v.k !== 'L' || !s.elem) return v;
+        return VList(v.xs.map((x) => coerceWire(x, s.elem)));
+      case 'Record': {
+        if (v.k !== 'R') return v;
+        const fields = Object.assign({}, v.fields);
+        const order = v.order.slice();
+        for (const f of (s.fields || [])) {
+          if (!Object.prototype.hasOwnProperty.call(fields, f.name)) {
+            if (f.shape.kind === 'Maybe') {
+              fields[f.name] = VCtor('Nothing', []);
+              order.push(f.name);
+            }
+            continue;
+          }
+          fields[f.name] = coerceWire(fields[f.name], f.shape);
+        }
+        return VRecord(fields, order);
+      }
+    }
+    return v;
+  }
+
+  // JSON.decode at a call site whose result type the checker knew. Same
+  // decoder, one more question asked afterwards, and the answer goes where
+  // a decode failure already went: Err.
+  function decodeWithShape(shape) {
+    return native(1, ([raw]) => {
+      let parsed;
+      try {
+        parsed = JSON.parse(raw.s);
+      } catch (e) {
+        return VCtor('Err', [VString(String((e && e.message) || e))]);
+      }
+      const v = jsToMar(parsed);
+      const err = checkWireAt(v, shape, '');
+      if (err) return VCtor('Err', [VString(err)]);
+      return VCtor('Ok', [coerceWire(v, shape)]);
+    });
+  }
+
   function evalExpr(e, env) {
     switch (e.kind) {
       case 'EInt':    return VInt(e.value);
@@ -1066,6 +1229,14 @@
         if (e.impl !== undefined) {
           const chosen = envLookup(env, e.impl);
           if (chosen !== undefined) return chosen;
+        }
+        // `wire` is the shape this occurrence of JSON.decode is decoding
+        // INTO, written by the checker because the call site's type is the
+        // only place it exists. Absent on every other node, and absent on
+        // an older bundle, where this falls through to the plain lookup and
+        // behaves as it did before the check existed.
+        if (e.wire !== undefined) {
+          return e._decoder || (e._decoder = decodeWithShape(e.wire));
         }
         const key = e._qn || (e._qn = e.module.join('.') + '.' + e.name);
         let v = envLookup(env, key);

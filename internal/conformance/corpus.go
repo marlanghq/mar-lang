@@ -488,8 +488,91 @@ orderingCases =
         ]
 
 
+type alias DecUser =
+    { name : String
+    , age : Int
+    }
+
+
+type DecStatus
+    = DecDraft
+    | DecSent
+
+
+type alias DecOpt =
+    { note : Maybe String
+    , amount : Decimal
+    }
+
+
+du : Result String DecUser -> String
+du r =
+    case r of
+        Ok u ->
+            "ok:" ++ u.name ++ ":" ++ String.fromInt u.age
+
+        Err e ->
+            e
+
+
+ds : Result String DecStatus -> String
+ds r =
+    case r of
+        Ok s ->
+            case s of
+                DecDraft ->
+                    "ok:draft"
+
+                DecSent ->
+                    "ok:sent"
+
+        Err e ->
+            e
+
+
+dl : Result String (List Int) -> String
+dl r =
+    case r of
+        Ok xs ->
+            "ok:" ++ is xs
+
+        Err e ->
+            e
+
+
+do : Result String DecOpt -> String
+do r =
+    case r of
+        Ok o ->
+            "ok:" ++ Maybe.withDefault "-" o.note ++ ":" ++ Decimal.toString o.amount
+
+        Err e ->
+            e
+
+
+decodeCases : String
+decodeCases =
+    String.join ";"
+        [ "ok=" ++ du (JSON.decode "{\"name\":\"ana\",\"age\":3}")
+        , "notObject=" ++ du (JSON.decode "42")
+        , "missingField=" ++ du (JSON.decode "{\"name\":\"ana\"}")
+        , "wrongFieldType=" ++ du (JSON.decode "{\"name\":7,\"age\":3}")
+        , "nullIsNotARecord=" ++ du (JSON.decode "null")
+        , "extraIgnored=" ++ du (JSON.decode "{\"name\":\"ana\",\"age\":3,\"x\":1}")
+        , "badTag=" ++ ds (JSON.decode "{\"__ctor\":\"Purple\"}")
+        , "goodTag=" ++ ds (JSON.decode "{\"__ctor\":\"DecSent\"}")
+        , "listOk=" ++ dl (JSON.decode "[1,2]")
+        , "listElem=" ++ dl (JSON.decode "[1,\"x\"]")
+        , "notAList=" ++ dl (JSON.decode "5")
+        , "optionalAbsent=" ++ do (JSON.decode "{\"amount\":3}")
+        , "optionalNull=" ++ do (JSON.decode "{\"note\":null,\"amount\":3}")
+        , "optionalJust=" ++ do (JSON.decode "{\"note\":{\"__ctor\":\"Just\",\"__args\":[\"hi\"]},\"amount\":3}")
+        , "optionalRaw=" ++ do (JSON.decode "{\"note\":\"hi\",\"amount\":3}")
+        ]
+
+
 results =
-    String.join "\n" [ basicsCases, stringCases, listCases, maybeCases, resultCases, tupleCases, charCases, dictCases, setCases, jsonCases, mathCases, shortCircuitCases, orderingCases ]
+    String.join "\n" [ basicsCases, stringCases, listCases, maybeCases, resultCases, tupleCases, charCases, dictCases, setCases, jsonCases, mathCases, shortCircuitCases, orderingCases, decodeCases ]
 `
 
 // Entry is the value each runtime is asked to evaluate.
@@ -507,6 +590,14 @@ var Blocks = []string{
 	// `<=`, `>=` are in neither set. Comparison was three implementations
 	// with nothing comparing them — the same blind spot that hid `modBy`.
 	"Ordering",
+	// Decode is about what JSON.decode does with a value that does NOT fit
+	// the type the call site asked for. It answered `Ok` for anything that
+	// parsed, in all three, and the mismatch surfaced later and elsewhere.
+	// The messages are pinned to the character because three runtimes now
+	// answer the same question and the only thing keeping their answers the
+	// same sentence is this block. Parse failures are deliberately absent:
+	// the three host JSON parsers word those differently and always have.
+	"Decode",
 }
 
 // Scope is the set of modules whose meaning must be identical everywhere: pure
@@ -854,7 +945,7 @@ ShortCircuit.andSkips=F
 ShortCircuit.orSkips=T
 ShortCircuit.andEvaluates=T
 ShortCircuit.orEvaluates=T
-`
+` + decodeExpectations
 
 // Expectations parses the hand-written answers. Blank lines only group them for
 // reading.
@@ -945,3 +1036,24 @@ func Difference(aName string, a map[string]string, bName string, b map[string]st
 	sort.Strings(out)
 	return out
 }
+
+// The decode messages name fields in backticks, and the block above is a Go
+// raw string literal, which a backtick ends. Interpreted string literals have
+// no such trouble, so these live here rather than being reworded to suit the
+// file they are written in.
+const decodeExpectations = "Decode.ok=ok:ana:3\n" +
+	"Decode.notObject=the value should be an object, got a whole number\n" +
+	"Decode.missingField=the value is missing the field `age`\n" +
+	"Decode.wrongFieldType=`name` should be a string, got a whole number\n" +
+	"Decode.nullIsNotARecord=the value should be an object, got nothing\n" +
+	"Decode.extraIgnored=ok:ana:3\n" +
+	"Decode.badTag=the value should be one of `DecDraft`, `DecSent`, got `Purple`\n" +
+	"Decode.goodTag=ok:sent\n" +
+	"Decode.listOk=ok:1,2\n" +
+	"Decode.listElem=`[1]` should be a whole number, got a string\n" +
+	"Decode.notAList=the value should be a list, got a whole number\n" +
+	"Decode.optionalAbsent=ok:-:3\n" +
+	"Decode.optionalNull=ok:-:3\n" +
+	"Decode.optionalJust=ok:hi:3\n" +
+	"Decode.optionalRaw=`note` should be a Maybe (leave the field out for Nothing), got a string\n" +
+	""

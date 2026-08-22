@@ -100,6 +100,13 @@ enum Eval {
              .qualified(let module, let name):
             return try lookupQualified(env: env, module: module, name: name)
 
+        case .jsonDecode(let shape):
+            // This occurrence of JSON.decode knows what it is decoding INTO,
+            // because the checker wrote the call site's type onto the node.
+            // Without it the decoder answered Ok for anything that parsed,
+            // and the mismatch surfaced later, somewhere else.
+            return MarWire.decoder(shape)
+
         case .negate(let inner):
             switch try eval(inner, env) {
             case .int(let n):   return .int(-n)

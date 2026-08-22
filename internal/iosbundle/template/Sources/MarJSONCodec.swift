@@ -309,6 +309,9 @@ enum MarJSONCodec {
                          name: stringOf(dict["name"]))
         case "EQualified":
             if let impl = elaboratedImpl(dict) { return .var(impl) }
+            if let shape = MarWireShape.decode(dict["wire"]) {
+                return .jsonDecode(shape: shape)
+            }
             return .qualified(module: stringList(dict["module"]),
                               name: stringOf(dict["name"]))
         case "ENegate":
