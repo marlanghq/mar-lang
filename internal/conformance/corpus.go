@@ -445,8 +445,51 @@ shortCircuitCases =
 
 
 results : String
+orderingCases : String
+orderingCases =
+    String.join ";"
+        [ "ltInt=" ++ yn (1 < 2)
+        , "ltString=" ++ yn ("abc" < "abd")
+        , "ltChar=" ++ yn ('a' < 'b')
+        , "tupleFirstWins=" ++ yn (( 1, "z" ) < ( 2, "a" ))
+        , "tupleTieBreaks=" ++ yn (( 1, "a" ) < ( 1, "b" ))
+        , "tupleEqual=" ++ yn (( 1, "a" ) < ( 1, "a" ))
+        , "tupleGe=" ++ yn (( 2, 0 ) >= ( 1, 9 ))
+        , "leEqualTuple=" ++ yn (( 1, "a" ) <= ( 1, "a" ))
+        , "leList=" ++ yn ([ 1 ] <= [ 1, 2 ])
+        , "geChar=" ++ yn ('a' >= 'a')
+        , "neInt=" ++ yn (1 /= 2)
+        , "neEqual=" ++ yn (1 /= 1)
+        , "neRecord=" ++ yn ({ p = 1 } /= { p = 2 })
+        , "neTuple=" ++ yn (( 1, "a" ) /= ( 1, "b" ))
+        , "tripleTie=" ++ yn (( 1, 2, 3 ) < ( 1, 2, 4 ))
+        , "listPrefixIsLess=" ++ yn ([ 1 ] < [ 1, 2 ])
+        , "listFirstWins=" ++ yn ([ 2 ] < [ 1, 3 ])
+        , "listEmptyIsLeast=" ++ yn ([] < [ 1 ])
+        , "listEqual=" ++ yn ([ 1, 2 ] < [ 1, 2 ])
+        , "listOfTuples=" ++ yn ([ ( 1, "a" ) ] < [ ( 1, "b" ) ])
+        , "sortTuples=" ++ ss (List.map Tuple.second (List.sort [ ( 2, "b" ), ( 1, "a" ), ( 2, "a" ) ]))
+        , "sortLists=" ++ String.join "|" (List.map is (List.sort [ [ 2 ], [ 1, 2 ], [ 1 ] ]))
+        , "sortByTupleKey=" ++ is (List.sortBy (\n -> ( modBy 2 n, n )) [ 1, 2, 3, 4 ])
+        , "maxTuple=" ++ (case List.maximum [ ( 1, 9 ), ( 2, 0 ) ] of
+                            Just p -> String.fromInt (Tuple.first p)
+                            Nothing -> "-"
+                         )
+        , "minList=" ++ (case List.minimum [ [ 2 ], [ 1, 5 ] ] of
+                            Just l -> is l
+                            Nothing -> "-"
+                        )
+        , "maxOfTuples=" ++ String.fromInt (Tuple.first (max ( 1, 9 ) ( 2, 0 )))
+        , "sortStability=" ++ ss (List.map Tuple.second (List.sortBy Tuple.first [ ( 1, "a" ), ( 0, "b" ), ( 1, "c" ), ( 0, "d" ) ]))
+        , "dictTupleKeys=" ++ String.fromInt (Dict.size (Dict.fromList [ ( ( 1, 2 ), 1 ), ( ( 3, 4 ), 2 ), ( ( 1, 2 ), 3 ) ]))
+        , "dictTupleOrder=" ++ ss (List.map (\k -> String.fromInt (Tuple.first k) ++ "/" ++ String.fromInt (Tuple.second k)) (Dict.keys (Dict.fromList [ ( ( 2, 1 ), 0 ), ( ( 1, 9 ), 0 ), ( ( 1, 2 ), 0 ) ])))
+        , "setTupleKeys=" ++ String.fromInt (Set.size (Set.fromList [ ( 1, 2 ), ( 3, 4 ), ( 1, 2 ) ]))
+        , "setListItems=" ++ String.join "|" (List.map is (Set.toList (Set.fromList [ [ 2 ], [ 1 ], [ 2 ] ])))
+        ]
+
+
 results =
-    String.join "\n" [ basicsCases, stringCases, listCases, maybeCases, resultCases, tupleCases, charCases, dictCases, setCases, jsonCases, mathCases, shortCircuitCases ]
+    String.join "\n" [ basicsCases, stringCases, listCases, maybeCases, resultCases, tupleCases, charCases, dictCases, setCases, jsonCases, mathCases, shortCircuitCases, orderingCases ]
 `
 
 // Entry is the value each runtime is asked to evaluate.
@@ -458,6 +501,12 @@ const Entry = "Conform.results"
 var Blocks = []string{
 	"Basics", "String", "List", "Maybe", "Result", "Tuple", "Char", "Dict", "Set", "JSON", "Math",
 	"ShortCircuit",
+	// Ordering is the one block that is about OPERATORS rather than named
+	// functions, which is why it had to be written by hand: the coverage
+	// gate walks qualified stdlib names and bare globals, and `<`, `>`,
+	// `<=`, `>=` are in neither set. Comparison was three implementations
+	// with nothing comparing them — the same blind spot that hid `modBy`.
+	"Ordering",
 }
 
 // Scope is the set of modules whose meaning must be identical everywhere: pure
@@ -540,6 +589,37 @@ var OutOfScope = map[string]string{
 // deduplicated. If a runtime disagrees with a line here, the line is the
 // argument.
 const expectations = `
+Ordering.ltInt=T
+Ordering.ltString=T
+Ordering.ltChar=T
+Ordering.tupleFirstWins=T
+Ordering.tupleTieBreaks=T
+Ordering.tupleEqual=F
+Ordering.tupleGe=T
+Ordering.leEqualTuple=T
+Ordering.leList=T
+Ordering.geChar=T
+Ordering.neInt=T
+Ordering.neEqual=F
+Ordering.neRecord=T
+Ordering.neTuple=T
+Ordering.tripleTie=T
+Ordering.listPrefixIsLess=T
+Ordering.listFirstWins=F
+Ordering.listEmptyIsLeast=T
+Ordering.listEqual=F
+Ordering.listOfTuples=T
+Ordering.sortTuples=a,a,b
+Ordering.sortLists=1|1,2|2
+Ordering.sortByTupleKey=2,4,1,3
+Ordering.maxTuple=2
+Ordering.minList=1,5
+Ordering.maxOfTuples=2
+Ordering.sortStability=b,d,a,c
+Ordering.dictTupleKeys=2
+Ordering.dictTupleOrder=1/2,1/9,2/1
+Ordering.setTupleKeys=2
+Ordering.setListItems=1|2
 Basics.abs=7
 Basics.absPos=7
 Basics.always=4

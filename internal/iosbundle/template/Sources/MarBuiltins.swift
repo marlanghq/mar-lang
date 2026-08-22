@@ -883,8 +883,12 @@ enum MarBuiltins {
         env.define("List.filterMap", .fn(listFilterMap))
 
         // MARK: List.maximum / List.minimum : List a -> Maybe a
-        // compareMar only orders Int/Float/String; non-comparable
-        // element types silently return Nothing rather than throwing.
+        // listMaximum / listMinimum : List comparable -> Maybe comparable,
+        // over compareMar, which orders the four scalars plus tuples and
+        // lists of them. Nothing means EMPTY. An element compareMar cannot
+        // order keeps the first element and logs — the one place iOS still
+        // differs from the other two, and unreachable from a checked
+        // program because of the Comparable constraint. See compareMar.
         let listMaximum = MarFn.native(1) { args in
             guard case .list(let xs) = args[0] else {
                 throw MarRuntimeError.typeMismatch(expected: "List", got: Eval.typeOf(args[0]))

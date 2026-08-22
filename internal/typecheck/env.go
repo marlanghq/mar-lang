@@ -1119,6 +1119,17 @@ func stdlibBindings() map[string]Type {
 	// and the same untaken ID range.
 	num := TVar{ID: -22, Constraint: KindNumber}
 
+	// The ordering family — List.sort, sortBy, maximum, minimum — needs the
+	// same constraint the ordering OPERATORS have always had, and did not
+	// have it. Declared with a plain variable, `List.sortBy (\e -> e.at)`
+	// over a list of Times type-checked and then gave three different
+	// answers: the server raised, and the browser and the phone returned
+	// the list untouched. A sort that silently does nothing is the worst
+	// available outcome, so this is the var that stops it at compile time.
+	// List.sortWith deliberately keeps a plain variable: supplying the
+	// order is what it is for.
+	ord := TVar{ID: -37, Constraint: KindComparable}
+
 	return map[string]Type{
 		// List
 		"listLength": TForall{Vars: []int{a.ID}, Body: TArrow{From: TList(a), To: TInt}},
@@ -1251,27 +1262,31 @@ func stdlibBindings() map[string]Type {
 				To:   TArrow{From: TList(a), To: TList(b)},
 			},
 		},
-		// listMaximum / listMinimum : List a -> Maybe a
+		// listMaximum / listMinimum : List comparable -> Maybe comparable
 		"listMaximum": TForall{
-			Vars: []int{a.ID},
-			Body: TArrow{From: TList(a), To: TMaybe(a)},
+			Vars: []int{ord.ID},
+			Body: TArrow{From: TList(ord), To: TMaybe(ord)},
 		},
 		"listMinimum": TForall{
-			Vars: []int{a.ID},
-			Body: TArrow{From: TList(a), To: TMaybe(a)},
+			Vars: []int{ord.ID},
+			Body: TArrow{From: TList(ord), To: TMaybe(ord)},
 		},
 		// listProduct : List number -> number (same shape as listSum)
 		"listProduct": TForall{Vars: []int{num.ID}, Body: TArrow{From: TList(num), To: num}},
-		// listSort : List a -> List a
+		// listSort : List comparable -> List comparable
 		"listSort": TForall{
-			Vars: []int{a.ID},
-			Body: TArrow{From: TList(a), To: TList(a)},
+			Vars: []int{ord.ID},
+			Body: TArrow{From: TList(ord), To: TList(ord)},
 		},
-		// listSortBy : (a -> b) -> List a -> List a
+		// listSortBy : (a -> comparable) -> List a -> List a
+		// The KEY carries the constraint, not the element: sorting
+		// records by one of their fields is the ordinary case, and
+		// `List.sortBy (\p -> ( p.name, p.age ))` works because a tuple
+		// of comparables is comparable.
 		"listSortBy": TForall{
-			Vars: []int{a.ID, b.ID},
+			Vars: []int{a.ID, ord.ID},
 			Body: TArrow{
-				From: TArrow{From: a, To: b},
+				From: TArrow{From: a, To: ord},
 				To:   TArrow{From: TList(a), To: TList(a)},
 			},
 		},

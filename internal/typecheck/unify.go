@@ -32,6 +32,14 @@ func (e *UnifyError) Error() string {
 	if e.Reason == "" {
 		return fmt.Sprintf("cannot unify %s with %s", a, b)
 	}
+	// A constraint violation reads better without the unification framing.
+	// "cannot unify comparable with Time: a Time has no order of its own"
+	// asks the reader to care about the machinery; the reason alone is the
+	// whole message, and it already names both the offending type and the
+	// way out.
+	if e.KindMismatch {
+		return e.Reason
+	}
 	return fmt.Sprintf("cannot unify %s with %s: %s", a, b, e.Reason)
 }
 
@@ -164,13 +172,8 @@ func bindVar(v TVar, t Type, s *Subst) error {
 			s.Bind(other.ID, fresh)
 			return nil
 		}
-		if !satisfiesKind(v.Constraint, t) {
-			return &UnifyError{
-				A:            v,
-				B:            t,
-				Reason:       kindMismatchReason(v.Constraint, t),
-				KindMismatch: true,
-			}
+		if err := enforceKind(v, v.Constraint, t, s); err != nil {
+			return err
 		}
 	}
 
@@ -179,6 +182,80 @@ func bindVar(v TVar, t Type, s *Subst) error {
 }
 
 // satisfiesKind reports whether the concrete type t honors kind k.
+// enforceKind checks that t honors constraint k and, for Comparable,
+// MAKES it honor it wherever that is possible.
+//
+// Comparable is the only structural constraint: a tuple is comparable when
+// its members are, a list when its element is. Walking that structure has to
+// be able to reach a type VARIABLE and promote it — sorting a
+// `List ( a, Int )` inside a polymorphic function is what constrains `a` —
+// and promoting means binding, which a yes/no predicate cannot do. That is
+// why this takes the substitution where satisfiesKind took only a type.
+// Number and Appendable stay flat, because they have no structure to walk.
+func enforceKind(v TVar, k Kind, t Type, s *Subst) *UnifyError {
+	if k == KindComparable {
+		return constrainComparable(v, t, s)
+	}
+	if !satisfiesKind(k, t) {
+		return &UnifyError{
+			A:            v,
+			B:            t,
+			Reason:       kindMismatchReason(k, t),
+			KindMismatch: true,
+		}
+	}
+	return nil
+}
+
+// constrainComparable walks t, demanding comparability all the way down and
+// promoting any variable it meets. `origin` is the variable that asked, and
+// stays on the error so the message reads as one unification rather than as
+// a type failing to unify with itself; the offending INNER type is what the
+// reason names, so `( Int, { p : Int } ) < ...` reports the record rather
+// than the tuple.
+func constrainComparable(origin TVar, t Type, s *Subst) *UnifyError {
+	t = s.Apply(t)
+	switch n := t.(type) {
+	case TVar:
+		if n.Constraint == KindComparable {
+			// Already carries it. Minting another fresh var here would
+			// only add a link to the substitution chain, on every visit.
+			return nil
+		}
+		merged, ok := mergeKinds(KindComparable, n.Constraint)
+		if !ok {
+			return &UnifyError{
+				A:            origin,
+				B:            t,
+				Reason:       conflictReason(KindComparable, n.Constraint),
+				KindMismatch: true,
+			}
+		}
+		s.Bind(n.ID, TVar{ID: int(atomicNextVarID()), Constraint: merged})
+		return nil
+	case TTuple:
+		for _, m := range n.Members {
+			if err := constrainComparable(origin, m, s); err != nil {
+				return err
+			}
+		}
+		return nil
+	case TCon:
+		if n.Name == "List" && len(n.Args) == 1 {
+			return constrainComparable(origin, n.Args[0], s)
+		}
+		if IsComparableType(n) {
+			return nil
+		}
+	}
+	return &UnifyError{
+		A:            origin,
+		B:            t,
+		Reason:       kindMismatchReason(KindComparable, t),
+		KindMismatch: true,
+	}
+}
+
 func satisfiesKind(k Kind, t Type) bool {
 	switch k {
 	case KindComparable:
@@ -193,9 +270,14 @@ func satisfiesKind(k Kind, t Type) bool {
 
 // mergeKinds returns the stronger of two Kinds and whether they're
 // compatible. KindAny merges with anything (the other side wins).
-// Two distinct non-Any kinds (Comparable vs Appendable) have no
-// representable intersection, so ok is false and the caller rejects
-// the unification.
+//
+// Comparable and Appendable are still rejected together, but no longer
+// because the intersection is empty: now that tuples and lists are
+// comparable, String and List-of-comparable are in both. Elm names that
+// intersection `compappend` and gives it its own kind; Mar has no such
+// kind, so a variable that would need to be both is refused rather than
+// silently resolved to one of them. `\a b -> if a < b then a ++ b else b`
+// is the program that asks for it.
 func mergeKinds(a, b Kind) (Kind, bool) {
 	if a == b {
 		return a, true
@@ -243,11 +325,20 @@ func kindMismatchReason(k Kind, t Type) string {
 	}
 	switch k {
 	case KindComparable:
+		// Sorting rows by a timestamp is the commonest way to arrive
+		// here, and the fix is one call rather than a comparator, so
+		// the message says which call instead of making the reader
+		// find it.
+		if c, ok := t.(TCon); ok && c.Name == "Time" {
+			return "a Time has no order of its own; sort or compare by Time.toMillis instead"
+		}
 		// Phrasing stays neutral: "key types" was Dict-specific
 		// jargon; this message also fires for the ordering operators
 		// (`<`, `>`, `<=`, `>=`), where "key" makes no sense.
 		return fmt.Sprintf(
-			"%s is not comparable; comparable types are Int, Decimal, String, Char",
+			"%s is not comparable; comparable types are Int, Decimal, String and Char, "+
+				"and tuples or lists of those. To order anything else, use List.sortWith "+
+				"and say how",
 			shape,
 		)
 	case KindAppendable:

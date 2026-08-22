@@ -611,31 +611,147 @@ broken = True < False
 	}
 }
 
-func TestCheckOrderingRejectsList(t *testing.T) {
-	// List of comparable elements is NOT itself comparable in the
-	// strict semantics: runtime's compareValues doesn't recurse.
-	src := `module M exposing (..)
-broken = [1, 2] < [1, 3]
-`
-	_, err := checkSource(t, src)
-	if err == nil {
-		t.Fatal("expected error for list comparison, got clean check")
-	}
-	if !strings.Contains(err.Error(), "comparable") {
-		t.Fatalf("expected 'comparable' in error, got: %v", err)
+func TestCheckOrderingAcceptsListsAndTuples(t *testing.T) {
+	// These two used to be rejected, and the reason given was true at the
+	// time: the runtimes' comparison did not recurse. Now all three do,
+	// lexicographically for lists (a proper prefix is less) and
+	// component-wise for tuples, so Comparable is Elm's set and these
+	// programs are legal.
+	for _, src := range []string{
+		`module M exposing (..)
+ok = [1, 2] < [1, 3]
+`,
+		`module M exposing (..)
+ok = (1, 2) < (3, 4)
+`,
+		`module M exposing (..)
+ok = [(1, "a")] < [(1, "b")]
+`,
+		`module M exposing (..)
+ok = List.sort [ (2, "b"), (1, "a") ]
+`,
+	} {
+		if _, err := checkSource(t, src); err != nil {
+			t.Fatalf("tuples and lists of comparables are comparable: %v\n%s", err, src)
+		}
 	}
 }
 
-func TestCheckOrderingRejectsTuple(t *testing.T) {
-	src := `module M exposing (..)
-broken = (1, 2) < (3, 4)
-`
-	_, err := checkSource(t, src)
-	if err == nil {
-		t.Fatal("expected error for tuple comparison, got clean check")
+func TestCheckOrderingStillRejectsWhatCannotBeOrdered(t *testing.T) {
+	// The recursion bottoms out at the same four scalars, so a record or
+	// a custom type inside a tuple or a list is still refused — and the
+	// message names the offending INNER type, not the container.
+	for _, src := range []string{
+		`module M exposing (..)
+broken = ( 1, { p = 2 } ) < ( 2, { p = 3 } )
+`,
+		`module M exposing (..)
+type Color = Red | Green
+broken = [ Red ] < [ Green ]
+`,
+	} {
+		_, err := checkSource(t, src)
+		if err == nil {
+			t.Fatalf("expected a not-comparable error, got a clean check:\n%s", src)
+		}
+		if !strings.Contains(err.Error(), "comparable") {
+			t.Fatalf("expected 'comparable' in error, got: %v", err)
+		}
 	}
-	if !strings.Contains(err.Error(), "comparable") {
-		t.Fatalf("expected 'comparable' in error, got: %v", err)
+}
+
+func TestSortFamilyIsConstrained(t *testing.T) {
+	// The whole point of the constraint: these four used to take any type
+	// at all, so `List.sortBy (\e -> e.at)` over a list of Times checked
+	// clean and then gave three different answers — the server raised, the
+	// browser and the phone returned the list untouched.
+	for _, src := range []string{
+		`module M exposing (..)
+broken = List.sort [ { p = 1 } ]
+`,
+		`module M exposing (..)
+broken = List.sortBy (\r -> r.flag) [ { flag = True } ]
+`,
+		`module M exposing (..)
+broken = List.maximum [ { p = 1 } ]
+`,
+		`module M exposing (..)
+broken = List.minimum [ { p = 1 } ]
+`,
+	} {
+		_, err := checkSource(t, src)
+		if err == nil {
+			t.Fatalf("expected a not-comparable error, got a clean check:\n%s", src)
+		}
+	}
+	// sortWith keeps a plain variable: supplying the order is what it is
+	// for, and it is the escape hatch the diagnostic points at.
+	src := `module M exposing (..)
+ok = List.sortWith (\a b -> compareInts a.p b.p) [ { p = 1 } ]
+compareInts : Int -> Int -> Order
+compareInts a b =
+    if a < b then
+        LT
+
+    else if a > b then
+        GT
+
+    else
+        EQ
+`
+	if _, err := checkSource(t, src); err != nil {
+		t.Fatalf("List.sortWith stays unconstrained: %v", err)
+	}
+}
+
+func TestConstrainedVariableNamesInAnnotations(t *testing.T) {
+	// Mar can spell a constrained variable, so a signature that needs one
+	// can be written honestly rather than promising more than it delivers.
+	ok := []string{
+		`module M exposing (..)
+sortAny : List comparable -> List comparable
+sortAny xs = List.sort xs
+`,
+		`module M exposing (..)
+twice : number -> number
+twice x = x + x
+`,
+		`module M exposing (..)
+dup : appendable -> appendable
+dup x = x ++ x
+`,
+	}
+	for _, src := range ok {
+		if _, err := checkSource(t, src); err != nil {
+			t.Fatalf("a constrained variable name must check: %v\n%s", err, src)
+		}
+	}
+	// And a plain name over a body that needs a constraint is refused,
+	// naming the spelling that would make it true. Without this, the
+	// scheme published to callers dropped the constraint and the function
+	// accepted values the runtime cannot order.
+	bad := map[string]string{
+		`module M exposing (..)
+sortAny : List a -> List a
+sortAny xs = List.sort xs
+`: "comparable",
+		`module M exposing (..)
+twice : a -> a
+twice x = x + x
+`: "number",
+		`module M exposing (..)
+dup : a -> a
+dup x = x ++ x
+`: "appendable",
+	}
+	for src, want := range bad {
+		_, err := checkSource(t, src)
+		if err == nil {
+			t.Fatalf("expected an over-general annotation to be refused:\n%s", src)
+		}
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("expected the message to name %q, got: %v", want, err)
+		}
 	}
 }
 
@@ -995,12 +1111,12 @@ func TestAnnotationMustNotBeMoreGeneralThanTheBody(t *testing.T) {
 	}{
 		{
 			name: "body pins a quantified variable to a concrete type",
-			src: "module M exposing (..)\n\n\nbogus : a -> Int\nbogus x =\n    x + 1\n",
+			src:  "module M exposing (..)\n\n\nbogus : a -> Int\nbogus x =\n    x + 1\n",
 			want: "only works for",
 		},
 		{
 			name: "body collapses two quantified variables into one",
-			src: "module M exposing (..)\n\n\nsame : a -> b -> a\nsame x y =\n    x + y\n",
+			src:  "module M exposing (..)\n\n\nsame : a -> b -> a\nsame x y =\n    x + y\n",
 			want: "two independent types",
 		},
 	}

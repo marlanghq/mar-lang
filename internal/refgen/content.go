@@ -109,8 +109,8 @@ var descriptions = map[string]string{
 	"List.concat":      "Flattens a list of lists into one list, keeping order.",
 	"List.concatMap":   "Maps each element to a list and concatenates all the results. Use it when each element expands into zero or more elements.",
 	"List.intersperse": "Puts a separator value between every pair of elements.",
-	"List.sort":        "Sorts values from lowest to highest. Works on any comparable elements: numbers, strings, characters, and tuples of those.",
-	"List.sortBy":      "Sorts the elements by a key computed from each one, from lowest key to highest.",
+	"List.sort":        "Sorts values from lowest to highest. Comparable means Int, Decimal, String and Char, and tuples or lists built from them. Anything else needs List.sortWith, which asks you for the order.",
+	"List.sortBy":      "Sorts the elements by a key computed from each one, from lowest key to highest. The key must be comparable, not the element, so sorting records by a field is the ordinary case. A tuple key sorts by its first component and breaks ties on the next.",
 	"List.sortWith":    "Sorts using a custom comparison that returns an Order (LT, EQ, or GT) for any two elements. Reach for this when neither sort nor sortBy expresses the ordering you need.",
 	"List.isEmpty":     "True when the list has no elements.",
 	"List.length":      "The number of elements in the list.",
@@ -172,7 +172,7 @@ var descriptions = map[string]string{
 	"Result.toMaybe":     "Turns a Result into a Maybe, discarding the error. The opposite trade: you keep the value and forget why it failed.",
 
 	// --- Tuple ---
-	"Basics.max":         "The larger of two values. Rides Comparable, so it orders Char and String too, not only numbers.",
+	"Basics.max":         "The larger of two values. Rides Comparable, so it orders Char and String too, not only numbers, and tuples and lists of those.",
 	"Basics.min":         "The smaller of two values.",
 	"Basics.clamp":       "Pins a value into a range: `clamp low high x`. Bounds come first so it partially applies, and a value already inside the range comes back untouched.",
 	"Basics.abs":         "Distance from zero, for Int or Decimal. A Decimal keeps its scale.",

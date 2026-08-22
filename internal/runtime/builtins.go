@@ -991,7 +991,57 @@ func compareValues(a, b Value) (int, error) {
 			return 1, nil
 		}
 		return 0, nil
+	case VTuple:
+		bv, ok := b.(VTuple)
+		if !ok || len(av.Members) != len(bv.Members) {
+			return 0, fmt.Errorf("comparison: type mismatch")
+		}
+		// Component-wise, left to right, first difference wins. Two
+		// tuples that compare here always have the same arity: different
+		// arities are different types and never unify.
+		for i := range av.Members {
+			c, err := compareValues(av.Members[i], bv.Members[i])
+			if err != nil {
+				return 0, err
+			}
+			if c != 0 {
+				return c, nil
+			}
+		}
+		return 0, nil
+	case VList:
+		bv, ok := b.(VList)
+		if !ok {
+			return 0, fmt.Errorf("comparison: type mismatch")
+		}
+		// Lexicographic, and a proper prefix is less than what extends
+		// it: [1] < [1,2]. Same rule a dictionary uses for words.
+		n := len(av.Elements)
+		if len(bv.Elements) < n {
+			n = len(bv.Elements)
+		}
+		for i := 0; i < n; i++ {
+			c, err := compareValues(av.Elements[i], bv.Elements[i])
+			if err != nil {
+				return 0, err
+			}
+			if c != 0 {
+				return c, nil
+			}
+		}
+		switch {
+		case len(av.Elements) < len(bv.Elements):
+			return -1, nil
+		case len(av.Elements) > len(bv.Elements):
+			return 1, nil
+		}
+		return 0, nil
 	}
+	// Records, custom types and functions have no order, and the type
+	// checker's Comparable constraint is what keeps them from arriving
+	// here. This stays an error rather than an arbitrary 0: a value kind
+	// added later must fail loudly rather than quietly claim equality,
+	// which is what Dict and Set would read it as.
 	return 0, fmt.Errorf("comparison: unsupported types")
 }
 

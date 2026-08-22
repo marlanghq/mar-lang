@@ -257,22 +257,37 @@ func resetVarIDsForTesting() {
 	atomic.StoreInt64(&nextVarID, 0)
 }
 
-// IsComparableType reports whether t is a built-in comparable type.
-// Used by unify when binding a Comparable-kind TVar to a concrete
-// type. Mirrors the runtime's compareValues / cmpValues / compareMar.
-// Currently: Int / Float / String / Char.
+// IsComparableType reports whether t is comparable: Int, Decimal, String
+// and Char, plus tuples and lists built from them. This is Elm's
+// `comparable` set, and it mirrors what the runtimes can actually order —
+// compareValues (Go), cmpValues (web) and compareMar (Swift) each recurse
+// through tuples and lists down to the same four scalars.
 //
-// A free TVar is NOT comparable on its own: the caller (bindVar)
-// handles that case separately by promoting the constraint onto the
-// var rather than calling this helper.
+// Records, custom types and functions are not comparable, in Mar as in Elm:
+// there is no order to infer for them, and inventing one would mean Dict
+// and Set silently keeping entries in an order nobody chose. `List.sortWith`
+// is the way to order them, because it makes the caller supply the order.
+//
+// A free TVar is NOT comparable on its own: constrainComparable in unify.go
+// handles that case by promoting the constraint onto the var, which is
+// something a predicate cannot do.
 func IsComparableType(t Type) bool {
-	c, ok := t.(TCon)
-	if !ok {
-		return false
-	}
-	switch c.Name {
-	case "Int", "String", "Char", "Decimal":
-		return len(c.Args) == 0
+	switch c := t.(type) {
+	case TTuple:
+		for _, m := range c.Members {
+			if !IsComparableType(m) {
+				return false
+			}
+		}
+		return true
+	case TCon:
+		if c.Name == "List" && len(c.Args) == 1 {
+			return IsComparableType(c.Args[0])
+		}
+		switch c.Name {
+		case "Int", "String", "Char", "Decimal":
+			return len(c.Args) == 0
+		}
 	}
 	return false
 }

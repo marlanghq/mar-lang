@@ -34,6 +34,45 @@ func TestCorpusCoversEveryFunctionInScope(t *testing.T) {
 	}
 }
 
+// And the same gate again for the OPERATORS, which neither of the other two
+// walks can see: the module walk skips dotless names, and BareGlobals holds
+// named functions rather than symbols. So `<`, `>`, `<=`, `>=`, `==` and `/=`
+// had three implementations and nothing comparing them — the same shape of
+// blind spot that hid `modBy`, and it hid a real one: comparison returned 0
+// for every tuple and list on the web and on iOS, which Dict and Set read as
+// "equal" and acted on by merging distinct keys.
+//
+// Spelled out here rather than derived, because an operator is a token and
+// the corpus is text: `>` appears inside `->` on nearly every line, so a
+// substring search would pass for a symbol nobody had tested. Each one names
+// the CASE that exercises it instead.
+func TestCorpusCoversEveryOperator(t *testing.T) {
+	operators := map[string]string{
+		"<":  "Ordering.ltInt",
+		">":  "Ordering.tupleGe",
+		"<=": "Ordering.leEqualTuple",
+		">=": "Ordering.tupleGe",
+		"==": "Math.degEqDeci",
+		"/=": "Ordering.neInt",
+	}
+	want, err := Expectations()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var missing []string
+	for op, caseName := range operators {
+		if _, ok := want[caseName]; !ok {
+			missing = append(missing, op+" (its case "+caseName+" is gone from the corpus)")
+		}
+	}
+	sort.Strings(missing)
+	if len(missing) > 0 {
+		t.Fatalf("%d operators have lost the corpus case that exercised them, so the\n"+
+			"runtimes are free to disagree about them again:\n  %s",
+			len(missing), strings.Join(missing, "\n  "))
+	}
+}
+
 // The same gate for the names spelled WITHOUT a qualifier. The module walk
 // above skips them by construction ("bare operators and globals; not module
 // surface"), and that blind spot is where `modBy` lived: defined in all three

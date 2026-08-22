@@ -462,10 +462,13 @@ func stdlib() map[string]Value {
 			}
 			return VList{Elements: out}, nil
 		}),
-		// listMaximum / listMinimum : List a -> Maybe a, uses the
-		// shared compareValues, so works for List Int / List Float /
-		// List String. Other element types yield Nothing rather
-		// than a hard error.
+		// listMaximum / listMinimum : List comparable -> Maybe comparable,
+		// over the shared compareValues. Nothing means EMPTY and nothing
+		// else: a comparison that fails is reported rather than swallowed,
+		// because answering Nothing for a three-element list would be the
+		// runtime lying about which of the two situations it met. The
+		// Comparable constraint on the signature is what makes that
+		// failure unreachable from a checked program.
 		"listMaximum": nativeFn(1, func(args []Value) (Value, error) {
 			l, ok := args[0].(VList)
 			if !ok {
@@ -478,7 +481,7 @@ func stdlib() map[string]Value {
 			for _, e := range l.Elements[1:] {
 				c, err := compareValues(best, e)
 				if err != nil {
-					return VCtor{Tag: "Nothing"}, nil
+					return nil, err
 				}
 				if c < 0 {
 					best = e
@@ -498,7 +501,7 @@ func stdlib() map[string]Value {
 			for _, e := range l.Elements[1:] {
 				c, err := compareValues(best, e)
 				if err != nil {
-					return VCtor{Tag: "Nothing"}, nil
+					return nil, err
 				}
 				if c > 0 {
 					best = e

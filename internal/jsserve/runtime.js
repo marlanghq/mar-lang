@@ -1374,12 +1374,43 @@
     return false;
   }
 
+  // Ordering, in the same arm order as eqValues above. Two things here are
+  // deliberate. It answers -1/0/1 rather than a difference, so every arm is
+  // the same shape as every other and a caller cannot come to depend on the
+  // magnitude. And the floor THROWS: it used to answer 0, which reads as
+  // "these are equal" — a lie that Dict and Set act on, merging distinct
+  // keys and losing entries with nothing reported anywhere. Records,
+  // constructors and functions have no order, and the type checker's
+  // Comparable constraint is what keeps them from arriving here.
   function cmpValues(a, b) {
-    if (a.k === 'I' || a.k === 'F') return a.n - b.n;
-    if (a.k === 'De') return decCmpV(a, b);
-    if (a.k === 'S') return a.s < b.s ? -1 : a.s > b.s ? 1 : 0;
-    if (a.k === 'Ch') return a.c - b.c;
-    return 0;
+    if (a.k !== b.k) throw new Error('comparison: type mismatch');
+    switch (a.k) {
+      case 'I': case 'F': return a.n < b.n ? -1 : a.n > b.n ? 1 : 0;
+      case 'De': return decCmpV(a, b);
+      case 'S': return a.s < b.s ? -1 : a.s > b.s ? 1 : 0;
+      case 'Ch': return a.c < b.c ? -1 : a.c > b.c ? 1 : 0;
+      case 'T': {
+        // Component-wise, left to right, first difference wins. Two tuples
+        // that reach here always have the same arity: different arities are
+        // different types and never unify.
+        for (let i = 0; i < a.xs.length; i++) {
+          const c = cmpValues(a.xs[i], b.xs[i]);
+          if (c !== 0) return c;
+        }
+        return 0;
+      }
+      case 'L': {
+        // Lexicographic, and a proper prefix is less than what extends it:
+        // [1] < [1,2]. The same rule a dictionary uses for words.
+        const n = Math.min(a.xs.length, b.xs.length);
+        for (let i = 0; i < n; i++) {
+          const c = cmpValues(a.xs[i], b.xs[i]);
+          if (c !== 0) return c;
+        }
+        return a.xs.length < b.xs.length ? -1 : a.xs.length > b.xs.length ? 1 : 0;
+      }
+    }
+    throw new Error('comparison: unsupported types');
   }
 
   // preservedModel / preservedScreenModels survive across marReload (the
@@ -3457,9 +3488,13 @@
     def('listFilterMap', listFilterMapImpl);
     def('List.filterMap', listFilterMapImpl);
 
-    // listMaximum / listMinimum : List a -> Maybe a, uses cmpValues
-    // which only handles Int/Float/String. Non-comparable element
-    // types silently return Nothing rather than throwing.
+    // listMaximum / listMinimum : List comparable -> Maybe comparable,
+    // over cmpValues. Nothing means EMPTY and nothing else: a comparison
+    // that cannot be made now throws out of cmpValues rather than being
+    // read as "equal", because answering Nothing for a three-element list
+    // would be the runtime lying about which of the two situations it met.
+    // The Comparable constraint on the signature is what makes that
+    // failure unreachable from a checked program.
     function listExtremum(l, want) {
       if (l.xs.length === 0) return VCtor('Nothing');
       let best = l.xs[0];

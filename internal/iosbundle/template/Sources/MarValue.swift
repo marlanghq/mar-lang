@@ -266,8 +266,22 @@ extension MarValue {
         }
     }
 
-    /// Three-way comparison used by `<`, `>`, `<=`, `>=`. JS limits
-    /// this to numbers + strings (other types return 0); we follow.
+    /// Three-way comparison used by `<`, `>`, `<=`, `>=`, by `max`/`min`,
+    /// and — load-bearing — as the sort key that Dict and Set keep their
+    /// entries in. Ordering is the Comparable set: Int, Decimal, String,
+    /// Char, and tuples and lists of those. Tuples compare component-wise
+    /// left to right; lists compare lexicographically with a proper prefix
+    /// less than what extends it, so [1] < [1, 2].
+    ///
+    /// The default arm answers 0, which reads as "these are equal" and is
+    /// the one place the three runtimes still differ: Go returns an error
+    /// and the web runtime throws. Making this one throw would mean
+    /// threading `throws` through the Dict and Set binary searches and
+    /// merges, none of which can throw today, and the arm is unreachable
+    /// from a checked program — the Comparable constraint is what keeps
+    /// records, constructors and functions from arriving here. It is
+    /// loud rather than silent so that if a compiler bug ever does reach
+    /// it, there is something to find.
     func compareMar(_ other: MarValue) -> Int {
         switch (self, other) {
         case (.int(let a), .int(let b)):       return a < b ? -1 : (a > b ? 1 : 0)
@@ -285,7 +299,22 @@ extension MarValue {
             return a < b ? -1 : (a > b ? 1 : 0)
         case (.char(let a), .char(let b)):
             return a.value < b.value ? -1 : (a.value > b.value ? 1 : 0)
+        case (.tuple(let a), .tuple(let b)):
+            // Two tuples that reach here always have the same arity:
+            // different arities are different types and never unify.
+            for (x, y) in zip(a, b) {
+                let c = x.compareMar(y)
+                if c != 0 { return c }
+            }
+            return 0
+        case (.list(let a), .list(let b)):
+            for (x, y) in zip(a, b) {
+                let c = x.compareMar(y)
+                if c != 0 { return c }
+            }
+            return a.count < b.count ? -1 : (a.count > b.count ? 1 : 0)
         default:
+            print("mar: comparison: unsupported types (\(Eval.typeOf(self)) and \(Eval.typeOf(other))) — this is a bug in Mar rather than in your code")
             return 0
         }
     }
