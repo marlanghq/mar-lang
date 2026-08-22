@@ -161,13 +161,15 @@ test: ios-template
 
 check-examples: build
 	@ok=0; fail=0; \
-	for f in examples/*.mar; do \
-		if ./mar check "$$f" > /dev/null 2>&1; then \
-			echo "  OK   $$f"; ok=$$((ok+1)); \
-		else \
-			echo "  FAIL $$f"; fail=$$((fail+1)); \
-		fi; \
-	done; \
+	if ls examples/*.mar > /dev/null 2>&1; then \
+		for f in examples/*.mar; do \
+			if ./mar check "$$f" > /dev/null 2>&1; then \
+				echo "  OK   $$f"; ok=$$((ok+1)); \
+			else \
+				echo "  FAIL $$f"; fail=$$((fail+1)); \
+			fi; \
+		done; \
+	fi; \
 	for d in examples/*/; do \
 		if [ -f "$$d.mar-design-only" ]; then \
 			echo "  SKIP $$d (design-only; uses unimplemented API)"; \
