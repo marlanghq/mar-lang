@@ -203,6 +203,13 @@ func RunBootMigrations() error {
 	if err != nil {
 		return err
 	}
+	// Tell the request path it has nothing left to do. Without this the boot
+	// pass migrated every entity and then the first request to touch each
+	// table planned the whole diff again — the cache the comment on
+	// ensureMigrated described was never actually filled by anyone.
+	for _, e := range entities {
+		markMigrated(e.Table)
+	}
 	if summary.HasChanges() || len(summary.Notes) > 0 {
 		printRunSummary(summary)
 	}

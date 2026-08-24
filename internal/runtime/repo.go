@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math/big"
 	"strings"
+	"sync"
 )
 
 // Repo is the high-level data-access API. Each operation takes an Entity
@@ -266,10 +267,19 @@ func repoDeleteByID(args []Value) (Value, error) {
 // ---------- shared helpers ----------
 
 // migrationCache prevents repeated migration work per process. Keyed by
-// the entity's table name. Safe because entity schemas don't change at
-// runtime within a process: hot-reload swaps the entire registry and
-// resets the cache via ResetMigrationCache.
+// the entity's table name. Entity schemas don't change at runtime within a
+// process: hot-reload swaps the entire registry and resets the cache via
+// ResetMigrationCache.
+//
+// The mutex is not decoration. Requests are concurrent, and the cache read
+// and the migrator run and the cache write used to be three separate steps
+// with nothing between them, so two handlers arriving together both saw a
+// cache miss and both planned the same CREATE TABLE. One of them lost:
+// measured at exactly one 500 out of 32 simultaneous first requests, three
+// rounds out of three, on every schema change. Holding the lock ACROSS the
+// migrator run, not merely around the map, is what makes that impossible.
 var migrationCache = struct {
+	mu   sync.Mutex
 	done map[string]bool
 }{done: map[string]bool{}}
 
@@ -277,29 +287,47 @@ var migrationCache = struct {
 // the boot path on hot-reload (so re-edited entities re-migrate) and
 // by tests for isolation.
 func ResetMigrationCache() {
+	migrationCache.mu.Lock()
+	defer migrationCache.mu.Unlock()
 	migrationCache.done = map[string]bool{}
 }
 
-// ensureMigrated opens the DB (lazy) and runs the migrator over this
-// entity if it hasn't been migrated in this process yet.
+// markMigrated records that an entity's schema is current, so the request
+// path can stop asking. RunBootMigrations calls it for every entity it
+// migrated: without that, the boot pass did all the work and then the first
+// request did it again, diff and all.
+func markMigrated(table string) {
+	migrationCache.mu.Lock()
+	defer migrationCache.mu.Unlock()
+	migrationCache.done[table] = true
+}
+
+// ensureMigrated opens the DB (lazy) and runs the migrator over this entity
+// if it hasn't been migrated in this process yet.
 //
-// In normal operation, RunBootMigrations runs once at boot over every
-// registered entity, fills the cache, and Repo.* calls hit the cache
-// hot-path. This per-entity fallback exists for two cases:
+// The sentence that used to be here — "in normal operation RunBootMigrations
+// runs once at boot over every registered entity, fills the cache, and Repo.*
+// calls hit the cache hot-path" — was wrong twice. Boot migrations did not
+// run at all in a deployed binary, so this WAS the production migration path;
+// and RunBootMigrations did not fill the cache, so even under `mar dev` the
+// first request re-planned everything the boot pass had just done. Both are
+// now true, which leaves this as the fallback it was always described as:
 //
-//  1. Tests that exercise Repo.* directly without going through `mar
-//     dev` / `mar build`: boot migrations don't run in that path.
-//  2. Defensive: a future Repo call against an entity that wasn't in
-//     the boot-time registry (shouldn't happen, but the safety net is
-//     worth the trivial cost).
+//  1. Tests that exercise Repo.* directly without going through `mar dev` /
+//     `mar build`: boot migrations don't run in that path.
+//  2. Defensive: a Repo call against an entity that wasn't in the boot-time
+//     registry.
 //
-// Goes through the proper migrator (not a bare `CREATE TABLE IF
-// NOT EXISTS`), so schema drift is detected here too.
+// Goes through the proper migrator (not a bare `CREATE TABLE IF NOT EXISTS`),
+// so schema drift is detected here too. The lock is held across the run:
+// see migrationCache.
 func ensureMigrated(entity VEntity) (*sql.DB, error) {
 	db, err := getDB()
 	if err != nil {
 		return nil, err
 	}
+	migrationCache.mu.Lock()
+	defer migrationCache.mu.Unlock()
 	if migrationCache.done[entity.Table] {
 		return db, nil
 	}

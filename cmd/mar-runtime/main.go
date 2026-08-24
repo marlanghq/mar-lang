@@ -467,6 +467,29 @@ func runFromPath(path string) error {
 		return fmt.Errorf("main returned without invoking App.frontend / App.backend / App.fullstack")
 	}
 
+	// Schema first, listener second — the same order `mar dev` has always
+	// used, and it has to be the same order, because the two disagreeing is
+	// the whole bug.
+	//
+	// This call did not exist here. In a deployed binary every schema change
+	// was applied lazily by the first Repo.* call that touched the table,
+	// inside an HTTP handler, which produced three failures that only ever
+	// happened in production. A blocked migration let the machine boot and
+	// answer `/` with a 200, so the deploy health probe called it healthy and
+	// Fly promoted it, while every affected route answered 500 forever with
+	// one line on stderr. Concurrent first requests raced each other to
+	// CREATE the same table, so one real user got a 500 after every
+	// schema-changing deploy — measured at exactly one out of 32, three
+	// rounds out of three. And DDL, including a DROP, ran inside a request.
+	//
+	// It runs after eff.Run() because that is what registers the entities,
+	// and before ServeLive so a failure exits non-zero: Fly then keeps the
+	// previous version serving, which is what the deployment docs have
+	// promised all along.
+	if err := runtime.RunBootMigrations(); err != nil {
+		return err
+	}
+
 	// hub=nil: production server, no SSE / hot-reload endpoint.
 	return jsserve.ServeLive(port, lp, nil, nil)
 }

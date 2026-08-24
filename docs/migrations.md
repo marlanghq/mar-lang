@@ -308,11 +308,17 @@ In CI, before promoting a build to production:
 
 ```sh
 # Against a clone of the production DB:
-./myapp migrate plan
+MAR_DATABASE_PATH=/path/to/clone.db mar migrate plan .
 # exit 0 if everything would apply cleanly
 # exit 1 if any change would be blocked, with the same error the
 # real boot would produce
 ```
+
+The command is `mar migrate plan`, not `./myapp migrate plan`. The
+deployed binary dispatches `admin`, `backup` and `restore-db` and
+nothing else, so an unrecognised subcommand falls through to the
+normal boot path: `./myapp migrate plan` in a CI job does not plan
+anything, it starts the server and the job hangs.
 
 Pipeline fails on exit 1 → bad migration never reaches production.
 Same diff machine, same error format, just read-only.
@@ -320,7 +326,7 @@ Same diff machine, same error format, just read-only.
 ### Operator review
 
 ```sh
-./myapp migrate status
+mar migrate status .
 # Lists every applied migration from _mar_schema_migrations:
 # 2026-04-09 17:45:27  notes  create_table         CREATE TABLE notes (...)
 # 2026-04-09 18:01:13  notes  add_column_archived  ALTER TABLE notes ADD COLUMN archived ...
