@@ -571,8 +571,98 @@ decodeCases =
         ]
 
 
+type alias EqP =
+    { a : Int, b : Bool }
+
+
+eqOne : EqP
+eqOne =
+    { a = 1, b = True }
+
+
+eqTwo : EqP
+eqTwo =
+    { a = 1, b = True }
+
+
+eqOther : EqP
+eqOther =
+    { a = 2, b = True }
+
+
+-- The same fields written in the other order. Field order is display
+-- metadata: it decides how a record renders, so it must not affect identity.
+eqFlipped : EqP
+eqFlipped =
+    { b = True, a = 1 }
+
+
+eqNone : Maybe EqP
+eqNone =
+    Nothing
+
+
+equalityCases : String
+equalityCases =
+    String.join ";"
+        [ "recSelf=" ++ yn (eqOne == eqOne)
+        , "recEqual=" ++ yn (eqOne == eqTwo)
+        , "recFieldOrder=" ++ yn (eqOne == eqFlipped)
+        , "recDiffer=" ++ yn (eqOne == eqOther)
+        , "recNeEqual=" ++ yn (eqOne /= eqTwo)
+        , "recNeDiffer=" ++ yn (eqOne /= eqOther)
+
+        -- records nested in a record
+        , "nestSame=" ++ yn ({ inner = eqOne, tag = "x" } == { inner = eqTwo, tag = "x" })
+        , "nestTag=" ++ yn ({ inner = eqOne, tag = "x" } == { inner = eqTwo, tag = "y" })
+        , "nestInner=" ++ yn ({ inner = eqOne, tag = "x" } == { inner = eqOther, tag = "x" })
+
+        -- the container cases recurse through record equality, so each of
+        -- these broke too while the record case was missing on the web
+        , "justSame=" ++ yn (Just eqOne == Just eqTwo)
+        , "justDiffer=" ++ yn (Just eqOne == Just eqOther)
+        , "justVsNothing=" ++ yn (Just eqOne == eqNone)
+        , "nothingSame=" ++ yn (eqNone == eqNone)
+        , "listSame=" ++ yn ([ eqOne, eqOther ] == [ eqTwo, eqOther ])
+        , "listDiffer=" ++ yn ([ eqOne ] == [ eqOther ])
+        , "tupleSame=" ++ yn (( eqOne, 2 ) == ( eqTwo, 2 ))
+        , "tupleDiffer=" ++ yn (( eqOne, 2 ) == ( eqTwo, 3 ))
+
+        -- List.member is structural equality wearing another name
+        , "memberFound=" ++ yn (List.member eqTwo [ eqOther, eqOne ])
+        , "memberMissing=" ++ yn (List.member eqOther [ eqOne, eqTwo ])
+
+        -- Duration normalizes to seconds at construction, so the unit one was
+        -- BUILT with is not part of its identity. Missing from all three
+        -- switches at once, which is why no drift test saw it: they agreed.
+        , "durSame=" ++ yn (Time.seconds 1 == Time.seconds 1)
+        , "durMinutes=" ++ yn (Time.seconds 60 == Time.minutes 1)
+        , "durHours=" ++ yn (Time.hours 1 == Time.minutes 60)
+        , "durDiffer=" ++ yn (Time.seconds 1 == Time.seconds 2)
+        , "durNe=" ++ yn (Time.seconds 1 /= Time.seconds 2)
+        , "durInJust=" ++ yn (Just (Time.seconds 1) == Just (Time.seconds 1))
+        , "durInRecord=" ++ yn ({ d = Time.seconds 1 } == { d = Time.seconds 1 })
+
+        -- Time: the same moment is the same Unix millisecond.
+        , "timeSame=" ++ yn (Time.fromYMD 2026 8 11 == Time.fromYMD 2026 8 11)
+        , "timeDiffer=" ++ yn (Time.fromYMD 2026 8 11 == Time.fromYMD 2026 8 12)
+        , "timeInRecord=" ++ yn ({ at = Time.fromYMD 2026 8 11 } == { at = Time.fromYMD 2026 8 11 })
+        , "timeInList=" ++ yn (List.member (Time.fromYMD 2026 8 11) [ Time.fromYMD 2026 8 12, Time.fromYMD 2026 8 11 ])
+
+        -- Dict / Set were handled on the web and on iOS and missing from Go
+        -- only, so the same comparison answered True in the browser and on
+        -- the phone and False on the server.
+        , "dictOrder=" ++ yn (Dict.fromList [ ( 1, "a" ), ( 2, "b" ) ] == Dict.fromList [ ( 2, "b" ), ( 1, "a" ) ])
+        , "dictValue=" ++ yn (Dict.fromList [ ( 1, "a" ) ] == Dict.fromList [ ( 1, "b" ) ])
+        , "dictSize=" ++ yn (Dict.fromList [ ( 1, "a" ) ] == Dict.fromList [ ( 1, "a" ), ( 2, "b" ) ])
+        , "setOrder=" ++ yn (Set.fromList [ 3, 1, 2 ] == Set.fromList [ 1, 2, 3 ])
+        , "setDiffer=" ++ yn (Set.fromList [ 1 ] == Set.fromList [ 2 ])
+        , "setInRecord=" ++ yn ({ s = Set.fromList [ 1, 2 ] } == { s = Set.fromList [ 2, 1 ] })
+        ]
+
+
 results =
-    String.join "\n" [ basicsCases, stringCases, listCases, maybeCases, resultCases, tupleCases, charCases, dictCases, setCases, jsonCases, mathCases, shortCircuitCases, orderingCases, decodeCases ]
+    String.join "\n" [ basicsCases, stringCases, listCases, maybeCases, resultCases, tupleCases, charCases, dictCases, setCases, jsonCases, mathCases, shortCircuitCases, orderingCases, decodeCases, equalityCases ]
 `
 
 // Entry is the value each runtime is asked to evaluate.
@@ -598,6 +688,13 @@ var Blocks = []string{
 	// same sentence is this block. Parse failures are deliberately absent:
 	// the three host JSON parsers word those differently and always have.
 	"Decode",
+	// Equality moved here from a Go-vs-JS test that could not see the third
+	// runtime. It is the block with the best claim to a place in a SHARED
+	// corpus: `==` is one switch per runtime with nothing forcing the three
+	// to cover the same kinds, and it has already been wrong twice — records
+	// answered False on the web while Go and iOS said True, and Dict and Set
+	// answered False on the server while the other two said True.
+	"Equality",
 }
 
 // Scope is the set of modules whose meaning must be identical everywhere: pure
@@ -680,6 +777,42 @@ var OutOfScope = map[string]string{
 // deduplicated. If a runtime disagrees with a line here, the line is the
 // argument.
 const expectations = `
+Equality.recSelf=T
+Equality.recEqual=T
+Equality.recFieldOrder=T
+Equality.recDiffer=F
+Equality.recNeEqual=F
+Equality.recNeDiffer=T
+Equality.nestSame=T
+Equality.nestTag=F
+Equality.nestInner=F
+Equality.justSame=T
+Equality.justDiffer=F
+Equality.justVsNothing=F
+Equality.nothingSame=T
+Equality.listSame=T
+Equality.listDiffer=F
+Equality.tupleSame=T
+Equality.tupleDiffer=F
+Equality.memberFound=T
+Equality.memberMissing=F
+Equality.durSame=T
+Equality.durMinutes=T
+Equality.durHours=T
+Equality.durDiffer=F
+Equality.durNe=T
+Equality.durInJust=T
+Equality.durInRecord=T
+Equality.timeSame=T
+Equality.timeDiffer=F
+Equality.timeInRecord=T
+Equality.timeInList=T
+Equality.dictOrder=T
+Equality.dictValue=F
+Equality.dictSize=F
+Equality.setOrder=T
+Equality.setDiffer=F
+Equality.setInRecord=T
 Ordering.ltInt=T
 Ordering.ltString=T
 Ordering.ltChar=T
