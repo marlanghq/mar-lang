@@ -284,6 +284,11 @@ func runNavScript(t *testing.T, host *navHost, script string) string {
 // bootedSimulator returns an already-booted device, or boots the first
 // available iPhone. Reusing a booted one keeps a local run fast; booting is
 // for a clean machine.
+//
+// When it boots one, it says so, so the suite can put it back. See
+// simulator_lifecycle_test.go: a device this package started is this
+// package's to shut down, and one that was already running belongs to
+// whoever was using it.
 func bootedSimulator() (string, error) {
 	out, err := exec.Command("xcrun", "simctl", "list", "devices", "available", "-j").Output()
 	if err != nil {
@@ -316,9 +321,14 @@ func bootedSimulator() (string, error) {
 	if candidate == "" {
 		return "", errNoSimulator
 	}
-	if out, err := exec.Command("xcrun", "simctl", "boot", candidate).CombinedOutput(); err != nil &&
-		!strings.Contains(string(out), "current state: Booted") {
-		return "", err
+	out, bootErr := exec.Command("xcrun", "simctl", "boot", candidate).CombinedOutput()
+	alreadyRunning := strings.Contains(string(out), "current state: Booted")
+	if bootErr != nil && !alreadyRunning {
+		return "", bootErr
+	}
+	if !alreadyRunning {
+		// We turned it on, so we owe it a shutdown.
+		claimBootedSimulator(candidate)
 	}
 	// simctl boot returns before the device accepts installs.
 	_ = exec.Command("xcrun", "simctl", "bootstatus", candidate).Run()
