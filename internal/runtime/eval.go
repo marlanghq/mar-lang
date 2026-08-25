@@ -92,15 +92,19 @@ func evalAt(e ast.Expr, env *Env, depth int) (Value, error) {
 		if v, ok := lookupElaborated(n.Impl, env); ok {
 			return v, nil
 		}
-		if n.Wire != nil {
+		key := joinName(n.Module, n.Name)
+		if n.Wire != nil && key == "JSON.decode" {
 			// This occurrence of JSON.decode knows what it is decoding
 			// INTO, because the checker wrote the call site's type onto the
 			// node. Without it the decoder answered Ok for anything that
 			// was valid JSON, and the mismatch surfaced later, somewhere
 			// else, as a runtime error about a field.
+			//
+			// The name is checked, not just the mark: elaboration stamps a
+			// shape on Service.call too, and reading that one as a decoder
+			// would replace the call with a JSON parser.
 			return decodeWithShape(*n.Wire), nil
 		}
-		key := joinName(n.Module, n.Name)
 		if v, ok := env.Lookup(key); ok {
 			return v, nil
 		}

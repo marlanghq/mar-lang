@@ -1406,7 +1406,7 @@ func (s *Server) projectAnalyze(path, content string) ([]lspDiagnostic, bool) {
 	if err != nil {
 		return nil, false
 	}
-	_, _, err = project.LoadForServeTypedWithOverrides(mainFile, map[string]string{abs: content})
+	_, _, _, err = project.LoadForServeTypedWithOverrides(mainFile, map[string]string{abs: content})
 	if err != nil {
 		if d, ok := errorToDiagnostic(err, path, content); ok {
 			return []lspDiagnostic{d}, true

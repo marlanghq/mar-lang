@@ -193,9 +193,15 @@ setStatus = Service.declare POST "/api/status"
 	}
 }
 
-// A union that carries a payload keeps the escape hatch: there is no single
-// wire form worth asserting about, and a wrong 422 is worse than the 500.
-func TestUnionWithPayloadStaysAny(t *testing.T) {
+// A union that carries a payload IS checked, arguments and all.
+//
+// This test asserted the opposite when the guard was written, and the reason
+// given — no single wire form worth asserting about — was wrong: every
+// constructor has a known arity and known argument types. It was the widest
+// hole in the guard. An undeclared tag, or the right tag with the wrong
+// payload, reached a `case` the checker had proved total, and a payload that
+// violated its own type got written to the database through it.
+func TestUnionWithPayloadIsChecked(t *testing.T) {
 	dir := t.TempDir()
 	entry := filepath.Join(dir, "Main.mar")
 	src := `module Main exposing (send)
@@ -216,9 +222,177 @@ send = Service.declare POST "/api/send"
 	}
 	v, _ := rEnv.Lookup("Main.send")
 	svc := v.(runtime.VService)
+	var to runtime.WireShape
 	for _, f := range svc.InputShape.Fields {
-		if f.Name == "to" && f.Shape.Kind != runtime.WireAny {
-			t.Fatalf("a payload-carrying union must stay Any, got %s", f.Shape.Kind)
+		if f.Name == "to" {
+			to = f.Shape
 		}
+	}
+	if to.Kind != runtime.WireCtor {
+		t.Fatalf("a payload-carrying union is checkable, got %s", to.Kind)
+	}
+	if strings.Join(to.Tags, ",") != "Everyone,Person" {
+		t.Fatalf("tags = %v, want [Everyone Person]", to.Tags)
+	}
+	if len(to.Args) != 2 || len(to.Args[0]) != 0 || len(to.Args[1]) != 1 ||
+		to.Args[1][0].Kind != runtime.WireString {
+		t.Fatalf("argument shapes = %v, want [[] [String]]", to.Args)
+	}
+
+	rec := func(v runtime.Value) runtime.Value {
+		return runtime.VRecord{
+			Fields: map[string]runtime.Value{"to": v},
+			Order:  []string{"to"},
+		}
+	}
+	ok := []runtime.Value{
+		runtime.VCtor{Tag: "Everyone"},
+		runtime.VCtor{Tag: "Person", Args: []runtime.Value{runtime.VString{V: "ana"}}},
+	}
+	for _, good := range ok {
+		if err := runtime.CheckWire(rec(good), *svc.InputShape); err != nil {
+			t.Fatalf("a well-formed constructor must pass: %v", err)
+		}
+	}
+	bad := map[string]runtime.Value{
+		"an undeclared tag":      runtime.VCtor{Tag: "Nobody"},
+		"the wrong arity":        runtime.VCtor{Tag: "Person"},
+		"the wrong payload type": runtime.VCtor{Tag: "Person", Args: []runtime.Value{runtime.VInt{V: 1}}},
+		"a payload on a nullary": runtime.VCtor{Tag: "Everyone", Args: []runtime.Value{runtime.VInt{V: 1}}},
+	}
+	for what, v := range bad {
+		if err := runtime.CheckWire(rec(v), *svc.InputShape); err == nil {
+			t.Errorf("%s must be refused", what)
+		}
+	}
+}
+
+// A tuple is checkable too: its arity is part of its type. There was no shape
+// kind for one at all, which made a tuple in a request a guaranteed
+// `tupleFirst: not a 2-tuple` and a tuple AS the request type something no
+// client could ever call successfully.
+func TestTupleIsChecked(t *testing.T) {
+	dir := t.TempDir()
+	entry := filepath.Join(dir, "Main.mar")
+	src := `module Main exposing (place)
+
+place : Service ( Int, String ) String
+place = Service.declare POST "/api/place"
+`
+	if err := os.WriteFile(entry, []byte(src), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	rEnv, _, _, err := LoadIntoEnvWithModulesAndHook(entry, nil)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	v, _ := rEnv.Lookup("Main.place")
+	svc := v.(runtime.VService)
+	if svc.InputShape.Kind != runtime.WireTuple {
+		t.Fatalf("shape kind = %s, want Tuple", svc.InputShape.Kind)
+	}
+	good := runtime.VTuple{Members: []runtime.Value{runtime.VInt{V: 1}, runtime.VString{V: "a"}}}
+	if err := runtime.CheckWire(good, *svc.InputShape); err != nil {
+		t.Fatalf("a well-formed tuple must pass: %v", err)
+	}
+	// A tuple travels as a JSON array and comes back from the decoder as a
+	// LIST, because an array is all the wire has. So the well-formed list is
+	// the ordinary case, not an error — this assertion said the opposite when
+	// it was written, and would have made a tuple request uncallable in a
+	// second way.
+	asList := runtime.VList{Elements: []runtime.Value{runtime.VInt{V: 1}, runtime.VString{V: "a"}}}
+	if err := runtime.CheckWire(asList, *svc.InputShape); err != nil {
+		t.Fatalf("the wire form of a tuple is an array: %v", err)
+	}
+	if _, ok := runtime.CoerceWire(asList, *svc.InputShape).(runtime.VTuple); !ok {
+		t.Fatal("accepting the array means producing the tuple the handler was checked against")
+	}
+
+	bad := map[string]runtime.Value{
+		"the wrong arity":       runtime.VTuple{Members: []runtime.Value{runtime.VInt{V: 1}}},
+		"the wrong member":      runtime.VTuple{Members: []runtime.Value{runtime.VInt{V: 1}, runtime.VInt{V: 2}}},
+		"a short list":          runtime.VList{Elements: []runtime.Value{runtime.VInt{V: 1}}},
+		"a list of wrong types": runtime.VList{Elements: []runtime.Value{runtime.VString{V: "x"}, runtime.VString{V: "a"}}},
+		"an object":             runtime.VRecord{Fields: map[string]runtime.Value{"a": runtime.VInt{V: 1}}, Order: []string{"a"}},
+	}
+	for what, v := range bad {
+		if err := runtime.CheckWire(v, *svc.InputShape); err == nil {
+			t.Errorf("%s must be refused", what)
+		}
+	}
+}
+
+// The depth cap is gone, so an ordinary record keeps being checked however
+// deep it is. Seven levels sailed through and met `+: unsupported types`.
+func TestDeepRecordIsStillChecked(t *testing.T) {
+	dir := t.TempDir()
+	entry := filepath.Join(dir, "Main.mar")
+	src := `module Main exposing (deep)
+
+deep : Service { a : { b : { c : { d : { e : { f : { g : { h : Int } } } } } } } } Int
+deep = Service.declare POST "/api/deep"
+`
+	if err := os.WriteFile(entry, []byte(src), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	rEnv, _, _, err := LoadIntoEnvWithModulesAndHook(entry, nil)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	v, _ := rEnv.Lookup("Main.deep")
+	svc := v.(runtime.VService)
+	shape := *svc.InputShape
+	for _, name := range []string{"a", "b", "c", "d", "e", "f", "g"} {
+		if shape.Kind != runtime.WireRecord || len(shape.Fields) != 1 || shape.Fields[0].Name != name {
+			t.Fatalf("expected a record naming %q, got %s", name, shape.Kind)
+		}
+		shape = shape.Fields[0].Shape
+	}
+	if shape.Kind != runtime.WireRecord || shape.Fields[0].Shape.Kind != runtime.WireInt {
+		t.Fatalf("the innermost field is an Int, got %s", shape.Fields[0].Shape.Kind)
+	}
+}
+
+// A recursive type closes its own cycle and gives up THERE, which is what the
+// depth cap was standing in for. Everything above the cycle stays checked.
+func TestRecursiveTypeStopsAtItsCycle(t *testing.T) {
+	dir := t.TempDir()
+	entry := filepath.Join(dir, "Main.mar")
+	src := `module Main exposing (post)
+
+type Comment
+    = Comment String (List Comment)
+
+post : Service { top : Comment } String
+post = Service.declare POST "/api/post"
+`
+	if err := os.WriteFile(entry, []byte(src), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	rEnv, _, _, err := LoadIntoEnvWithModulesAndHook(entry, nil)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	v, _ := rEnv.Lookup("Main.post")
+	svc := v.(runtime.VService)
+	top := svc.InputShape.Fields[0].Shape
+	if top.Kind != runtime.WireCtor || len(top.Args) != 1 || len(top.Args[0]) != 2 {
+		t.Fatalf("expected a one-constructor union taking two values, got %+v", top)
+	}
+	if top.Args[0][0].Kind != runtime.WireString {
+		t.Fatalf("the first argument is a String, got %s", top.Args[0][0].Kind)
+	}
+	inner := top.Args[0][1]
+	if inner.Kind != runtime.WireList || inner.Elem == nil || inner.Elem.Kind != runtime.WireAny {
+		t.Fatalf("the recursive position gives up as Any, got %+v", inner)
+	}
+	// And it still rejects what it CAN see, rather than giving up wholesale.
+	bad := runtime.VRecord{
+		Fields: map[string]runtime.Value{"top": runtime.VCtor{Tag: "Comment",
+			Args: []runtime.Value{runtime.VInt{V: 1}, runtime.VList{}}}},
+		Order: []string{"top"},
+	}
+	if err := runtime.CheckWire(bad, *svc.InputShape); err == nil {
+		t.Fatal("the non-recursive argument is still checked")
 	}
 }

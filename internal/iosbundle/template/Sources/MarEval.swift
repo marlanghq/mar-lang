@@ -107,6 +107,11 @@ enum Eval {
             // and the mismatch surfaced later, somewhere else.
             return MarWire.decoder(shape)
 
+        case .serviceCall(let shape):
+            // Same idea for the other direction: this occurrence knows what
+            // the server is supposed to answer with.
+            return MarWire.serviceCaller(shape)
+
         case .negate(let inner):
             switch try eval(inner, env) {
             case .int(let n):   return .int(-n)

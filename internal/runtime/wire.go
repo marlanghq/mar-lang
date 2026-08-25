@@ -44,6 +44,7 @@ const (
 	WireList    = ast.WireList
 	WireMaybe   = ast.WireMaybe
 	WireRecord  = ast.WireRecord
+	WireTuple   = ast.WireTuple
 	WireCtor    = ast.WireCtor
 	WireAny     = ast.WireAny
 )
@@ -147,16 +148,59 @@ func checkWireAt(v Value, s WireShape, path string) error {
 
 	case WireCtor:
 		c, ok := v.(VCtor)
-		if !ok || len(c.Args) != 0 {
+		if !ok {
 			return bad("one of " + strings.Join(quoteEach(s.Tags), ", "))
 		}
-		for _, tag := range s.Tags {
-			if c.Tag == tag {
-				return nil
+		for i, tag := range s.Tags {
+			if c.Tag != tag {
+				continue
 			}
+			// The right tag still has to carry the right things. A
+			// constructor's arguments are part of its type, and letting
+			// them through unchecked was how a value that violates its own
+			// declared type reached a handler — and, through one, the
+			// database.
+			var want []WireShape
+			if i < len(s.Args) {
+				want = s.Args[i]
+			}
+			if len(c.Args) != len(want) {
+				return fmt.Errorf("%s: `%s` takes %s, got %d",
+					where(), tag, plural(len(want), "value"), len(c.Args))
+			}
+			for j, arg := range c.Args {
+				if err := checkWireAt(arg, want[j], fmt.Sprintf("%s.%s[%d]", path, tag, j)); err != nil {
+					return err
+				}
+			}
+			return nil
 		}
 		return fmt.Errorf("%s should be one of %s, got `%s`",
 			where(), strings.Join(quoteEach(s.Tags), ", "), c.Tag)
+
+	case WireTuple:
+		// A tuple travels as a JSON array, and comes back from the decoder
+		// as a LIST, because an array is all the wire has and nothing tells
+		// the decoder which one was meant. So both arrive here, and the
+		// arity — which is part of a tuple's type — is what separates a
+		// well-formed one from anything else.
+		//
+		// There was no arm here at all: a tuple sailed through the guard
+		// and met `tupleFirst: not a 2-tuple`, which is why a tuple as a
+		// request type could not be called successfully by anyone.
+		members := tupleMembers(v)
+		if members == nil {
+			return bad(fmt.Sprintf("a list of %s", plural(len(s.Members), "value")))
+		}
+		if len(members) != len(s.Members) {
+			return fmt.Errorf("%s should be a list of %s, got %d",
+				where(), plural(len(s.Members), "value"), len(members))
+		}
+		for i, m := range members {
+			if err := checkWireAt(m, s.Members[i], fmt.Sprintf("%s[%d]", path, i)); err != nil {
+				return err
+			}
+		}
 
 	case WireList:
 		l, ok := v.(VList)
@@ -207,6 +251,28 @@ func quoteEach(tags []string) []string {
 		out[i] = "`" + t + "`"
 	}
 	return out
+}
+
+// tupleMembers reads the positions out of whichever of the two forms arrived:
+// a VTuple built inside the program, or the VList a JSON array decodes to.
+// Returns nil for anything else.
+func tupleMembers(v Value) []Value {
+	switch n := v.(type) {
+	case VTuple:
+		return n.Members
+	case VList:
+		return n.Elements
+	}
+	return nil
+}
+
+// plural keeps the counts in these messages reading like English rather than
+// like a format string: "1 value", "2 values".
+func plural(n int, noun string) string {
+	if n == 1 {
+		return "1 " + noun
+	}
+	return fmt.Sprintf("%d %ss", n, noun)
 }
 
 func joinWirePath(path, field string) string {
@@ -302,6 +368,36 @@ func CoerceWire(v Value, s WireShape) Value {
 			out[i] = CoerceWire(item, *s.Elem)
 		}
 		return VList{Elements: out}
+
+	case WireTuple:
+		// The decoder handed back a list; the handler was checked against a
+		// tuple. Accepting the array means producing the tuple.
+		members := tupleMembers(v)
+		if members == nil || len(members) != len(s.Members) {
+			return v
+		}
+		out := make([]Value, len(members))
+		for i, m := range members {
+			out[i] = CoerceWire(m, s.Members[i])
+		}
+		return VTuple{Members: out}
+
+	case WireCtor:
+		c, ok := v.(VCtor)
+		if !ok {
+			return v
+		}
+		for i, tag := range s.Tags {
+			if c.Tag != tag || i >= len(s.Args) || len(c.Args) != len(s.Args[i]) {
+				continue
+			}
+			args := make([]Value, len(c.Args))
+			for j, a := range c.Args {
+				args[j] = CoerceWire(a, s.Args[i][j])
+			}
+			return VCtor{Tag: c.Tag, Args: args}
+		}
+		return v
 
 	case WireRecord:
 		rec, ok := v.(VRecord)

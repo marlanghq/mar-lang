@@ -8,6 +8,18 @@ import (
 	"mar/internal/typecheck"
 )
 
+// ctorsFrom builds the union lookup the shape reduction needs.
+//
+// This used to be built by walking the module ASTs, because that was the
+// cheapest place constructor names and arities both existed. It cannot stay
+// there: checking a union with a PAYLOAD needs the argument TYPES, and an AST
+// carries type expressions that only the checker can resolve. The checker's
+// own environment has them, so the lookup comes from there and there is one
+// implementation of it rather than two that can drift.
+func ctorsFrom(env *typecheck.TypeEnv) typecheck.CtorLookup {
+	return typecheck.CtorsFromEnv(env)
+}
+
 // This package is the one place that can see both a checked type and a runtime
 // value, so it is where the declared request type gets attached to the service
 // the dispatcher will check bodies against. The reduction itself lives in
@@ -35,42 +47,6 @@ func stampServiceShape(svc runtime.VService, t typecheck.Type, tags typecheck.Ct
 	s := typecheck.WireShapeOf(con.Args[0], tags)
 	svc.InputShape = &s
 	return svc
-}
-
-// ctorsFromModules builds the lookup out of the module ASTs the loader already
-// has in hand, which is the cheapest place the constructor names and their
-// arities both exist. A canonical name splits at its LAST dot: a module name
-// has dots in it (`Frontend.Home`) and a type name does not.
-func ctorsFromModules(modulesByName map[string]*ast.Module) typecheck.CtorLookup {
-	return func(canonical string) ([]string, bool) {
-		dot := strings.LastIndex(canonical, ".")
-		if dot < 0 {
-			return nil, false
-		}
-		mod, ok := modulesByName[canonical[:dot]]
-		if !ok {
-			return nil, false
-		}
-		typeName := canonical[dot+1:]
-		for _, d := range mod.Decls {
-			ct, ok := d.(*ast.CustomTypeDecl)
-			if !ok || ct.Name != typeName || len(ct.Params) > 0 {
-				continue
-			}
-			names := make([]string, 0, len(ct.Constructors))
-			for _, c := range ct.Constructors {
-				if len(c.Args) > 0 {
-					return nil, false
-				}
-				names = append(names, c.Name)
-			}
-			if len(names) == 0 {
-				return nil, false
-			}
-			return names, true
-		}
-		return nil, false
-	}
 }
 
 // declaredTypes indexes a module's checked value types by bare name, which is

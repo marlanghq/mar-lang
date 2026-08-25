@@ -59,13 +59,13 @@ enum MarHTTP {
     /// nothing to send. Response is parsed as JSON before being wrapped
     /// in `Ok` so user code gets a typed value back instead of a raw
     /// string.
-    static func fireService(method: String, path: String, body: String?, toMsg: MarValue) {
+    static func fireService(method: String, path: String, body: String?, toMsg: MarValue, responseShape: MarWireShape? = nil) {
         Task { @MainActor in
             guard let url = MarDispatcher.shared.resolve(path: path) else {
                 dispatchServiceErr(toMsg, message: "invalid service path: \(path)")
                 return
             }
-            sendService(method: method, url: url, body: body, toMsg: toMsg)
+            sendService(method: method, url: url, body: body, toMsg: toMsg, responseShape: responseShape)
         }
     }
 
@@ -85,7 +85,7 @@ enum MarHTTP {
         }.resume()
     }
 
-    private static func sendService(method: String, url: URL, body: String?, toMsg: MarValue) {
+    private static func sendService(method: String, url: URL, body: String?, toMsg: MarValue, responseShape: MarWireShape?) {
         var req = URLRequest(url: url)
         req.httpMethod = method
         if let body {
@@ -113,12 +113,12 @@ enum MarHTTP {
                     // No signInPath configured: fall through and
                     // surface Err Unauthorized so the app at least
                     // sees something.
-                    let r = makeServiceResult(data: data, response: response, error: error)
+                    let r = makeServiceResult(data: data, response: response, error: error, responseShape: responseShape)
                     deliverServiceResult(r, toMsg: toMsg)
                 }
                 return
             }
-            let r = makeServiceResult(data: data, response: response, error: error)
+            let r = makeServiceResult(data: data, response: response, error: error, responseShape: responseShape)
             Task { @MainActor in
                 deliverServiceResult(r, toMsg: toMsg)
             }
@@ -473,7 +473,7 @@ enum MarHTTP {
     /// Builds the Result a Service.call delivers: Ok decoded-value, or Err
     /// carrying a Service.Error. The String variant (makeJSONResult) stays
     /// for Http.get/post and auth, whose Err is still a bare String.
-    private static func makeServiceResult(data: Data?, response: URLResponse?, error: Error?) -> MarValue {
+    private static func makeServiceResult(data: Data?, response: URLResponse?, error: Error?, responseShape: MarWireShape?) -> MarValue {
         if error != nil {
             return .ctor(tag: "Err", args: [serviceErrorOffline()], origin: nil)
         }
@@ -485,7 +485,22 @@ enum MarHTTP {
         }
         do {
             let any = try JSONSerialization.jsonObject(with: bodyData, options: [.fragmentsAllowed])
-            return .ctor(tag: "Ok", args: [MarJSONCodec.jsonToMar(any)], origin: nil)
+            let decoded = MarJSONCodec.jsonToMar(any)
+            // The response was not produced by the type system either. It
+            // comes from this app's own server, so the realistic mismatch is
+            // version skew: a phone still running an embedded snapshot
+            // against a server whose response type has moved. It goes where
+            // a body that would not decode already goes.
+            if let shape = responseShape {
+                if let err = MarWire.check(decoded, shape) {
+                    let se: MarValue = .ctor(tag: "ServerError",
+                        args: [.string("the response does not match what this app expects: \(err)")],
+                        origin: nil)
+                    return .ctor(tag: "Err", args: [se], origin: nil)
+                }
+                return .ctor(tag: "Ok", args: [MarWire.coerce(decoded, shape)], origin: nil)
+            }
+            return .ctor(tag: "Ok", args: [decoded], origin: nil)
         } catch {
             let se: MarValue = .ctor(tag: "ServerError", args: [.string("decode failed: \(error.localizedDescription)")], origin: nil)
             return .ctor(tag: "Err", args: [se], origin: nil)

@@ -26,6 +26,12 @@ indirect enum Expr {
     /// same way `impl` is, so the evaluator sees one case rather than a
     /// qualified name it has to special-case.
     case jsonDecode(shape: MarWireShape)
+    /// `Service.call` at a call site whose declared RESPONSE type the checker
+    /// knew. The client holds a service value carrying a verb and a path and
+    /// no type at all, and a built program carries no type information of any
+    /// kind, so this node is the only way the response type reaches the
+    /// phone. Resolved at decode time, like `impl` and `jsonDecode`.
+    case serviceCall(shape: MarWireShape)
 
     case negate(Expr)
     case app(fn: Expr, arg: Expr)

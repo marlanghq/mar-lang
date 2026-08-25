@@ -60,7 +60,7 @@ func LoadIntoEnvForRuntime(
 	// loudly. `1 + 1.50` passes `mar check`, runs under `mar dev`, and dies
 	// here with `+: expected Int`. See ADR 0017.
 	byName := indexModules(mods)
-	checked, err := checkOrdered(mods,
+	checked, tEnv, err := checkOrdered(mods,
 		func(m *ast.Module) string { return joinName(m.Name) },
 		func(module string) bool { _, ok := byName[module]; return ok },
 		nil,
@@ -74,7 +74,7 @@ func LoadIntoEnvForRuntime(
 		installBuiltins(rEnv, mods)
 	}
 	for _, m := range mods {
-		if err := loadIntoEnv(m, joinName(m.Name), rEnv, byName, declaredTypes(checked, m)); err != nil {
+		if err := loadIntoEnv(m, joinName(m.Name), rEnv, byName, declaredTypes(checked, m), ctorsFrom(tEnv)); err != nil {
 			return nil, nil, err
 		}
 	}

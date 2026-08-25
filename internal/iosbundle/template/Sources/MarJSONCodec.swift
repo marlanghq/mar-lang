@@ -309,8 +309,15 @@ enum MarJSONCodec {
                          name: stringOf(dict["name"]))
         case "EQualified":
             if let impl = elaboratedImpl(dict) { return .var(impl) }
+            // What the shape MEANS depends on which builtin this is, so the
+            // name is checked and not merely the mark's presence: reading a
+            // Service.call's response shape as a decoder would replace a
+            // network call with a JSON parser.
             if let shape = MarWireShape.decode(dict["wire"]) {
-                return .jsonDecode(shape: shape)
+                let module = stringList(dict["module"]).joined(separator: ".")
+                let qualified = module.isEmpty ? stringOf(dict["name"]) : module + "." + stringOf(dict["name"])
+                if qualified == "JSON.decode" { return .jsonDecode(shape: shape) }
+                if qualified == "Service.call" { return .serviceCall(shape: shape) }
             }
             return .qualified(module: stringList(dict["module"]),
                               name: stringOf(dict["name"]))

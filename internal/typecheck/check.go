@@ -577,8 +577,11 @@ func Elaborate(exprTypes map[ast.Expr]Type, tags CtorLookup) {
 		case *ast.EQualified:
 			name := joinName(n.Module, n.Name)
 			n.Impl = decimalImplFor(name, t)
-			if name == "JSON.decode" {
+			switch name {
+			case "JSON.decode":
 				n.Wire = decodeShapeFor(t, tags)
+			case "Service.call":
+				n.Wire = responseShapeFor(t, tags)
 			}
 		case *ast.EVar:
 			n.Impl = decimalImplFor(n.Name, t)
@@ -593,6 +596,37 @@ func Elaborate(exprTypes map[ast.Expr]Type, tags CtorLookup) {
 // `JSON.decode` passed around as a value, or a result nobody looked at — the
 // shape reduces to WireAny and there is nothing worth carrying, so the node
 // stays bare and the runtimes behave exactly as they did before this existed.
+// responseShapeFor reads the declared RESPONSE type off this occurrence of
+// Service.call.
+//
+// A request body is checked before a handler sees it; a response was not
+// checked at all, in either client, because the declared type never reached
+// them — a built program carries no type information of any kind, and the
+// Service value on the client side holds a verb and a path and nothing else.
+// So both clients decoded whatever arrived and handed it to code that had
+// been checked against something else. Measured in the browser: a constructor
+// the type does not declare threw inside the live page's update and was then
+// swallowed by the stale-message guard, leaving a frozen screen with no
+// banner and no console line.
+//
+// The occurrence type is the instantiated arrow, and its first argument is
+// `Service req resp`, so the response type is sitting right there.
+func responseShapeFor(t Type, tags CtorLookup) *ast.WireShape {
+	arrow, ok := t.(TArrow)
+	if !ok {
+		return nil
+	}
+	svc, ok := StripForall(arrow.From).(TCon)
+	if !ok || svc.Name != "Service" || len(svc.Args) != 2 {
+		return nil
+	}
+	s := WireShapeOf(svc.Args[1], tags)
+	if s.Kind == ast.WireAny {
+		return nil
+	}
+	return &s
+}
+
 func decodeShapeFor(t Type, tags CtorLookup) *ast.WireShape {
 	arrow, ok := t.(TArrow)
 	if !ok {

@@ -499,6 +499,11 @@ type DecStatus
     | DecSent
 
 
+type DecShape
+    = DecCircle Int
+    | DecNamed String Int
+
+
 type alias DecOpt =
     { note : Maybe String
     , amount : Decimal
@@ -540,6 +545,31 @@ dl r =
             e
 
 
+dp : Result String DecShape -> String
+dp r =
+    case r of
+        Ok s ->
+            case s of
+                DecCircle n ->
+                    "ok:circle:" ++ String.fromInt n
+
+                DecNamed n k ->
+                    "ok:" ++ n ++ ":" ++ String.fromInt k
+
+        Err e ->
+            e
+
+
+dt : Result String ( Int, String ) -> String
+dt r =
+    case r of
+        Ok t ->
+            "ok:" ++ String.fromInt (Tuple.first t) ++ ":" ++ Tuple.second t
+
+        Err e ->
+            e
+
+
 do : Result String DecOpt -> String
 do r =
     case r of
@@ -568,6 +598,19 @@ decodeCases =
         , "optionalNull=" ++ do (JSON.decode "{\"note\":null,\"amount\":3}")
         , "optionalJust=" ++ do (JSON.decode "{\"note\":{\"__ctor\":\"Just\",\"__args\":[\"hi\"]},\"amount\":3}")
         , "optionalRaw=" ++ do (JSON.decode "{\"note\":\"hi\",\"amount\":3}")
+
+        -- A union with a PAYLOAD, and a tuple: the two shapes the guard
+        -- announced itself on and then checked nothing about.
+        , "ctorOk=" ++ dp (JSON.decode "{\"__ctor\":\"DecCircle\",\"__args\":[3]}")
+        , "ctorTwoArgs=" ++ dp (JSON.decode "{\"__ctor\":\"DecNamed\",\"__args\":[\"a\",2]}")
+        , "ctorUnknownTag=" ++ dp (JSON.decode "{\"__ctor\":\"DecRoxo\",\"__args\":[1]}")
+        , "ctorWrongArity=" ++ dp (JSON.decode "{\"__ctor\":\"DecCircle\",\"__args\":[]}")
+        , "ctorWrongArgType=" ++ dp (JSON.decode "{\"__ctor\":\"DecCircle\",\"__args\":[\"x\"]}")
+        , "ctorNotACtor=" ++ dp (JSON.decode "{}")
+        , "tupleOk=" ++ dt (JSON.decode "[7,\"abc\"]")
+        , "tupleShort=" ++ dt (JSON.decode "[7]")
+        , "tupleWrongType=" ++ dt (JSON.decode "[\"x\",\"abc\"]")
+        , "tupleNotAList=" ++ dt (JSON.decode "{\"a\":1}")
         ]
 
 
@@ -1189,4 +1232,13 @@ const decodeExpectations = "Decode.ok=ok:ana:3\n" +
 	"Decode.optionalNull=ok:-:3\n" +
 	"Decode.optionalJust=ok:hi:3\n" +
 	"Decode.optionalRaw=`note` should be a Maybe (leave the field out for Nothing), got a string\n" +
-	""
+	"Decode.ctorOk=ok:circle:3" + "\n" +
+	"Decode.ctorTwoArgs=ok:a:2" + "\n" +
+	"Decode.ctorUnknownTag=the value should be one of `DecCircle`, `DecNamed`, got `DecRoxo`" + "\n" +
+	"Decode.ctorWrongArity=the value: `DecCircle` takes 1 value, got 0" + "\n" +
+	"Decode.ctorWrongArgType=`.DecCircle[0]` should be a whole number, got a string" + "\n" +
+	"Decode.ctorNotACtor=the value should be one of `DecCircle`, `DecNamed`, got an empty object" + "\n" +
+	"Decode.tupleOk=ok:7:abc" + "\n" +
+	"Decode.tupleShort=the value should be a list of 2 values, got 1" + "\n" +
+	"Decode.tupleWrongType=`[0]` should be a whole number, got a string" + "\n" +
+	"Decode.tupleNotAList=the value should be a list of 2 values, got an object with a" + "\n"

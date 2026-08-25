@@ -1058,6 +1058,16 @@
     return tags.map((t) => '`' + t + '`').join(', ');
   }
 
+  function plural(n, noun) {
+    return n === 1 ? '1 ' + noun : n + ' ' + noun + 's';
+  }
+
+  // Assigned when the builtins install, because it closes over the service
+  // call itself. Declared here so the evaluator can see it: an assignment
+  // with no declaration would be an implicit global, which is exactly the
+  // kind of thing that works until the file is loaded in strict mode.
+  let serviceCallWithShape = null;
+
   // Returns null when the value fits the shape, or the sentence that says
   // how it does not.
   function checkWireAt(v, s, path) {
@@ -1092,9 +1102,40 @@
 
       case 'Ctor': {
         const tags = s.tags || [];
-        if (v.k !== 'C' || v.args.length !== 0) return bad('one of ' + quoteEach(tags));
-        if (tags.indexOf(v.tag) >= 0) return null;
-        return where + ' should be one of ' + quoteEach(tags) + ', got `' + v.tag + '`';
+        if (v.k !== 'C') return bad('one of ' + quoteEach(tags));
+        const i = tags.indexOf(v.tag);
+        if (i < 0) {
+          return where + ' should be one of ' + quoteEach(tags) + ', got `' + v.tag + '`';
+        }
+        // The right tag still has to carry the right things: a
+        // constructor's arguments are part of its type.
+        const want = (s.args && s.args[i]) || [];
+        if (v.args.length !== want.length) {
+          return where + ': `' + v.tag + '` takes ' + plural(want.length, 'value') +
+            ', got ' + v.args.length;
+        }
+        for (let j = 0; j < v.args.length; j++) {
+          const err = checkWireAt(v.args[j], want[j], path + '.' + v.tag + '[' + j + ']');
+          if (err) return err;
+        }
+        return null;
+      }
+
+      case 'Tuple': {
+        // A tuple travels as a JSON array and comes back as a LIST: an array
+        // is all the wire has. Both forms arrive here, and the arity is what
+        // separates a well-formed tuple from anything else.
+        const members = s.members || [];
+        if (v.k !== 'T' && v.k !== 'L') return bad('a list of ' + plural(members.length, 'value'));
+        if (v.xs.length !== members.length) {
+          return where + ' should be a list of ' + plural(members.length, 'value') +
+            ', got ' + v.xs.length;
+        }
+        for (let i = 0; i < v.xs.length; i++) {
+          const err = checkWireAt(v.xs[i], members[i], path + '[' + i + ']');
+          if (err) return err;
+        }
+        return null;
       }
 
       case 'List': {
@@ -1136,6 +1177,20 @@
     switch (s.kind) {
       case 'Decimal':
         return v.k === 'I' ? VDec(BigInt(v.n), 0) : v;
+      case 'Tuple': {
+        // The decoder handed back a list; the code was checked against a
+        // tuple. Accepting the array means producing the tuple.
+        const members = s.members || [];
+        if ((v.k !== 'T' && v.k !== 'L') || v.xs.length !== members.length) return v;
+        return VTuple(v.xs.map((x, i) => coerceWire(x, members[i])));
+      }
+      case 'Ctor': {
+        if (v.k !== 'C') return v;
+        const i = (s.tags || []).indexOf(v.tag);
+        const want = (s.args && s.args[i]) || [];
+        if (i < 0 || v.args.length !== want.length) return v;
+        return VCtor(v.tag, v.args.map((a, j) => coerceWire(a, want[j])));
+      }
       case 'Maybe':
         if (wireAbsent(v)) return VCtor('Nothing', []);
         if (v.k === 'C' && v.tag === 'Just' && v.args.length === 1 && s.elem) {
@@ -1230,15 +1285,21 @@
           const chosen = envLookup(env, e.impl);
           if (chosen !== undefined) return chosen;
         }
-        // `wire` is the shape this occurrence of JSON.decode is decoding
-        // INTO, written by the checker because the call site's type is the
-        // only place it exists. Absent on every other node, and absent on
-        // an older bundle, where this falls through to the plain lookup and
-        // behaves as it did before the check existed.
-        if (e.wire !== undefined) {
+        // `wire` is the shape this occurrence needs, written by the checker
+        // because the call site's type is the only place it exists. What to
+        // DO with it depends on which builtin this is, so the NAME is
+        // checked and not merely the mark: JSON.decode wants a decoder that
+        // validates, Service.call wants its RESPONSE validated. Reading one
+        // as the other would replace a network call with a JSON parser.
+        // Absent on every other node, and absent on an older bundle, where
+        // this falls through to the plain lookup and behaves as it did.
+        const key = e._qn || (e._qn = e.module.join('.') + '.' + e.name);
+        if (e.wire !== undefined && key === 'JSON.decode') {
           return e._decoder || (e._decoder = decodeWithShape(e.wire));
         }
-        const key = e._qn || (e._qn = e.module.join('.') + '.' + e.name);
+        if (e.wire !== undefined && key === 'Service.call' && serviceCallWithShape) {
+          return e._caller || (e._caller = serviceCallWithShape(e.wire));
+        }
         let v = envLookup(env, key);
         if (v === undefined) v = envLookup(env, e.name);
         if (v === undefined) throw new Error('unbound name: ' + key);
@@ -6172,7 +6233,14 @@
     //     params go in the URL, the rest in the query (GET / DELETE) or
     //     the JSON body (POST / PUT / PATCH). Parses the JSON response into
     //     a mar value, dispatches msg(Ok | Err).
-    def('serviceCall', native(3, ([svc, req, toMsg]) => {
+    // A Service.call occurrence whose declared RESPONSE type the checker
+    // knew. Same call, one more question asked of what comes back.
+    serviceCallWithShape = (shape) => native(3, ([svc, req, toMsg]) =>
+      serviceCallImpl(svc, req, toMsg, shape));
+
+    def('serviceCall', native(3, ([svc, req, toMsg]) => serviceCallImpl(svc, req, toMsg, null)));
+
+    function serviceCallImpl(svc, req, toMsg, respShape) {
       return VEffect(() => {
         const verb = svc.verb || 'POST';
         const built = buildServiceRequest(verb, svc.path || '/', req);
@@ -6213,6 +6281,21 @@
               if (currentDispatch) currentDispatch(msg);
               return;
             }
+            // The response was not produced by the type system either. It
+            // comes from this app's own server, so the realistic mismatch is
+            // version skew: an open tab, or a phone still on an embedded
+            // snapshot, against a server whose response type has moved. It
+            // goes where a body that would not decode already goes.
+            if (respShape) {
+              const shapeErr = checkWireAt(parsed, respShape, '');
+              if (shapeErr) {
+                const bad = apply(toMsg, VCtor('Err', [VCtor('ServerError',
+                  [VString('the response does not match what this app expects: ' + shapeErr)])]));
+                if (currentDispatch) currentDispatch(bad);
+                return;
+              }
+              parsed = coerceWire(parsed, respShape);
+            }
             const msg = apply(toMsg, VCtor('Ok', [parsed]));
             if (currentDispatch) currentDispatch(msg);
           })
@@ -6224,7 +6307,7 @@
           });
         return VUnit();
       }, 'serviceCall');
-    }));
+    }
     def('Service.call', envLookup(env, 'serviceCall'));
 
     // friendlyFetchError translates a fetch() rejection into a
@@ -14545,5 +14628,38 @@
   // (Sound.voice / Sound.glide's held node) against a fake AudioContext, the same way the Cmd
   // half is already driven through Sound.play.
   global.__marStartSub = function (src, sound) { return subSources[src].start({ sound }); };
+  // Run one Cmd outside a page and hand back whatever it dispatches.
+  //
+  // The client half of a service call had no test at all, which is a large
+  // part of why it went unchecked for so long: everything about it happens
+  // inside a fetch callback, behind a dispatch that only a mounted page
+  // installs. This borrows both — a stubbed fetch and a collector in place of
+  // the page's dispatch — so a response body can be pushed through the real
+  // path and the resulting Msg read back.
+  global.__marTestRunCmd = function (program, name) {
+    const cmd = marEvalRaw(program, name);
+    if (!cmd || cmd.k !== 'E' || typeof cmd.run !== 'function') {
+      throw new Error(name + ' is not a Cmd');
+    }
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => resolve('(nothing dispatched)'), 2000);
+      currentDispatch = (msg) => {
+        clearTimeout(timer);
+        currentDispatch = null;
+        try {
+          resolve(displayValue(msg, 0));
+        } catch (e) {
+          reject(e);
+        }
+      };
+      try {
+        cmd.run();
+      } catch (e) {
+        clearTimeout(timer);
+        currentDispatch = null;
+        reject(e);
+      }
+    });
+  };
   } // end if (__MAR_DEV__)
 })(typeof window !== 'undefined' ? window : globalThis);

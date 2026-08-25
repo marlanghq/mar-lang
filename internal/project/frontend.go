@@ -22,7 +22,7 @@ import (
 // Built-in stdlib modules (List, String, UI, Dict, Time, etc.) are
 // runtime-provided and are not loaded as files; see isStdlib in project.go,
 // which derives the full set from the qualified builtin surface.
-func LoadForServeTyped(entry string) ([]*ast.Module, map[string]typecheck.Type, error) {
+func LoadForServeTyped(entry string) ([]*ast.Module, map[string]typecheck.Type, *typecheck.TypeEnv, error) {
 	return LoadForServeTypedWithOverrides(entry, nil)
 }
 
@@ -36,10 +36,10 @@ func LoadForServeTyped(entry string) ([]*ast.Module, map[string]typecheck.Type, 
 //
 // `overrides` keys must be absolute file paths (use filepath.Abs); empty
 // or nil map means "no overrides", behaviour identical to LoadForServeTyped.
-func LoadForServeTypedWithOverrides(entry string, overrides map[string]string) ([]*ast.Module, map[string]typecheck.Type, error) {
+func LoadForServeTypedWithOverrides(entry string, overrides map[string]string) ([]*ast.Module, map[string]typecheck.Type, *typecheck.TypeEnv, error) {
 	entryAbs, err := filepath.Abs(entry)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	dir := filepath.Dir(entryAbs)
 
@@ -60,13 +60,13 @@ func LoadForServeTypedWithOverrides(entry string, overrides map[string]string) (
 		} else {
 			b, err := os.ReadFile(path)
 			if err != nil {
-				return nil, nil, err
+				return nil, nil, nil, err
 			}
 			src = string(b)
 		}
 		mod, err := parser.Parse(src)
 		if err != nil {
-			return nil, nil, diag.Wrap(path, src, err)
+			return nil, nil, nil, diag.Wrap(path, src, err)
 		}
 		modName := joinName(mod.Name)
 		if _, dup := loaded[modName]; dup {
@@ -96,7 +96,7 @@ func LoadForServeTypedWithOverrides(entry string, overrides map[string]string) (
 	// Topological sort.
 	order, err := topoSort(loaded)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 
 	// Type-check in order. Types defined in a module are only visible
@@ -132,7 +132,7 @@ func LoadForServeTypedWithOverrides(entry string, overrides map[string]string) (
 
 		res, err := typecheck.CheckModuleWith(mod, tEnv, importedAliases, importedCustoms)
 		if err != nil {
-			return nil, nil, diag.Wrap(paths[name], sources[name], err)
+			return nil, nil, nil, diag.Wrap(paths[name], sources[name], err)
 		}
 		for vname, t := range res.ValueTypes {
 			tEnv.Define(name+"."+vname, t)
@@ -171,7 +171,7 @@ func LoadForServeTypedWithOverrides(entry string, overrides map[string]string) (
 		issue := issues[0]
 		modPath := paths[issue.Module]
 		modSrc := sources[issue.Module]
-		return nil, nil, diag.Wrap(modPath, modSrc, &issue)
+		return nil, nil, nil, diag.Wrap(modPath, modSrc, &issue)
 	}
 
 	// GET services must be read-only. Project-wide pass: a GET handler
@@ -180,7 +180,7 @@ func LoadForServeTypedWithOverrides(entry string, overrides map[string]string) (
 		issue := issues[0]
 		modPath := paths[issue.Module]
 		modSrc := sources[issue.Module]
-		return nil, nil, diag.Wrap(modPath, modSrc, &issue)
+		return nil, nil, nil, diag.Wrap(modPath, modSrc, &issue)
 	}
 
 	// Every module runs on one side. A module that reaches both the browser
@@ -191,10 +191,10 @@ func LoadForServeTypedWithOverrides(entry string, overrides map[string]string) (
 		issue := issues[0]
 		modPath := paths[issue.Module]
 		modSrc := sources[issue.Module]
-		return nil, nil, diag.Wrap(modPath, modSrc, &issue)
+		return nil, nil, nil, diag.Wrap(modPath, modSrc, &issue)
 	}
 
-	return out, valueTypes, nil
+	return out, valueTypes, tEnv, nil
 }
 
 // resolveImport looks for a .mar file matching the dotted module name in the
@@ -241,7 +241,7 @@ func LoadIntoEnvWithModulesAndHook(
 	entry string,
 	installBuiltins func(*runtime.Env, []*ast.Module),
 ) (*runtime.Env, []*ast.Module, map[string]typecheck.Type, error) {
-	mods, valueTypes, err := LoadForServeTyped(entry)
+	mods, valueTypes, tEnv, err := LoadForServeTyped(entry)
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -251,7 +251,7 @@ func LoadIntoEnvWithModulesAndHook(
 	}
 	byName := indexModules(mods)
 	for _, m := range mods {
-		if err := loadIntoEnv(m, joinName(m.Name), rEnv, byName, declaredTypesFlat(valueTypes, m)); err != nil {
+		if err := loadIntoEnv(m, joinName(m.Name), rEnv, byName, declaredTypesFlat(valueTypes, m), ctorsFrom(tEnv)); err != nil {
 			return nil, nil, nil, err
 		}
 	}

@@ -24,7 +24,7 @@ func checkOrdered(
 	nameOf func(*ast.Module) string,
 	present func(module string) bool,
 	wrap func(mod *ast.Module, err error) error,
-) (map[string]map[string]typecheck.Type, error) {
+) (map[string]map[string]typecheck.Type, *typecheck.TypeEnv, error) {
 	tEnv := typecheck.BaseEnv()
 	aliasesByModule := map[string]map[string]typecheck.TypeAlias{}
 	customsByModule := map[string]map[string]typecheck.CustomType{}
@@ -51,9 +51,9 @@ func checkOrdered(
 		res, err := typecheck.CheckModuleWith(mod, tEnv, importedAliases, importedCustoms)
 		if err != nil {
 			if wrap != nil {
-				return nil, wrap(mod, err)
+				return nil, nil, wrap(mod, err)
 			}
-			return nil, err
+			return nil, nil, err
 		}
 
 		for vname, t := range res.ValueTypes {
@@ -77,5 +77,5 @@ func checkOrdered(
 		customsByModule[name] = modCustoms
 		out[name] = res.ValueTypes
 	}
-	return out, nil
+	return out, tEnv, nil
 }

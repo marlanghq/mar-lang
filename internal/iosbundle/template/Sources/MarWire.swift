@@ -20,7 +20,9 @@ final class MarWireShape {
     let kind: String
     var fields: [(name: String, shape: MarWireShape)] = []
     var elem: MarWireShape? = nil
+    var members: [MarWireShape] = []
     var tags: [String] = []
+    var args: [[MarWireShape]] = []
 
     init(kind: String) {
         self.kind = kind
@@ -44,8 +46,16 @@ final class MarWireShape {
                 shape.fields.append((name: name, shape: sub))
             }
         }
+        if let raw = dict["members"] as? [Any] {
+            shape.members = raw.compactMap { MarWireShape.decode($0) }
+        }
         if let raw = dict["tags"] as? [Any] {
             shape.tags = raw.compactMap { $0 as? String }
+        }
+        if let raw = dict["args"] as? [Any] {
+            shape.args = raw.map { per in
+                (per as? [Any] ?? []).compactMap { MarWireShape.decode($0) }
+            }
         }
         return shape
     }
@@ -112,11 +122,37 @@ enum MarWire {
             return bad("a Maybe (leave the field out for Nothing)")
 
         case "Ctor":
-            guard case .ctor(let tag, let args, _) = v, args.isEmpty else {
+            guard case .ctor(let tag, let carried, _) = v else {
                 return bad("one of \(quoteEach(s.tags))")
             }
-            if s.tags.contains(tag) { return nil }
-            return "\(where_) should be one of \(quoteEach(s.tags)), got `\(tag)`"
+            guard let i = s.tags.firstIndex(of: tag) else {
+                return "\(where_) should be one of \(quoteEach(s.tags)), got `\(tag)`"
+            }
+            // The right tag still has to carry the right things: a
+            // constructor's arguments are part of its type.
+            let want = i < s.args.count ? s.args[i] : []
+            if carried.count != want.count {
+                return "\(where_): `\(tag)` takes \(plural(want.count, "value")), got \(carried.count)"
+            }
+            for (j, arg) in carried.enumerated() {
+                if let err = check(arg, want[j], "\(path).\(tag)[\(j)]") { return err }
+            }
+            return nil
+
+        case "Tuple":
+            // A tuple travels as a JSON array and comes back as a LIST: an
+            // array is all the wire has. Both forms arrive here, and the
+            // arity is what separates a well-formed tuple from anything else.
+            guard let xs = tupleMembers(v) else {
+                return bad("a list of \(plural(s.members.count, "value"))")
+            }
+            if xs.count != s.members.count {
+                return "\(where_) should be a list of \(plural(s.members.count, "value")), got \(xs.count)"
+            }
+            for (i, m) in xs.enumerated() {
+                if let err = check(m, s.members[i], "\(path)[\(i)]") { return err }
+            }
+            return nil
 
         case "List":
             guard case .list(let xs) = v else { return bad("a list") }
@@ -172,6 +208,20 @@ enum MarWire {
             guard case .list(let xs) = v, let elem = s.elem else { return v }
             return .list(xs.map { coerce($0, elem) })
 
+        case "Tuple":
+            // Accepting the array means producing the tuple.
+            guard let xs = tupleMembers(v), xs.count == s.members.count else { return v }
+            return .tuple(xs.enumerated().map { coerce($1, s.members[$0]) })
+
+        case "Ctor":
+            guard case .ctor(let tag, let carried, let origin) = v,
+                  let i = s.tags.firstIndex(of: tag),
+                  i < s.args.count,
+                  carried.count == s.args[i].count else { return v }
+            return .ctor(tag: tag,
+                         args: carried.enumerated().map { coerce($1, s.args[i][$0]) },
+                         origin: origin)
+
         case "Record":
             guard case .record(var fields, var order) = v else { return v }
             for f in s.fields {
@@ -217,7 +267,40 @@ enum MarWire {
         })
     }
 
+    /// `Service.call` at a call site whose declared response type the checker
+    /// knew. Same call, one more question asked of what comes back — and the
+    /// only place the phone can ask it, since neither the service value nor
+    /// the built program carries the type.
+    static func serviceCaller(_ shape: MarWireShape) -> MarValue {
+        .fn(MarFn.native(3) { args in
+            let svc = args[0]
+            let toMsg = args[2]
+            return .effect(MarEffect(tag: "serviceCall") {
+                guard case .ctor("__Service", let svcArgs, _) = svc,
+                      svcArgs.count == 2,
+                      case .string(let verb) = svcArgs[0],
+                      case .string(let pattern) = svcArgs[1] else {
+                    throw MarRuntimeError.message("Service.call: not a service contract")
+                }
+                let built = MarBuiltins.buildServiceRequest(verb: verb, pattern: pattern, req: args[1])
+                MarHTTP.fireService(method: verb, path: built.url, body: built.body,
+                                    toMsg: toMsg, responseShape: shape)
+                return .unit
+            })
+        })
+    }
+
     // MARK: - Helpers
+
+    /// The positions of whichever of the two forms arrived: a tuple built
+    /// inside the program, or the list a JSON array decodes to.
+    private static func tupleMembers(_ v: MarValue) -> [MarValue]? {
+        switch v {
+        case .tuple(let xs): return xs
+        case .list(let xs): return xs
+        default: return nil
+        }
+    }
 
     private static func isAbsent(_ v: MarValue) -> Bool {
         if case .unit = v { return true }
@@ -226,6 +309,12 @@ enum MarWire {
 
     private static func quoteEach(_ tags: [String]) -> String {
         tags.map { "`\($0)`" }.joined(separator: ", ")
+    }
+
+    /// Keeps the counts in these messages reading like English rather than
+    /// like a format string.
+    private static func plural(_ n: Int, _ noun: String) -> String {
+        n == 1 ? "1 \(noun)" : "\(n) \(noun)s"
     }
 
     /// Names what actually arrived, in the vocabulary of whoever wrote the

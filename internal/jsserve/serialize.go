@@ -113,12 +113,30 @@ func serializeWireShape(s ast.WireShape) map[string]any {
 		}
 		m["fields"] = fields
 	}
+	if len(s.Members) > 0 {
+		members := make([]any, 0, len(s.Members))
+		for _, mem := range s.Members {
+			members = append(members, serializeWireShape(mem))
+		}
+		m["members"] = members
+	}
 	if len(s.Tags) > 0 {
 		tags := make([]any, 0, len(s.Tags))
 		for _, t := range s.Tags {
 			tags = append(tags, t)
 		}
 		m["tags"] = tags
+		// One entry per tag, in the same order, so a constructor's
+		// arguments are checkable rather than merely its name.
+		args := make([]any, 0, len(s.Args))
+		for _, per := range s.Args {
+			shapes := make([]any, 0, len(per))
+			for _, a := range per {
+				shapes = append(shapes, serializeWireShape(a))
+			}
+			args = append(args, shapes)
+		}
+		m["args"] = args
 	}
 	return m
 }

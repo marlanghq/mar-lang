@@ -20,10 +20,12 @@ package ast
 // of a valid request is worse than the failure it replaces.
 
 type WireShape struct {
-	Kind   WireKind
-	Fields []WireField // Record: declared fields, in declaration order
-	Elem   *WireShape  // List, Maybe: the element shape
-	Tags   []string    // Ctor: the constructor names the type declares
+	Kind    WireKind
+	Fields  []WireField   // Record: declared fields, in declaration order
+	Elem    *WireShape    // List, Maybe: the element shape
+	Members []WireShape   // Tuple: one shape per position, in order
+	Tags    []string      // Ctor: the constructor names the type declares
+	Args    [][]WireShape // Ctor: the argument shapes of each tag, same order as Tags
 }
 
 type WireKind string
@@ -40,19 +42,38 @@ const (
 	WireMaybe   WireKind = "Maybe"
 	WireRecord  WireKind = "Record"
 
-	// WireCtor is a union whose constructors all carry nothing — the
-	// shape a status, a role or a category has. It used to fall through
-	// to WireAny, and a tag the type does not declare then reached a
-	// `case` the checker had proved total: "no case branch matched", a
-	// 500, from a request. The set of legal tags is finite and known at
-	// load time, so this is the one place a union CAN be checked.
+	// WireTuple had no kind at all, which meant a tuple anywhere in a
+	// request was waved through and then hit `tupleFirst: not a 2-tuple`
+	// — and a tuple as the whole request type could never be called
+	// successfully by anyone. A tuple's arity is part of its type, so
+	// both the arity and the member shapes are checkable.
+	WireTuple WireKind = "Tuple"
+
+	// WireCtor is a union: the finite set of constructors the type
+	// declares, and what each one carries.
+	//
+	// It started as nullary-only, which left a union with a PAYLOAD
+	// falling through to WireAny — and that was the widest hole in the
+	// guard. A tag the type does not declare, or the right tag with the
+	// wrong arguments, reached a `case` the checker had proved total:
+	// "no case branch matched", a 500, from an anonymous request. Worse,
+	// a payload that violates its own declared type got written to the
+	// database through it, which bricks an endpoint permanently and is
+	// invisible to the checker.
+	//
+	// A union is the one shape where the legal values are enumerable, so
+	// it is the last place that should have been unchecked.
 	WireCtor WireKind = "Ctor"
 
-	// WireAny is the escape hatch, and it has to exist: a request type can
-	// legitimately be a custom union, a type variable, or something whose
-	// wire form this package should not be asserting. Checking nothing is
-	// the honest answer there, and it is strictly better than the previous
-	// behaviour, which checked nothing everywhere.
+	// WireAny is the escape hatch. It has to exist — a type variable has
+	// no shape to assert, and neither does a function — but it had grown
+	// to cover things that DO have one: tuples, unions with a payload,
+	// and anything nested past an arbitrary depth. Each of those was a
+	// place the guard announced itself and then checked nothing.
+	//
+	// What is left behind it is what genuinely cannot be checked: an
+	// unresolved type variable, a function, and a RECURSIVE type at the
+	// point where it closes its own cycle.
 	WireAny WireKind = "Any"
 )
 
