@@ -5,6 +5,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -289,6 +291,25 @@ func runNavScript(t *testing.T, host *navHost, script string) string {
 // simulator_lifecycle_test.go: a device this package started is this
 // package's to shut down, and one that was already running belongs to
 // whoever was using it.
+// runtimeVersion pulls the numbers out of a simulator runtime identifier:
+// `com.apple.CoreSimulator.SimRuntime.iOS-26-5` gives [26, 5]. Anything
+// unparseable sorts last, which is the right place for it.
+func runtimeVersion(id string) []int {
+	i := strings.LastIndex(id, "iOS-")
+	if i < 0 {
+		return nil
+	}
+	var out []int
+	for _, part := range strings.Split(id[i+len("iOS-"):], "-") {
+		n, err := strconv.Atoi(part)
+		if err != nil {
+			break
+		}
+		out = append(out, n)
+	}
+	return out
+}
+
 func bootedSimulator() (string, error) {
 	out, err := exec.Command("xcrun", "simctl", "list", "devices", "available", "-j").Output()
 	if err != nil {
@@ -304,12 +325,40 @@ func bootedSimulator() (string, error) {
 	if err := json.Unmarshal(out, &listing); err != nil {
 		return "", err
 	}
+	// NEWEST runtime first, deliberately, and in a stable order.
+	//
+	// Ranging the map picked a different device on every run — the machine
+	// here has three iOS runtimes with eleven devices each — so consecutive
+	// runs booted different simulators and the suite left one behind. But
+	// merely sorting the keys is worse than random: they are
+	// `com.apple.CoreSimulator.SimRuntime.iOS-18-5` and friends, so
+	// ascending order picks the OLDEST installed iOS, which is how this
+	// package went from 190 seconds to a 600-second timeout. The version is
+	// parsed rather than compared as text, because `iOS-9-0` sorts above
+	// `iOS-10-0` in both directions otherwise.
+	runtimeNames := make([]string, 0, len(listing.Devices))
+	for name := range listing.Devices {
+		runtimeNames = append(runtimeNames, name)
+	}
+	sort.Slice(runtimeNames, func(i, j int) bool {
+		a, b := runtimeVersion(runtimeNames[i]), runtimeVersion(runtimeNames[j])
+		for k := 0; k < len(a) && k < len(b); k++ {
+			if a[k] != b[k] {
+				return a[k] > b[k]
+			}
+		}
+		if len(a) != len(b) {
+			return len(a) > len(b)
+		}
+		return runtimeNames[i] > runtimeNames[j]
+	})
+
 	var candidate string
-	for runtimeName, devices := range listing.Devices {
+	for _, runtimeName := range runtimeNames {
 		if !strings.Contains(runtimeName, "iOS") {
 			continue
 		}
-		for _, d := range devices {
+		for _, d := range listing.Devices[runtimeName] {
 			if d.State == "Booted" {
 				return d.UDID, nil
 			}

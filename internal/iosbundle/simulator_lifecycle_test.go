@@ -23,20 +23,28 @@ import (
 //
 // It happens once per package run rather than per test, because the tests
 // deliberately share one device: TestSurfaceParity alone asks for it twice.
+//
+// A SET, not one device. The first version of this held a single UDID and
+// dropped any later claim, on the assumption that one run boots at most one
+// simulator. It does not: bootedSimulator used to range a map to choose a
+// candidate, so a run could pick a different device than the last one, and a
+// second device booted after the first was recorded went unreleased. The
+// candidate is chosen in a stable order now, and this keeps every one anyway —
+// an assumption about how many is exactly what left a simulator running for
+// 57 hours in the first place.
 var simulator struct {
 	mu     sync.Mutex
-	udid   string // non-empty only when WE booted it
-	booted bool
+	booted map[string]bool
 }
 
 // claimBootedSimulator records that this run turned a device on.
 func claimBootedSimulator(udid string) {
 	simulator.mu.Lock()
 	defer simulator.mu.Unlock()
-	if !simulator.booted {
-		simulator.udid = udid
-		simulator.booted = true
+	if simulator.booted == nil {
+		simulator.booted = map[string]bool{}
 	}
+	simulator.booted[udid] = true
 }
 
 // releaseBootedSimulator shuts down a device this run booted, and does
@@ -44,13 +52,12 @@ func claimBootedSimulator(udid string) {
 // a reason to fail a green suite, and the next run reuses it either way.
 func releaseBootedSimulator() {
 	simulator.mu.Lock()
-	udid, booted := simulator.udid, simulator.booted
-	simulator.udid, simulator.booted = "", false
+	ours := simulator.booted
+	simulator.booted = nil
 	simulator.mu.Unlock()
-	if !booted {
-		return
+	for udid := range ours {
+		_ = exec.Command("xcrun", "simctl", "shutdown", udid).Run()
 	}
-	_ = exec.Command("xcrun", "simctl", "shutdown", udid).Run()
 }
 
 func TestMain(m *testing.M) {
