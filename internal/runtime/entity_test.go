@@ -154,17 +154,28 @@ func TestEnumField_DecodeAcceptsBytes(t *testing.T) {
 	}
 }
 
-func TestEnumField_DecodeUnknownTagStillReturnsCtor(t *testing.T) {
-	// Defensive: a row whose enum column holds a value outside the
-	// accepted set: e.g. someone manually edited the DB or the
-	// CHECK constraint hasn't been applied yet, should still
-	// surface as a VCtor so callers can detect it via pattern-
-	// matching, not silently coerce to a string.
+func TestEnumField_DecodeUnknownTagIsRefused(t *testing.T) {
+	// This test asserted the opposite, and the reason it gave was that a
+	// caller could then detect the stray value by pattern-matching. Mar
+	// cannot do that: every `case` is total over the constructors the type
+	// declares (ADR 0022), so a tag outside the set matches NO branch. The
+	// value came back as the declared type, and the failure surfaced
+	// somewhere downstream as "no case branch matched" — on a program the
+	// checker had proved total.
+	//
+	// A row can hold one of these: it predates a change to the type, or it
+	// was written by something that bypassed the CHECK constraint. Either
+	// way it is not a value of the type, and the read says so, naming the
+	// column and the set it should have been in.
 	f := enumField()
-	got := mustDecodeColumn(t, f, "Owner")
-	ctor, ok := got.(VCtor)
-	if !ok || ctor.Tag != "Owner" {
-		t.Fatalf("decode unknown = %v, want VCtor{Owner}", got)
+	_, err := decodeColumn("users", f, "Owner")
+	if err == nil {
+		t.Fatal("a tag the type does not declare is not a value of that type")
+	}
+	for _, want := range []string{"users", "Owner", "Member", "Admin"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the message must mention %q, got: %v", want, err)
+		}
 	}
 }
 
@@ -202,7 +213,7 @@ func TestBuildCreateTableSQL_EmitsCheckForEnum(t *testing.T) {
 // unexpected failure here should just stop the test.
 func mustDecodeColumn(t *testing.T, f EntityField, raw any) Value {
 	t.Helper()
-	v, err := decodeColumn(f, raw)
+	v, err := decodeColumn("t", f, raw)
 	if err != nil {
 		t.Fatalf("decodeColumn(%v): %v", raw, err)
 	}

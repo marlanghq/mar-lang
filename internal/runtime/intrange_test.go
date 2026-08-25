@@ -79,10 +79,10 @@ func TestStringToIntIsNothingOutsideTheRange(t *testing.T) {
 // disagreeing with the language, so it raises.
 func TestDatabaseIntegerOutOfRangeIsRefused(t *testing.T) {
 	f := EntityField{Name: "count", SQLType: "INTEGER"}
-	if _, err := decodeColumn(f, int64(MaxSafeInt)); err != nil {
+	if _, err := decodeColumn("t", f, int64(MaxSafeInt)); err != nil {
 		t.Fatalf("the largest representable Int was refused: %v", err)
 	}
-	_, err := decodeColumn(f, int64(MaxSafeInt)+1)
+	_, err := decodeColumn("t", f, int64(MaxSafeInt)+1)
 	if err == nil {
 		t.Fatal("a 64-bit row value was accepted as an Int")
 	}

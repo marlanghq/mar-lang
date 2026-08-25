@@ -3,6 +3,7 @@ package runtime
 import (
 	"database/sql"
 	"fmt"
+	"math"
 	"math/big"
 	"strings"
 	"sync"
@@ -523,9 +524,9 @@ func scanRow(rows *sql.Rows, entity VEntity) (VRecord, error) {
 	order := make([]string, len(entity.Fields))
 	for i, f := range entity.Fields {
 		order[i] = f.Name
-		v, err := decodeColumn(f, vals[i])
+		v, err := decodeColumn(entity.Table, f, vals[i])
 		if err != nil {
-			return VRecord{}, fmt.Errorf("column %s: %w", f.Name, err)
+			return VRecord{}, err
 		}
 		fields[f.Name] = v
 	}
@@ -536,16 +537,32 @@ func scanRow(rows *sql.Rows, entity VEntity) (VRecord, error) {
 // entity's column declaration. NULL on a NOT NULL column is treated as
 // the zero value (defensive: schema should prevent this in practice).
 //
-// It can fail for exactly one reason: SQLite's INTEGER is 64 bits wide and
-// Mar's Int is 53, so a row can hold a number the language cannot represent.
-// That is not a bad request from anyone: it is our own storage disagreeing
-// with the language, whether from data written before the bound existed, a
-// restore from another tool, or an external 64-bit id, so it raises rather
-// than rounding, and reaches the caller as a failed request.
+// A row is the third thing a Mar program receives that the type system did
+// not produce. A request body is checked against its declared type and a
+// service response is checked against its declared type; a row was not, and
+// SQLite is dynamically typed, so what a column HOLDS and what it was
+// DECLARED as are two different facts. This function knew the declaration
+// and used it only to pick a branch: anything the branch did not recognise
+// fell through to goValueToScalar, which reads whatever the database handed
+// back. Declared-type-first, database-type-as-silent-fallback — so a TEXT
+// column holding an integer arrived as an Int where the type said String.
+//
+// Every branch now either produces the declared type or fails naming the
+// table, the column and what was actually stored. The failure surfaces as a
+// failed read, which is the honest outcome: the alternative is a value that
+// violates its own type, and downstream that is a `case` with no matching
+// branch on a program the checker proved total.
+//
+// It can also fail because SQLite's INTEGER is 64 bits wide and Mar's Int is
+// 53, so a row can hold a number the language cannot represent. That is not a
+// bad request from anyone: it is our own storage disagreeing with the
+// language, whether from data written before the bound existed, a restore
+// from another tool, or an external 64-bit id, so it raises rather than
+// rounding.
 //
 // TIMESTAMP and DECIMAL are deliberately not bounded: they decode to VTime
 // and to an arbitrary-precision coefficient, neither of which is an Int.
-func decodeColumn(f EntityField, raw any) (Value, error) {
+func decodeColumn(table string, f EntityField, raw any) (Value, error) {
 	if raw == nil {
 		// All declared columns are NOT NULL today, so NULL shouldn't
 		// happen if migrations were applied correctly. Return the
@@ -561,34 +578,34 @@ func decodeColumn(f EntityField, raw any) (Value, error) {
 	}
 	switch f.SQLType {
 	case "INTEGER":
-		switch x := raw.(type) {
-		case int64:
-			if !inIntRange(x) {
-				return nil, intOutOfRange("the database", x)
-			}
-			return VInt{V: x}, nil
-		case float64:
-			return VInt{V: int64(x)}, nil
+		n, err := storedInt(table, f, raw)
+		if err != nil {
+			return nil, err
 		}
+		if !inIntRange(n) {
+			return nil, intOutOfRange("the database", n)
+		}
+		return VInt{V: n}, nil
+
 	case "TIMESTAMP":
 		// Stored as INTEGER under the hood; rehydrate to VTime so
 		// the user's record has `createdAt : Time`, not Int.
-		switch x := raw.(type) {
-		case int64:
-			return VTime{Millis: x}, nil
-		case float64:
-			return VTime{Millis: int64(x)}, nil
+		n, err := storedInt(table, f, raw)
+		if err != nil {
+			return nil, err
 		}
+		return VTime{Millis: n}, nil
+
 	case "DECIMAL":
 		// Stored as an INTEGER coefficient at the column's fixed
 		// scale; rehydrate to a Decimal so `amount : Decimal` reads
 		// back as 12.34, never a bare 1234.
-		switch x := raw.(type) {
-		case int64:
-			return VDecimal{Coef: big.NewInt(x), Scale: f.DecimalScale}, nil
-		case float64:
-			return VDecimal{Coef: big.NewInt(int64(x)), Scale: f.DecimalScale}, nil
+		n, err := storedInt(table, f, raw)
+		if err != nil {
+			return nil, err
 		}
+		return VDecimal{Coef: big.NewInt(n), Scale: f.DecimalScale}, nil
+
 	case "BOOLEAN":
 		switch x := raw.(type) {
 		case bool:
@@ -596,33 +613,94 @@ func decodeColumn(f EntityField, raw any) (Value, error) {
 		case int64:
 			return VBool{V: x != 0}, nil
 		}
+		return nil, storedWrong(table, f, raw, "true or false")
+
 	case "TEXT":
-		var s string
+		var str string
 		switch x := raw.(type) {
 		case string:
-			s = x
+			str = x
 		case []byte:
-			s = string(x)
+			str = string(x)
 		default:
-			return goValueToScalar(raw)
+			return nil, storedWrong(table, f, raw, "text")
 		}
-		// Enum column: rehydrate the ctor from its tag. Membership in
-		// AcceptedCtors is enforced; an unknown value (e.g. a row
-		// written by something that bypassed the CHECK constraint)
-		// surfaces as a zero-arg ctor with the raw tag so it's at
-		// least visible in the model rather than silently coerced.
-		if f.AcceptedCtors != nil {
-			for _, accepted := range f.AcceptedCtors {
-				if accepted == s {
-					return VCtor{Tag: s}, nil
-				}
+		if f.AcceptedCtors == nil {
+			return VString{V: str}, nil
+		}
+		// Enum column: rehydrate the ctor from its tag. The comment
+		// here used to say membership was enforced, and the code
+		// below it returned the same thing whether or not the tag was
+		// in the set — so a value the type no longer declares came
+		// back AS that type. The old rationale was that a
+		// pattern-match could then detect it, which is not something
+		// Mar can do: every `case` is total over the declared
+		// constructors (ADR 0022), so an undeclared tag matches no
+		// branch at all and the read surfaced as
+		// "no case branch matched" somewhere downstream.
+		for _, accepted := range f.AcceptedCtors {
+			if accepted == str {
+				return VCtor{Tag: str}, nil
 			}
-			// Unknown value: still return as a ctor so pattern-matches
-			// can detect it. Caller can choose how to handle.
-			return VCtor{Tag: s}, nil
 		}
-		return VString{V: s}, nil
+		return nil, fmt.Errorf(
+			"%s.%s holds %q, which is not one of %s — a row predating a change to the type, "+
+				"or written by something that bypassed the CHECK constraint",
+			table, f.Name, str, strings.Join(quoteEach(f.AcceptedCtors), ", "))
 	}
-	// Fallback: best-effort scalar conversion.
-	return goValueToScalar(raw)
+	return nil, storedWrong(table, f, raw, "a value of its declared type")
+}
+
+// storedInt reads a column stored as an integer. SQLite is dynamically typed,
+// so an INTEGER column can hold a REAL: 3.7 used to become 3 silently, on a
+// column whose declared type says Int. An integral float is the same number
+// and is accepted; anything else is not that number and is refused.
+func storedInt(table string, f EntityField, raw any) (int64, error) {
+	switch x := raw.(type) {
+	case int64:
+		return x, nil
+	case float64:
+		if x != math.Trunc(x) || math.IsNaN(x) {
+			return 0, fmt.Errorf("%s.%s holds %v, which is not a whole number", table, f.Name, x)
+		}
+		// Integral is not the same as representable. Converting a float
+		// outside int64's range is implementation-defined in Go, so 1e300
+		// came out as some arbitrary number and kept going — a saturated
+		// value reads as real data, which is the failure mode this whole
+		// function exists to remove. The bound is written as a comparison
+		// against 2^63 because float64(math.MaxInt64) rounds UP to exactly
+		// that, so `x <= float64(math.MaxInt64)` would let 2^63 through.
+		const twoTo63 = 9223372036854775808.0
+		if math.IsInf(x, 0) || x >= twoTo63 || x < -twoTo63 {
+			return 0, fmt.Errorf("%s.%s holds %v, which is too large to store as a whole number",
+				table, f.Name, x)
+		}
+		return int64(x), nil
+	}
+	return 0, storedWrong(table, f, raw, "a whole number")
+}
+
+// storedWrong says what the column was declared to hold and what it actually
+// holds, in the vocabulary of whoever wrote the entity rather than Go's.
+func storedWrong(table string, f EntityField, raw any, want string) error {
+	return fmt.Errorf("%s.%s should hold %s, but the row holds %s",
+		table, f.Name, want, describeStored(raw))
+}
+
+func describeStored(raw any) string {
+	switch x := raw.(type) {
+	case nil:
+		return "nothing"
+	case int64:
+		return fmt.Sprintf("the whole number %d", x)
+	case float64:
+		return fmt.Sprintf("the number %v", x)
+	case bool:
+		return fmt.Sprintf("%v", x)
+	case string:
+		return fmt.Sprintf("the text %q", x)
+	case []byte:
+		return fmt.Sprintf("the text %q", string(x))
+	}
+	return fmt.Sprintf("a %T", raw)
 }
