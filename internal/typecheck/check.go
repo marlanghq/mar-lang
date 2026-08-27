@@ -516,6 +516,14 @@ func CheckModuleWith(
 		}
 	}
 
+	// A `Service` whose request or response type is still open is not a
+	// contract: the two sides of the wire would instantiate it separately.
+	// Asked here because it reads the FINAL type of each value, which Pass 4
+	// has just settled. See servicecontract.go.
+	if err := checkServiceContracts(mod, res.ValueTypes, CtorsFromEnv(valueEnv)); err != nil {
+		return nil, err
+	}
+
 	// Reject illegal dependency cycles (non-function values that
 	// reference themselves directly or transitively). The runtime would
 	// otherwise eagerly evaluate them and hit a placeholder, producing
