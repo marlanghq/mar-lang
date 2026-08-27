@@ -86,8 +86,18 @@ type MigrationStep struct {
 	Column string
 
 	// SQL is the statement that would (or did) execute. Empty for
-	// blocked or note-only steps.
+	// blocked or note-only steps, and empty when a step carries SQLs
+	// instead.
 	SQL string
+
+	// SQLs is a step that takes more than one statement, run as one
+	// transaction. It exists because the obvious spelling does not work:
+	// handing "BEGIN; ...; COMMIT" to a single db.Exec does NOT roll back
+	// on the driver we ship — a rebuild whose CREATE failed left the DROP
+	// committed and the table simply gone, with later writes going through
+	// as if nothing had happened. A migration is the one place where half
+	// of something is worse than none of it.
+	SQLs []string
 
 	// Description is a one-line human summary used in plan/status output
 	// and in the audit table's `migration_kind` column. Stable:
@@ -324,13 +334,8 @@ func (m *Migrator) Run() (RunSummary, error) {
 		case StepNoteOrphanTable:
 			notes = append(notes, step.Description)
 		default:
-			if _, err := m.db.Exec(step.SQL); err != nil {
-				return RunSummary{}, fmt.Errorf("migration %s on %s failed: %w",
-					step.migrationKind(), step.Table, err)
-			}
-			if err := m.recordMigration(step); err != nil {
-				return RunSummary{}, fmt.Errorf("audit migration %s on %s: %w",
-					step.migrationKind(), step.Table, err)
+			if err := m.applyStep(step); err != nil {
+				return RunSummary{}, err
 			}
 			applied = append(applied, step)
 		}
@@ -340,6 +345,43 @@ func (m *Migrator) Run() (RunSummary, error) {
 		Notes:   notes,
 		Elapsed: time.Since(start),
 	}, nil
+}
+
+// applyStep runs one step and records it, as one transaction.
+//
+// The audit row goes inside the transaction with the DDL it describes, not
+// after it: a crash between the two would leave the ledger claiming a
+// migration that did not happen, and the next boot would trust it.
+func (m *Migrator) applyStep(step MigrationStep) error {
+	stmts := step.SQLs
+	if len(stmts) == 0 {
+		stmts = []string{step.SQL}
+	}
+	tx, err := m.db.Begin()
+	if err != nil {
+		return fmt.Errorf("migration %s on %s: begin: %w",
+			step.migrationKind(), step.Table, err)
+	}
+	for _, stmt := range stmts {
+		if strings.TrimSpace(stmt) == "" {
+			continue
+		}
+		if _, err := tx.Exec(stmt); err != nil {
+			_ = tx.Rollback()
+			return fmt.Errorf("migration %s on %s failed: %w",
+				step.migrationKind(), step.Table, err)
+		}
+	}
+	if err := m.recordMigrationTx(tx, step); err != nil {
+		_ = tx.Rollback()
+		return fmt.Errorf("audit migration %s on %s: %w",
+			step.migrationKind(), step.Table, err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("migration %s on %s: commit: %w",
+			step.migrationKind(), step.Table, err)
+	}
+	return nil
 }
 
 // Plan computes the full diff without applying it. Returns even
@@ -455,9 +497,28 @@ func (m *Migrator) ensureMigrationMetaTable() error {
 func (m *Migrator) recordMigration(step MigrationStep) error {
 	_, err := m.db.Exec(
 		`INSERT INTO _mar_schema_migrations (table_name, migration_kind, sql_text, applied_at) VALUES (?, ?, ?, ?)`,
-		step.Table, step.migrationKind(), step.SQL, time.Now().UnixMilli(),
+		step.Table, step.migrationKind(), step.recordedSQL(), time.Now().UnixMilli(),
 	)
 	return err
+}
+
+// recordMigrationTx is the same row, written inside the transaction that
+// carries the step's own statements. See applyStep.
+func (m *Migrator) recordMigrationTx(tx *sql.Tx, step MigrationStep) error {
+	_, err := tx.Exec(
+		`INSERT INTO _mar_schema_migrations (table_name, migration_kind, sql_text, applied_at) VALUES (?, ?, ?, ?)`,
+		step.Table, step.migrationKind(), step.recordedSQL(), time.Now().UnixMilli(),
+	)
+	return err
+}
+
+// recordedSQL is what the audit row shows: one statement as itself, several
+// joined the way an operator would paste them back.
+func (s MigrationStep) recordedSQL() string {
+	if len(s.SQLs) > 0 {
+		return strings.Join(s.SQLs, "; ")
+	}
+	return s.SQL
 }
 
 // ---------- Diff ----------
@@ -557,6 +618,31 @@ func (m *Migrator) planEntity(ent VEntity) ([]MigrationStep, error) {
 		}
 	}
 
+	// The constructor set of an enum column, which the storage-type diff
+	// cannot see: a TEXT column with any set is just TEXT. The old set is
+	// recorded exactly in the CHECK the migrator itself wrote.
+	enumSteps, err := m.planEnumSets(ent, hasRows)
+	if err != nil {
+		return nil, err
+	}
+	steps = append(steps, enumSteps...)
+
+	// Columns the live table has and the declaration does not.
+	//
+	// planEntity walked the DECLARED fields and never looked at what was
+	// left over, so removing a field from an entity emitted nothing at all.
+	// That is fine when the leftover column can hold a row on its own, and
+	// fatal when it cannot: Repo.create names only declared columns, so
+	// SQLite has to supply a value for an undeclared NOT NULL column with
+	// no default, and cannot. Every create then failed inside a request
+	// with a constraint error naming a column the source no longer
+	// mentions, on an app that booted clean.
+	orphanSteps, err := m.planOrphanColumns(ent, live)
+	if err != nil {
+		return nil, err
+	}
+	steps = append(steps, orphanSteps...)
+
 	// Unique indexes: emit unconditionally as IF NOT EXISTS. The
 	// migrator doesn't track per-index drift: an index that already
 	// matches is a no-op; an index that doesn't exist yet gets
@@ -565,6 +651,125 @@ func (m *Migrator) planEntity(ent VEntity) ([]MigrationStep, error) {
 	// "index drift" step later if it becomes a real problem.
 	steps = append(steps, planUniqueIndexes(ent)...)
 	return steps, nil
+}
+
+// planOrphanColumns decides what to do about columns the live table has and
+// the entity no longer declares.
+//
+// Keeping them is the existing policy for orphan TABLES, and it is right for
+// the same reason: real apps accumulate legacy fields, and the migrator does
+// not delete data it was not asked to delete. So a leftover column that can
+// hold a row on its own is a note.
+//
+// A leftover column that is NOT NULL with no default cannot hold a row on its
+// own, and that is a different situation: the app is already broken, it just
+// does not know yet. Blocking at boot is strictly better than what happens
+// today, which is a listener that opens and then fails every write with a
+// SQLite constraint error from inside a request.
+//
+// It is a block rather than an automatic DROP COLUMN because dropping a
+// column deletes what it holds for every row, forever — the only
+// irreversible thing the migrator could do. The hint copies first.
+func (m *Migrator) planOrphanColumns(ent VEntity, live []tableInfoRow) ([]MigrationStep, error) {
+	declared := map[string]bool{}
+	for _, f := range ent.Fields {
+		declared[f.Name] = true
+	}
+	var steps []MigrationStep
+	for _, row := range live {
+		if declared[row.Name] {
+			continue
+		}
+		if row.NotNull == 0 || row.Default != nil {
+			steps = append(steps, MigrationStep{
+				Kind:  StepNoteOrphanTable,
+				Table: ent.Table,
+				Description: fmt.Sprintf(
+					"column %s.%s has no field declaring it; keeping the data. If no longer needed, drop with: ALTER TABLE %s DROP COLUMN %s;",
+					ent.Table, row.Name, quoteIdent(ent.Table), quoteIdent(row.Name)),
+			})
+			continue
+		}
+		indexes, err := m.indexesOnColumn(ent.Table, row.Name)
+		if err != nil {
+			return nil, err
+		}
+		steps = append(steps, MigrationStep{
+			Kind:  StepBlocked,
+			Table: ent.Table,
+			Error: orphanRequiredColumnError(ent.Table, row.Name, indexes),
+		})
+		return steps, nil
+	}
+	return steps, nil
+}
+
+// orphanRequiredColumnError explains a column that no longer has a field and
+// cannot be left alone. The script copies the data to a side table before it
+// drops anything, so following it verbatim never loses the column's contents.
+func orphanRequiredColumnError(table, column string, indexes []string) error {
+	keep := table + "_" + column + "_kept"
+	nl := "\n"
+	var script strings.Builder
+	for _, idx := range indexes {
+		// DROP COLUMN refuses while an index still mentions the column.
+		script.WriteString("    DROP INDEX " + quoteIdent(idx) + ";" + nl)
+	}
+	script.WriteString("    CREATE TABLE " + quoteIdent(keep) + " AS SELECT rowid, " +
+		quoteIdent(column) + " FROM " + quoteIdent(table) + ";" + nl)
+	script.WriteString("    ALTER TABLE " + quoteIdent(table) + " DROP COLUMN " + quoteIdent(column) + ";" + nl)
+	return &BlockedMigrationError{
+		Summary: fmt.Sprintf(
+			"migration blocked for entity `%s`: the table still has a required column `%s` that no field declares",
+			table, column),
+		Hint: "Every `Repo.create` names only the declared columns, so the database has to " +
+			"supply a value for `" + column + "` and it has none." + nl + nl +
+			script.String() + nl +
+			"Run that and restart. The first line keeps the old values in `" + keep +
+			"`, which you can drop once the app is up and the data looks right.",
+	}
+}
+
+// indexesOnColumn lists the indexes that mention a column, because DROP
+// COLUMN refuses while one still does.
+func (m *Migrator) indexesOnColumn(table, column string) ([]string, error) {
+	rows, err := m.db.Query(`SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = ? AND name NOT LIKE 'sqlite_%'`, table)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var names []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, err
+		}
+		names = append(names, name)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	var hits []string
+	for _, name := range names {
+		info, err := m.db.Query(`PRAGMA index_info(` + quoteIdent(name) + `)`)
+		if err != nil {
+			return nil, err
+		}
+		for info.Next() {
+			var seqno, cid int
+			var col any
+			if err := info.Scan(&seqno, &cid, &col); err != nil {
+				info.Close()
+				return nil, err
+			}
+			if got, ok := col.(string); ok && got == column {
+				hits = append(hits, name)
+				break
+			}
+		}
+		info.Close()
+	}
+	return hits, nil
 }
 
 // planUniqueIndexes turns the entity's UniqueIndexes slice into a
@@ -832,7 +1037,7 @@ func assertCompatibleColumn(ent VEntity, f EntityField, live tableInfoRow, hasRo
 				return &MigrationStep{
 					Kind:        StepRecreateEmpty,
 					Table:       ent.Table,
-					SQL:         buildRecreateEmptySQL(ent),
+					SQLs:        buildRecreateEmptySQL(ent),
 					Description: fmt.Sprintf("recreate empty table %s (nullability change)", ent.Table),
 				}
 			}
@@ -890,6 +1095,13 @@ type tableInfoRow struct {
 	Type    string
 	NotNull int
 	PK      int
+
+	// Default is the column's DEFAULT expression as SQLite reports it, or
+	// nil when it has none. PRAGMA has always returned it and readTableInfo
+	// has always scanned it into a discarded variable — it is what decides
+	// whether an undeclared NOT NULL column merely sits there or breaks
+	// every insert.
+	Default any
 }
 
 func (m *Migrator) tableExists(name string) (bool, error) {
@@ -943,6 +1155,7 @@ func (m *Migrator) readTableInfo(name string) ([]tableInfoRow, error) {
 			Type:    colType,
 			NotNull: notNull,
 			PK:      pk,
+			Default: dfltValue,
 		})
 	}
 	return out, rows.Err()
@@ -1004,13 +1217,19 @@ func buildCreateTableSQLNew(e VEntity) string {
 // buildRecreateEmptySQL drops the (empty) table and recreates it
 // with the current declared schema. Wrapped in a transaction so a
 // failure mid-recreate doesn't leave the DB without the table.
-func buildRecreateEmptySQL(e VEntity) string {
+func buildRecreateEmptySQL(e VEntity) []string {
 	cols := make([]string, len(e.Fields))
 	for i, f := range e.Fields {
 		cols[i] = columnDefSQL(f)
 	}
-	return "BEGIN; DROP TABLE " + quoteIdent(e.Table) + "; CREATE TABLE " +
-		quoteIdent(e.Table) + " (" + strings.Join(cols, ", ") + "); COMMIT"
+	// Two statements, run as one transaction by applyStep. This used to be
+	// one string reading "BEGIN; DROP TABLE ...; CREATE TABLE ...; COMMIT"
+	// handed to a single Exec, which does not roll back on the driver we
+	// ship: a CREATE that failed left the DROP committed and the table gone.
+	return []string{
+		"DROP TABLE " + quoteIdent(e.Table),
+		"CREATE TABLE " + quoteIdent(e.Table) + " (" + strings.Join(cols, ", ") + ")",
+	}
 }
 
 // sqlTypeForDDL returns the storage type to write into the CREATE /
