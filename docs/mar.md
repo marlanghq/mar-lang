@@ -531,7 +531,7 @@ addTask : Service { name : String } AddTaskOutcome
 addTask = Service.declare POST "/tasks"
 ```
 
-`Service.declare VERB "/path"` fixes the HTTP method (`GET` / `POST` / `PUT` / `PATCH` / `DELETE`) and the path; the type annotation fixes `req` and `resp`. A path may carry typed `{name:Type}` params that name fields of the request record: `getTask`'s `{id:Int}` binds `req.id` into the URL. The backend pairs each contract with a handler, the frontend calls it:
+`Service.declare VERB "/path"` fixes the HTTP method (`GET` / `POST` / `PUT` / `PATCH` / `DELETE`) and the path; the type annotation fixes `req` and `resp`, and is required: without it the contract infers as `Service a b`, which the two sides would instantiate separately, so `mar check` refuses it. A path may carry typed `{name:Type}` params that name fields of the request record: `getTask`'s `{id:Int}` binds `req.id` into the URL. The backend pairs each contract with a handler, the frontend calls it:
 
 ```elm
 Service.declare       : Method -> String -> Service req resp

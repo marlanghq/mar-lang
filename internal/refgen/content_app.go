@@ -801,10 +801,12 @@ var appExamples = map[string][]string{
 	"Task.forEach":  {"Task.forEach (\\n -> Task.succeed ()) [ 1, 2, 3 ]"},
 
 	// Service. The declaration is the thing both sides share, so it gets a name
-	// instead of being spelled out again inside every call.
+	// instead of being spelled out again inside every call — and an annotation,
+	// without which the two sides instantiate its types separately and it stops
+	// being a contract at all.
 	"Service.declare":       {"Service.declare GET \"/tasks\"", "Service.declare POST \"/task/{id:Int}/done\""},
-	"Service.implement":     {"listTasks = Service.declare GET \"/tasks\"\n\nservedOnTheBackend = Service.implement listTasks (\\request -> Task.succeed [])"},
-	"Service.call":          {"listTasks = Service.declare GET \"/tasks\"\n\nfetchedFromTheFrontend = Service.call listTasks () (\\result -> result)"},
+	"Service.implement":     {"listTasks : Service () (List String)\nlistTasks = Service.declare GET \"/tasks\"\n\nservedOnTheBackend = Service.implement listTasks (\\request -> Task.succeed [])"},
+	"Service.call":          {"listTasks : Service () (List String)\nlistTasks = Service.declare GET \"/tasks\"\n\nfetchedFromTheFrontend = Service.call listTasks () (\\result -> result)"},
 	"Service.Offline":       {"Service.errorToString Service.Offline"},
 	"Service.Unauthorized":  {"Service.errorToString Service.Unauthorized"},
 	"Service.RateLimited":   {"Service.errorToString Service.RateLimited"},
@@ -875,7 +877,7 @@ var appExamples = map[string][]string{
 	"Auth.TooManyAttempts": {"Auth.TooManyAttempts"},
 	"Auth.me":              {"type Msg = Me (Result String (Maybe { email : String }))\n\nwho = Auth.me (\\result -> Me result)"},
 	"Auth.logout":          {"type Msg = LoggedOut (Result String ())\n\nsignOut = Auth.logout (\\result -> LoggedOut result)"},
-	"Auth.protect":         {"whoAmI = Service.declare GET \"/me\"\n\nsignedInOnly = Auth.protect whoAmI (\\request user -> Task.succeed user)"},
+	"Auth.protect":         {"whoAmI : Service () { email : String }\nwhoAmI = Service.declare GET \"/me\"\n\nsignedInOnly = Auth.protect whoAmI (\\request user -> Task.succeed user)"},
 	"Auth.requireRole":     {"stats = Service.implement (Service.declare GET \"/stats\") (\\request -> Task.succeed ())\n\nadminsOnly = Auth.requireRole \"admin\" stats"},
 	"Auth.requireOwner":    {"editTask = Service.implement (Service.declare POST \"/task\") (\\request -> Task.succeed ())\n\nfindTheTask = \\request user -> Task.succeed Nothing\n\nownersOnly = Auth.requireOwner findTheTask (\\task -> task.userId) editTask"},
 	"Auth.authorize":       {"editTask = Service.implement (Service.declare POST \"/task\") (\\request -> Task.succeed ())\n\nfindTheTask = \\request user -> Task.succeed Nothing\n\nmayEdit = \\request user task -> True\n\nguarded = Auth.authorize findTheTask mayEdit editTask"},
