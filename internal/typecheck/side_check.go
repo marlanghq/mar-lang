@@ -306,6 +306,12 @@ func sortIssues(issues []ShapeIssue) {
 		if issues[i].Module != issues[j].Module {
 			return issues[i].Module < issues[j].Module
 		}
-		return issues[i].Pos.Line < issues[j].Pos.Line
+		if issues[i].Pos.Line != issues[j].Pos.Line {
+			return issues[i].Pos.Line < issues[j].Pos.Line
+		}
+		// Several issues can share one position — every row-type mismatch
+		// is reported at the `Entity.define` call — so the line alone is
+		// not a total order.
+		return issues[i].Message < issues[j].Message
 	})
 }

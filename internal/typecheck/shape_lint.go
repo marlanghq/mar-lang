@@ -107,6 +107,15 @@ type entitySchema struct {
 	tableName string // the string literal passed to Entity.define
 	columns   map[string]columnInfo
 	order     []string // declaration order, for stable error messages
+
+	// define is the `Entity.define { ... }` expression itself, and module
+	// and bind name the declaration it came from. They exist so the row
+	// type can be looked up and compared with these columns: the schema
+	// says what the database holds, the row type says what the program
+	// believes it reads back, and nothing was checking that they agree.
+	define ast.Expr
+	module string
+	bind   string
 }
 
 // RunShapeLint walks every parsed module and reports record-shape
@@ -137,6 +146,7 @@ func RunShapeLint(mods []*ast.Module, exprTypes map[ast.Expr]Type) []ShapeIssue 
 		return issues
 	}
 	ctx := lintCtx{schemas: schemas, exprTypes: exprTypes}
+	issues = append(issues, checkRowTypesAgainstSchemas(schemas, ctx)...)
 	for _, m := range mods {
 		modName := strings.Join(m.Name, ".")
 		for _, d := range m.Decls {
@@ -215,9 +225,11 @@ func extractEntities(mods []*ast.Module) (map[string]entitySchema, []ShapeIssue)
 			}
 			nameDecls[parse.nameLiteral] = nameDeclSite{module: modName, pos: parse.namePos}
 
-			out[v.Name] = parse.schema
+			schema := parse.schema
+			schema.define, schema.module, schema.bind = v.Body, modName, v.Name
+			out[v.Name] = schema
 			if modName != "" {
-				out[modName+"."+v.Name] = parse.schema
+				out[modName+"."+v.Name] = schema
 			}
 		}
 	}
@@ -897,4 +909,118 @@ func checkRecordTypeAgainstSchema(e ast.Expr, schema entitySchema, op string, re
 		})
 	}
 	return issues
+}
+
+// checkRowTypesAgainstSchemas compares what an entity SAYS it reads back with
+// what its columns actually hold.
+//
+// `users : Entity User` names two things that were never compared: the row
+// type, which every read is typed as, and the columns, which decide what a
+// read produces. A disagreement is not caught anywhere, and the sharpest one
+// breaks the totality guarantee. Measured end to end:
+//
+//	tag : Maybe String   over a NOT NULL TEXT column
+//	mar check            passes, and PROVES the `case` over it total
+//	Repo.create ... { tag = Just "verde" }   the Just is unwrapped, "verde" stored
+//	Repo.all             hands back a String where the type says Maybe String
+//	case tag of Just t -> ... ; Nothing -> ...   no case branch matched
+//
+// ADR 0022 says every `case` is total. This is the one way a checked program
+// reaches a branch that cannot match, so it is refused where it is written.
+//
+// The other direction — a COLUMN with no field in the row type — is left
+// alone. Measured, it reads back fine: the record carries a field the type
+// does not mention, and no program can observe it because naming it would not
+// type-check. Where it does bite is `Repo.create`, which must supply every
+// column, and the call site already says so.
+func checkRowTypesAgainstSchemas(schemas map[string]entitySchema, ctx lintCtx) []ShapeIssue {
+	if ctx.exprTypes == nil {
+		return nil
+	}
+	var issues []ShapeIssue
+	seen := map[string]bool{} // each schema is registered twice (bare and qualified)
+	for _, schema := range schemas {
+		if schema.define == nil || seen[schema.module+"."+schema.bind] {
+			continue
+		}
+		seen[schema.module+"."+schema.bind] = true
+		row, ok := entityRowType(schema.define, ctx)
+		if !ok {
+			continue
+		}
+		issues = append(issues, compareRowWithColumns(row, schema)...)
+	}
+	sortIssues(issues)
+	return issues
+}
+
+// entityRowType reads the `T` out of the `Entity T` an `Entity.define` call
+// has. A row type that is still open or a variable says nothing to compare.
+func entityRowType(define ast.Expr, ctx lintCtx) (TRecord, bool) {
+	t, ok := ctx.exprTypes[define]
+	if !ok {
+		return TRecord{}, false
+	}
+	con, ok := StripForall(t).(TCon)
+	if !ok || con.Name != "Entity" || len(con.Args) != 1 {
+		return TRecord{}, false
+	}
+	rec, ok := StripForall(con.Args[0]).(TRecord)
+	if !ok || rec.Tail != nil {
+		return TRecord{}, false
+	}
+	return rec, true
+}
+
+func compareRowWithColumns(row TRecord, schema entitySchema) []ShapeIssue {
+	var issues []ShapeIssue
+	pos := schema.define.Position()
+	for _, name := range row.Order {
+		col, known := schema.columns[name]
+		if !known {
+			issues = append(issues, ShapeIssue{
+				Module: schema.module,
+				Pos:    pos,
+				Message: fmt.Sprintf(
+					"Entity.define: the row type of %q has a field %q and %q has no such column (has: %s).\n"+
+						"  Every read is typed as the row type and produces the columns, so that field "+
+						"is missing from every record the database hands back",
+					schema.bind, name, schema.tableName, strings.Join(schema.order, ", ")),
+			})
+			continue
+		}
+		if isOptional(row.Fields[name]) {
+			issues = append(issues, ShapeIssue{
+				Module: schema.module,
+				Pos:    pos,
+				Message: fmt.Sprintf(
+					"Entity.define: the row type of %q says %q is optional, and the column always holds a value.\n"+
+						"  A `Just` written there is unwrapped and stored bare, and the read hands back "+
+						"a %s where the type says `Maybe %s` — so a `case` over it reaches "+
+						"\"no case branch matched\", on a program the checker proved total.\n"+
+						"  Declare it as `%s`",
+					schema.bind, name, col.kind, col.kind, col.kind),
+			})
+			continue
+		}
+		if msg := checkInferredAgainstKind(row.Fields[name], col.kind); msg != "" {
+			issues = append(issues, ShapeIssue{
+				Module: schema.module,
+				Pos:    pos,
+				Message: fmt.Sprintf(
+					"Entity.define: the row type of %q says %q is %s; the column holds %s.\n"+
+						"  Every read is typed as the row type, so each row comes back as something "+
+						"its own type does not describe",
+					schema.bind, name, msg[len("got "):], col.kind),
+			})
+		}
+	}
+	return issues
+}
+
+// isOptional recognises `Maybe X`, which is the shape with no honest reading
+// against a column that is always filled.
+func isOptional(t Type) bool {
+	con, ok := StripForall(t).(TCon)
+	return ok && con.Name == "Maybe" && len(con.Args) == 1
 }
