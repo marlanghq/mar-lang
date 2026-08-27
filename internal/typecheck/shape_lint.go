@@ -551,16 +551,20 @@ func matchRepoOp(app *ast.EApp, ctx lintCtx) []ShapeIssue {
 		entityExpr = args[0]
 		recordExpr = args[2]
 	}
-	rec, ok := recordExpr.(*ast.ERecord)
-	if !ok {
-		return nil
-	}
 	name := resolveEntityName(entityExpr)
 	schema, ok := ctx.schemas[name]
 	if !ok {
 		return nil
 	}
-	return checkRecordAgainstSchema(rec, schema, "Repo."+op, requireFull, ctx)
+	if rec, isLiteral := recordExpr.(*ast.ERecord); isLiteral {
+		return checkRecordAgainstSchema(rec, schema, "Repo."+op, requireFull, ctx)
+	}
+	// The record does not have to be written at the call site to be known.
+	// Binding it to a name one line above used to hide it completely:
+	// measured, `Repo.findBy users { emial = "ada" }` is a shape error and
+	// `payload = { emial = "ada" }` followed by `Repo.findBy users payload`
+	// checks clean and answers 500 to every request.
+	return checkRecordTypeAgainstSchema(recordExpr, schema, "Repo."+op, requireFull, ctx)
 }
 
 // matchAuthConfig recognizes Auth.config { entity = X, signup = (\e -> {...}) }
@@ -833,4 +837,64 @@ func checkLiteralAgainstKind(e ast.Expr, kind columnKind) string {
 		}
 	}
 	return "" // non-literal: skip
+}
+
+// checkRecordTypeAgainstSchema is checkRecordAgainstSchema for a record that
+// arrives as a value rather than as syntax.
+//
+// It speaks only about a CLOSED record type. An open one (`{ r | x : Int }`)
+// constrains the fields it names and says nothing about the rest, so a missing
+// column there is not a missing column; a type variable says nothing at all.
+// Both are passed over, because a lint that guesses is worse than one that is
+// quiet.
+func checkRecordTypeAgainstSchema(e ast.Expr, schema entitySchema, op string, requireFull bool, ctx lintCtx) []ShapeIssue {
+	if ctx.exprTypes == nil {
+		return nil
+	}
+	t, ok := ctx.exprTypes[e]
+	if !ok {
+		return nil
+	}
+	rec, ok := StripForall(t).(TRecord)
+	if !ok || rec.Tail != nil {
+		return nil
+	}
+	pos := e.Position()
+	var issues []ShapeIssue
+	seen := map[string]bool{}
+	for _, fname := range rec.Order {
+		seen[fname] = true
+		col, known := schema.columns[fname]
+		if !known {
+			issues = append(issues, ShapeIssue{
+				Pos: pos,
+				Message: fmt.Sprintf("%s: field %q is not a column of %q (have: %s)",
+					op, fname, schema.tableName, strings.Join(schema.order, ", ")),
+			})
+			continue
+		}
+		if msg := checkInferredAgainstKind(rec.Fields[fname], col.kind); msg != "" {
+			issues = append(issues, ShapeIssue{
+				Pos:     pos,
+				Message: fmt.Sprintf("%s: field %q expects %s; %s", op, fname, col.kind, msg),
+			})
+		}
+	}
+	if !requireFull {
+		return issues
+	}
+	for _, name := range schema.order {
+		col := schema.columns[name]
+		// Serial columns are filled by the database, and a timestamp is
+		// typically threaded in through an effect chain — the same two
+		// exemptions the literal path makes, for the same reasons.
+		if col.serial || col.kind == kindTime || seen[name] {
+			continue
+		}
+		issues = append(issues, ShapeIssue{
+			Pos:     pos,
+			Message: fmt.Sprintf("%s: missing column %q (%s) on %q", op, name, col.kind, schema.tableName),
+		})
+	}
+	return issues
 }
