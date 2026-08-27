@@ -491,6 +491,11 @@ func marValueToSQLForField(field *EntityField, v Value) (any, error) {
 		}
 		return coef, nil
 	}
+	if field != nil {
+		return storableAs(*field, v)
+	}
+	// No column in hand: a filter built without one. There is nothing to
+	// check against, so this stays a transcription.
 	switch x := v.(type) {
 	case VInt:
 		return x.V, nil
@@ -501,8 +506,6 @@ func marValueToSQLForField(field *EntityField, v Value) (any, error) {
 	case VFloat:
 		return x.V, nil
 	case VTime:
-		// Caller didn't pass a field (e.g. filter without column
-		// info). Fall back to milliseconds: same wire format.
 		return x.Millis, nil
 	}
 	return nil, fmt.Errorf("unsupported value type %T", v)
@@ -703,4 +706,78 @@ func describeStored(raw any) string {
 		return fmt.Sprintf("the text %q", string(x))
 	}
 	return fmt.Sprintf("a %T", raw)
+}
+
+// storableAs is the write path's half of decodeColumn: a value is written as
+// the column was DECLARED, or it is refused.
+//
+// The read path was made to refuse a stored value that does not match its
+// column; the write path went on transcribing whatever it was handed,
+// switching on the VALUE and never on the column. SQLite has no opinion about
+// it — affinity converts, or stores the other type as-is — so an Int written
+// into a TEXT column comes back and fails on the READ, at a point with no
+// connection to the write that caused it.
+//
+// The two paths have to agree, or the read guard is a way of blaming later
+// code for what an earlier write did.
+func storableAs(f EntityField, v Value) (any, error) {
+	switch f.SQLType {
+	case "INTEGER":
+		if n, ok := v.(VInt); ok {
+			return n.V, nil
+		}
+		return nil, writeWrong(f, v, "a whole number")
+
+	case "TEXT":
+		if s, ok := v.(VString); ok {
+			return s.V, nil
+		}
+		return nil, writeWrong(f, v, "text")
+
+	case "BOOLEAN":
+		if b, ok := v.(VBool); ok {
+			return b.V, nil
+		}
+		return nil, writeWrong(f, v, "true or false")
+	}
+	// TIMESTAMP, DECIMAL and enum columns are handled above, before this is
+	// reached; anything else is a column kind this function has not been
+	// taught, and guessing is what it exists to stop.
+	return nil, writeWrong(f, v, "a value of its declared type")
+}
+
+func writeWrong(f EntityField, v Value, want string) error {
+	return fmt.Errorf(
+		"column %q holds %s, and the value being written is %s.\n"+
+			"  It would be stored as it is and refused on the way back out, at a point "+
+			"with nothing to connect it to this write",
+		f.Name, want, describeValueKind(v))
+}
+
+// describeValueKind names a value the way the language does, not the way Go
+// does: a `%T` reading `runtime.VCtor` tells a developer nothing.
+func describeValueKind(v Value) string {
+	switch x := v.(type) {
+	case VInt:
+		return fmt.Sprintf("the whole number %d", x.V)
+	case VString:
+		return fmt.Sprintf("the text %q", x.V)
+	case VBool:
+		return fmt.Sprintf("%t", x.V)
+	case VFloat:
+		return fmt.Sprintf("the number %v", x.V)
+	case VTime:
+		return "a Time"
+	case VDecimal:
+		return "a Decimal"
+	case VCtor:
+		return fmt.Sprintf("the constructor `%s`", x.Tag)
+	case VList:
+		return "a list"
+	case VRecord:
+		return "a record"
+	case VUnit:
+		return "()"
+	}
+	return fmt.Sprintf("%T", v)
 }
