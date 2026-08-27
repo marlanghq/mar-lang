@@ -3,6 +3,7 @@ package runtime
 import (
 	"database/sql"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 )
@@ -66,10 +67,53 @@ var (
 // RegisterAuth captures the most recent Auth.config result so the
 // HTTP dispatcher can find it. The runtime sets this when evaluating
 // the user's Main module; subsequent reads are concurrent-safe.
-func RegisterAuth(a VAuth) {
+func RegisterAuth(a VAuth) error {
 	regMu.Lock()
+	defer regMu.Unlock()
+	if regAuth != nil {
+		if what := authDiffers(*regAuth, a); what != "" {
+			return fmt.Errorf(
+				"this program evaluates `Auth.config` twice, and the two disagree about %s.\n"+
+					"  Only one can be the app's authentication: the last one evaluated wins, "+
+					"and the other is simply gone — sign-in, the protected routes and the "+
+					"identity column all follow the winner.\n"+
+					"  Keep one `Auth.config`",
+				what)
+		}
+	}
 	regAuth = &a
-	regMu.Unlock()
+	return nil
+}
+
+// authDiffers names the first thing two configurations disagree about, and is
+// empty when they agree. Two identical registrations leave nothing to choose
+// between, so they are not a conflict — only a difference is.
+//
+// The function-valued fields are compared on whether they are present rather
+// than on identity: two closures are never equal in Go, and a program that
+// declares the same auth twice would then be refused for saying the same thing
+// twice.
+func authDiffers(a, b VAuth) string {
+	switch {
+	case a.Entity.Table != b.Entity.Table:
+		return fmt.Sprintf("which entity holds the users (`%s` and `%s`)", a.Entity.Table, b.Entity.Table)
+	case a.SignInPath != b.SignInPath:
+		return fmt.Sprintf("where signed-out visitors go (`%s` and `%s`)", a.SignInPath, b.SignInPath)
+	case a.EmailSubject != b.EmailSubject:
+		return fmt.Sprintf("the sign-in email subject (%q and %q)", a.EmailSubject, b.EmailSubject)
+	case a.SessionDuration != b.SessionDuration:
+		return fmt.Sprintf("how long a session lasts (%d and %d seconds)", a.SessionDuration, b.SessionDuration)
+	case (a.Role == nil) != (b.Role == nil):
+		return "whether the app models roles"
+	case (a.Signup == nil) != (b.Signup == nil):
+		return "whether there is a signup hook"
+	}
+	colA, _ := ResolveIdentityColumn(a)
+	colB, _ := ResolveIdentityColumn(b)
+	if colA != colB {
+		return fmt.Sprintf("which column identifies a user (`%s` and `%s`)", colA, colB)
+	}
+	return ""
 }
 
 // CurrentAuth returns the registered Auth, if any. Used by the HTTP
@@ -81,15 +125,26 @@ func CurrentAuth() *VAuth {
 	return regAuth
 }
 
-// ResetAuthForTesting clears the registered Auth so tests can run in
-// isolation without leaking state from previous runs. Production
-// code should never call this: `mar dev` and `mar-runtime` rely on
-// the auth registration sticking for the lifetime of the process.
-func ResetAuthForTesting() {
+// ResetAuth clears the registered Auth so a re-evaluation starts from the
+// source rather than from what a previous one left behind.
+//
+// This registry was the one global ResetForReload did not clear, and the
+// omission is visible: loading a program WITHOUT `Auth.config` after one that
+// had it leaves the old config live, so `mar dev` goes on mounting `/_auth/*`
+// and protecting routes with a configuration the source no longer contains.
+// Deleting `Auth.config` and saving did nothing until the process restarted.
+//
+// Clearing is safe because there is exactly one way in: evaluating
+// `Auth.config`, which a reload re-runs. A program that has auth gets it back
+// on the same pass that cleared it.
+func ResetAuth() {
 	regMu.Lock()
 	regAuth = nil
 	regMu.Unlock()
 }
+
+// ResetAuthForTesting is the old spelling, kept for the tests that call it.
+func ResetAuthForTesting() { ResetAuth() }
 
 // authBuiltins registers the language-level surface for authentication.
 //
@@ -228,7 +283,9 @@ func makeAuthConfig(args []Value) (Value, error) {
 		Role:            role,
 		SignInPath:      signInPath,
 	}
-	RegisterAuth(cfg)
+	if err := RegisterAuth(cfg); err != nil {
+		return nil, err
+	}
 	return cfg, nil
 }
 
@@ -530,18 +587,32 @@ func idColumnName(e VEntity) string {
 	return "id" // fallback; entities without serial PK will fail elsewhere
 }
 
-// identifyColumn applies the user-supplied identify projection to a
-// dummy record where every field is named-as-its-name, so we can read
-// back which field name the projection picked. Implementation: look
-// up which field on the entity is a String (typical case) and trust
-// the convention of `\u -> u.email` mapping to the `email` field.
+// identifyColumn returns the column that holds a user's identity: the one the
+// sign-in flow queries, and the one the migrator makes UNIQUE.
 //
-// For v1, we accept this slight cheat: the identify projection is
-// expected to be `\u -> u.<emailFieldName>`, and we discover the
-// column name by trying common names. If multiple String columns
-// exist, the user can name their email column something obvious or
-// the framework will pick the first one.
+// `Auth.config` takes an `identify` projection precisely to say which field
+// that is, and until now the value was stored and never read. The column was
+// GUESSED instead — a field named `email`, else the first TEXT NOT NULL column
+// in declaration order — so an entity like
+//
+//	{ name : String, login : String }
+//
+// with `identify = \u -> u.login` was queried on `name`, and had a UNIQUE
+// index created on `name` that the app never asked for. Sign-in looked up the
+// wrong column, and two users could not share a name.
+//
+// The projection now decides. It is applied to a record whose every field
+// holds its own name, so `\u -> u.login` comes back as the string "login".
+// That is the technique the original comment described and did not do.
+//
+// The guess stays as a fallback for a projection that is not a plain field
+// read (`\u -> String.toLower u.email` answers with no field name at all).
+// CheckAuthIdentity refuses that at boot rather than leaving it to be
+// discovered by a user who cannot sign in.
 func identifyColumn(cfg VAuth) (string, error) {
+	if col, ok := projectedIdentityColumn(cfg); ok {
+		return col, nil
+	}
 	// Common case: an `email` column.
 	for _, f := range cfg.Entity.Fields {
 		if f.Name == "email" {
@@ -555,6 +626,76 @@ func identifyColumn(cfg VAuth) (string, error) {
 		}
 	}
 	return "", fmt.Errorf("auth: cannot determine email column on entity %q", cfg.Entity.Table)
+}
+
+// projectedIdentityColumn reads the field name `identify` picks.
+//
+// Applying a projection to a record of field-name strings is safe to do at
+// boot: `identify : user -> String` is a pure read in every shape the language
+// can express, and a projection that does something else simply fails to name
+// a field, which the caller treats as "not resolved".
+func projectedIdentityColumn(cfg VAuth) (string, bool) {
+	if cfg.Identify == nil || len(cfg.Entity.Fields) == 0 {
+		return "", false
+	}
+	named := VRecord{Fields: map[string]Value{}}
+	for _, f := range cfg.Entity.Fields {
+		named.Fields[f.Name] = VString{V: f.Name}
+		named.Order = append(named.Order, f.Name)
+	}
+	out, err := Apply(cfg.Identify, named)
+	if err != nil {
+		return "", false
+	}
+	s, ok := out.(VString)
+	if !ok {
+		return "", false
+	}
+	if _, isField := named.Fields[s.V]; !isField {
+		return "", false
+	}
+	return s.V, true
+}
+
+// ResolveIdentityColumn returns the identity column and whether `identify`
+// is what decided it. A false second result means the framework guessed,
+// which is the state CheckAuthIdentity refuses at boot.
+func ResolveIdentityColumn(cfg VAuth) (string, bool) {
+	col, ok := projectedIdentityColumn(cfg)
+	if ok {
+		return col, true
+	}
+	col, err := identifyColumn(cfg)
+	if err != nil {
+		return "", false
+	}
+	return col, false
+}
+
+// CheckAuthIdentity reports an `Auth.config` whose `identify` does not name a
+// column, which is decided by the program alone and so belongs at boot.
+//
+// Without it the framework silently falls back to a guess, and the failure
+// surfaces as a visitor who can never sign in — or as a UNIQUE index on a
+// column nobody meant to be unique.
+func CheckAuthIdentity(cfg *VAuth) error {
+	if cfg == nil || cfg.Identify == nil {
+		return nil
+	}
+	if _, ok := projectedIdentityColumn(*cfg); ok {
+		return nil
+	}
+	names := make([]string, 0, len(cfg.Entity.Fields))
+	for _, f := range cfg.Entity.Fields {
+		names = append(names, "`"+f.Name+"`")
+	}
+	return fmt.Errorf(
+		"`Auth.config`'s `identify` does not name a field of `%s`.\n"+
+			"  Sign-in looks a visitor up by one column and the framework cannot tell "+
+			"which, so it would guess — and the guess also decides which column is made "+
+			"UNIQUE in the database.\n"+
+			"  Write it as a plain field read, one of: %s",
+		cfg.Entity.Table, strings.Join(names, ", "))
 }
 
 // valueToAny converts a runtime Value to a JSON-friendly Go value.

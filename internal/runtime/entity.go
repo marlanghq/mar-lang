@@ -81,13 +81,13 @@ func ResetRegisteredEntities() {
 // ResetForReload clears every package-level registry that a fresh
 // compile (mar dev hot reload, or a one-shot mar migrate command)
 // should not inherit from a previous run: the entity registry, the
-// migration cache, and the enum-type table used by typed Path
-// patterns. Wraps three separate calls so adding a fourth global
-// later is a one-place change.
+// migration cache, the enum-type table used by typed Path patterns,
+// and the registered `Auth.config`.
 func ResetForReload() {
 	ResetRegisteredEntities()
 	ResetMigrationCache()
 	ResetEnumTypes()
+	ResetAuth()
 }
 
 // VEntity is the runtime representation of an Entity declaration. The
