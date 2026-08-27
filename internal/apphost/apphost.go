@@ -27,7 +27,7 @@ import (
 // for the browser bundle). `port` is the listening port: the App.* effect
 // signature takes none, so we wire it in at install time.
 func Install(env *runtime.Env, mods []*ast.Module, port int, lp *jsserve.LiveProgram) {
-	fs := MakeFullstackBuiltin(mods, port, lp)
+	fs := MakeFullstackBuiltin(env, mods, port, lp)
 	env.Define("appFullstack", fs)
 	env.Define("App.fullstack", fs)
 
@@ -76,8 +76,11 @@ func MakeBackendBuiltin(port int, lp *jsserve.LiveProgram) runtime.Value {
 			if !ok {
 				return nil, fmt.Errorf("App.backend: expected { services } record (got %T)", args[0])
 			}
-			routes, err := ExtractServices(rec, "App.backend")
+			routes, exposed, err := extractServices(rec, "App.backend")
 			if err != nil {
+				return nil, err
+			}
+			if err := reportRouteTable("App.backend", exposed, nil); err != nil {
 				return nil, err
 			}
 			lp.SetPort(port)
@@ -92,7 +95,7 @@ func MakeBackendBuiltin(port int, lp *jsserve.LiveProgram) runtime.Value {
 // MakeFullstackBuiltin overrides `App.fullstack : { services, pages } -> Cmd ()`.
 // `services` mount at the verb + path each was declared with; `pages`
 // ship to the browser via the LiveProgram.
-func MakeFullstackBuiltin(mods []*ast.Module, port int, lp *jsserve.LiveProgram) runtime.Value {
+func MakeFullstackBuiltin(env *runtime.Env, mods []*ast.Module, port int, lp *jsserve.LiveProgram) runtime.Value {
 	return runtime.VFn{
 		Arity: 1,
 		Native: func(args []runtime.Value) (runtime.Value, error) {
@@ -108,16 +111,12 @@ func MakeFullstackBuiltin(mods []*ast.Module, port int, lp *jsserve.LiveProgram)
 			if !ok {
 				return nil, fmt.Errorf("App.fullstack: `pages` is not a list (got %T)", pagesV)
 			}
-			routes, err := ExtractServices(rec, "App.fullstack")
+			checked, err := CheckProgram("App.fullstack", rec, pageList.Elements, mods, env)
 			if err != nil {
 				return nil, err
 			}
-			frontMods, err := PickFrontMods(pageList.Elements, mods)
-			if err != nil {
-				return nil, fmt.Errorf("App.fullstack: %v", err)
-			}
 			lp.SetPort(port)
-			if err := lp.Update(routes, frontMods, "__entry"); err != nil {
+			if err := lp.Update(checked.Routes, checked.FrontMods, "__entry"); err != nil {
 				return nil, fmt.Errorf("App.fullstack: %v", err)
 			}
 			return noopEffect("appFullstack"), nil
@@ -201,21 +200,54 @@ func PickFrontMods(pages []runtime.Value, mods []*ast.Module) ([]*ast.Module, er
 // turns each entry into the internal route record the HTTP dispatcher
 // consumes: mounted at the verb + path the service was declared with.
 func ExtractServices(rec runtime.VRecord, who string) ([]runtime.Value, error) {
+	routes, _, err := extractServices(rec, who)
+	return routes, err
+}
+
+// extractServices also hands back the contracts themselves, which the route
+// table check needs and ExposedServiceToRoute erases.
+func extractServices(rec runtime.VRecord, who string) ([]runtime.Value, []runtime.VExposedService, error) {
 	var out []runtime.Value
+	var exposed []runtime.VExposedService
 	if v, ok := rec.Fields["services"]; ok {
 		list, isList := v.(runtime.VList)
 		if !isList {
-			return nil, fmt.Errorf("%s: `services` is not a list (got %T)", who, v)
+			return nil, nil, fmt.Errorf("%s: `services` is not a list (got %T)", who, v)
 		}
 		for i, sv := range list.Elements {
 			es, isES := sv.(runtime.VExposedService)
 			if !isES {
-				return nil, fmt.Errorf("%s: services[%d] is not an ExposedService (got %T)", who, i, sv)
+				return nil, nil, fmt.Errorf("%s: services[%d] is not an ExposedService (got %T)", who, i, sv)
 			}
+			// A contract that is not a top-level binding never had its
+			// declared request type reduced to a shape, because the
+			// stamping happens where the loader can see a value AND its
+			// declaration together — at a named declaration. An inline
+			// `Service.declare` mounts a route whose body is therefore
+			// never validated against anything, and the handler is handed
+			// a value its own type forbids. Worse, an entity-backed
+			// handler then WRITES it: one unauthenticated POST can put a
+			// string in an INTEGER column and make every later read of
+			// that table fail.
+			//
+			// Pages have refused this since they were written, ten lines
+			// up in this same file. Services went through the sibling
+			// function and got no such check.
+			if es.Service.InputShape == nil {
+				return nil, nil, fmt.Errorf(
+					"%s: services[%d] (%s %s) was declared inline, so its request body would never be checked.\n"+
+						"  A contract has to be a top-level binding — `myService = Service.declare POST \"/path\"` —\n"+
+						"  because that is where the compiler can attach the declared request type to it.",
+					who, i, es.Service.Verb, es.Service.Path)
+			}
+			exposed = append(exposed, es)
 			out = append(out, runtime.ExposedServiceToRoute(es))
 		}
 	}
-	return out, nil
+	if err := checkPathEnumsAgree(exposed); err != nil {
+		return nil, nil, fmt.Errorf("%s: %w", who, err)
+	}
+	return out, exposed, nil
 }
 
 // reachableFrom walks the import graph starting at startModule and returns
@@ -280,4 +312,139 @@ func noopEffect(tag string) runtime.VEffect {
 		Tag: tag,
 		Run: func() (runtime.Value, error) { return runtime.VUnit{}, nil },
 	}
+}
+
+// checkPathEnumsAgree refuses a program whose route patterns would decode a
+// path segment into constructors of the wrong type.
+//
+// The runtime matches a `{name:Type}` segment through a registry keyed by the
+// BARE type name, and two modules that each declare a `Status` write to the
+// same key — last one loaded wins. The checker is not confused: a type's
+// identity is `Module.Name` (ADR 0027), and it resolves the segment to the
+// right one. So a booted process holds both answers at once, and the wrong one
+// is the one the URL goes through: a `case` the checker PROVED total falls
+// through from an ordinary link, and `linkTo` throws on a constructor written
+// as a literal in the source.
+//
+// The comparison is a TAUTOLOGY-GUARD, and that is the whole design. It asks
+// only whether the checker's answer for THIS param and the runtime's answer
+// for that bare name are the same list; where they are, the program behaves
+// exactly as it does today, so the check provably cannot refuse a working
+// program.
+//
+// The tempting simpler rule — "this type name is declared by more than one
+// module" — over-approximates and WOULD refuse working programs, because
+// whether the collision bites depends on module load order: two modules can
+// both declare `Status` while the route still resolves to the one that
+// happens to win. That program works, and has to keep working.
+//
+// The checker's answer is already on the service: stampServiceShape asked the
+// type environment for the request type, so the field named by the path param
+// carries the constructors the checker resolved.
+func checkPathEnumsAgree(services []runtime.VExposedService) error {
+	for _, es := range services {
+		if es.Service.InputShape == nil {
+			continue // refused separately, with its own message
+		}
+		pattern, err := runtime.ParsePathPattern(es.Service.Path)
+		if err != nil {
+			continue // an unparseable pattern is someone else's error to report
+		}
+		for _, seg := range pattern.Segments {
+			if !seg.IsParam || runtime.ValidPathTypes[seg.Type] {
+				continue
+			}
+			live, registered := runtime.EnumTypes[seg.Type]
+			if !registered {
+				continue
+			}
+			checker, found := ctorsOfField(*es.Service.InputShape, seg.Name)
+			if !found {
+				continue // the param is not a constructor field; nothing to compare
+			}
+			if sameCtorList(checker, live) {
+				continue
+			}
+			return fmt.Errorf(
+				"the route `%s` decodes `{%s:%s}` into `%s`, but the `%s` this route means is `%s`.\n"+
+					"  Path types are matched by their bare name at run time, so when two modules "+
+					"declare a `%s` only one of them can win, and this route got the other.\n"+
+					"  Rename one of the two types.",
+				es.Service.Path, seg.Name, seg.Type,
+				strings.Join(live, " | "), seg.Type, strings.Join(checker, " | "), seg.Type)
+		}
+	}
+	return nil
+}
+
+// ctorsOfField finds the constructor set the checker resolved for one field of
+// a request type.
+func ctorsOfField(shape runtime.WireShape, field string) ([]string, bool) {
+	if shape.Kind != runtime.WireRecord {
+		return nil, false
+	}
+	for _, f := range shape.Fields {
+		if f.Name != field {
+			continue
+		}
+		if f.Shape.Kind != runtime.WireCtor {
+			return nil, false
+		}
+		return f.Shape.Tags, true
+	}
+	return nil, false
+}
+
+func sameCtorList(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// CheckedProgram is what a registered fullstack program amounts to once every
+// boot check has passed: the routes to mount, the contracts behind them, and
+// the modules the pages reach.
+type CheckedProgram struct {
+	Routes    []runtime.Value
+	Exposed   []runtime.VExposedService
+	FrontMods []*ast.Module
+}
+
+// CheckProgram is the whole boot check for a fullstack program, in one place
+// both build paths call.
+//
+// It exists because they did not. `mar dev` installed these builtins and ran
+// every check; `mar build --target ios` replaced App.fullstack with its own
+// capture, which reads `pages` and ignores `services` entirely — so the same
+// program was refused by one and shipped by the other. Measured: a page whose
+// only fetch has no handler stops `mar dev` with the contract named, and
+// builds an iOS app that prints "Next steps".
+//
+// One program must not have two answers, and the way to keep it that way is
+// one function rather than two lists of calls that drift.
+func CheckProgram(who string, rec runtime.VRecord, pages []runtime.Value, mods []*ast.Module, env *runtime.Env) (CheckedProgram, error) {
+	routes, exposed, err := extractServices(rec, who)
+	if err != nil {
+		return CheckedProgram{}, err
+	}
+	if err := reportRouteTable(who, exposed, pages); err != nil {
+		return CheckedProgram{}, err
+	}
+	frontMods, err := PickFrontMods(pages, mods)
+	if err != nil {
+		return CheckedProgram{}, fmt.Errorf("%s: %v", who, err)
+	}
+	// After PickFrontMods on purpose: it narrows the modules to what the
+	// pages actually reach, so a contract called from code no page can run
+	// is not something to refuse a boot over.
+	if err := CheckServiceCalls(frontMods, env, exposed); err != nil {
+		return CheckedProgram{}, fmt.Errorf("%s: %w", who, err)
+	}
+	return CheckedProgram{Routes: routes, Exposed: exposed, FrontMods: frontMods}, nil
 }

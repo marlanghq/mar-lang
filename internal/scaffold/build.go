@@ -674,6 +674,12 @@ type buildCtx struct {
 	// the runtime fails to mount any page.
 	pages []runtime.Value
 	title string
+
+	// env and mods are what the loader hook had in hand. The boot checks
+	// read the registered program, which only exists once `main` has run,
+	// so the capture that runs during `main` needs them.
+	env  *runtime.Env
+	mods []*ast.Module
 }
 
 func makeFrontendCapture(mods []*ast.Module, bc *buildCtx) runtime.Value {

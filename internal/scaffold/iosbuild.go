@@ -152,9 +152,11 @@ func BuildIOS(entry, distDir, marVersion string) (IOSBuildResult, error) {
 	// can render its first screen instantly from the embedded bundle
 	// (instant cold start). Failure here means the user's mar source
 	// has an error; surface it the same way other build paths do.
+	// Bare: the command already says "mar build:", and a compile error that
+	// says it twice reads like two failures.
 	programJSON, frontendOnly, err := compileIOSProgram(entry)
 	if err != nil {
-		return IOSBuildResult{}, fmt.Errorf("mar build: %w", err)
+		return IOSBuildResult{}, err
 	}
 
 	spec := iosbundle.Spec{
@@ -283,6 +285,10 @@ func compileIOSProgram(entry string) (program []byte, frontendOnly bool, err err
 	bc := &buildCtx{}
 	rEnv, allMods, _, err := project.LoadIntoEnvWithModulesAndHook(mainFile,
 		func(env *runtime.Env, mods []*ast.Module) {
+			// The checks read the registered program, which only exists once
+			// `main` has run — so the capture needs what the hook has.
+			bc.env, bc.mods = env, mods
+
 			fe := makeIOSPagesCapture(bc, false /*fromRecord*/)
 			env.Define("appFrontend", fe)
 			env.Define("App.frontend", fe)
@@ -394,6 +400,15 @@ func makeIOSPagesCapture(bc *buildCtx, fromRecord bool) runtime.Value {
 			// build summary can tell whether ios.serverUrl matters.
 			if fromRecord {
 				bc.kind = kindFullstack
+				// The same check `mar dev` runs, from the same function.
+				// This path used to read `pages` and ignore `services`
+				// entirely, so a program `mar dev` refused still built an
+				// iOS app: one program, two answers, and the phone got the
+				// broken one.
+				rec := args[0].(runtime.VRecord)
+				if _, err := apphost.CheckProgram("App.fullstack", rec, pageList.Elements, bc.mods, bc.env); err != nil {
+					return nil, err
+				}
 			} else {
 				bc.kind = kindFrontend
 			}
