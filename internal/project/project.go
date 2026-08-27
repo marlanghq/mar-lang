@@ -91,6 +91,7 @@ func Load(root string) (*Project, error) {
 	aliasesByModule := map[string]map[string]typecheck.TypeAlias{}
 	customsByModule := map[string]map[string]typecheck.CustomType{}
 	mods := make(map[string]*LoadedModule)
+	allExprTypes := map[ast.Expr]typecheck.Type{}
 	for _, name := range order {
 		mod := parsed[name]
 		// Verify all imports are present
@@ -128,6 +129,12 @@ func Load(root string) (*Project, error) {
 		for vname, t := range res.ValueTypes {
 			tEnv.Define(name+"."+vname, t)
 		}
+		// And keep the expression types. Throwing them away is what made
+		// `mar check` weaker than `mar dev`: half the shape lint needs them,
+		// and with a nil map it skips those checks silently. See below.
+		for e, t := range res.ExprTypes {
+			allExprTypes[e] = t
+		}
 		// Stash this module's types so importing modules pick them up,
 		// while siblings that don't import remain unaffected.
 		modAliases := map[string]typecheck.TypeAlias{}
@@ -163,16 +170,20 @@ func Load(root string) (*Project, error) {
 	// `mar check` would silently accept programs that `mar dev`
 	// rejects at boot.
 	//
-	// Note: we pass nil for the expression-type map because Load
-	// doesn't keep one. The lint's literal-only mode is enough for
-	// the entity-name checks; the record-shape checks that need
-	// types are skipped silently when the map is nil (already the
-	// documented behavior of RunShapeLint).
+	// Load DOES keep an expression-type map: it runs the same
+	// CheckModuleWith the serve path runs, and used to discard the
+	// ExprTypes the result already carried. With nil here, every shape
+	// check that needs a type was skipped silently, so `mar check`
+	// accepted what `mar dev` refused — measured, on
+	// `Repo.findBy users { age = oldish }` where `oldish : String`:
+	// `mar check` clean, `mar dev` "field \"age\" expects Int; got String".
+	// That is the split ADR 0017 exists to prevent, and the paragraph above
+	// says so about the other half of this same call.
 	orderedMods := make([]*ast.Module, 0, len(order))
 	for _, name := range order {
 		orderedMods = append(orderedMods, parsed[name])
 	}
-	if issues := typecheck.RunShapeLint(orderedMods, nil); len(issues) > 0 {
+	if issues := typecheck.RunShapeLint(orderedMods, allExprTypes); len(issues) > 0 {
 		issue := issues[0]
 		return nil, diag.Wrap(paths[issue.Module], sources[issue.Module], &issue)
 	}
