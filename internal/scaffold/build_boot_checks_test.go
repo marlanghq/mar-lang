@@ -206,3 +206,69 @@ main : Cmd ()
 main =
     App.frontend [ home, twin ]
 `
+
+// `mar check` is the command CI runs, and it was weaker than `mar build` in
+// exactly the way `mar build` was weaker than `mar dev`: the boot checks live
+// in the App.* builtins, so only a path that EVALUATES `main` reaches them.
+// The weakest link was the one guarding the merge.
+func TestCheckRunsTheBootChecksToo(t *testing.T) {
+	newProject := func(t *testing.T, main string) string {
+		t.Helper()
+		dir := t.TempDir()
+		for name, body := range map[string]string{
+			"mar.json": `{"name":"twin","locale":"en"}`,
+			"Main.mar": main,
+		} {
+			if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return dir
+	}
+
+	t.Run("refuses what the build refuses", func(t *testing.T) {
+		ran, err := CheckBoot(newProject(t, twoPagesOnOnePathSource))
+		if err == nil {
+			t.Fatal("`mar check` passed a program `mar build` refuses; CI would be greener than the deploy")
+		}
+		if !strings.Contains(err.Error(), "two pages are declared on `/`") {
+			t.Fatalf("refused for the wrong reason: %v", err)
+		}
+		if ran {
+			t.Error("a refused program did not finish booting")
+		}
+	})
+
+	t.Run("passes a sound program", func(t *testing.T) {
+		sound := strings.Replace(twoPagesOnOnePathSource,
+			`        { path = "/"
+        , title = "Twin"`,
+			`        { path = "/twin"
+        , title = "Twin"`, 1)
+		ran, err := CheckBoot(newProject(t, sound))
+		if err != nil {
+			t.Fatalf("two pages on two paths is an ordinary app: %v", err)
+		}
+		if !ran {
+			t.Error("this project has a `main`, so the boot checks had something to run")
+		}
+	})
+
+	t.Run("a module that is not an entry point is not an error", func(t *testing.T) {
+		// `mar check` still has plenty to say about a module with no `main`;
+		// only `mar build` has nothing to do with one.
+		ran, err := CheckBoot(newProject(t, `module Main exposing (greeting)
+
+
+greeting : String
+greeting =
+    "hi"
+`))
+		if err != nil {
+			t.Fatalf("a module without `main` is not a broken program: %v", err)
+		}
+		if ran {
+			t.Error("there was no `main` to run")
+		}
+	})
+}

@@ -1005,6 +1005,17 @@ func runCheck(path string) int {
 			}
 			return 1
 		}
+		// The boot checks: the route table, the service contracts, the
+		// service calls. They live in the App.* builtins, so only a path
+		// that EVALUATES `main` reaches them — and `mar check` did not.
+		// It is the command CI runs, so the weakest link was the one
+		// guarding the merge and `mar build`, the step after, was the one
+		// that refused. Measured on two pages declared on `/`:
+		// `mar check .` said OK and `mar build .` refused.
+		if _, err := scaffold.CheckBoot(path); err != nil {
+			printError("mar check", err)
+			return 1
+		}
 		fmt.Printf("project %s: OK (%d modules)\n", path, len(proj.Modules))
 		for _, name := range proj.Order {
 			m := proj.Modules[name]

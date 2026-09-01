@@ -3,6 +3,7 @@ package scaffold
 import (
 	_ "embed"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -270,7 +271,7 @@ func loadAndRunForBuild(entry string) (projectDir string, bc *buildCtx, err erro
 	}
 	mainVal, ok := project.LookupMain(rEnv, mods)
 	if !ok {
-		return "", nil, fmt.Errorf("Main.mar must export `main`")
+		return "", nil, ErrNoMain
 	}
 	eff, ok := mainVal.(runtime.VEffect)
 	if !ok {
@@ -280,6 +281,31 @@ func loadAndRunForBuild(entry string) (projectDir string, bc *buildCtx, err erro
 		return "", nil, err
 	}
 	return projectDir, bc, nil
+}
+
+// ErrNoMain says the entry has no `main` to run, which is not the same thing
+// as a program that is wrong. `mar build` refuses it — there is nothing to
+// build — while `mar check` has plenty left to say about a module that is not
+// an entry point, so it needs to tell the two apart.
+var ErrNoMain = errors.New("Main.mar must export `main`")
+
+// CheckBoot runs a project's boot checks and produces nothing.
+//
+// It exists because `mar check` was weaker than `mar build` in exactly the way
+// `mar build` was weaker than `mar dev` until a moment ago: the checks live in
+// the App.* builtins, and only a path that EVALUATES `main` reaches them.
+// `mar check` is what runs in CI, so the weakest link was the one guarding the
+// merge, and `mar build` — the step after — was the one that would refuse.
+//
+// Reports whether there was a `main` to run at all.
+func CheckBoot(entry string) (ran bool, err error) {
+	if _, _, err := loadAndRunForBuild(entry); err != nil {
+		if errors.Is(err, ErrNoMain) {
+			return false, nil
+		}
+		return false, err
+	}
+	return true, nil
 }
 
 // Topology reports which App.* the project's main calls: "frontend",
