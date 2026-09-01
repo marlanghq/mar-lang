@@ -162,7 +162,18 @@ func orderValueDecls(mod *ast.Module) {
 	ordered := make([]*ast.ValueDecl, 0, len(slots))
 	ordered = append(ordered, funcs...)
 
-	// Post-order DFS: emit a value only after everything it reads.
+	// Post-order DFS: emit a value only after everything it reads —
+	// including what it reads THROUGH a function it calls.
+	//
+	// Putting the functions first is not enough on its own. A function
+	// declaration only builds a closure, but CALLING one runs its body, and
+	// the body reads its free names at that moment. So `out = render ()`
+	// depends on everything `render` reads, transitively, even though
+	// `render` itself is already bound. Following only the direct value
+	// deps left `out` reading a placeholder and holding `()` while its type
+	// said String: a checked program with a wrong value in it, and no error
+	// anywhere. `valuesReachedThroughFuncs` is what closes that gap.
+	reached := valuesReachedThroughFuncs(g)
 	done := map[string]bool{}
 	var visit func(v *ast.ValueDecl)
 	visit = func(v *ast.ValueDecl) {
@@ -171,8 +182,18 @@ func orderValueDecls(mod *ast.Module) {
 		}
 		done[v.Name] = true // set first: a cycle would otherwise spin
 		for _, dep := range g.deps[v.Name] {
-			if info, ok := g.decls[dep]; ok && !info.isFunction {
+			info, ok := g.decls[dep]
+			if !ok {
+				continue
+			}
+			if !info.isFunction {
 				if d := byName[dep]; d != nil {
+					visit(d)
+				}
+				continue
+			}
+			for _, indirect := range reached[dep] {
+				if d := byName[indirect]; d != nil {
 					visit(d)
 				}
 			}
@@ -196,6 +217,72 @@ func orderValueDecls(mod *ast.Module) {
 	for n, i := range slots {
 		mod.Decls[i] = ordered[n]
 	}
+}
+
+// valuesReachedThroughFuncs answers, for each function, which non-function
+// values its body can read once it is CALLED — following calls to other
+// functions as far as they go.
+//
+// A value that calls a function has to be evaluated after everything that
+// function reaches, not just after what the value itself names. The walk is
+// memoised per function and guarded against cycles: mutually recursive
+// functions are ordinary in Mar, and a guard that spins is worse than the
+// bug it was added for.
+//
+// Cycles are answered with what has been collected so far rather than with
+// an error. A value that reaches back to itself through a function may still
+// evaluate perfectly well — `v = f 0` with `f n = if n == 0 then "base" else v`
+// never reads `v` — and refusing it would break a program that works today.
+func valuesReachedThroughFuncs(g valueGraph) map[string][]string {
+	memo := map[string][]string{}
+	visiting := map[string]bool{}
+
+	var walk func(name string) []string
+	walk = func(name string) []string {
+		if got, ok := memo[name]; ok {
+			return got
+		}
+		if visiting[name] {
+			return nil // a cycle: what the other frames collect still stands
+		}
+		visiting[name] = true
+
+		seen := map[string]bool{}
+		out := []string{}
+		add := func(n string) {
+			if !seen[n] {
+				seen[n] = true
+				out = append(out, n)
+			}
+		}
+		// g.deps is sorted, and the walk visits in that order, so the
+		// result is the same on every run — orderValueDecls turns it into
+		// the evaluation order, which cannot wobble between builds.
+		for _, dep := range g.deps[name] {
+			info, ok := g.decls[dep]
+			if !ok {
+				continue
+			}
+			if !info.isFunction {
+				add(dep)
+				continue
+			}
+			for _, indirect := range walk(dep) {
+				add(indirect)
+			}
+		}
+
+		visiting[name] = false
+		memo[name] = out
+		return out
+	}
+
+	for name, info := range g.decls {
+		if info.isFunction {
+			walk(name)
+		}
+	}
+	return memo
 }
 
 func joinCycle(path []string) string {
