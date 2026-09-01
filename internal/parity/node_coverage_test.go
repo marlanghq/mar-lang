@@ -376,22 +376,85 @@ func TestEverySubscriptionHasASourceInBothClientRuntimes(t *testing.T) {
 func subReturningBuiltins() []string {
 	var out []string
 	for name, ty := range typecheck.BaseQualifiedSymbols() {
-		res := ty
-		for {
-			if f, ok := res.(typecheck.TForall); ok {
-				res = f.Body
-				continue
-			}
-			if a, ok := res.(typecheck.TArrow); ok {
-				res = a.To
-				continue
-			}
-			break
-		}
-		if strings.HasPrefix(res.String(), "Sub") {
+		if strings.HasPrefix(resultType(ty).String(), "Sub") {
 			out = append(out, name)
 		}
 	}
 	sort.Strings(out)
 	return out
+}
+
+// An attribute one client runtime builds under a different name than the other
+// is a program that looks right on the web and does nothing on the phone —
+// disabled that does not disable, a keyboard that comes up wrong, a toolbar
+// button that never appears. The web↔iOS parity harness compares the SCREENS
+// the examples produce, so it covers an attribute only if an example uses it.
+// This covers all of them, used or not.
+//
+// The two runtimes build the names with the same two helpers, so the sets are
+// directly comparable — and each `Attr`-returning builtin has its own name,
+// which is what makes "the same names" mean "the same attributes".
+func TestBothClientRuntimesBuildTheSameAttributes(t *testing.T) {
+	jsNames := attrNames(readFile(t, filepath.Join("..", "jsserve", "runtime.js")),
+		`makeAttr\('([a-zA-Z]+)'|flagAttr\('([a-zA-Z]+)'`)
+	swiftNames := attrNames(readAll(t, filepath.Join("..", "iosbundle", "template", "Sources"), ".swift"),
+		`makeAttr\("([a-zA-Z]+)"|flagAttr\("([a-zA-Z]+)"|attr\("([a-zA-Z]+)"`)
+
+	if len(jsNames) < 20 || len(swiftNames) < 20 {
+		t.Fatalf("found %d attribute names in runtime.js and %d in the Swift sources; "+
+			"the scan is broken, not the runtimes", len(jsNames), len(swiftNames))
+	}
+
+	for name := range jsNames {
+		if !swiftNames[name] {
+			t.Errorf("the web builds the attribute %q and the phone does not", name)
+		}
+	}
+	for name := range swiftNames {
+		if !jsNames[name] {
+			t.Errorf("the phone builds the attribute %q and the web does not", name)
+		}
+	}
+
+	// Each Attr builtin owns a name. If this stops holding because a new
+	// builtin deliberately reuses one, say so here — the point of the count
+	// is that "the same names" cannot hide a builtin missing from both.
+	attrBuiltins := 0
+	for _, ty := range typecheck.BaseQualifiedSymbols() {
+		if strings.HasPrefix(resultType(ty).String(), "Attr") {
+			attrBuiltins++
+		}
+	}
+	if attrBuiltins != len(jsNames) {
+		t.Errorf("%d builtins return an Attr and the runtimes build %d distinct names; "+
+			"either one is missing from BOTH runtimes, or a new builtin shares a name with an "+
+			"older one and this count needs to say so", attrBuiltins, len(jsNames))
+	}
+}
+
+func attrNames(src, pattern string) map[string]bool {
+	out := map[string]bool{}
+	for _, m := range regexp.MustCompile(pattern).FindAllStringSubmatch(src, -1) {
+		for _, g := range m[1:] {
+			if g != "" {
+				out[g] = true
+			}
+		}
+	}
+	return out
+}
+
+// resultType walks to what a builtin hands back once every argument is given.
+func resultType(t typecheck.Type) typecheck.Type {
+	for {
+		if f, ok := t.(typecheck.TForall); ok {
+			t = f.Body
+			continue
+		}
+		if a, ok := t.(typecheck.TArrow); ok {
+			t = a.To
+			continue
+		}
+		return t
+	}
 }
