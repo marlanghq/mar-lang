@@ -406,6 +406,9 @@ func (p *parser) parseValueDecl() (ast.Decl, error) {
 		if err != nil {
 			return nil, err
 		}
+		if bad := requireParamPattern(pat); bad != nil {
+			return nil, bad
+		}
 		decl.Params = append(decl.Params, pat)
 	}
 	if _, err := p.expect(lexer.KindEquals); err != nil {
@@ -1184,6 +1187,35 @@ func (p *parser) parseRecordField() (ast.RecField, error) {
 	return ast.RecField{Pos: posOf(nameTok), Name: nameTok.Value, Value: val}, nil
 }
 
+// requireParamPattern refuses a parameter that is not a name or `_`.
+//
+// The grammar reads a full pattern here, but nothing downstream binds one: all
+// three evaluators accept exactly PVar and PWildcard and raise "lambda params
+// must be names or _" on anything else. That left the language answering the
+// same program two different ways. `\(a, b) -> a + b` fails the typechecker
+// with "unknown identifier: a", because the names never bind — an error about
+// the body, for a problem in the head. And `\(a, b) -> 42`, which never reads
+// them, passes `mar check` and dies at LOAD with a runtime error quoting an
+// internal type name (`got *ast.PTuple`), on a program the checker approved.
+//
+// Refusing here costs nothing that works: neither shape runs today. It is the
+// same call as `\ -> e` above — a purely syntactic property, answered where
+// the syntax is read, with a sentence that says what to write instead.
+func requireParamPattern(pat ast.Pattern) *Error {
+	switch pat.(type) {
+	case *ast.PVar, *ast.PWildcard:
+		return nil
+	}
+	pos := pat.Position()
+	return &Error{
+		Line:   pos.Line,
+		Column: pos.Column,
+		Message: "a parameter has to be a name or `_`. To take apart a tuple, " +
+			"a record or a constructor, take the whole value here and match it " +
+			"with `case` in the body",
+	}
+}
+
 func (p *parser) parseLambda() (ast.Expr, error) {
 	tok, _ := p.expect(lexer.KindBackslash)
 	lam := &ast.ELambda{Pos: posOf(tok)}
@@ -1191,6 +1223,9 @@ func (p *parser) parseLambda() (ast.Expr, error) {
 		pat, err := p.parsePatternAtom()
 		if err != nil {
 			return nil, err
+		}
+		if bad := requireParamPattern(pat); bad != nil {
+			return nil, bad
 		}
 		lam.Params = append(lam.Params, pat)
 	}
