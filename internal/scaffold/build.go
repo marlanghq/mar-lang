@@ -690,14 +690,18 @@ func makeFrontendCapture(mods []*ast.Module, bc *buildCtx) runtime.Value {
 			if !ok {
 				return nil, fmt.Errorf("App.frontend: expected List Page (got %T)", args[0])
 			}
-			// Delegate to apphost.PickFrontMods: the single source of
-			// truth for "page-reachable modules + synthetic __entry
-			// module". All three build paths (dev/apphost.go,
-			// web/here, iOS/iosbuild.go) go through it so the
-			// synthetic entry module always lands in the bundle.
-			// Skipping it would leave `envLookup("main")` failing at
-			// boot with "entry not found: main".
-			merged, err := apphost.PickFrontMods(pageList.Elements, mods)
+			// Delegate to apphost.CheckFrontendProgram: the single
+			// source of truth for "the App.frontend boot checks, then
+			// page-reachable modules + synthetic __entry module". All
+			// three paths (dev/apphost.go, web/here, iOS/iosbuild.go)
+			// go through it, so the synthetic entry module always lands
+			// in the bundle AND a program the dev server refuses cannot
+			// be built instead.
+			//
+			// This used to call PickFrontMods alone, which is the module
+			// walk WITHOUT the checks: `mar build` wrote a dist for a
+			// program `mar dev` would not start.
+			merged, err := apphost.CheckFrontendProgram("App.frontend", pageList.Elements, mods)
 			if err != nil {
 				return nil, err
 			}
@@ -724,6 +728,15 @@ func makeBackendCapture(bc *buildCtx) runtime.Value {
 	return runtime.VFn{
 		Arity: 1,
 		Native: func(args []runtime.Value) (runtime.Value, error) {
+			rec, ok := args[0].(runtime.VRecord)
+			if !ok {
+				return nil, fmt.Errorf("App.backend: expected { services } record (got %T)", args[0])
+			}
+			// The same checks the dev server runs. A build that skips them
+			// ships the route table the dev server refused.
+			if _, err := apphost.CheckBackendProgram(rec); err != nil {
+				return nil, err
+			}
 			bc.kind = kindBackend
 			return runtime.VEffect{Tag: "appBackend", Run: func() (runtime.Value, error) {
 				return runtime.VUnit{}, nil
@@ -736,7 +749,33 @@ func makeFullstackCapture(bc *buildCtx) runtime.Value {
 	return runtime.VFn{
 		Arity: 1,
 		Native: func(args []runtime.Value) (runtime.Value, error) {
+			rec, ok := args[0].(runtime.VRecord)
+			if !ok {
+				return nil, fmt.Errorf("App.fullstack: expected { services, pages } record (got %T)", args[0])
+			}
+			pagesV, ok := rec.Fields["pages"]
+			if !ok {
+				return nil, fmt.Errorf("App.fullstack: missing `pages` field")
+			}
+			pageList, ok := pagesV.(runtime.VList)
+			if !ok {
+				return nil, fmt.Errorf("App.fullstack: `pages` is not a list (got %T)", pagesV)
+			}
+			// Same call the dev server makes, with the same arguments: the
+			// route table, the service contracts, and the module walk.
+			checked, err := apphost.CheckProgram("App.fullstack", "", rec, pageList.Elements, bc.mods, bc.env)
+			if err != nil {
+				return nil, err
+			}
 			bc.kind = kindFullstack
+			bc.frontMods = checked.FrontMods
+			bc.pages = pageList.Elements
+			for i := len(checked.FrontMods) - 1; i >= 0; i-- {
+				if nm := checked.FrontMods[i].Name; len(nm) > 0 {
+					bc.title = nm[len(nm)-1]
+					break
+				}
+			}
 			return runtime.VEffect{Tag: "appFullstack", Run: func() (runtime.Value, error) {
 				return runtime.VUnit{}, nil
 			}}, nil

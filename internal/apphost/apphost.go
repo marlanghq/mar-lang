@@ -52,9 +52,9 @@ func MakeFrontendBuiltin(mods []*ast.Module, port int, lp *jsserve.LiveProgram) 
 			if !ok {
 				return nil, fmt.Errorf("App.frontend: expected List Page (got %T)", args[0])
 			}
-			frontMods, err := PickFrontMods(pageList.Elements, mods)
+			frontMods, err := CheckFrontendProgram("App.frontend", pageList.Elements, mods)
 			if err != nil {
-				return nil, fmt.Errorf("App.frontend: %v", err)
+				return nil, err
 			}
 			lp.SetPort(port)
 			if err := lp.Update(nil, frontMods, "__entry"); err != nil {
@@ -76,11 +76,8 @@ func MakeBackendBuiltin(port int, lp *jsserve.LiveProgram) runtime.Value {
 			if !ok {
 				return nil, fmt.Errorf("App.backend: expected { services } record (got %T)", args[0])
 			}
-			routes, exposed, err := extractServices(rec, "App.backend")
+			routes, err := CheckBackendProgram(rec)
 			if err != nil {
-				return nil, err
-			}
-			if err := reportRouteTable("App.backend", exposed, nil); err != nil {
 				return nil, err
 			}
 			lp.SetPort(port)
@@ -111,7 +108,7 @@ func MakeFullstackBuiltin(env *runtime.Env, mods []*ast.Module, port int, lp *js
 			if !ok {
 				return nil, fmt.Errorf("App.fullstack: `pages` is not a list (got %T)", pagesV)
 			}
-			checked, err := CheckProgram("App.fullstack", rec, pageList.Elements, mods, env)
+			checked, err := CheckProgram("App.fullstack", "" /*serves /_mar/admin*/, rec, pageList.Elements, mods, env)
 			if err != nil {
 				return nil, err
 			}
@@ -410,6 +407,46 @@ func sameCtorList(a, b []string) bool {
 // CheckedProgram is what a registered fullstack program amounts to once every
 // boot check has passed: the routes to mount, the contracts behind them, and
 // the modules the pages reach.
+// CheckFrontendProgram is the whole boot check for `App.frontend`, in one
+// place both the dev server and `mar build` call.
+//
+// It exists for the reason CheckProgram exists: the checks used to live inside
+// the builtin the dev server installs, and `mar build` installs a DIFFERENT
+// builtin — one that captures the page list and returns. So a program `mar dev`
+// refused to run built and shipped without a word: two pages on one path, for
+// instance, which is the case whose own message says the browser keeps the last
+// and the phone keeps the first.
+// `who` names the App.* builtin in the message: an iOS build of a fullstack
+// app reaches this too, and telling its author about `App.frontend` would send
+// them looking for a builtin their program does not call.
+func CheckFrontendProgram(who string, pages []runtime.Value, mods []*ast.Module) ([]*ast.Module, error) {
+	// The page-side checks. They used to live only on the fullstack path, so a
+	// frontend-only app got none of them: two pages on one path, a protected
+	// page with no way to authenticate, an app with nowhere for a stray URL to
+	// land.
+	if err := reportRouteTable(who, nil, pages); err != nil {
+		return nil, err
+	}
+	frontMods, err := PickFrontMods(pages, mods)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %v", who, err)
+	}
+	return frontMods, nil
+}
+
+// CheckBackendProgram is the same for `App.backend`: the service list turned
+// into routes, with the route table checked.
+func CheckBackendProgram(rec runtime.VRecord) ([]runtime.Value, error) {
+	routes, exposed, err := extractServices(rec, "App.backend")
+	if err != nil {
+		return nil, err
+	}
+	if err := reportRouteTable("App.backend", exposed, nil); err != nil {
+		return nil, err
+	}
+	return routes, nil
+}
+
 type CheckedProgram struct {
 	Routes    []runtime.Value
 	Exposed   []runtime.VExposedService
@@ -428,12 +465,16 @@ type CheckedProgram struct {
 //
 // One program must not have two answers, and the way to keep it that way is
 // one function rather than two lists of calls that drift.
-func CheckProgram(who string, rec runtime.VRecord, pages []runtime.Value, mods []*ast.Module, env *runtime.Env) (CheckedProgram, error) {
+// `adminPanel` says whether THIS deployment serves `/_mar/admin`. It is not
+// something `who` can answer: `App.fullstack` serves it in a browser and does
+// not on a phone, where the admin panel has no app at all and the Swift
+// runtime throws "Page.adminProtected is web-only" when the page is reached.
+func CheckProgram(who, noAdminPanel string, rec runtime.VRecord, pages []runtime.Value, mods []*ast.Module, env *runtime.Env) (CheckedProgram, error) {
 	routes, exposed, err := extractServices(rec, who)
 	if err != nil {
 		return CheckedProgram{}, err
 	}
-	if err := reportRouteTable(who, exposed, pages); err != nil {
+	if err := reportRouteTableOn(who, noAdminPanel, exposed, pages); err != nil {
 		return CheckedProgram{}, err
 	}
 	frontMods, err := PickFrontMods(pages, mods)

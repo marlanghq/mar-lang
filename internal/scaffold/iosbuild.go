@@ -327,15 +327,25 @@ func compileIOSProgram(entry string) (program []byte, frontendOnly bool, err err
 		b, err := makeProgramJSON(nil, "main", false)
 		return b, frontendOnly, err
 	}
-	// apphost.PickFrontMods does the page-reachable module walk AND
-	// appends a synthetic `__entry = appFrontend [pages]` module that
-	// the iOS runtime looks up at boot. Without that synthetic entry,
-	// the embedded program.json has nothing for env.lookup("main")
-	// or env.lookup("__entry") to find, runProgramSync throws,
-	// AppViewModel falls back to .loading, and the user sees the
-	// spinner instead of the instant cold-start the embedded
+	// apphost.CheckFrontendProgram runs the page-side boot checks and then
+	// the page-reachable module walk, which appends a synthetic
+	// `__entry = appFrontend [pages]` module that the iOS runtime looks up
+	// at boot. Without that synthetic entry, the embedded program.json has
+	// nothing for env.lookup("main") or env.lookup("__entry") to find,
+	// runProgramSync throws, AppViewModel falls back to .loading, and the
+	// user sees the spinner instead of the instant cold-start the embedded
 	// snapshot was meant to provide.
-	mods, err := apphost.PickFrontMods(bc.pages, allMods)
+	//
+	// It used to call PickFrontMods alone — the walk without the checks — so
+	// `mar build --target ios` wrote an Xcode project for a program `mar dev`
+	// refuses to start. Two pages on one path is the sharpest case: the check
+	// that catches it exists BECAUSE the phone keeps the first and the
+	// browser keeps the last, and the phone is what this path builds.
+	who := "App.frontend"
+	if bc.kind == kindFullstack {
+		who = "App.fullstack"
+	}
+	mods, err := apphost.CheckFrontendProgram(who, bc.pages, allMods)
 	if err != nil {
 		return nil, false, err
 	}
@@ -406,7 +416,11 @@ func makeIOSPagesCapture(bc *buildCtx, fromRecord bool) runtime.Value {
 				// iOS app: one program, two answers, and the phone got the
 				// broken one.
 				rec := args[0].(runtime.VRecord)
-				if _, err := apphost.CheckProgram("App.fullstack", rec, pageList.Elements, bc.mods, bc.env); err != nil {
+				// false: the admin panel has no iOS app. A page built with
+				// `Page.adminProtected` reaches the phone and throws
+				// "Page.adminProtected is web-only" when it is opened —
+				// measured, on a bundle that built and printed "Next steps".
+				if _, err := apphost.CheckProgram("App.fullstack", "the admin panel has no iOS app", rec, pageList.Elements, bc.mods, bc.env); err != nil {
 					return nil, err
 				}
 			} else {
