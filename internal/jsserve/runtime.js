@@ -471,47 +471,96 @@
       // Time round-trip, `{__time: "ISO 8601"}` from the Go
       // encoder rebuilds a VTime so user code typed as
       // `createdAt : Time` actually receives a Time, not a String.
-      if (typeof v.__time === 'string') {
-        const ms = Date.parse(v.__time);
-        if (!isNaN(ms)) return VTime(ms);
+      if ('__time' in v) {
+        const ms = typeof v.__time === 'string' ? Date.parse(v.__time) : NaN;
+        if (isNaN(ms)) {
+          throw new Error('the value should be a date and time, got `' + v.__time + '`');
+        }
+        return VTime(ms);
       }
       // Angle round-trip, `{__angle: 450}` (deci-degrees) from the Go
       // encoder. Wrapped rather than trusted: the payload crossed a
       // network boundary and every other way to build an Angle
       // normalizes, so this one does too.
+      // Deci-degrees are integral by construction and no Mar encoder
+      // writes a fraction, so a fractional payload is refused rather than
+      // truncated — the same rule `__char` follows, and the same sentence
+      // in all three runtimes. Pinned by the Decode block of the corpus.
       if (typeof v.__angle === 'number') {
-        return VAngle(posMod(Math.trunc(v.__angle), DECI_FULL));
+        if (!Number.isInteger(v.__angle)) {
+          throw new Error('the value should be a whole number of deci-degrees, got ' + v.__angle);
+        }
+        return VAngle(posMod(v.__angle, DECI_FULL));
       }
-      // Char round-trip, `{__char: "x"}` from the Go encoder. Take
-      // the FIRST code point (covers BMP + supplementary planes). A
-      // malformed empty string degrades to U+FFFD rather than NaN.
+      // Char round-trip, `{__char: "x"}` from the Go encoder, and
+      // exactly one Unicode scalar or nothing.
+      //
+      // This used to take the FIRST code point and degrade an empty
+      // payload to U+FFFD. The input is EXTERNAL — a Mar encoder cannot
+      // write more than one scalar — so `{"__char":"abc"}` answered 'a'
+      // silently, and an empty payload answered U+FFFD here and on the
+      // phone while the server errored. Three runtimes, three answers to
+      // one JSON document. Pinned by the Decode block of the corpus.
       if (typeof v.__char === 'string') {
-        const cp = v.__char.codePointAt(0);
-        return VChar(cp == null ? 0xFFFD : cp);
+        const scalars = Array.from(v.__char);
+        if (scalars.length !== 1) {
+          throw new Error('the value should be a single character, got ' + scalars.length);
+        }
+        return VChar(scalars[0].codePointAt(0));
       }
       // Decimal round-trip, `{__dec: "1.50"}` from the Go encoder.
       // Rebuilt textually so the exact coefficient + scale survive.
-      if (typeof v.__dec === 'string') {
+      // A tagged value that will not rebuild is a decode failure, not a
+      // record. Falling through left `{"__dec":"x"}` as `{ __dec = "x" }`
+      // here and on the phone while the server errored — and a Set or Dict
+      // that fell through CRASHED the first operation on it, because the
+      // shape reduction has no kind for either and checks nothing.
+      if ('__dec' in v) {
+        if (typeof v.__dec !== 'string') {
+          throw new Error('the value should be a decimal number, got `' + v.__dec + '`');
+        }
         const d = parseDecString(v.__dec);
-        if (d) return d;
+        if (!d) throw new Error('the value should be a decimal number, got `' + v.__dec + '`');
+        return d;
       }
       // Dict / Set round-trip. The encoder emits `{__dict:[[k,v],...]}`
       // and `{__set:[i, ...]}`. We rebuild via the runtime's own
       // insert helpers so the sorted invariant survives even when the
       // wire payload arrives out of order (hand-written JSON, network
       // intermediaries, etc).
-      if (Array.isArray(v.__dict)) {
+      if ('__dict' in v) {
+        if (!Array.isArray(v.__dict)) {
+          throw new Error('the value should be a list of key/value pairs');
+        }
         let d = VDict([]);
         for (const pair of v.__dict) {
-          if (!Array.isArray(pair) || pair.length !== 2) continue;
-          d = dictInsertHelper(d, jsToMar(pair[0]), jsToMar(pair[1]));
+          if (!Array.isArray(pair) || pair.length !== 2) {
+            throw new Error('the value should be a key/value pair of two items');
+          }
+          try {
+            d = dictInsertHelper(d, jsToMar(pair[0]), jsToMar(pair[1]));
+          } catch (e) {
+            // A dictionary is sorted by key, so building one compares the
+            // keys, and mixed types failed that comparison with a message
+            // about comparison rather than about the request.
+            if (e && e.marWire) throw e;
+            throw new Error('the value should be a list of key/value pairs whose keys are one type');
+          }
         }
         return d;
       }
-      if (Array.isArray(v.__set)) {
+      if ('__set' in v) {
+        if (!Array.isArray(v.__set)) {
+          throw new Error('the value should be a list of items');
+        }
         let s = VSet([]);
         for (const it of v.__set) {
-          s = setInsertHelper(s, jsToMar(it));
+          try {
+            s = setInsertHelper(s, jsToMar(it));
+          } catch (e) {
+            if (e && e.marWire) throw e;
+            throw new Error('the value should be a list of items of one type');
+          }
         }
         return s;
       }
@@ -609,7 +658,11 @@
       if (!m) return s;
       hadParam = true;
       const name = m[1];
-      const enc = encodeURIComponent(pathParamString(fields[name]));
+      // The same encoder linkTo and Nav.* use. This built the URL its own
+      // way, so `Service.call getNote { slug = "a'b" }` asked for
+      // `/item/a'b` while `linkTo notePath { slug = "a'b" }` pointed at
+      // `/item/a%27b` — one language, one job, two answers.
+      const enc = encodePathComponent(pathParamString(fields[name]));
       delete fields[name];
       return enc;
     });
@@ -751,7 +804,13 @@
     if (type === 'Int') {
       if (!/^-?\d+$/.test(decoded)) return null;
       const n = parseInt(decoded, 10);
-      if (Number.isNaN(n)) return null;
+      // 53 bits, the range a Mar Int has (ADR 0021). parseInt happily
+      // ROUNDS past it — "9007199254740993" comes back as
+      // …992 — so the browser matched the route and bound a number that
+      // is not the one in the URL, while the phone bound the exact value
+      // and the server (before this) returned it intact. One URL anyone
+      // can type, three answers.
+      if (!Number.isSafeInteger(n)) return null;
       return VInt(n);
     }
     // Custom enum: case-insensitive match against the registered
@@ -769,10 +828,28 @@
   // Encode a VInt / VString / VCtor back to a URL segment. Used by
   // linkTo / Nav.pushTo. Type mismatches throw: caller surfaces
   // them at the call-site with the path source for context.
+  // encodePathComponent percent-encodes one path SEGMENT, keeping only the
+  // unreserved set of RFC 3986 (`A-Za-z0-9-._~`).
+  //
+  // Spelled out rather than borrowed from the host: `encodeURIComponent`
+  // leaves `! ' ( ) * ~` alone, Swift's `.urlPathAllowed` leaves a SLASH
+  // alone, and Go left everything alone. The three runtimes have to build
+  // the same URL from the same value. Pinned by the corpus.
+  function encodePathComponent(s) {
+    let out = '';
+    const bytes = new TextEncoder().encode(s);
+    for (const b of bytes) {
+      const c = String.fromCharCode(b);
+      if (/[A-Za-z0-9\-._~]/.test(c)) { out += c; continue; }
+      out += '%' + b.toString(16).toUpperCase().padStart(2, '0');
+    }
+    return out;
+  }
+
   function encodePathSegment(v, type) {
     if (type === 'String') {
       if (!v || v.k !== 'S') throw new Error(`expected String, got ${v && v.k}`);
-      return encodeURIComponent(v.s);
+      return encodePathComponent(v.s);
     }
     if (type === 'Int') {
       if (!v || v.k !== 'I') throw new Error(`expected Int, got ${v && v.k}`);
@@ -1070,7 +1147,16 @@
 
   // Returns null when the value fits the shape, or the sentence that says
   // how it does not.
+  // `seen` carries the named shapes met on the way down, so a Ref can point
+  // back at the type it is inside. A shape is a TREE and a recursive type is
+  // not: the point where one re-entered itself used to be Any, checking
+  // nothing from there down. Following the cycle against the DATA ends,
+  // because the data is finite.
   function checkWireAt(v, s, path) {
+    return checkWireIn(v, s, path, {});
+  }
+
+  function checkWireIn(v, s, path, seen) {
     const where = path === '' ? 'the value' : '`' + path + '`';
     const bad = (want) => where + ' should be ' + want + ', got ' + wireDescribe(v);
 
@@ -1095,12 +1181,15 @@
         if (v.k !== 'C') return bad('a Maybe (leave the field out for Nothing)');
         if (v.tag === 'Nothing') return null;
         if (v.tag === 'Just' && v.args.length === 1) {
-          return s.elem ? checkWireAt(v.args[0], s.elem, path) : null;
+          return s.elem ? checkWireIn(v.args[0], s.elem, path, seen) : null;
         }
         return bad('a Maybe (leave the field out for Nothing)');
       }
 
       case 'Ctor': {
+        // Remembered under its type name so a Ref below can find it.
+        // A fresh object keeps sibling branches independent.
+        if (s.name) seen = Object.assign({}, seen, { [s.name]: s });
         const tags = s.tags || [];
         if (v.k !== 'C') return bad('one of ' + quoteEach(tags));
         const i = tags.indexOf(v.tag);
@@ -1115,12 +1204,44 @@
             ', got ' + v.args.length;
         }
         for (let j = 0; j < v.args.length; j++) {
-          const err = checkWireAt(v.args[j], want[j], path + '.' + v.tag + '[' + j + ']');
+          const err = checkWireIn(v.args[j], want[j], path + '.' + v.tag + '[' + j + ']', seen);
           if (err) return err;
         }
         return null;
       }
 
+      case 'Ref': {
+        // The type this position re-enters, remembered on the way down. A
+        // Ref with nothing to point at came from a bundle older than this
+        // kind: it asserts nothing rather than refusing.
+        const target = seen[s.name];
+        return target ? checkWireIn(v, target, path, seen) : null;
+      }
+      case 'Set': {
+        // Set, Dict and Angle had no arm here, the same hole the tuple had:
+        // measured on the server, a plain `[1,2,3]` where the type says
+        // `Set Int` sailed through the guard and answered 500 with
+        // `Set.toList: not a Set`.
+        if (v.k !== 'Se') return bad('a set');
+        for (let i = 0; i < v.items.length; i++) {
+          const err = checkWireIn(v.items[i], s.elem, path + '[' + i + ']', seen);
+          if (err) return err;
+        }
+        return null;
+      }
+      case 'Dict': {
+        if (v.k !== 'M') return bad('a dictionary');
+        const members = s.members || [];
+        for (let i = 0; i < v.pairs.length; i++) {
+          const kErr = checkWireIn(v.pairs[i].key, members[0], path + '[' + i + '].key', seen);
+          if (kErr) return kErr;
+          const vErr = checkWireIn(v.pairs[i].value, members[1], path + '[' + i + '].value', seen);
+          if (vErr) return vErr;
+        }
+        return null;
+      }
+      case 'Angle':
+        return v.k === 'A' ? null : bad('an angle');
       case 'Tuple': {
         // A tuple travels as a JSON array and comes back as a LIST: an array
         // is all the wire has. Both forms arrive here, and the arity is what
@@ -1132,7 +1253,7 @@
             ', got ' + v.xs.length;
         }
         for (let i = 0; i < v.xs.length; i++) {
-          const err = checkWireAt(v.xs[i], members[i], path + '[' + i + ']');
+          const err = checkWireIn(v.xs[i], members[i], path + '[' + i + ']', seen);
           if (err) return err;
         }
         return null;
@@ -1142,7 +1263,7 @@
         if (v.k !== 'L') return bad('a list');
         if (!s.elem) return null;
         for (let i = 0; i < v.xs.length; i++) {
-          const err = checkWireAt(v.xs[i], s.elem, path + '[' + i + ']');
+          const err = checkWireIn(v.xs[i], s.elem, path + '[' + i + ']', seen);
           if (err) return err;
         }
         return null;
@@ -1158,7 +1279,7 @@
             if (f.shape.kind === 'Maybe') continue;
             return where + ' is missing the field `' + f.name + '`';
           }
-          const err = checkWireAt(v.fields[f.name], f.shape, path === '' ? f.name : path + '.' + f.name);
+          const err = checkWireIn(v.fields[f.name], f.shape, path === '' ? f.name : path + '.' + f.name, seen);
           if (err) return err;
         }
         // Extra fields are allowed on purpose: a newer client sending a
@@ -1231,7 +1352,16 @@
       } catch (e) {
         return VCtor('Err', [VString(String((e && e.message) || e))]);
       }
-      const v = jsToMar(parsed);
+      // jsToMar is inside the guard too. It rejects a tagged value that
+      // cannot be one — `{"__char":"abc"}` is not a character — and that
+      // is a decode failure like any other, so it goes where decode
+      // failures go rather than escaping as a thrown Error.
+      let v;
+      try {
+        v = jsToMar(parsed);
+      } catch (e) {
+        return VCtor('Err', [VString(String((e && e.message) || e))]);
+      }
       const err = checkWireAt(v, shape, '');
       if (err) return VCtor('Err', [VString(err)]);
       return VCtor('Ok', [coerceWire(v, shape)]);
@@ -6073,11 +6203,30 @@
       VTime(Date.UTC(y.n, m.n - 1, d.n))));
     def('Time.fromYMD', envLookup(env, 'timeFromYMD'));
 
+    // A month or year shift CLAMPS to the last day of a shorter month:
+    // "adding a month to the 31st lands on the last day of a shorter
+    // month", which is what the reference promises and what the phone
+    // already did, because Swift's Calendar clamps.
+    //
+    // setUTCMonth overflows instead — Jan 31 plus one month is March 2,
+    // and Feb 29 plus one year is March 1 — so the server and the browser
+    // agreed with each other and disagreed with the phone and with the
+    // documented contract, on a subscription renewal or a due date.
+    //
+    // Only month and year shifts can overflow. Adding DAYS is exact and
+    // must keep rolling over, which is why the clamp is gated on the day
+    // of the month having moved.
     const calendarShift = (yMul, mMul, dMul) => native(2, ([t, n]) => {
       const date = new Date(t.millis || 0);
       const k = n.n;
+      const dayBefore = date.getUTCDate();
       date.setUTCFullYear(date.getUTCFullYear() + yMul * k);
       date.setUTCMonth(date.getUTCMonth() + mMul * k);
+      if ((yMul !== 0 || mMul !== 0) && date.getUTCDate() !== dayBefore) {
+        // Landed in the following month: back up to the last day of the
+        // one that was asked for.
+        date.setUTCDate(0);
+      }
       date.setUTCDate(date.getUTCDate() + dMul * k);
       return VTime(date.getTime());
     });
@@ -12204,11 +12353,22 @@
           return dp.page;
         }
       }
-      // 3) fallback to the first declared page (single-page apps with
-      //    a stale URL, dev hot-reload from a deep link, etc.).
-      const fallback = pages[firstPath]
-        || (dynamicPages[0] && dynamicPages[0].page)
-        || null;
+      // 3) fallback to the first declared STATIC page (single-page apps
+      //    with a stale URL, dev hot-reload from a deep link, etc.).
+      //
+      //    Never a dynamic one. It used to fall through to
+      //    `dynamicPages[0]` and then stamp `params = null`, which is
+      //    right for a static page and a guaranteed crash for a dynamic
+      //    one: its `view` reads the params the URL was supposed to
+      //    carry. Measured, on an app whose only page was
+      //    `/note/{id:Int}`, every non-matching URL — including `/` —
+      //    painted "view failed: Cannot read properties of null".
+      //
+      //    iOS never had this: it refuses to fall back at all and shows
+      //    "Page not found" (ContentView.matchPath). An app with no
+      //    static page is now refused at boot, so this returns null only
+      //    for a program that could not have started.
+      const fallback = pages[firstPath] || null;
       if (fallback) {
         fallback.activeKey = fallback.path;
         fallback.params = null;
@@ -13991,7 +14151,84 @@
 
   // ---------- Public entry ----------
 
+  // A program.json that is not a program says so, in the same sentences the
+  // phone uses.
+  //
+  // The web used to walk straight into loading it and fail with
+  // `entry not found: main` — for a document with no modules at all, or for
+  // one that is not an object. Measured against the Swift decoder, which
+  // answers `program.json is not an object` and
+  // `program.json missing modules`:
+  //
+  //   42, {}, {modules: "x"}   web: entry not found: main
+  //   {modules:[{name:...}]}   web: mod.decls is not iterable
+  //
+  // It arrives over the network — a truncated download, a proxy answering
+  // with HTML, a stale cache — and "entry not found: main" sends someone
+  // hunting for a `main` that is right there.
+  function checkProgramShape(program) {
+    if (program === null || typeof program !== 'object' || Array.isArray(program)) {
+      throw new Error('program.json is not an object');
+    }
+    const mods = program.modules !== undefined ? program.modules : program.module;
+    if (mods === undefined) {
+      throw new Error('program.json missing `modules` (or legacy `module`)');
+    }
+    const list = Array.isArray(mods) ? mods : [mods];
+    for (const m of list) {
+      if (m === null || typeof m !== 'object' || !Array.isArray(m.decls)) {
+        throw new Error('program.json: a module has no `decls`');
+      }
+    }
+    for (const m of list) checkNodeKinds(m.decls);
+  }
+
+  // The expression and pattern kinds the evaluator has arms for.
+  //
+  // Written out because JS cannot read its own switch. It is not a second
+  // source of truth: internal/parity/node_coverage_test.go compares this
+  // list with the `case` arms below AND with the node types in internal/ast,
+  // so a node added to the language without an arm here fails the build.
+  const KNOWN_NODE_KINDS = new Set([
+    'EApp', 'EBinop', 'ECase', 'EChar', 'ECtor', 'EDecimal', 'EFieldAccess',
+    'EFieldAccessor', 'EIf', 'EInt', 'ELambda', 'ELet', 'EList', 'ENegate',
+    'EQualified', 'ERecord', 'ERecordUpdate', 'EString', 'ETuple', 'EUnit', 'EVar',
+    'PChar', 'PCons', 'PCtor', 'PInt', 'PList', 'PRecord', 'PString', 'PTuple',
+    'PUnit', 'PVar', 'PWildcard',
+  ]);
+
+  // checkNodeKinds refuses a program carrying a node this runtime cannot
+  // evaluate, at LOAD, before any of it runs.
+  //
+  // The kind is only discovered by `evalExpr` otherwise, which is whenever
+  // that expression is first reached: a page three navigations in, a branch
+  // taken once a week, or never. So a program the runtime cannot fully run
+  // would run PARTLY, and the failure would arrive somewhere with no
+  // connection to its cause. The Swift runtime already answers this at decode
+  // ("unknown expr kind"), because building its enum forces the question; the
+  // web never had to ask it.
+  //
+  // The reachable cause is version skew — a cached runtime.js meeting a newer
+  // program.json — which this project has already seen from the other side
+  // (`marRun is not defined`). Measured at 4.5ms for the largest example
+  // (70k nodes, 2.6MB), against a JSON.parse of the same bytes that costs
+  // more.
+  function checkNodeKinds(node) {
+    if (Array.isArray(node)) {
+      for (const child of node) checkNodeKinds(child);
+      return;
+    }
+    if (node === null || typeof node !== 'object') return;
+    const kind = node.kind;
+    if (typeof kind === 'string' && (kind[0] === 'E' || kind[0] === 'P') && !KNOWN_NODE_KINDS.has(kind)) {
+      throw new Error('program.json: unknown node kind `' + kind + '`. ' +
+        'This program was built by a newer Mar than the runtime loading it.');
+    }
+    for (const key in node) checkNodeKinds(node[key]);
+  }
+
   global.marRun = function (program) {
+    checkProgramShape(program);
     // devMode is sticky on the global so mountPages, setupDevChannel,
     // and the time-travel capture path all check the same source. The
     // server stamps it into program.json (see makeProgramJSON in
