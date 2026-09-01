@@ -7,9 +7,12 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
+
+	"mar/internal/typecheck"
 )
 
 // Every expression and pattern the parser can build has to be handled by all
@@ -293,6 +296,101 @@ func elaborationMarks(t *testing.T) []string {
 	out := make([]string, 0, len(seen))
 	for m := range seen {
 		out = append(out, m)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// A subscription that one client runtime does not recognise does not fail: it
+// does NOTHING. The page renders, the app runs, and the timer never ticks or
+// the keys never arrive — on one platform only, with nothing in any log.
+//
+// So every builtin whose type ends in `Sub` needs a source on the web AND on
+// the phone. The list comes from the type environment rather than from here,
+// so a new one cannot be added without this test asking where it is handled.
+func TestEverySubscriptionHasASourceInBothClientRuntimes(t *testing.T) {
+	// What each subscription is called on each side. The two runtimes name
+	// them differently on purpose — the web keys a flat source table, the
+	// phone carries a tag plus a mode string — so this cannot be a single
+	// string compared against both.
+	sources := map[string]struct {
+		js, swift, container string
+	}{
+		"Time.every":     {js: "timeEvery", swift: "__SubEvery"},
+		"Keyboard.watch": {js: "keyboardWatch", swift: "__SubKeyboard"},
+		"Gamepad.watch":  {js: "gamepadWatch", swift: "__SubGamepad"},
+		"Device.watch":   {js: "deviceWatch", swift: "__SubDevice"},
+		"Sound.loop":     {js: "loop", swift: `soundSub("loop"`},
+		"Sound.once":     {js: "once", swift: `soundSub("once"`},
+		"Sound.voice":    {js: "voice", swift: `soundSub("voice"`},
+		"Sound.glide":    {js: "glide", swift: `soundSub("glide"`},
+		"Sub.none":       {container: "the empty subscription: there is no source to start"},
+		"Sub.batch":      {container: "a list of other subscriptions, each of which is checked on its own"},
+	}
+
+	jsSrc := readFile(t, filepath.Join("..", "jsserve", "runtime.js"))
+	swiftSrc := readAll(t, filepath.Join("..", "iosbundle", "template", "Sources"), ".swift")
+
+	found := subReturningBuiltins()
+	if len(found) < 8 {
+		t.Fatalf("found %d subscription builtins; the scan is broken, not the runtimes", len(found))
+	}
+
+	for _, name := range found {
+		src, known := sources[name]
+		if !known {
+			t.Errorf("`%s` produces a Sub and this test does not know how either client runtime starts it. "+
+				"A subscription no runtime recognises does not fail — it silently never fires.", name)
+			continue
+		}
+		if src.container != "" {
+			continue
+		}
+		// The web needs the builtin to EMIT the source and the reconciler to
+		// have a row for it: emitting one the table does not know is the same
+		// silence as not emitting at all.
+		if !strings.Contains(jsSrc, "src: '"+src.js+"'") {
+			t.Errorf("`%s`: runtime.js no longer emits the source %q", name, src.js)
+		}
+		if !strings.Contains(jsSrc, "\n    "+src.js+": {") {
+			t.Errorf("`%s`: runtime.js emits %q but its subscription table has no row for it, "+
+				"so the page would subscribe to nothing", name, src.js)
+		}
+		if !strings.Contains(swiftSrc, src.swift) {
+			t.Errorf("`%s`: the Swift runtime no longer starts it (%q)", name, src.swift)
+		}
+	}
+
+	for name, src := range sources {
+		if src.container != "" {
+			continue
+		}
+		if !slices.Contains(found, name) {
+			t.Errorf("this test still explains how `%s` is started, but nothing produces a Sub under that name", name)
+		}
+	}
+}
+
+// subReturningBuiltins reads the type environment for everything that hands
+// back a Sub.
+func subReturningBuiltins() []string {
+	var out []string
+	for name, ty := range typecheck.BaseQualifiedSymbols() {
+		res := ty
+		for {
+			if f, ok := res.(typecheck.TForall); ok {
+				res = f.Body
+				continue
+			}
+			if a, ok := res.(typecheck.TArrow); ok {
+				res = a.To
+				continue
+			}
+			break
+		}
+		if strings.HasPrefix(res.String(), "Sub") {
+			out = append(out, name)
+		}
 	}
 	sort.Strings(out)
 	return out
