@@ -113,7 +113,12 @@ func serviceBuiltins() map[string]Value {
 			return VExposedService{Service: contract}, nil
 		}),
 
-		"serviceCall": nativeFn(4, func(args []Value) (Value, error) {
+		// Arity 3, matching `Service.call`'s type and the browser runtime.
+		// It was 4, so applying it the way a program has to — service,
+		// request, message constructor — left a partially applied FUNCTION
+		// sitting where the type says `Cmd msg`, and the message below (the
+		// whole reason this stub exists) could never be reached.
+		"serviceCall": nativeFn(3, func(args []Value) (Value, error) {
 			return VEffect{
 				Tag: "serviceCall",
 				Run: func() (Value, error) {
