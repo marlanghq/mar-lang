@@ -68,7 +68,7 @@ func evalAt(e ast.Expr, env *Env, depth int) (Value, error) {
 	case *ast.EDecimal:
 		coef, ok := new(big.Int).SetString(n.Coef, 10)
 		if !ok {
-			return nil, errorf(n.Pos, "invalid decimal literal")
+			return nil, internalErrorf(n.Pos, "the parser accepted the decimal literal %q and the evaluator cannot read it", n.Coef)
 		}
 		return VDecimal{Coef: coef, Scale: n.Scale}, nil
 	case *ast.EString:
@@ -84,7 +84,7 @@ func evalAt(e ast.Expr, env *Env, depth int) (Value, error) {
 		}
 		v, ok := env.Lookup(n.Name)
 		if !ok {
-			return nil, errorf(n.Pos, "unbound name: %s", n.Name)
+			return nil, internalErrorf(n.Pos, "unbound name: %s", n.Name)
 		}
 		return v, nil
 
@@ -111,7 +111,7 @@ func evalAt(e ast.Expr, env *Env, depth int) (Value, error) {
 		if v, ok := env.Lookup(n.Name); ok {
 			return v, nil
 		}
-		return nil, errorf(n.Pos, "unbound qualified name: %s", key)
+		return nil, internalErrorf(n.Pos, "unbound qualified name: %s", key)
 
 	case *ast.ECtor:
 		// Constructors are looked up like values (registered at module
@@ -124,7 +124,7 @@ func evalAt(e ast.Expr, env *Env, depth int) (Value, error) {
 		}
 		v, ok := env.Lookup(ctorName)
 		if !ok {
-			return nil, errorf(n.Pos, "unbound constructor: %s", ctorName)
+			return nil, internalErrorf(n.Pos, "unbound constructor: %s", ctorName)
 		}
 		return v, nil
 
@@ -142,7 +142,7 @@ func evalAt(e ast.Expr, env *Env, depth int) (Value, error) {
 	case *ast.EBinop:
 		op, ok := env.Lookup(n.Op)
 		if !ok {
-			return nil, errorf(n.Pos, "unknown operator: %s", n.Op)
+			return nil, internalErrorf(n.Pos, "unknown operator: %s", n.Op)
 		}
 		left, err := evalAt(n.Left, env, depth)
 		if err != nil {
@@ -166,7 +166,7 @@ func evalAt(e ast.Expr, env *Env, depth int) (Value, error) {
 		if n.Op == "&&" || n.Op == "||" {
 			lb, isBool := left.(VBool)
 			if !isBool {
-				return nil, errorf(n.Pos, "%s: expected Bool", n.Op)
+				return nil, internalErrorf(n.Pos, "an operand of `%s` evaluated to something that is not a Bool", n.Op)
 			}
 			if n.Op == "&&" && !lb.V {
 				return VBool{V: false}, nil
@@ -180,7 +180,7 @@ func evalAt(e ast.Expr, env *Env, depth int) (Value, error) {
 			}
 			rb, isBool := right.(VBool)
 			if !isBool {
-				return nil, errorf(n.Pos, "%s: expected Bool", n.Op)
+				return nil, internalErrorf(n.Pos, "an operand of `%s` evaluated to something that is not a Bool", n.Op)
 			}
 			return rb, nil
 		}
@@ -239,7 +239,7 @@ func evalAt(e ast.Expr, env *Env, depth int) (Value, error) {
 				// Use a unique name that the body won't reference.
 				paramNames[i] = fmt.Sprintf("__wild%d", i)
 			default:
-				return nil, errorf(n.Pos, "lambda params must be names or _ (got %T)", p)
+				return nil, internalErrorf(n.Pos, "a lambda parameter is not a name or `_` (got %T)", p)
 			}
 		}
 		return VFn{
@@ -342,22 +342,23 @@ func evalAt(e ast.Expr, env *Env, depth int) (Value, error) {
 		}
 		v, ok := rec.Fields[n.Field]
 		if !ok {
-			return nil, errorf(n.Pos, "%s", missingFieldMessage(n.Field, rec))
+			return nil, internalErrorf(n.Pos, "%s", missingFieldMessage(n.Field, rec))
 		}
 		return v, nil
 
 	case *ast.EFieldAccessor:
 		// .foo as a function: \r -> r.foo
 		field := n.Field
+		pos := n.Pos
 		return VFn{
 			Native: func(args []Value) (Value, error) {
 				rec, ok := args[0].(VRecord)
 				if !ok {
-					return nil, fmt.Errorf("field accessor .%s: not a record", field)
+					return nil, internalErrorf(pos, "the field accessor `.%s` was applied to something that is not a record (got %T)", field, args[0])
 				}
 				v, ok := rec.Fields[field]
 				if !ok {
-					return nil, fmt.Errorf("%s", missingFieldMessage(field, rec))
+					return nil, internalErrorf(pos, "%s", missingFieldMessage(field, rec))
 				}
 				return v, nil
 			},
@@ -379,7 +380,7 @@ func evalAt(e ast.Expr, env *Env, depth int) (Value, error) {
 		return nil, errorf(n.Pos, "no case branch matched")
 
 	default:
-		return nil, errorf(e.Position(), "eval: not yet supported: %T", e)
+		return nil, internalErrorf(e.Position(), "the evaluator has no case for %T", e)
 	}
 }
 
