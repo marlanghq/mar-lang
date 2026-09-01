@@ -1180,6 +1180,12 @@ func ResolveSessionSecret(m *Manifest, projectDir string) (string, string, error
 	}
 	devDir := filepath.Join(projectDir, ".mar")
 	devFile := filepath.Join(devDir, "dev-secrets.json")
+	// Whether the file was THERE and unusable, as opposed to absent, is the
+	// difference between a first run and a mystery. Both end with a new
+	// secret written below; only the second one logs a developer out of a
+	// session they had a moment ago, so only the second one is worth saying
+	// out loud. The caller tells them apart by this source string.
+	replaced := false
 	if data, err := os.ReadFile(devFile); err == nil {
 		var stored struct {
 			SessionSecret string `json:"sessionSecret"`
@@ -1187,6 +1193,7 @@ func ResolveSessionSecret(m *Manifest, projectDir string) (string, string, error
 		if json.Unmarshal(data, &stored) == nil && stored.SessionSecret != "" {
 			return stored.SessionSecret, ".mar/dev-secrets.json", nil
 		}
+		replaced = true
 	}
 	if err := os.MkdirAll(devDir, 0o755); err != nil {
 		return "", "", fmt.Errorf("create .mar dir: %w", err)
@@ -1204,6 +1211,9 @@ func ResolveSessionSecret(m *Manifest, projectDir string) (string, string, error
 	// Make sure it's gitignored. Append-only so we don't clobber an
 	// existing .gitignore.
 	ensureGitignored(filepath.Join(projectDir, ".gitignore"), ".mar/")
+	if replaced {
+		return secret, ".mar/dev-secrets.json (replaced: the file was there but could not be read)", nil
+	}
 	return secret, ".mar/dev-secrets.json (newly generated)", nil
 }
 

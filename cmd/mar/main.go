@@ -1149,7 +1149,20 @@ func runDev(path string, noOpen bool) int {
 		smtpCfg := project.ToSMTPConfig(manifest)
 		smtpCfg.AllowStdoutSink = true
 		jsserve.SetAuthRuntime(secret, smtpCfg)
-		_ = secretSrc // available for diagnostics if we want to log it later
+		// A REPLACED secret invalidates every session that existed a moment
+		// ago, and the developer's next click is a sign-in screen they did
+		// not ask for. The recovery is right — `.mar/dev-secrets.json` is
+		// rewritten and dev keeps working — but the silence is not: nothing
+		// said why everyone was logged out. The source string carried this
+		// and was being discarded with a note about logging it later.
+		//
+		// A first run is deliberately quiet: there was no session to lose,
+		// and an app with no `Auth.config` at all would be told about a
+		// sign-in it does not have.
+		if strings.Contains(secretSrc, "replaced:") {
+			fprintHint("the session secret was replaced (%s),\n"+
+				"      so anyone signed in before now has to sign in again.", secretSrc)
+		}
 		if manifest != nil && manifest.Mail != nil {
 			jsserve.SetAdminMailFrom(manifest.Mail.From)
 		}
