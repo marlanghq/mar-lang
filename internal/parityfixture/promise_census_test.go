@@ -48,7 +48,7 @@ type promiseSource struct {
 
 var promiseCensus = []promiseSource{
 	{"jsserve/runtime.js", 11, 1, "fixture", "8 of the 11 are values in Source, 1 (the math kernels) is generated, and the domain-code boundary is held to AuthPortCases; RegisterEnumType needs a server, and is the gap inside this file"},
-	{"runtime/admin.go", 1, 1, "gap", "admin payload shapes have no second implementation to disagree with — the phone does not render the admin pages"},
+	{"runtime/admin.go", 1, 0, "table", "not a cross-runtime promise at all: the bodies are checked against their declared type by internal/jsserve admin_shape_test.go, which is the wire checker pointed the other way"},
 	{"runtime/device.go", 1, 0, "fixture", "`devices` compares touchOnly / canHover over four records: only the SOURCE of a Device is the host's matchMedia, and the logic is a pure function"},
 	{"runtime/path.go", 1, 0, "fixture", "`link` encodes a space and a slash, which is where the three answers used to differ"},
 	{"iosbundle/MarBuiltins.swift", 5, 0, "fixture", "builtin tables: durations, listMove, charEdges, seeded, and Device.touchOnly / canHover, which moved here out of a file that imports a screen"},
