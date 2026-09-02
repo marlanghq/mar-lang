@@ -2143,11 +2143,19 @@ func stdlibBindings() map[string]Type {
 		// express the row-type ⇄ schema correspondence for nullable columns.
 		"entityNotNull": TConstraint(),
 
-		// Repo operations. Inputs (filter, patch, create-payload) are fully
+		// Repo operations. This comment used to read: "Inputs are fully
 		// polymorphic at the type-checker level; the runtime cross-checks at
-		// call time that record fields are a subset of the entity's columns
-		// with matching types. (Stricter compile-time check would need
-		// row-poly subtyping mar's HM doesn't support today.)
+		// call time... (Stricter compile-time check would need row-poly
+		// subtyping mar's HM doesn't support today.)"
+		//
+		// Both halves were wrong. Mar's HM DOES have row polymorphism -- see
+		// TRecord.Tail, which several builtins already use -- so the inputs are
+		// open records now and a non-record is a unification error. And the
+		// field-level cross-check is not the runtime's: the shape lint does it
+		// at compile time, against the entity's own columns.
+		//
+		// What is left for the runtime is the case neither can be sure of, an
+		// entity arriving through a value the pass cannot resolve.
 		"repoAll": TForall{
 			Vars: []int{a.ID},
 			Body: TArrow{From: TEntity(a), To: TTask(TList(a))},
