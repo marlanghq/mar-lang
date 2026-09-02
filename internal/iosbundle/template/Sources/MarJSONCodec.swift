@@ -27,7 +27,90 @@ enum MarJSONCodec {
     /// (null maps to unit, NOT to Nothing: Nothing tags uniformly
     /// via {"__ctor":"Nothing"} so it doesn\'t collide with VUnit\'s
     /// null encoding.)
-    static func jsonToMar(_ any: Any) -> MarValue {
+    /// formatWireNumber prints a rejected payload the way the other two
+    /// runtimes do, so the corpus compares one sentence rather than three.
+    /// quoteWire prints a rejected payload the way the other two runtimes
+    /// do, so the corpus compares one sentence rather than three.
+    /// parseISO reads an ISO 8601 instant with OR without fractional
+    /// seconds. `.withFractionalSeconds` REQUIRES them, so asking for it
+    /// alone would refuse every value written before the wire form carried
+    /// milliseconds — which is everything already stored or in flight.
+    static func parseISO(_ iso: String) -> Date? {
+        let withFraction = ISO8601DateFormatter()
+        withFraction.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let d = withFraction.date(from: iso) { return d }
+        let plain = ISO8601DateFormatter()
+        plain.formatOptions = [.withInternetDateTime]
+        return plain.date(from: iso)
+    }
+
+    /// formatISO writes one, always with three decimal places, matching the
+    /// Go encoder and JavaScript's toISOString.
+    static func formatISO(_ millis: Int) -> String {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return f.string(from: Date(timeIntervalSince1970: Double(millis) / 1000))
+    }
+
+    /// sameKindAsExisting reports whether a new key or item can share a
+    /// collection with what is already there.
+    ///
+    /// A Set and a Dict are SORTED, so building one compares its members.
+    /// Go and JS fail that comparison outright; Swift's search does not, so
+    /// it built a set of mixed types and handed it on. All three now refuse
+    /// the payload, with one sentence.
+    static func sameKindAsExisting(_ v: MarValue, in collection: MarValue) -> Bool {
+        var first: MarValue?
+        switch collection {
+        case .set(let items):  first = items.first
+        case .dict(let pairs): first = pairs.first?.0
+        default: return true
+        }
+        guard let existing = first else { return true }
+        return kindTag(v) == kindTag(existing)
+    }
+
+    private static func kindTag(_ v: MarValue) -> String {
+        switch v {
+        case .int:     return "int"
+        case .string:  return "string"
+        case .bool:    return "bool"
+        case .char:    return "char"
+        case .decimal: return "decimal"
+        case .time:    return "time"
+        case .angle:   return "angle"
+        case .list:    return "list"
+        case .tuple:   return "tuple"
+        case .record:  return "record"
+        case .ctor:    return "ctor"
+        default:       return "other"
+        }
+    }
+
+    static func plainWire(_ any: Any?) -> String {
+        if let s = any as? String { return s }
+        if let n = any as? NSNumber { return formatWireNumber(n.doubleValue) }
+        return "null"
+    }
+
+    static func quoteWire(_ any: Any?) -> String {
+        if let s = any as? String {
+            let escaped = s.replacingOccurrences(of: "\\", with: "\\\\")
+                .replacingOccurrences(of: "\"", with: "\\\"")
+            return "\"" + escaped + "\""
+        }
+        if let n = any as? NSNumber { return formatWireNumber(n.doubleValue) }
+        return "null"
+    }
+
+    static func formatWireNumber(_ d: Double) -> String {
+        if d == d.rounded(.towardZero) && abs(d) < 1e15 {
+            return String(Int(d))
+        }
+        return String(d)
+    }
+
+    static func jsonToMar(_ any: Any) throws -> MarValue {
         if any is NSNull { return .unit }
         if let n = any as? NSNumber {
             // Distinguish Bool from numeric: NSNumber wraps both
@@ -51,7 +134,7 @@ enum MarJSONCodec {
         if let s = any as? String { return .string(s) }
         if let b = any as? Bool { return .bool(b) }
         if let arr = any as? [Any] {
-            return .list(arr.map(jsonToMar))
+            return .list(try arr.map(jsonToMar))
         }
         if let dict = any as? [String: Any] {
             // Tagged constructor, round-trip from {__ctor: "Tag"} or
@@ -60,70 +143,117 @@ enum MarJSONCodec {
             if let tag = dict["__ctor"] as? String {
                 let args: [MarValue]
                 if let raw = dict["__args"] as? [Any] {
-                    args = raw.map(jsonToMar)
+                    args = try raw.map(jsonToMar)
                 } else {
                     args = []
                 }
                 return .ctor(tag: tag, args: args, origin: nil)
             }
-            // Char round-trip, `{__char: "x"}` rebuilds a .char from
-            // the first Unicode scalar of the payload. Same convention
-            // as Go's convertJSON and JS jsToMar. If the scalar isn't
-            // a valid Unicode.Scalar (shouldn't happen: the producer
-            // is trusted), we fall back to U+FFFD.
+            // Char round-trip, `{__char: "x"}`, and exactly one Unicode
+            // scalar or nothing. Same convention as Go's convertJSON and
+            // JS jsToMar.
+            //
+            // This used to take the first scalar and fall back to U+FFFD
+            // for an empty payload, on the grounds that the producer is
+            // trusted. It is not: the input is EXTERNAL, and a Mar
+            // encoder cannot write more than one scalar. So
+            // `{"__char":"abc"}` answered 'a' silently, and an empty
+            // payload answered U+FFFD here and in the browser while the
+            // server errored. Pinned by the Decode block of the corpus.
             if let s = dict["__char"] as? String, dict.count == 1 {
-                if let scalar = s.unicodeScalars.first {
-                    return .char(scalar)
+                let scalars = Array(s.unicodeScalars)
+                if scalars.count != 1 {
+                    throw MarRuntimeError.message(
+                        "the value should be a single character, got \(scalars.count)")
                 }
-                return .char(Unicode.Scalar(0xFFFD)!)
+                return .char(scalars[0])
             }
             // Decimal round-trip, `{__dec: "1.50"}`. Rebuilt textually
             // so the exact coefficient + scale survive; same convention
             // as the Go and JS decoders.
-            if let s = dict["__dec"] as? String, dict.count == 1,
-               let dec = DecMath.parseDecimalString(s) {
+            if dict["__dec"] != nil, dict.count == 1 {
+                guard let s = dict["__dec"] as? String,
+                      let dec = DecMath.parseDecimalString(s) else {
+                    throw MarRuntimeError.message(
+                        "the value should be a decimal number, got `\(plainWire(dict["__dec"]))`")
+                }
                 return .decimal(dec)
             }
             // Angle round-trip, `{__angle: 450}`, deci-degrees. Wrapped
             // rather than trusted: the payload crossed a network boundary,
             // and every other way to build an Angle normalizes.
-            if let d = dict["__angle"] as? Int, dict.count == 1 {
-                return .angle(MarMath.posMod(d, MarMath.deciFull))
+            // Deci-degrees are integral by construction and no Mar encoder
+            // writes a fraction, so a fractional payload is refused rather
+            // than quietly falling through to a record — the same rule
+            // `__char` follows, and the same sentence in all three
+            // runtimes. Pinned by the Decode block of the corpus.
+            if let n = dict["__angle"] as? NSNumber, dict.count == 1 {
+                let d = n.doubleValue
+                guard d == d.rounded(.towardZero), let i = Int(exactly: d) else {
+                    throw MarRuntimeError.message(
+                        "the value should be a whole number of deci-degrees, got \(formatWireNumber(d))")
+                }
+                return .angle(MarMath.posMod(i, MarMath.deciFull))
             }
             // Time round-trip, `{__time: "ISO 8601"}` rebuilds a
             // VTime so user code typed as `createdAt : Time`
             // actually receives a Time, not a String.
-            if let iso = dict["__time"] as? String {
-                let f = ISO8601DateFormatter()
-                f.formatOptions = [.withInternetDateTime]
-                if let d = f.date(from: iso) {
-                    return .time(Int(d.timeIntervalSince1970 * 1000))
+            // A tagged value that will not rebuild is a decode failure, not
+            // a record. Falling through left `{"__time":"nope"}` as a plain
+            // record here and in the browser while the server errored — and
+            // a Set or Dict that fell through CRASHED the first operation on
+            // it, because the shape reduction has no kind for either.
+            if dict["__time"] != nil {
+                guard let iso = dict["__time"] as? String, let d = parseISO(iso) else {
+                    throw MarRuntimeError.message(
+                        "the value should be a date and time, got `\(plainWire(dict["__time"]))`")
                 }
+                return .time(Int(d.timeIntervalSince1970 * 1000))
             }
             // Dict / Set round-trip. Wire format mirrors the Go and JS
             // sides exactly: `{__dict: [[k, v], ...]}` and
             // `{__set: [k, ...]}`. We rebuild via the runtime's
             // insert helpers so the sorted invariant survives even
             // when the payload arrives out of order.
-            if let pairs = dict["__dict"] as? [Any] {
+            if dict["__dict"] != nil {
+                guard let pairs = dict["__dict"] as? [Any] else {
+                    throw MarRuntimeError.message("the value should be a list of key/value pairs")
+                }
                 var d = MarValue.dict([])
                 for p in pairs {
-                    guard let arr = p as? [Any], arr.count == 2 else { continue }
-                    d = MarDict.insert(d, jsonToMar(arr[0]), jsonToMar(arr[1]))
+                    guard let arr = p as? [Any], arr.count == 2 else {
+                        throw MarRuntimeError.message("the value should be a key/value pair of two items")
+                    }
+                    // A dictionary is sorted by key, so building one
+                    // compares the keys; mixed types failed with a message
+                    // about comparison rather than about the request.
+                    let k = try jsonToMar(arr[0])
+                    guard sameKindAsExisting(k, in: d) else {
+                        throw MarRuntimeError.message(
+                            "the value should be a list of key/value pairs whose keys are one type")
+                    }
+                    d = MarDict.insert(d, k, try jsonToMar(arr[1]))
                 }
                 return d
             }
-            if let items = dict["__set"] as? [Any] {
+            if dict["__set"] != nil {
+                guard let items = dict["__set"] as? [Any] else {
+                    throw MarRuntimeError.message("the value should be a list of items")
+                }
                 var s = MarValue.set([])
                 for it in items {
-                    s = MarDict.setInsert(s, jsonToMar(it))
+                    let item = try jsonToMar(it)
+                    guard sameKindAsExisting(item, in: s) else {
+                        throw MarRuntimeError.message("the value should be a list of items of one type")
+                    }
+                    s = MarDict.setInsert(s, item)
                 }
                 return s
             }
             var fields: [String: MarValue] = [:]
             var order: [String] = []
             for k in dict.keys.sorted() {
-                fields[k] = jsonToMar(dict[k] as Any)
+                fields[k] = try jsonToMar(dict[k] as Any)
                 order.append(k)
             }
             return .record(fields: fields, order: order)
@@ -152,10 +282,7 @@ enum MarJSONCodec {
         case .duration(let s): return s     // Duration → seconds (whole renders as int, sub-second keeps the fraction)
         case .angle(let d): return ["__angle": d] as [String: Any]
         case .time(let ms):
-            let d = Date(timeIntervalSince1970: TimeInterval(ms) / 1000)
-            let f = ISO8601DateFormatter()
-            f.formatOptions = [.withInternetDateTime]
-            return ["__time": f.string(from: d)] as [String: Any]
+            return ["__time": formatISO(ms)] as [String: Any]
         case .list(let xs): return xs.map(marToJSON)
         case .tuple(let xs): return xs.map(marToJSON)
         case .record(let fs, let order):
@@ -318,6 +445,8 @@ enum MarJSONCodec {
                 let qualified = module.isEmpty ? stringOf(dict["name"]) : module + "." + stringOf(dict["name"])
                 if qualified == "JSON.decode" { return .jsonDecode(shape: shape) }
                 if qualified == "Service.call" { return .serviceCall(shape: shape) }
+                if qualified == "Auth.verifyCode" { return .authVerify(shape: shape) }
+                if qualified == "Auth.me" { return .authMe(shape: shape) }
             }
             return .qualified(module: stringList(dict["module"]),
                               name: stringOf(dict["name"]))

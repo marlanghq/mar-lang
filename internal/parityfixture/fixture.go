@@ -284,3 +284,42 @@ var HTTPErrorCases = []HTTPErrorCase{
 	{200, `{"a":1`, "decode failed: the document is not valid JSON",
 		"JSON that stops halfway"},
 }
+
+// AuthPortCases is the body the sign-in endpoint answered with and the one
+// sentence both clients must turn it into.
+//
+// The auth port was the wire port that asserted NOTHING. Whatever
+// /_auth/verify-code answered went straight into `Auth.SignedIn` and reached
+// user code typed as the app's own user record — so `{"id":"1"}` handed a
+// String to a program the checker had promised an Int to, and neither runtime
+// said a word. What each did instead was worse than silence:
+//
+//	browser  a missing field threw while reading it, the promise's outer
+//	         catch answered Offline, and the user was told their connection
+//	         was down about a server that had answered fine
+//	phone    a body that would not parse became `()`, so `SignedIn ()` was
+//	         delivered, and Auth.me reported a signed-in person as signed OUT
+//
+// The checker knows the user type at the call site — it is what pins the type
+// variable in `Auth.VerifyOutcome user` — so the shape is stamped on the node
+// exactly like Service.call's response shape, and both clients check it.
+type AuthPortCase struct {
+	Body string
+	Says string // "" means the body is accepted
+	Why  string
+}
+
+var AuthPortCases = []AuthPortCase{
+	{`{"id":1,"email":"a@b.c"}`, "",
+		"the user the endpoint is supposed to answer with"},
+	{`{"nope":1}`, "the response does not match what this app expects: the value is missing the field `id`",
+		"a record with none of the fields the program was promised"},
+	{`{"id":"1","email":"a@b.c"}`, "the response does not match what this app expects: `id` should be a whole number, got a string",
+		"the right fields with the wrong type: a String where the checker promised an Int"},
+	{`[1,2]`, "the response does not match what this app expects: the value should be an object, got a list",
+		"JSON that is not an object at all"},
+	{`null`, "the response does not match what this app expects: the value should be an object, got nothing",
+		"a null where a user belongs"},
+	{`<html>`, "decode failed: the document is not valid JSON",
+		"a sign-in page from a proxy instead of a user"},
+}

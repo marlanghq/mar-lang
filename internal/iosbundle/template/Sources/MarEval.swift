@@ -112,6 +112,13 @@ enum Eval {
             // the server is supposed to answer with.
             return MarWire.serviceCaller(shape)
 
+        case .authVerify(let shape):
+            // And the sign-in endpoint, which answers with the app's own user.
+            return MarWire.authVerifier(shape)
+
+        case .authMe(let shape):
+            return MarWire.authMe(shape)
+
         case .negate(let inner):
             switch try eval(inner, env) {
             case .int(let n):   return .int(-n)

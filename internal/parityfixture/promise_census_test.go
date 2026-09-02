@@ -57,7 +57,7 @@ var promiseCensus = []promiseSource{
 	{"iosbundle/MarIntRange.swift", 1, 0, "fixture", "`bigInt` and `decimalEdge` ride the bound; the refusal's wording is pinned in internal/runtime"},
 	{"iosbundle/MarJSONCodec.swift", 1, 0, "fixture", "collections: Set and Dict round-trip and keep their order"},
 	{"iosbundle/MarEval.swift", 1, 0, "fixture", "`no case branch matched`, matched by text on both clients"},
-	{"iosbundle/MarHTTP.swift", 3, 2, "table", "decodeServerError is held to parityfixture.HTTPErrorCases; handleAuthExpired and authOutcomePost still need a real request, and are the gaps"},
+	{"iosbundle/MarHTTP.swift", 4, 1, "table", "decodeServerError is held to HTTPErrorCases and authOutcomePost to AuthPortCases; the shape-mismatch sentence is held to AuthPortCases too; handleAuthExpired is the gap, because routing to a sign-in screen is only observable as a screen"},
 	{"iosbundle/MarRenderer.swift", 2, 0, "screens", "the renderer is compared by the screens it produces"},
 	{"iosbundle/MarPageRuntime.swift", 4, 0, "screens", "page lifecycle, compared by the navigation fixture"},
 	{"iosbundle/MarDispatcher.swift", 1, 0, "screens", "dispatch is observable only as a screen that changed"},

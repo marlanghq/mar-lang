@@ -32,6 +32,12 @@ indirect enum Expr {
     /// kind, so this node is the only way the response type reaches the
     /// phone. Resolved at decode time, like `impl` and `jsonDecode`.
     case serviceCall(shape: MarWireShape)
+    /// `Auth.verifyCode` / `Auth.me` at a call site whose USER type the checker
+    /// knew. The auth port used to assert nothing: whatever the sign-in
+    /// endpoint answered became `Auth.SignedIn` and reached user code typed as
+    /// the app's own user record.
+    case authVerify(shape: MarWireShape)
+    case authMe(shape: MarWireShape)
 
     case negate(Expr)
     case app(fn: Expr, arg: Expr)

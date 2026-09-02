@@ -438,6 +438,15 @@
   // depending on the language the phone was set to, which is how a user could
   // be shown "The data couldn't be read because it isn't in the correct
   // format." where the browser said "Unexpected token '<'".
+  // A response whose shape is not what the call site's type promised. The
+  // sentence is the one Service.call already gives; the flag is what keeps the
+  // `decode failed:` prefix off it.
+  function wireMismatch(where, detail) {
+    const e = new Error(where + ' does not match what this app expects: ' + detail);
+    e.marWire = true;
+    return e;
+  }
+
   function jsonBodyOrThrow(body) {
     try {
       return JSON.parse(body);
@@ -1162,6 +1171,21 @@
   // with no declaration would be an implicit global, which is exactly the
   // kind of thing that works until the file is loaded in strict mode.
   let serviceCallWithShape = null;
+  let authVerifyWithShape = null;
+  let authMeWithShape = null;
+
+  // A body from an auth endpoint, decoded and then held to the type the call
+  // site asked for. Throws with the sentence Service.call gives, so the two
+  // ports read the same when a server has moved on.
+  function checkedMarUser(v, shape) {
+    const err = checkWireAt(v, shape, '');
+    if (err) throw wireMismatch('the response', err);
+    return coerceWire(v, shape);
+  }
+
+  function checkedUser(text, shape) {
+    return checkedMarUser(jsToMar(jsonBodyOrThrow(text)), shape);
+  }
 
   // Returns null when the value fits the shape, or the sentence that says
   // how it does not.
@@ -1449,6 +1473,12 @@
         }
         if (e.wire !== undefined && key === 'Service.call' && serviceCallWithShape) {
           return e._caller || (e._caller = serviceCallWithShape(e.wire));
+        }
+        if (e.wire !== undefined && key === 'Auth.verifyCode' && authVerifyWithShape) {
+          return e._verify || (e._verify = authVerifyWithShape(e.wire));
+        }
+        if (e.wire !== undefined && key === 'Auth.me' && authMeWithShape) {
+          return e._me || (e._me = authMeWithShape(e.wire));
         }
         let v = envLookup(env, key);
         if (v === undefined) v = envLookup(env, e.name);
@@ -6678,7 +6708,16 @@
               try {
                 result = VCtor('Ok', [okOutcome(r.body)]);
               } catch (e) {
-                result = VCtor('Err', [VCtor('ServerError', [VString('decode failed: ' + (e && e.message || e))])]);
+                // A shape mismatch already carries the whole sentence; only a
+                // parse failure needs the `decode failed:` framing. Before the
+                // auth port had a shape at all, a body of the wrong shape got
+                // no sentence: reading a missing field threw inside the
+                // promise and the outer .catch answered Offline, which told
+                // the user their connection was down about a server that had
+                // answered.
+                const text = (e && e.marWire) ? e.message
+                  : 'decode failed: ' + (e && e.message || e);
+                result = VCtor('Err', [VCtor('ServerError', [VString(text)])]);
               }
             } else {
               const domain = mapCode(decodeServerError(r.body));
@@ -6705,6 +6744,17 @@
               : null);
     }));
     def('Auth.requestCode', envLookup(env, 'authRequestCode'));
+
+    // The user the sign-in endpoint answers with is checked against the type
+    // the call site asked for, exactly like a Service.call response. Without
+    // the shape this was the one wire port that asserted nothing.
+    authVerifyWithShape = (shape) => native(2, ([req, toMsg]) => {
+      return authOutcomePost('/_auth/verify-code', marToJs(req), toMsg,
+        text => VCtor('SignedIn', [checkedUser(text, shape)]),
+        code => code === 'invalid_code' ? VCtor('WrongCode')
+              : code === 'too_many_attempts' ? VCtor('TooManyAttempts')
+              : null);
+    });
 
     def('authVerifyCode', native(2, ([req, toMsg]) => {
       return authOutcomePost('/_auth/verify-code', marToJs(req), toMsg,
@@ -6761,7 +6811,14 @@
     }));
     def('Auth.logout', envLookup(env, 'authLogout'));
 
-    def('authMe', native(1, ([toMsg]) => {
+    // Auth.me with the call site's user type, when the checker knew it. The
+    // shape is optional so an older bundle -- one serialized before the auth
+    // port had a shape at all -- still runs, unchecked, exactly as it did.
+    authMeWithShape = (shape) => native(1, ([toMsg]) => authMeEffect(toMsg, shape));
+
+    def('authMe', native(1, ([toMsg]) => authMeEffect(toMsg, null)));
+
+    function authMeEffect(toMsg, shape) {
       // GET /_auth/whoami: Maybe user.
       return VEffect(() => {
         fetch('/_auth/whoami', { credentials: 'same-origin' })
@@ -6775,11 +6832,15 @@
             let parsed;
             try {
               const raw = jsonBodyOrThrow(r.body);
+              // `null` is a signed-out answer, not a user of the wrong shape,
+              // so it never meets the guard.
               parsed = raw == null
                 ? VCtor('Nothing', [])
-                : VCtor('Just', [jsToMar(raw)]);
+                : VCtor('Just', [shape ? checkedMarUser(jsToMar(raw), shape) : jsToMar(raw)]);
             } catch (e) {
-              const msg = apply(toMsg, VCtor('Err', [VString('decode failed: ' + (e && e.message || e))]));
+              const text = (e && e.marWire) ? e.message
+                : 'decode failed: ' + (e && e.message || e);
+              const msg = apply(toMsg, VCtor('Err', [VString(text)]));
               if (currentDispatch) currentDispatch(msg);
               return;
             }
@@ -6792,7 +6853,7 @@
           });
         return VUnit();
       }, 'authMe');
-    }));
+    }
     def('Auth.me', envLookup(env, 'authMe'));
 
     def('httpPost', native(3, ([url, body, toMsg]) => {

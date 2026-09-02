@@ -38,6 +38,41 @@ if args.count >= 4, args[1] == "--service-result" {
     exit(0)
 }
 
+// Fourth mode: the AUTH port. Same journey as --service-result, through the
+// sign-in endpoint's decoder, so the user record the app is handed is compared
+// with the browser's for the same body.
+if args.count >= 4, args[1] == "--auth-verify" {
+    let status = Int(args[2]) ?? 0
+    let body = args[3]
+    let data = body.data(using: .utf8) ?? Data()
+    let response = HTTPURLResponse(url: URL(string: "https://example.invalid/_auth/verify-code")!,
+                                   statusCode: status, httpVersion: nil, headerFields: nil)
+    // { id : Int, email : String }: the shape the probe program declares.
+    let shape = MarWireShape(kind: "Record")
+    let idShape = MarWireShape(kind: "Int")
+    let emailShape = MarWireShape(kind: "String")
+    shape.fields = [(name: "id", shape: idShape), (name: "email", shape: emailShape)]
+    let v = MarHTTP.makeAuthOutcomeResult(
+        data: data, response: response, error: nil,
+        okOutcome: { user in .ctor(tag: "SignedIn", args: [user], origin: nil) },
+        mapCode: { code in
+            switch code {
+            case "invalid_code": return .ctor(tag: "WrongCode", args: [], origin: nil)
+            case "too_many_attempts": return .ctor(tag: "TooManyAttempts", args: [], origin: nil)
+            default: return nil
+            }
+        },
+        userShape: shape)
+    if case .ctor(let tag, let cargs, _) = v {
+        if tag == "Err", let inner = cargs.first, case .ctor(let etag, let eargs, _) = inner {
+            if let m = eargs.first, case .string(let s) = m { print(s) } else { print(etag) }
+        } else if let ok = cargs.first {
+            print("Ok " + String(describing: ok))
+        }
+    }
+    exit(0)
+}
+
 guard args.count >= 3 else {
     FileHandle.standardError.write("usage: driver <program.json> <Module.value>\n".data(using: .utf8)!)
     exit(2)

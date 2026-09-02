@@ -602,6 +602,10 @@ func Elaborate(exprTypes map[ast.Expr]Type, tags CtorLookup) {
 				n.Wire = decodeShapeFor(t, tags)
 			case "Service.call":
 				n.Wire = responseShapeFor(t, tags)
+			case "Auth.verifyCode":
+				n.Wire = authUserShapeFor(t, tags, 1)
+			case "Auth.me":
+				n.Wire = authUserShapeFor(t, tags, 0)
 			}
 		case *ast.EVar:
 			n.Impl = decimalImplFor(n.Name, t)
@@ -641,6 +645,56 @@ func responseShapeFor(t Type, tags CtorLookup) *ast.WireShape {
 		return nil
 	}
 	s := WireShapeOf(svc.Args[1], tags)
+	if s.Kind == ast.WireAny {
+		return nil
+	}
+	return &s
+}
+
+// authUserShapeFor reads the app's USER type off an occurrence of an auth
+// call, so the record the sign-in endpoint answers with meets the same guard
+// every other response does.
+//
+// It was the one wire port with no shape at all. `Auth.verifyCode` hands
+// whatever the server sent straight into `Auth.SignedIn`, and the program then
+// reads `user.email` off a value nothing had checked: on the browser a
+// `{"nope":1}` became a record without the field and the failure surfaced as
+// "Can't reach the server", which is a lie about a server that answered; on
+// the phone a body that was not JSON became `()` and `SignedIn ()` reached
+// user code typed as a user.
+//
+// skip is how many arguments come before the callback: verifyCode takes the
+// request first, Auth.me takes only the callback.
+func authUserShapeFor(t Type, tags CtorLookup, skip int) *ast.WireShape {
+	for i := 0; i < skip; i++ {
+		arrow, ok := t.(TArrow)
+		if !ok {
+			return nil
+		}
+		t = arrow.To
+	}
+	arrow, ok := t.(TArrow)
+	if !ok {
+		return nil
+	}
+	callback, ok := StripForall(arrow.From).(TArrow)
+	if !ok {
+		return nil
+	}
+	res, ok := StripForall(callback.From).(TCon)
+	if !ok || res.Name != "Result" || len(res.Args) != 2 {
+		return nil
+	}
+	// Result _ (Auth.VerifyOutcome user) for verifyCode, Result _ (Maybe user)
+	// for Auth.me: one argument either way, and it is the user.
+	carrier, ok := StripForall(res.Args[1]).(TCon)
+	if !ok || len(carrier.Args) != 1 {
+		return nil
+	}
+	if carrier.Name != "Auth.VerifyOutcome" && carrier.Name != "Maybe" {
+		return nil
+	}
+	s := WireShapeOf(carrier.Args[0], tags)
 	if s.Kind == ast.WireAny {
 		return nil
 	}

@@ -243,7 +243,7 @@ enum MarHTTP {
     /// GET /_auth/me. Body is either a JSON user record or `null`.
     /// Resolves to `Ok (Just user)` or `Ok Nothing`. Network errors
     /// resolve to `Err message`.
-    static func fireAuthMe(toMsg: MarValue) {
+    static func fireAuthMe(toMsg: MarValue, userShape: MarWireShape? = nil) {
         Task { @MainActor in
             guard let url = MarDispatcher.shared.resolve(path: "/_auth/me") else {
                 dispatchErr(toMsg, message: "invalid auth path: /_auth/me")
@@ -264,10 +264,24 @@ enum MarHTTP {
                     let any = (try? JSONSerialization.jsonObject(
                         with: raw, options: [.fragmentsAllowed])
                     )
-                    if let any, !(any is NSNull), let user = try? MarJSONCodec.jsonToMar(any) {
-                        outcome = .okJSON(.ctor(tag: "Just", args: [user], origin: nil))
-                    } else {
+                    // `null` is a signed-out answer. Anything else is supposed
+                    // to be the app's own user, and used to become `Nothing`
+                    // when it was not — so a server that had moved on made the
+                    // phone report the person as signed out, silently, while
+                    // the browser said the response did not match.
+                    if any == nil {
+                        outcome = .err(notJSONMessage)
+                    } else if any is NSNull {
                         outcome = .okJSON(.ctor(tag: "Nothing", args: [], origin: nil))
+                    } else if let user = try? MarJSONCodec.jsonToMar(any!) {
+                        if let shape = userShape, let err = MarWire.check(user, shape) {
+                            outcome = .err(wireMismatchMessage(err))
+                        } else {
+                            let checked = userShape.map { MarWire.coerce(user, $0) } ?? user
+                            outcome = .okJSON(.ctor(tag: "Just", args: [checked], origin: nil))
+                        }
+                    } else {
+                        outcome = .err(notJSONMessage)
                     }
                 }
                 Task { @MainActor in
@@ -401,7 +415,8 @@ enum MarHTTP {
         // warning.
         okOutcome: @escaping @Sendable (MarValue) -> MarValue,
         mapCode: @escaping @Sendable (String) -> MarValue?,
-        toMsg: MarValue
+        toMsg: MarValue,
+        userShape: MarWireShape? = nil
     ) {
         Task { @MainActor in
             guard let url = MarDispatcher.shared.resolve(path: path) else {
@@ -428,7 +443,7 @@ enum MarHTTP {
                 }
                 let resultValue = makeAuthOutcomeResult(
                     data: data, response: response, error: error,
-                    okOutcome: okOutcome, mapCode: mapCode
+                    okOutcome: okOutcome, mapCode: mapCode, userShape: userShape
                 )
                 Task { @MainActor in
                     deliverServiceResult(resultValue, toMsg: toMsg)
@@ -437,10 +452,13 @@ enum MarHTTP {
         }
     }
 
-    private static func makeAuthOutcomeResult(
+    // Not private: internal/iosbundle drives it, so the auth port is compared
+    // with the browser's without a real request.
+    static func makeAuthOutcomeResult(
         data: Data?, response: URLResponse?, error: Error?,
         okOutcome: (MarValue) -> MarValue,
-        mapCode: (String) -> MarValue?
+        mapCode: (String) -> MarValue?,
+        userShape: MarWireShape? = nil
     ) -> MarValue {
         if error != nil {
             return .ctor(tag: "Err", args: [serviceErrorOffline()], origin: nil)
@@ -455,9 +473,24 @@ enum MarHTTP {
             let se = serviceErrorFromResponse(status: http.statusCode, body: bodyData, fallbackBody: bodyString)
             return .ctor(tag: "Err", args: [se], origin: nil)
         }
-        let any = (try? JSONSerialization.jsonObject(with: bodyData, options: [.fragmentsAllowed]))
-        let decoded: MarValue = any.flatMap { try? MarJSONCodec.jsonToMar($0) } ?? .unit
-        return .ctor(tag: "Ok", args: [okOutcome(decoded)], origin: nil)
+        // What the endpoint answered is supposed to be the app's own user.
+        // Before the auth port had a shape, a body that would not parse became
+        // `()` and `Auth.SignedIn ()` reached code typed as a user record; a
+        // body of the WRONG shape reached it just as intact.
+        guard let any = (try? JSONSerialization.jsonObject(with: bodyData, options: [.fragmentsAllowed])),
+              let decoded = try? MarJSONCodec.jsonToMar(any) else {
+            return .ctor(tag: "Err",
+                         args: [.ctor(tag: "ServerError", args: [.string(notJSONMessage)], origin: nil)],
+                         origin: nil)
+        }
+        if let shape = userShape, let err = MarWire.check(decoded, shape) {
+            return .ctor(tag: "Err",
+                         args: [.ctor(tag: "ServerError",
+                                      args: [.string(wireMismatchMessage(err))], origin: nil)],
+                         origin: nil)
+        }
+        let checked = userShape.map { MarWire.coerce(decoded, $0) } ?? decoded
+        return .ctor(tag: "Ok", args: [okOutcome(checked)], origin: nil)
     }
 
     // MARK: Service.call result (Service.Error union)
@@ -498,6 +531,12 @@ enum MarHTTP {
             return "You appear to be offline. Check your connection and try again."
         }
         return "Couldn't reach the server. Try again in a moment."
+    }
+
+    /// The sentence a response of the wrong shape gets, the same one
+    /// Service.call gives. Keep it identical to the browser's.
+    static func wireMismatchMessage(_ detail: String) -> String {
+        "the response does not match what this app expects: \(detail)"
     }
 
     /// The sentence a body that is not JSON gets, on every runtime.

@@ -364,6 +364,41 @@ enum MarWire {
         })
     }
 
+    /// `Auth.verifyCode` at a call site whose USER type the checker knew.
+    static func authVerifier(_ shape: MarWireShape) -> MarValue {
+        .fn(MarFn.native(2) { args in
+            let req = args[0]
+            let toMsg = args[1]
+            return .effect(MarEffect(tag: "Auth.verifyCode") {
+                MarHTTP.fireAuthOutcome(
+                    path: "/_auth/verify-code",
+                    body: req,
+                    okOutcome: { user in .ctor(tag: "SignedIn", args: [user], origin: nil) },
+                    mapCode: { code in
+                        switch code {
+                        case "invalid_code": return .ctor(tag: "WrongCode", args: [], origin: nil)
+                        case "too_many_attempts": return .ctor(tag: "TooManyAttempts", args: [], origin: nil)
+                        default: return nil
+                        }
+                    },
+                    toMsg: toMsg,
+                    userShape: shape)
+                return .unit
+            })
+        })
+    }
+
+    /// `Auth.me` at a call site whose user type the checker knew.
+    static func authMe(_ shape: MarWireShape) -> MarValue {
+        .fn(MarFn.native(1) { args in
+            let toMsg = args[0]
+            return .effect(MarEffect(tag: "Auth.me") {
+                MarHTTP.fireAuthMe(toMsg: toMsg, userShape: shape)
+                return .unit
+            })
+        })
+    }
+
     // MARK: - Helpers
 
     /// The positions of whichever of the two forms arrived: a tuple built
