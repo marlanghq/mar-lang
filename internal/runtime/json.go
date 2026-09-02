@@ -64,6 +64,39 @@ func jsonBuiltins() map[string]Value {
 //     keeps it distinguishable from VUnit on the wire: a service
 //     `Int -> ()` returns bare null, and `Ok ()` patterns must still
 //     match it without colliding with `Nothing`.
+//
+// marKindOf names a value the way the program's author would: `a Page`, not
+// `runtime.VPage`.
+func marKindOf(v Value) string {
+	switch v.(type) {
+	case VPage:
+		return "a Page"
+	case VView:
+		return "a View"
+	case VEntity:
+		return "an Entity"
+	case VColumn:
+		return "a Column"
+	case VConstraint:
+		return "a Constraint"
+	case VService:
+		return "a Service"
+	case VExposedService:
+		return "an exposed Service"
+	case VAuth:
+		return "an Auth config"
+	case VPath:
+		return "a Path"
+	case VShared:
+		return "a shared store"
+	case VFn:
+		return "a function"
+	case VEffect:
+		return "a Cmd or Task"
+	}
+	return fmt.Sprintf("this value (%T)", v)
+}
+
 func encodeValue(v Value) (string, error) {
 	switch x := v.(type) {
 	case VInt:
@@ -280,9 +313,17 @@ func encodeValue(v Value) (string, error) {
 		sb.WriteString("]}")
 		return sb.String(), nil
 	case VEffect, VFn:
-		return "", fmt.Errorf("JSON.encode: cannot encode %s", x.Display())
+		return "", fmt.Errorf("JSON.encode: %s has no JSON form.\n"+
+			"  Encode the data it was built FROM, and build it on the side that uses it", marKindOf(v))
 	}
-	return "", fmt.Errorf("JSON.encode: unsupported %T", v)
+	// A Go type name is not something the reader wrote. These are the values a
+	// runtime builds for itself — a Page, a View, an Entity — and `JSON.encode`
+	// takes `a`, so the type system lets one through and the encoder meets it
+	// here. Naming the Mar kind is the least this can do; moving it earlier
+	// would need the API to stop being polymorphic, which is a language
+	// decision rather than a fix.
+	return "", fmt.Errorf("JSON.encode: %s has no JSON form.\n"+
+		"  Encode the data it was built FROM, and build it on the side that uses it", marKindOf(v))
 }
 
 // EncodeValueJSON serializes a Mar Value into the JSON wire format the frontend
