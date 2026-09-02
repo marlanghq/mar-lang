@@ -4,6 +4,7 @@ import (
 	"os"
 	"regexp"
 	"strconv"
+	"strings"
 	"testing"
 
 	"mar/internal/runtime"
@@ -75,4 +76,54 @@ func constantIn(t *testing.T, path, pattern string) int {
 		t.Fatalf("%s: %q is not a number", path, m[1])
 	}
 	return n
+}
+
+// The other number three runtimes have to share, and this one by EQUALITY
+// rather than by direction. decimal.go states the stake itself: "The 34-digit
+// bound is what keeps the three runtimes bit-identical". A money calculation
+// that overflows at 34 digits on the server and at some other width in the
+// browser does not fail differently -- it SUCCEEDS differently, and the two
+// answers are both plausible.
+//
+// The promise census did not cover it: that pass looks for a comment saying one
+// implementation mirrors another, and this one states a shared constraint
+// instead. Same kind of claim, different words, so it needed its own check.
+//
+// The overflow SENTENCE is identical in all three too, and is checked here
+// because it cannot ride in the fixture: it is raised, not returned.
+func TestTheThreeRuntimesBoundDecimalsAtTheSameWidth(t *testing.T) {
+	widths := map[string]int{
+		"server":  constantIn(t, "../runtime/decimal.go", `maxDecimalDigits = ([0-9_]+)`),
+		"browser": constantIn(t, "../jsserve/runtime.js", `MAX_DEC_DIGITS = ([0-9_]+)`),
+		"phone":   constantIn(t, "../iosbundle/template/Sources/MarDecimal.swift", `maxDigits = ([0-9_]+)`),
+	}
+	first := widths["server"]
+	for who, n := range widths {
+		if n != first {
+			t.Errorf("%s bounds a Decimal at %d digits and the server at %d.\n"+
+				"    decimal.go says this bound is what keeps the three bit-identical, so a\n"+
+				"    money calculation would not fail differently -- it would SUCCEED\n"+
+				"    differently, with two plausible answers.", who, n, first)
+		}
+	}
+
+	const sentence = ": Decimal overflow — the result exceeds "
+	for _, f := range []struct{ label, path string }{
+		{"server", "../runtime/decimal.go"},
+		{"browser", "../jsserve/runtime.js"},
+		{"phone", "../iosbundle/template/Sources/MarDecimal.swift"},
+	} {
+		b, err := os.ReadFile(f.path)
+		if err != nil {
+			t.Fatalf("%s: %v", f.label, err)
+		}
+		if !strings.Contains(string(b), sentence) {
+			t.Errorf("the %s runtime no longer says %q when a Decimal overflows",
+				f.label, sentence)
+		}
+	}
+
+	if !t.Failed() {
+		t.Logf("all three bound a Decimal at %d significant digits, and word the overflow the same", first)
+	}
 }
