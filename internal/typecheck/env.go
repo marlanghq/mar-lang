@@ -2159,27 +2159,36 @@ func stdlibBindings() map[string]Type {
 				To:   TArrow{From: TInt, To: TTask(TMaybe(a))},
 			},
 		},
+		// The filter, the input and the patch are RECORDS, and the type used
+		// to say only `b`, which asserts nothing: `Repo.create items 5`
+		// type-checked and failed when a request arrived. An open row with no
+		// required fields is exactly the right strength -- it refuses a
+		// non-record at compile time and lets the shape lint answer the
+		// narrower question of whether the fields are columns of THIS entity.
+		//
+		// Filed as "needs a decision about the type system" and it did not:
+		// Mar has row polymorphism and other builtins already use it.
 		"repoFindBy": TForall{
-			Vars: []int{a.ID, b.ID},
+			Vars: []int{a.ID, -101},
 			Body: TArrow{
 				From: TEntity(a),
-				To:   TArrow{From: b, To: TTask(TList(a))},
+				To:   TArrow{From: TRecord{Fields: map[string]Type{}, Tail: TVar{ID: -101}}, To: TTask(TList(a))},
 			},
 		},
 		"repoCreate": TForall{
-			Vars: []int{a.ID, b.ID},
+			Vars: []int{a.ID, -102},
 			Body: TArrow{
 				From: TEntity(a),
-				To:   TArrow{From: b, To: TTask(a)},
+				To:   TArrow{From: TRecord{Fields: map[string]Type{}, Tail: TVar{ID: -102}}, To: TTask(a)},
 			},
 		},
 		"repoUpdate": TForall{
-			Vars: []int{a.ID, b.ID},
+			Vars: []int{a.ID, -103},
 			Body: TArrow{
 				From: TEntity(a),
 				To: TArrow{
 					From: TInt,
-					To:   TArrow{From: b, To: TTask(TMaybe(a))},
+					To:   TArrow{From: TRecord{Fields: map[string]Type{}, Tail: TVar{ID: -103}}, To: TTask(TMaybe(a))},
 				},
 			},
 		},

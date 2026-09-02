@@ -8,20 +8,19 @@ import (
 	"mar/internal/parser"
 )
 
-// `Repo.create : Entity a -> b -> Task a`. The second argument is a bare type
-// variable, so the checker asserts NOTHING about it: `Repo.create items n`
-// with `n : Int` type-checks, and the failure arrives when a request does.
+// `Repo.create : Entity a -> b -> Task a`. The second argument was a bare type
+// variable, so the checker asserted NOTHING about it: `Repo.create items n`
+// with `n : Int` type-checked, and the failure arrived when a request did.
 //
-// The runtime's own guard says the right sentence — "expected input record" —
-// at the wrong time, and with a Go type name in it. This is the compile-time
-// half, and it is a compile error rather than a boot one because the call can
-// sit inside a function body that boot never evaluates. Measured before the
-// fix: with the call at the top level `mar check` refused it (boot evaluates
-// top-level values); moved one line into a function, `mar check` said OK.
+// It is refused at compile time twice over now, and the two are worth keeping
+// apart. The TYPE says the argument is a record -- an open row with no
+// required fields, which Mar already had and which other builtins already use
+// -- so a non-record is a unification error from the checker itself. The LINT
+// then answers the narrower question the type cannot: whether those fields are
+// columns of THIS entity.
 //
-// The lint stays silent whenever the type is not a definite answer, which is
-// the same discipline as the rest of the pass: a type variable might still
-// become a record, and `Int` cannot.
+// This test drives the checker, so it accepts either voice: what it refuses to
+// accept is the call passing.
 func TestARepoArgumentThatCannotBeARecordIsRefusedAtCompileTime(t *testing.T) {
 	const entity = `module Main exposing (..)
 
@@ -47,22 +46,22 @@ items =
 		{
 			"create with an Int where the row belongs",
 			"addOne : Int -> Task Item\naddOne n =\n    Repo.create items n\n",
-			`Repo.create: expected a record of the columns of "items", got Int`,
+			"cannot unify { … } with Int",
 		},
 		{
 			"update with a String patch",
 			"patchOne : Task (Maybe Item)\npatchOne =\n    Repo.update items 1 \"hello\"\n",
-			`Repo.update: expected a record of the columns of "items", got String`,
+			"the 3rd argument to `Repo.update` has the wrong type: expected { … }, got String",
 		},
 		{
 			"findBy with a Bool filter",
 			"findOne : Task (List Item)\nfindOne =\n    Repo.findBy items True\n",
-			`Repo.findBy: expected a record of the columns of "items", got Bool`,
+			"the 2nd argument to `Repo.findBy` has the wrong type: expected { … }, got Bool",
 		},
 		{
 			"a list, which groups values and cannot be one row",
 			"listOne : Task Item\nlistOne =\n    Repo.create items [ 1, 2 ]\n",
-			`Repo.create: expected a record of the columns of "items", got List`,
+			"the 2nd argument to `Repo.create` has the wrong type: expected { … }, got List",
 		},
 	} {
 		t.Run(c.name, func(t *testing.T) {
@@ -70,27 +69,35 @@ items =
 			if err != nil {
 				t.Fatalf("parse: %v", err)
 			}
+			var said []string
 			types, err := CheckModule(mod)
 			if err != nil {
-				t.Fatalf("check: %v", err)
+				said = append(said, err.Error())
+			} else {
+				for _, i := range RunShapeLint([]*ast.Module{mod}, types.ExprTypes) {
+					said = append(said, i.Message)
+				}
 			}
-			issues := RunShapeLint([]*ast.Module{mod}, types.ExprTypes)
-			if len(issues) == 0 {
+			if len(said) == 0 {
 				t.Fatalf("this checks clean, and fails when a request arrives:\n%s", c.decl)
 			}
-			var got []string
-			for _, i := range issues {
-				got = append(got, i.Message)
-			}
-			if !strings.Contains(strings.Join(got, "\n"), c.want) {
-				t.Errorf("want a message containing %q\ngot:\n  %s", c.want, strings.Join(got, "\n  "))
+			joined := strings.Join(said, "\n")
+			if !strings.Contains(joined, c.want) {
+				t.Errorf("want a message containing %q\ngot:\n  %s", c.want, strings.Join(said, "\n  "))
 			}
 		})
 	}
 }
 
-// The other half, and the one that decides whether the lint is usable: a real
-// record still passes, and so does anything the pass cannot answer for.
+// The other half, and the one that decides whether any of this is usable: a
+// real record still passes.
+//
+// The `viaArgument` case used to live here, as the thing the LINT cannot judge:
+// an entity arriving as a parameter, whose columns the pass cannot resolve. It
+// moved out because the TYPE now catches it -- `Repo.create ent n` with an Int
+// is a unification error whether or not anyone knows which entity `ent` is.
+// That is the better place for it, and it is why the type was worth
+// strengthening rather than leaving the lint to carry the whole load.
 func TestTheRepoLintStaysSilentWhenItCannotBeSure(t *testing.T) {
 	const src = `module Main exposing (..)
 
@@ -125,11 +132,11 @@ okBound s =
     Repo.create items row
 
 
--- The entity is not an Entity.define this pass can resolve, so nothing is
--- known about the columns and nothing is said.
-viaArgument : Entity Item -> Int -> Task Item
-viaArgument ent n =
-    Repo.create ent n
+-- The entity is not an Entity.define this pass can resolve, so the lint says
+-- nothing about the columns. The record still has to be a record, and it is.
+viaArgument : Entity Item -> String -> Task Item
+viaArgument ent s =
+    Repo.create ent { name = s }
 `
 	mod, err := parser.Parse(src)
 	if err != nil {
