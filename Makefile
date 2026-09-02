@@ -49,7 +49,7 @@ MACOS_NOTARY_PROFILE         ?=
 # locked to this version too; bumping requires updating both.
 ELM_REQUIRED_VERSION := 0.19.1
 
-.PHONY: all build stubs release release-macos ios-template test check-examples vscode open-vscode-marketplace website website-serve website-dev clean
+.PHONY: all build stubs release release-macos ios-template test check-examples vscode open-vscode-marketplace website website-serve website-dev clean soundness guards guards-js
 
 all: build
 
@@ -175,6 +175,37 @@ guards: ios-template
 		| grep -vE '/lsp/|/scaffold/init|cloudflare|fly\.go|fly_health' || true
 	@rm -f /tmp/mar-guards.out
 	@echo "(empty above means every guard runs at least once)"
+
+# The goal, as one command.
+#
+# "As sound as possible" has no stopping condition: it presupposes that every
+# surface has been enumerated, and that is the one thing nobody can check. What
+# CAN be checked is the sentence underneath it, and these three tests are it:
+#
+#   only-runtime-when-necessary  every argument guard is either unreachable
+#                                because the declared type pins the argument,
+#                                or reachable and worded in Mar's own words
+#   boot-when-not-compile        every pass runs at the earliest stage it can:
+#                                AST-only passes are reached by `mar check`,
+#                                and a pass needing an evaluated `main` says why
+#   the three runtimes agree     every comment promising two implementations
+#                                behave the same names what checks it
+#
+# The numbers print; the build breaks when any of the three stops holding. That
+# is a claim with a stopping condition, which the superlative is not.
+soundness: ios-template
+	@echo "Só de runtime quando precisa:"
+	@go test ./internal/runtime/ -run TestAGuardAProgramCanReachDoesNotNameAGoType -v 2>&1 \
+		| grep -E "argument guards|FAIL" | sed 's/^ */  /'
+	@echo "No estágio mais cedo possível:"
+	@go test ./internal/project/ -run TestEveryCheckRunsAtTheEarliestStageItCan -v 2>&1 \
+		| grep -E "passes:|FAIL" | sed 's/^ */  /'
+	@echo "Os três runtimes concordam:"
+	@go test ./internal/parityfixture/ -run TestEveryCrossRuntimePromiseIsAccountedFor -v 2>&1 \
+		| grep -E "promises:|FAIL" | sed 's/^ */  /'
+	@echo "E as comparações rodaram de verdade:"
+	@go test ./internal/parityfixture/ -run TestTheOtherTwoRuntimesAreActuallyPresent -v 2>&1 \
+		| grep -E "are both here|missing|FAIL" | sed 's/^ */  /'
 
 # The same question for the web runtime, which `go tool cover` cannot see:
 # runtime.js is a 700KB file the Go tests drive through node. Node writes V8
