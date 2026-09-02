@@ -22,8 +22,22 @@ const (
 	SideBoth Side = iota
 
 	// SideFrontend runs in the browser AND on iOS. Never one without the
-	// other: a name earns this only when both clients implement it, so a
-	// page that compiles is a page that runs on the phone too.
+	// other: a name earns this only when both clients implement it.
+	//
+	// That is a rule about WHERE a name may be called, and it holds. It is
+	// not a promise that everything reachable from a frontend module works
+	// on a phone, and it used to say so — `Page.adminProtected`,
+	// `Page.dynamicAdminProtected` and the `Mar.Admin` surface they hand an
+	// `AdminSession` to have no iOS implementation at all: the Swift runtime
+	// throws "the admin panel has no iOS app" when such a page is reached.
+	// That is the fork this comment warns about, and it is real.
+	//
+	// It is a capability question rather than a side one, so it is answered
+	// where capabilities are known: `mar build --target ios` refuses a
+	// program with an admin page, because the phone has no panel to pass.
+	// See apphost.CheckWiring. Measured before that check existed: the
+	// bundle built, printed "Next steps", and failed for whoever tapped
+	// through to the screen.
 	//
 	// Before adding a `SideFrontend` name, check it against ADR-0023: a
 	// function that answers a question about the machine: viewport size,

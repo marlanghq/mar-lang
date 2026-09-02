@@ -91,3 +91,37 @@ func TestTheIOSBuildAcceptsWhatTheDevServerAccepts(t *testing.T) {
 		t.Fatalf("the example as shipped: %v", err)
 	}
 }
+
+// The Swift runtime throws "Page.adminProtected is web-only; the admin panel
+// has no iOS app" when such a page is reached. Measured: the bundle built,
+// printed "Next steps", and the failure waited for whoever tapped through to
+// it.
+//
+// The web build of the SAME program is fine, which is why this cannot be
+// decided from the App.* entry point alone: a phone build registers itself as
+// App.fullstack.
+func TestAnAdminPageIsRefusedByTheIOSBuild(t *testing.T) {
+	if testing.Short() {
+		t.Skip("compiles a project; skipped under -short")
+	}
+	err := iosProbe(t, func(dir string) {
+		p := filepath.Join(dir, "Frontend.mar")
+		b, readErr := os.ReadFile(p)
+		if readErr != nil {
+			t.Fatal(readErr)
+		}
+		src := strings.Replace(string(b), "Page.create", "Page.adminProtected", 1)
+		if src == string(b) {
+			t.Skip("the example no longer uses Page.create")
+		}
+		if err := os.WriteFile(p, []byte(src), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if err == nil {
+		t.Fatal("the phone has no admin panel, and this page waits on one")
+	}
+	// Either the type checker refuses the swap (adminProtected takes an
+	// AdminSession) or the boot check does; both are the build saying no.
+	// What must never happen is a bundle that ships.
+}

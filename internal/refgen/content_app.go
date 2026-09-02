@@ -865,7 +865,27 @@ var appExamples = map[string][]string{
 
 	// Auth. The guards wrap a service that has a name, so you can see what is
 	// being guarded and what the guard is.
-	"Auth.config":          {"Auth.config { from = \"hello@example.com\" }"},
+	// `from` is NOT a field here: it lives in mar.json's `mail.from`, the
+	// single source of truth for the address verified with the provider.
+	// This example used to pass one anyway, which typechecked only because
+	// the argument was a bare type variable.
+	"Auth.config": {"type alias User =\n" +
+		"    { id : Int, email : String }\n\n" +
+		"users : Entity User\n" +
+		"users =\n" +
+		"    Entity.define\n" +
+		"        { name = \"users\"\n" +
+		"        , columns = { id = Entity.serial, email = Entity.text Entity.notNull }\n" +
+		"        , uniques = []\n" +
+		"        }\n\n" +
+		"auth =\n" +
+		"    Auth.config\n" +
+		"        { entity = users\n" +
+		"        , identify = \\u -> u.email\n" +
+		"        , signup = \\userEmail -> { email = userEmail }\n" +
+		"        , email = { subject = \"Sign in to Notes\" }\n" +
+		"        , sessionDuration = Time.days 30\n" +
+		"        }"},
 	"Auth.requestCode":     {"type Msg = CodeRequested (Result Service.Error Auth.RequestOutcome)\n\nask = Auth.requestCode { email = \"you@example.com\" } (\\result -> CodeRequested result)"},
 	"Auth.verifyCode":      {"type Msg = CodeChecked (Result Service.Error (Auth.VerifyOutcome { email : String }))\n\ncheck = Auth.verifyCode { email = \"you@example.com\", code = \"123456\" } (\\result -> CodeChecked result)"},
 	"Auth.completeSignIn":  {"Auth.completeSignIn"},

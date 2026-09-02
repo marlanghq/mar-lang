@@ -167,7 +167,14 @@ enum MarPath {
         case "Int":
             // Reject leading zeros / spaces / non-numeric: same
             // rules as Go's strconv.ParseInt and JS's regex check.
+            // 53 bits, the range a Mar Int has (ADR 0021). Swift's Int is
+            // 64 bits and parsed the whole of it, so the phone bound a
+            // value the browser cannot hold — it rounds — and the server
+            // returned it intact. One URL anyone can type, three answers.
             if let n = Int(decoded), String(n) == decoded || (decoded.hasPrefix("-") && String(n) == decoded) {
+                if n > 9007199254740991 || n < -9007199254740991 {
+                    return nil
+                }
                 return .int(n)
             }
             return nil
@@ -185,13 +192,38 @@ enum MarPath {
         }
     }
 
+    /// encodePathComponent percent-encodes one path SEGMENT, keeping only
+    /// the unreserved set of RFC 3986 (`A-Za-z0-9-._~`).
+    ///
+    /// Spelled out rather than borrowed from the platform: `.urlPathAllowed`
+    /// leaves a SLASH alone — true of a path, false of a segment — while
+    /// JavaScript's encodeURIComponent leaves `! \' ( ) * ~` and Go left
+    /// everything. The three runtimes have to build the same URL from the
+    /// same value. Pinned by the corpus.
+    static func encodePathComponent(_ s: String) -> String {
+        let hex = Array("0123456789ABCDEF")
+        var out = ""
+        for byte in Array(s.utf8) {
+            let c = Character(UnicodeScalar(byte))
+            if c.isLetter && c.isASCII || c.isNumber && c.isASCII
+                || c == "-" || c == "." || c == "_" || c == "~" {
+                out.append(c)
+                continue
+            }
+            out.append("%")
+            out.append(hex[Int(byte >> 4)])
+            out.append(hex[Int(byte & 0x0F)])
+        }
+        return out
+    }
+
     private static func encode(_ v: MarValue, type: String, paramName: String, pathSource: String) throws -> String {
         switch type {
         case "String":
             guard case .string(let s) = v else {
                 throw MarRuntimeError.message("linkTo \(pathSource): param \"\(paramName)\": expected String")
             }
-            return s.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? s
+            return encodePathComponent(s)
         case "Int":
             guard case .int(let n) = v else {
                 throw MarRuntimeError.message("linkTo \(pathSource): param \"\(paramName)\": expected Int")

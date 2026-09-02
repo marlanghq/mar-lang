@@ -570,6 +570,88 @@ dt r =
             e
 
 
+dan : Result String Angle -> String
+dan r =
+    case r of
+        Ok a ->
+            if a == Math.deciDegrees 900 then
+                "eq90deg"
+
+            else
+                "some other angle"
+
+        Err e ->
+            e
+
+
+-- An instant built from its ISO text, so the corpus can talk about one
+-- without a Time.fromMillis to build it with. Time.fromYMD 1970 1 1 is the
+-- epoch, which is what a malformed literal falls back to.
+instant : String -> Time
+instant iso =
+    case Time.fromIso iso of
+        Just t ->
+            t
+
+        Nothing ->
+            Time.fromYMD 1970 1 1
+
+
+isoOf : String -> String
+isoOf iso =
+    Time.toIso (instant iso)
+
+
+dtm : Result String Time -> String
+dtm r =
+    case r of
+        Ok t ->
+            String.fromInt (Time.toMillis t)
+
+        Err e ->
+            e
+
+
+dde : Result String Decimal -> String
+dde r =
+    case r of
+        Ok d ->
+            Decimal.toString d
+
+        Err e ->
+            e
+
+
+ddi : Result String (Dict Int Int) -> String
+ddi r =
+    case r of
+        Ok d ->
+            String.join "," (List.map String.fromInt (Dict.values d))
+
+        Err e ->
+            e
+
+
+dse : Result String (Set Int) -> String
+dse r =
+    case r of
+        Ok st ->
+            String.join "," (List.map String.fromInt (Set.toList st))
+
+        Err e ->
+            e
+
+
+dch : Result String Char -> String
+dch r =
+    case r of
+        Ok c ->
+            "ok:" ++ String.fromList [ c ]
+
+        Err e ->
+            e
+
+
 do : Result String DecOpt -> String
 do r =
     case r of
@@ -579,6 +661,261 @@ do r =
         Err e ->
             e
 
+
+
+-- Decimal arrived here from a Go-vs-JS test that could not see the third
+-- runtime, which is exactly where Equality was before it moved. Three
+-- hand-ported implementations of exact arithmetic, and the one that runs on
+-- the phone was never compared with the other two. It is money.
+decimalCases : String
+decimalCases =
+    String.join ";"
+        [ "add=" ++ Decimal.toString (0.1 + 0.2)
+        , "addScale=" ++ Decimal.toString (1.10 + 2.20)
+        , "sub=" ++ Decimal.toString (0.5 - 0.25)
+        , "mul=" ++ Decimal.toString (1.5 * 1.5)
+        , "mulSmall=" ++ Decimal.toString (0.10 * 0.10)
+        , "negLiteral=" ++ Decimal.toString (-(12.50))
+        , "abs=" ++ Decimal.toString (Decimal.abs (-2.5))
+        , "negate=" ++ Decimal.toString (Decimal.negate 1.50)
+        , "intDiv=" ++ String.fromInt (7 // 2)
+        , "intDivNeg=" ++ String.fromInt (-7 // 2)
+        , "intDivZero=" ++ String.fromInt (7 // 0)
+        , "eqScale=" ++ yn (1.50 == 1.5)
+        , "lt=" ++ yn (1.5 < 1.55)
+        , "roundHalfEven4=" ++ Decimal.toString (Decimal.rounded Decimal.HalfEven 4 (1.0 / 3.0))
+        , "roundHalfUp0=" ++ Decimal.toString (Decimal.rounded Decimal.HalfUp 0 (5.0 / 2.0))
+        , "roundHalfEven0=" ++ Decimal.toString (Decimal.rounded Decimal.HalfEven 0 (5.0 / 2.0))
+        , "roundDown=" ++ Decimal.toString (Decimal.rounded Decimal.Down 0 (-7.0 / 2.0))
+        , "roundUp=" ++ Decimal.toString (Decimal.rounded Decimal.Up 0 (-7.0 / 2.0))
+        , "roundFloor=" ++ Decimal.toString (Decimal.rounded Decimal.Floor 0 (-7.0 / 2.0))
+        , "roundCeiling=" ++ Decimal.toString (Decimal.rounded Decimal.Ceiling 0 (-7.0 / 2.0))
+        , "roundByZero=" ++ Decimal.toString (Decimal.rounded Decimal.HalfEven 2 (5.0 / 0.0))
+        , "withRemainder=" ++ fmtQR (Decimal.withRemainder 2 (100.00 / Decimal.fromInt 3))
+        , "withRemainderZero=" ++ fmtQR (Decimal.withRemainder 2 (5.0 / 0.0))
+        , "toScaleHalfEvenA=" ++ Decimal.toString (Decimal.toScale Decimal.HalfEven 2 1.005)
+        , "toScaleHalfEvenB=" ++ Decimal.toString (Decimal.toScale Decimal.HalfEven 2 1.015)
+        , "fromCents=" ++ Decimal.toString (Decimal.fromCents 1234)
+        , "toCents=" ++ String.fromInt (Decimal.toCents 12.34)
+        , "truncate=" ++ String.fromInt (Decimal.truncate (-2.9))
+        , "roundHalfEvenA=" ++ String.fromInt (Decimal.round 2.5)
+        , "roundHalfEvenB=" ++ String.fromInt (Decimal.round 3.5)
+        , "floor=" ++ String.fromInt (Decimal.floor (-2.1))
+        , "ceiling=" ++ String.fromInt (Decimal.ceiling (-2.1))
+        , "toIntWith=" ++ String.fromInt (Decimal.toIntWith Decimal.Up 2.1)
+        , "compare=" ++ ordStr (Decimal.compare 1.5 1.50)
+        , "fromStringOk=" ++ maybeDec (Decimal.fromString "12.50")
+        , "fromStringBad=" ++ maybeDec (Decimal.fromString "nope")
+        , "zero=" ++ Decimal.toString Decimal.zero
+
+        -- List.sum / List.product over Decimal: the polymorphic half of
+        -- the numeric kit, where the fold has to keep the scale rather
+        -- than fall back to floating point.
+        , "sumScales=" ++ Decimal.toString (List.sum [ 1.50, 2.25 ])
+        , "sumCarry=" ++ Decimal.toString (List.sum [ 0.1, 0.2 ])
+        , "sumOne=" ++ Decimal.toString (List.sum [ 19.99 ])
+        , "sumEmpty=" ++ Decimal.toString (List.sum emptyMoney)
+        , "productDec=" ++ Decimal.toString (List.product [ 1.5, 2.0 ])
+        , "productEmpty=" ++ Decimal.toString (List.product emptyMoney)
+        , "sumInt=" ++ String.fromInt (List.sum [ 1, 2, 3 ])
+        , "productInt=" ++ String.fromInt (List.product [ 2, 3, 4 ])
+        , "sumField=" ++ Decimal.toString (List.sum (List.map .amount decRows))
+        ]
+
+
+-- Declared below the list that reads them, on purpose: the checker orders
+-- value declarations by dependency, so source order carries no meaning.
+emptyMoney : List Decimal
+emptyMoney =
+    []
+
+
+decRows : List { amount : Decimal }
+decRows =
+    [ { amount = 10.00 }, { amount = 2.50 }, { amount = 0.05 } ]
+
+
+ordStr : Order -> String
+ordStr o =
+    case o of
+        LT ->
+            "LT"
+
+        EQ ->
+            "EQ"
+
+        GT ->
+            "GT"
+
+
+fmtQR : { quotient : Decimal, remainder : Decimal } -> String
+fmtQR r =
+    Decimal.toString r.quotient ++ "|" ++ Decimal.toString r.remainder
+
+
+maybeDec : Maybe Decimal -> String
+maybeDec m =
+    case m of
+        Nothing ->
+            "Nothing"
+
+        Just d ->
+            Decimal.toString d
+
+
+-- Time was outside the corpus, and that is where a data loss hid: the wire
+-- form and Time.toIso rendered SECONDS on the server and milliseconds in the
+-- browser, so every service response carrying a sub-second instant lost it,
+-- in one direction, silently. Three implementations of a calendar, compared
+-- by nothing.
+timeCases : String
+timeCases =
+    String.join ";"
+        [ "toIso=" ++ Time.toIso base
+        , "toIsoFraction=" ++ Time.toIso (instant "2023-11-14T22:13:20.123Z")
+        , "fromIsoBad=" ++ maybeIso (Time.fromIso "nope")
+        , "fromIsoNoFraction=" ++ maybeIso (Time.fromIso "2023-11-14T22:13:20Z")
+        , "toMillis=" ++ String.fromInt (Time.toMillis base)
+        , "durToSeconds=" ++ String.fromInt (Time.toSeconds (Time.minutes 3))
+        , "fromYMD=" ++ Time.toIso (Time.fromYMD 2023 11 14)
+        , "year=" ++ String.fromInt (Time.year base)
+        , "month=" ++ String.fromInt (Time.month base)
+        , "day=" ++ String.fromInt (Time.day base)
+        , "hour=" ++ String.fromInt (Time.hour base)
+        , "minute=" ++ String.fromInt (Time.minute base)
+        , "second=" ++ String.fromInt (Time.second base)
+        , "addSeconds=" ++ Time.toIso (Time.add base (Time.seconds 90))
+        , "addMinutes=" ++ Time.toIso (Time.add base (Time.minutes 3))
+        , "addHours=" ++ Time.toIso (Time.add base (Time.hours 2))
+        , "addMillis=" ++ Time.toIso (Time.add base (Time.millis 250))
+        , "sub=" ++ Time.toIso (Time.sub base (Time.days 1))
+        , "addDays=" ++ Time.toIso (Time.addDays base 20)
+        , "addMonths=" ++ Time.toIso (Time.addMonths base 3)
+        , "addMonthsClamps=" ++ Time.toIso (Time.addMonths (instant "2024-01-31T00:00:00Z") 1)
+        , "addYears=" ++ Time.toIso (Time.addYears base 1)
+        , "addYearsLeap=" ++ Time.toIso (Time.addYears (instant "2024-02-29T00:00:00Z") 1)
+        , "weeks=" ++ Time.toIso (Time.add base (Time.weeks 2))
+        , "diff=" ++ String.fromInt (Time.toSeconds (Time.diff base (instant "2023-11-14T22:14:20.000Z")))
+        , "diffBackwards=" ++ String.fromInt (Time.toSeconds (Time.diff (instant "2023-11-14T22:14:20.000Z") base))
+        , "before=" ++ yn (Time.before base (Time.addDays base 1))
+        , "after=" ++ yn (Time.after base (Time.addDays base 1))
+        , "epochRoundTrip=" ++ Time.toIso (Time.fromYMD 1970 1 1)
+        ]
+
+
+base : Time
+base =
+    instant "2023-11-14T22:13:20.000Z"
+
+
+maybeIso : Maybe Time -> String
+maybeIso m =
+    case m of
+        Nothing ->
+            "Nothing"
+
+        Just t ->
+            Time.toIso t
+
+
+-- Random has a seedable half, Random.initialSeed and Random.step, so
+-- the generators ARE comparable as values, and nothing was comparing them.
+-- A shuffled deck, a level layout, an enemy roll: same seed, and the phone
+-- has to deal the same cards as the browser. Three hand-ported generators.
+randomCases : String
+randomCases =
+    String.join ";"
+        [ "intOnce=" ++ String.fromInt (Tuple.first (Random.step (Random.int 1 6) (Random.initialSeed 42)))
+        , "intAgainSameSeed=" ++ String.fromInt (Tuple.first (Random.step (Random.int 1 6) (Random.initialSeed 42)))
+        , "intOtherSeed=" ++ String.fromInt (Tuple.first (Random.step (Random.int 1 6) (Random.initialSeed 7)))
+        , "intWideRange=" ++ String.fromInt (Tuple.first (Random.step (Random.int 0 1000000) (Random.initialSeed 1)))
+        , "intSinglePoint=" ++ String.fromInt (Tuple.first (Random.step (Random.int 5 5) (Random.initialSeed 99)))
+        , "intNegativeRange=" ++ String.fromInt (Tuple.first (Random.step (Random.int (0 - 10) 10) (Random.initialSeed 3)))
+        , "constant=" ++ String.fromInt (Tuple.first (Random.step (Random.constant 7) (Random.initialSeed 1)))
+        , "map=" ++ String.fromInt (Tuple.first (Random.step (Random.map (\n -> n * 2) (Random.int 1 6)) (Random.initialSeed 42)))
+        , "list=" ++ ss (List.map String.fromInt (Tuple.first (Random.step (Random.list 5 (Random.int 1 6)) (Random.initialSeed 42))))
+        , "pair=" ++ pairStr (Tuple.first (Random.step (Random.pair (Random.int 1 6) (Random.int 1 6)) (Random.initialSeed 42)))
+        , "uniform=" ++ String.fromInt (Tuple.first (Random.step (Random.uniform 10 [ 20, 30 ]) (Random.initialSeed 42)))
+        , "andThen=" ++ String.fromInt (Tuple.first (Random.step (Random.andThen (\n -> Random.int n (n + 1)) (Random.int 1 6)) (Random.initialSeed 42)))
+        , "sequence=" ++ ss (List.map String.fromInt (rollThree (Random.initialSeed 42)))
+        , "map2=" ++ String.fromInt (Tuple.first (Random.step (Random.map2 (\a b -> a * 100 + b) (Random.int 1 6) (Random.int 1 6)) (Random.initialSeed 42)))
+        , "map3=" ++ String.fromInt (Tuple.first (Random.step (Random.map3 (\a b c -> a * 10000 + b * 100 + c) (Random.int 1 6) (Random.int 1 6) (Random.int 1 6)) (Random.initialSeed 42)))
+        ]
+
+
+pairStr : ( Int, Int ) -> String
+pairStr p =
+    String.fromInt (Tuple.first p) ++ "/" ++ String.fromInt (Tuple.second p)
+
+
+-- Three draws from ONE seed, threading it forward: the part that proves the
+-- seed advances the same way everywhere, not just that one draw matches.
+rollThree : Random.Seed -> List Int
+rollThree s0 =
+    let
+        first =
+            Random.step (Random.int 1 100) s0
+
+        second =
+            Random.step (Random.int 1 100) (Tuple.second first)
+
+        third =
+            Random.step (Random.int 1 100) (Tuple.second second)
+    in
+    [ Tuple.first first, Tuple.first second, Tuple.first third ]
+
+
+-- linkTo was excused from the corpus as "builds a UI link; compared by the
+-- renderer parity tests". It returns a STRING, which is exactly what this
+-- corpus compares, and the renderer tests compare screens rather than the URL
+-- a link carries. Measured under that excuse, for a String param:
+--
+--     value    Go            JS            Swift
+--     "a b"    /item/a b     /item/a%20b   /item/a%20b
+--     "a/b"    /item/a/b     /item/a%2Fb   /item/a/b
+--     "a?b"    /item/a?b     /item/a%3Fb   /item/a%3Fb
+--
+-- The server did no encoding at all, so a slug with a slash became TWO
+-- segments and stopped matching its own pattern, and one with a ? became a
+-- query string.
+linkCases : String
+linkCases =
+    String.join ";"
+        [ "plain=" ++ linkTo itemPath { slug = "ok" }
+        , "space=" ++ linkTo itemPath { slug = "a b" }
+        , "slash=" ++ linkTo itemPath { slug = "a/b" }
+        , "question=" ++ linkTo itemPath { slug = "a?b" }
+        , "hash=" ++ linkTo itemPath { slug = "a#b" }
+        , "accent=" ++ linkTo itemPath { slug = "ç" }
+        , "ampersand=" ++ linkTo itemPath { slug = "a&b" }
+        , "quote=" ++ linkTo itemPath { slug = "a'b" }
+        , "parens=" ++ linkTo itemPath { slug = "a(b)" }
+        , "unreserved=" ++ linkTo itemPath { slug = "a-b._~c" }
+        , "empty=" ++ linkTo itemPath { slug = "" }
+        , "intParam=" ++ linkTo countPath { n = 42 }
+        , "intNegative=" ++ linkTo countPath { n = -7 }
+        , "enumParam=" ++ linkTo rolePath { role = LinkAdmin }
+        ]
+
+
+itemPath : Path { slug : String }
+itemPath =
+    "/item/{slug:String}"
+
+
+countPath : Path { n : Int }
+countPath =
+    "/count/{n:Int}"
+
+
+rolePath : Path { role : LinkRole }
+rolePath =
+    "/who/{role:LinkRole}"
+
+
+type LinkRole
+    = LinkAdmin
+    | LinkMember
 
 decodeCases : String
 decodeCases =
@@ -611,6 +948,52 @@ decodeCases =
         , "tupleShort=" ++ dt (JSON.decode "[7]")
         , "tupleWrongType=" ++ dt (JSON.decode "[\"x\",\"abc\"]")
         , "tupleNotAList=" ++ dt (JSON.decode "{\"a\":1}")
+
+        -- An Angle has to survive the wire: it goes into App.shared, through
+        -- time travel, and into a rules engine replayed on both sides. The
+        -- server branch tested for a Go float64 while the decoder runs
+        -- with UseNumber, so it was DEAD: the browser and the phone rebuilt
+        -- an Angle from these bytes and the server handed back a record.
+        , "angleOk=" ++ dan (JSON.decode "{\"__angle\":900}")
+        , "angleWraps=" ++ dan (JSON.decode "{\"__angle\":4500}")
+        , "angleFraction=" ++ dan (JSON.decode "{\"__angle\":1.5}")
+
+        -- The rest of the tagged family, for the same reason: the Angle
+        -- branch was DEAD in one runtime and nothing was comparing them.
+        , "timeTagged=" ++ dtm (JSON.decode "{\"__time\":\"2023-11-14T22:13:20Z\"}")
+        , "timeNotATime=" ++ dtm (JSON.decode "{\"__time\":\"nope\"}")
+        , "decTagged=" ++ dde (JSON.decode "{\"__dec\":\"1.50\"}")
+        , "decNotADec=" ++ dde (JSON.decode "{\"__dec\":\"x\"}")
+        , "dictTagged=" ++ ddi (JSON.decode "{\"__dict\":[[1,2]]}")
+        , "dictNotPairs=" ++ ddi (JSON.decode "{\"__dict\":[[1]]}")
+        , "setTagged=" ++ dse (JSON.decode "{\"__set\":[2,1,2]}")
+        , "setNotAList=" ++ dse (JSON.decode "{\"__set\":\"x\"}")
+
+        -- A Set and a Dict are SORTED, so building one compares its members.
+        -- Go and JS failed that comparison with a message about comparison
+        -- rather than about the request; Swift did not fail at all and built
+        -- a collection of mixed types.
+        , "setMixedTypes=" ++ dse (JSON.decode "{\"__set\":[1,\"x\"]}")
+        , "dictMixedKeys=" ++ ddi (JSON.decode "{\"__dict\":[[1,2],[\"a\",3]]}")
+
+        -- Time.toIso rendered seconds on the server and milliseconds in the
+        -- browser, and the WIRE used the server form: measured, a Time
+        -- carrying 1700000000123 encoded to "…:20Z" and decoded back to
+        -- …000. Every service response with a sub-second Time lost it,
+        -- silently, in one direction only.
+        , "isoMillis=" ++ isoOf "2023-11-14T22:13:20.123Z"
+        , "isoWhole=" ++ isoOf "2023-11-14T22:13:20Z"
+        , "isoRoundTrip=" ++ dtm (JSON.decode (JSON.encode (instant "2023-11-14T22:13:20.123Z")))
+
+        -- A Char is one Unicode scalar, and the payload is EXTERNAL: no
+        -- Mar encoder can write more than one. All three used to take the
+        -- FIRST scalar and drop the rest, and they disagreed about an
+        -- empty one: the server errored while the browser and the phone
+        -- answered U+FFFD. Three answers to one JSON document.
+        , "charOk=" ++ dch (JSON.decode "{\"__char\":\"a\"}")
+        , "charTooMany=" ++ dch (JSON.decode "{\"__char\":\"abc\"}")
+        , "charEmpty=" ++ dch (JSON.decode "{\"__char\":\"\"}")
+        , "charAstral=" ++ dch (JSON.decode "{\"__char\":\"\\ud83d\\ude00\"}")
         ]
 
 
@@ -705,7 +1088,7 @@ equalityCases =
 
 
 results =
-    String.join "\n" [ basicsCases, stringCases, listCases, maybeCases, resultCases, tupleCases, charCases, dictCases, setCases, jsonCases, mathCases, shortCircuitCases, orderingCases, decodeCases, equalityCases ]
+    String.join "\n" [ basicsCases, stringCases, listCases, maybeCases, resultCases, tupleCases, charCases, dictCases, setCases, jsonCases, mathCases, shortCircuitCases, orderingCases, decodeCases, decimalCases, timeCases, randomCases, linkCases, equalityCases ]
 `
 
 // Entry is the value each runtime is asked to evaluate.
@@ -737,6 +1120,19 @@ var Blocks = []string{
 	// to cover the same kinds, and it has already been wrong twice — records
 	// answered False on the web while Go and iOS said True, and Dict and Set
 	// answered False on the server while the other two said True.
+	// Decimal came from the same place, for the same reason, and it is
+	// money: three hand-ported implementations of exact arithmetic, and
+	// the one on the phone was never compared with the other two.
+	"Decimal",
+	// Time was outside it, and that is where the milliseconds went.
+	"Time",
+	// Random has a seedable half, so its generators are comparable as
+	// values. A shuffled deck has to deal the same cards on the phone.
+	"Random",
+	// linkTo returns a String, which is what this corpus compares. The
+	// excuse that the renderer tests covered it was how three different
+	// URL encodings lived side by side.
+	"Link",
 	"Equality",
 }
 
@@ -751,6 +1147,14 @@ var Scope = map[string]bool{
 	// kernels reading one generated table, where a single wrong fold would
 	// make a game aim differently on the phone than in the browser.
 	"Math": true,
+	// Decimal, Time and Random join the gate, not just the corpus. Being
+	// compared once is not the point: the point is that a function added
+	// tomorrow cannot enter without being compared, which is exactly how
+	// `Time.toIso` came to render seconds on the server and milliseconds
+	// in the browser with nothing noticing.
+	"Decimal": true,
+	"Time":    true,
+	"Random":  true,
 }
 
 // OutOfScopeBare is the bare-global counterpart to OutOfScope: a name spelled
@@ -758,20 +1162,29 @@ var Scope = map[string]bool{
 // typecheck.BareGlobals() has to appear in Source, which is the gate that was
 // missing when `modBy` diverged: the module walk skips dotless names, so the
 // numeric kit had never been compared across runtimes at all.
-var OutOfScopeBare = map[string]string{
-	"linkTo": "builds a UI link; compared by the renderer parity tests",
-}
+var OutOfScopeBare = map[string]string{}
 
 // OutOfScope is every other stdlib module, with the reason it is not compared
 // here. Together the two maps have to cover the whole stdlib: a module in
 // neither fails the build, so a new one cannot slip in untested by being
 // unnoticed.
-var OutOfScope = map[string]string{
-	// Pinned by a conformance file of its own.
-	"Decimal": "covered by decimal_conformance_test.go",
-	"Random":  "generators are effects; the algorithm is pinned in random_test.go",
-	"Time":    "Time.now reads the clock; the arithmetic deserves its own file",
+// OutOfScopeFunc excuses a SINGLE function, which the module-level map cannot
+// do. It exists because three modules came into Scope carrying a handful of
+// effects: the rest of Decimal, Time and Random is pure and comparable, and
+// excusing the whole module for the sake of `Time.now` is how `Time.toIso`
+// went years rendering seconds on the server and milliseconds in the browser.
+//
+// The gate consults this map rather than looking for the name in the corpus
+// text, so an excuse has to be written down here rather than being any mention
+// anywhere — a comment naming the function would otherwise satisfy it.
+var OutOfScopeFunc = map[string]string{
+	"Time.now":        "reads the wall clock; there is no answer two runtimes could agree on",
+	"Time.every":      "a subscription; its ticking is pinned by the vsync tests",
+	"Random.seed":     "a Task that reads entropy; the generators it feeds are covered",
+	"Random.generate": "a Cmd; Random.step is the same algorithm with the seed in hand",
+}
 
+var OutOfScope = map[string]string{
 	// Render rather than compute: the answer is a screen, and the three
 	// renderers are compared by the drift and parity tests instead.
 	"UI":     "renders; compared by the renderer parity tests",
@@ -1121,7 +1534,7 @@ ShortCircuit.andSkips=F
 ShortCircuit.orSkips=T
 ShortCircuit.andEvaluates=T
 ShortCircuit.orEvaluates=T
-` + decodeExpectations
+` + decodeExpectations + decimalExpectations + timeExpectations + randomExpectations + linkExpectations
 
 // Expectations parses the hand-written answers. Blank lines only group them for
 // reading.
@@ -1217,6 +1630,122 @@ func Difference(aName string, a map[string]string, bName string, b map[string]st
 // raw string literal, which a backtick ends. Interpreted string literals have
 // no such trouble, so these live here rather than being reworded to suit the
 // file they are written in.
+const linkExpectations = "" +
+	"Link.accent=/item/%C3%A7" + "\n" +
+	"Link.ampersand=/item/a%26b" + "\n" +
+	"Link.empty=/item/" + "\n" +
+	"Link.enumParam=/who/linkadmin" + "\n" +
+	"Link.hash=/item/a%23b" + "\n" +
+	"Link.intNegative=/count/-7" + "\n" +
+	"Link.intParam=/count/42" + "\n" +
+	"Link.parens=/item/a%28b%29" + "\n" +
+	"Link.plain=/item/ok" + "\n" +
+	"Link.question=/item/a%3Fb" + "\n" +
+	"Link.quote=/item/a%27b" + "\n" +
+	"Link.slash=/item/a%2Fb" + "\n" +
+	"Link.space=/item/a%20b" + "\n" +
+	"Link.unreserved=/item/a-b._~c" + "\n" +
+	""
+
+const randomExpectations = "" +
+	"Random.andThen=4" + "\n" +
+	"Random.constant=7" + "\n" +
+	"Random.intAgainSameSeed=3" + "\n" +
+	"Random.intNegativeRange=-1" + "\n" +
+	"Random.intOnce=3" + "\n" +
+	"Random.intOtherSeed=1" + "\n" +
+	"Random.intSinglePoint=5" + "\n" +
+	"Random.intWideRange=535848" + "\n" +
+	"Random.list=3,6,2,3,3" + "\n" +
+	"Random.map=6" + "\n" +
+	"Random.map2=306" + "\n" +
+	"Random.map3=30602" + "\n" +
+	"Random.pair=3/6" + "\n" +
+	"Random.sequence=95,20,60" + "\n" +
+	"Random.uniform=30" + "\n" +
+	""
+
+const timeExpectations = "" +
+	"Time.addDays=2023-12-04T22:13:20.000Z" + "\n" +
+	"Time.addHours=2023-11-15T00:13:20.000Z" + "\n" +
+	"Time.addMillis=2023-11-14T22:13:20.250Z" + "\n" +
+	"Time.addMinutes=2023-11-14T22:16:20.000Z" + "\n" +
+	"Time.addMonths=2024-02-14T22:13:20.000Z" + "\n" +
+	"Time.addMonthsClamps=2024-02-29T00:00:00.000Z" + "\n" +
+	"Time.addSeconds=2023-11-14T22:14:50.000Z" + "\n" +
+	"Time.addYears=2024-11-14T22:13:20.000Z" + "\n" +
+	"Time.addYearsLeap=2025-02-28T00:00:00.000Z" + "\n" +
+	"Time.after=F" + "\n" +
+	"Time.before=T" + "\n" +
+	"Time.day=14" + "\n" +
+	"Time.diff=60" + "\n" +
+	"Time.diffBackwards=-60" + "\n" +
+	"Time.durToSeconds=180" + "\n" +
+	"Time.epochRoundTrip=1970-01-01T00:00:00.000Z" + "\n" +
+	"Time.fromIsoBad=Nothing" + "\n" +
+	"Time.fromIsoNoFraction=2023-11-14T22:13:20.000Z" + "\n" +
+	"Time.fromYMD=2023-11-14T00:00:00.000Z" + "\n" +
+	"Time.hour=22" + "\n" +
+	"Time.minute=13" + "\n" +
+	"Time.month=11" + "\n" +
+	"Time.second=20" + "\n" +
+	"Time.sub=2023-11-13T22:13:20.000Z" + "\n" +
+	"Time.toIso=2023-11-14T22:13:20.000Z" + "\n" +
+	"Time.toIsoFraction=2023-11-14T22:13:20.123Z" + "\n" +
+	"Time.toMillis=1700000000000" + "\n" +
+	"Time.weeks=2023-11-28T22:13:20.000Z" + "\n" +
+	"Time.year=2023" + "\n" +
+	""
+
+const decimalExpectations = "" +
+	"Decimal.abs=2.5" + "\n" +
+	"Decimal.add=0.3" + "\n" +
+	"Decimal.addScale=3.30" + "\n" +
+	"Decimal.ceiling=-2" + "\n" +
+	"Decimal.compare=EQ" + "\n" +
+	"Decimal.eqScale=T" + "\n" +
+	"Decimal.floor=-3" + "\n" +
+	"Decimal.fromCents=12.34" + "\n" +
+	"Decimal.fromStringBad=Nothing" + "\n" +
+	"Decimal.fromStringOk=12.50" + "\n" +
+	"Decimal.intDiv=3" + "\n" +
+	"Decimal.intDivNeg=-3" + "\n" +
+	"Decimal.intDivZero=0" + "\n" +
+	"Decimal.lt=T" + "\n" +
+	"Decimal.mul=2.25" + "\n" +
+	"Decimal.mulSmall=0.0100" + "\n" +
+	"Decimal.negLiteral=-12.50" + "\n" +
+	"Decimal.negate=-1.50" + "\n" +
+	"Decimal.roundByZero=0.00" + "\n" +
+	"Decimal.roundCeiling=-3" + "\n" +
+	"Decimal.roundDown=-3" + "\n" +
+	"Decimal.roundFloor=-4" + "\n" +
+	"Decimal.roundHalfEven0=2" + "\n" +
+	"Decimal.roundHalfEven4=0.3333" + "\n" +
+	"Decimal.roundHalfEvenA=2" + "\n" +
+	"Decimal.roundHalfEvenB=4" + "\n" +
+	"Decimal.roundHalfUp0=3" + "\n" +
+	"Decimal.roundUp=-4" + "\n" +
+	"Decimal.sub=0.25" + "\n" +
+	"Decimal.toCents=1234" + "\n" +
+	"Decimal.toIntWith=3" + "\n" +
+	"Decimal.toScaleHalfEvenA=1.00" + "\n" +
+	"Decimal.toScaleHalfEvenB=1.02" + "\n" +
+	"Decimal.truncate=-2" + "\n" +
+	"Decimal.withRemainder=33.33|0.01" + "\n" +
+	"Decimal.withRemainderZero=0.00|5.000" + "\n" +
+	"Decimal.zero=0" + "\n" +
+	"Decimal.productDec=3.00" + "\n" +
+	"Decimal.productEmpty=1" + "\n" +
+	"Decimal.productInt=24" + "\n" +
+	"Decimal.sumCarry=0.3" + "\n" +
+	"Decimal.sumEmpty=0" + "\n" +
+	"Decimal.sumField=12.55" + "\n" +
+	"Decimal.sumInt=6" + "\n" +
+	"Decimal.sumOne=19.99" + "\n" +
+	"Decimal.sumScales=3.75" + "\n" +
+	""
+
 const decodeExpectations = "Decode.ok=ok:ana:3\n" +
 	"Decode.notObject=the value should be an object, got a whole number\n" +
 	"Decode.missingField=the value is missing the field `age`\n" +
@@ -1238,6 +1767,26 @@ const decodeExpectations = "Decode.ok=ok:ana:3\n" +
 	"Decode.ctorWrongArity=the value: `DecCircle` takes 1 value, got 0" + "\n" +
 	"Decode.ctorWrongArgType=`.DecCircle[0]` should be a whole number, got a string" + "\n" +
 	"Decode.ctorNotACtor=the value should be one of `DecCircle`, `DecNamed`, got an empty object" + "\n" +
+	"Decode.isoMillis=2023-11-14T22:13:20.123Z" + "\n" +
+	"Decode.isoWhole=2023-11-14T22:13:20.000Z" + "\n" +
+	"Decode.isoRoundTrip=1700000000123" + "\n" +
+	"Decode.timeTagged=1700000000000" + "\n" +
+	"Decode.timeNotATime=the value should be a date and time, got `nope`" + "\n" +
+	"Decode.decTagged=1.50" + "\n" +
+	"Decode.decNotADec=the value should be a decimal number, got `x`" + "\n" +
+	"Decode.dictTagged=2" + "\n" +
+	"Decode.dictNotPairs=the value should be a key/value pair of two items" + "\n" +
+	"Decode.setTagged=1,2" + "\n" +
+	"Decode.setNotAList=the value should be a list of items" + "\n" +
+	"Decode.setMixedTypes=the value should be a list of items of one type" + "\n" +
+	"Decode.dictMixedKeys=the value should be a list of key/value pairs whose keys are one type" + "\n" +
+	"Decode.angleOk=eq90deg" + "\n" +
+	"Decode.angleWraps=eq90deg" + "\n" +
+	"Decode.angleFraction=the value should be a whole number of deci-degrees, got 1.5" + "\n" +
+	"Decode.charOk=ok:a" + "\n" +
+	"Decode.charTooMany=the value should be a single character, got 3" + "\n" +
+	"Decode.charEmpty=the value should be a single character, got 0" + "\n" +
+	"Decode.charAstral=ok:\U0001F600" + "\n" +
 	"Decode.tupleOk=ok:7:abc" + "\n" +
 	"Decode.tupleShort=the value should be a list of 2 values, got 1" + "\n" +
 	"Decode.tupleWrongType=`[0]` should be a whole number, got a string" + "\n" +

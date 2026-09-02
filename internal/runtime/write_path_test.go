@@ -1,6 +1,8 @@
 package runtime
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -81,11 +83,46 @@ func TestAnEnumColumnStillJudgesTheConstructorSet(t *testing.T) {
 	refuses(t, f, VString{V: "Open"}, "expected a constructor")
 }
 
-func TestAFilterWithNoColumnStaysATranscription(t *testing.T) {
-	// Some callers have no column in hand. There is nothing to check
-	// against, and refusing on a guess would be worse than transcribing.
-	out, err := marValueToSQLForField(nil, VString{V: "ada"})
-	if err != nil || out != "ada" {
-		t.Fatalf("got %v, %v", out, err)
+func TestThereIsNoWriteWithoutAColumnToCheckAgainst(t *testing.T) {
+	// This used to transcribe the value, with a comment about "a filter
+	// built without a column". No such caller exists: Repo.create,
+	// Repo.update and Repo.findBy each resolve the column and refuse by
+	// name when the entity has none, and the only other call is this
+	// function unwrapping a `Just` with the same column in hand.
+	//
+	// Deleting the fallback is what makes the write path whole: every value
+	// that reaches a column is checked against it, with no branch left that
+	// skips the check. A fallback nobody reaches is a hole waiting for the
+	// first caller who forgets.
+	if _, err := marValueToSQLForField(nil, VString{V: "ada"}); err == nil {
+		t.Fatal("a value with no column to check it against is not something to write")
+	}
+}
+
+// OpenDB CREATES a missing SQLite file. That is right for a server starting
+// up and wrong for anything that means to READ what is already there — and
+// `mar-runtime backup` used to do exactly that: point it at the wrong path
+// and it made a brand-new empty database, snapshotted it, and reported
+// success. The backup command stats the file first; this pins the fact that
+// makes the stat necessary.
+func TestOpenDBCreatesAMissingFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "absent.db")
+	SetDBPath(path)
+	t.Cleanup(func() { SetDBPath("") })
+
+	db, err := OpenDB()
+	if err != nil {
+		t.Fatalf("OpenDB: %v", err)
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("the file was expected to be created: %v", err)
+	}
+	var tables int
+	if err := db.QueryRow(`SELECT count(*) FROM sqlite_master`).Scan(&tables); err != nil {
+		t.Fatal(err)
+	}
+	if tables != 0 {
+		t.Fatalf("a database created this way holds nothing, got %d tables", tables)
 	}
 }

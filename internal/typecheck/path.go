@@ -192,6 +192,29 @@ func pathSegmentType(name string, tEnv *typeNameEnv) (Type, error) {
 						name, cname, len(ct.Constructors[cname].Args))
 				}
 			}
+			// A URL segment matches a constructor case-INSENSITIVELY —
+			// `/who/admin` reaches `Admin` — so two constructors that
+			// differ only in case make one of them unreachable. Measured,
+			// on `type Role = Admin | ADmin | Member`: `mar check` passed,
+			// and `/api/who/admin`, `/api/who/ADmin` and `/api/who/Admin`
+			// all answered as `Admin`. The program declared three roles
+			// and the URL could name two.
+			//
+			// This is only wrong for a type used IN A PATH, which is why
+			// it is asked here rather than at the declaration: two such
+			// constructors are perfectly legal in a type nobody routes on.
+			seenLower := map[string]string{}
+			for _, cname := range ct.CtorOrder {
+				lower := strings.ToLower(cname)
+				if first, clash := seenLower[lower]; clash {
+					return nil, fmt.Errorf(
+						"type %q can't be used in a path: `%s` and `%s` differ only in case, "+
+							"and a URL segment matches a constructor case-insensitively, so `%s` "+
+							"could never be reached",
+						name, first, cname, cname)
+				}
+				seenLower[lower] = cname
+			}
 			if len(ct.Params) != 0 {
 				// Generic custom types (e.g. `Maybe a`) don't fit
 				// here, even with all-nullary ctors, the row

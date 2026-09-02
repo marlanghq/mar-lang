@@ -229,6 +229,20 @@ func decodePathSegment(raw, ty string) (Value, bool) {
 		if err != nil {
 			return nil, false
 		}
+		// 64 bits parsed, 53 bits admitted. `inIntRange` is the single
+		// predicate for "is this a Mar Int" (ADR 0021), and this door
+		// skipped it: measured, `/api/item/9007199254740993` answered 200
+		// with the value intact on the server — a number the browser
+		// cannot hold, which reads it back as 9007199254740992. A URL
+		// anyone can type, and the two runtimes disagree about what it
+		// says.
+		//
+		// Returning false makes the segment not match, so the route falls
+		// through like any other unmatched path rather than admitting a
+		// value Mar has no way to represent.
+		if !inIntRange(n) {
+			return nil, false
+		}
 		return VInt{V: n}, true
 	}
 	// Custom enum type: lookup ctor by lowercased name. The URL
@@ -248,6 +262,41 @@ func decodePathSegment(raw, ty string) (Value, bool) {
 // encodePathSegment is the reverse: it stringifies a typed param for
 // linkTo / Nav.pushTo. Type mismatches (passing a String where Int is
 // expected, etc.) surface as user-facing errors.
+// encodePathComponent percent-encodes one path SEGMENT, keeping only the
+// unreserved set of RFC 3986 (`A-Za-z0-9-._~`).
+//
+// The rule is written out rather than borrowed from the host, because each
+// host had a different one and the three runtimes have to build the same URL
+// from the same value. Measured, on `linkTo` with `{slug:String}`:
+//
+//	value   Go            JS                    Swift
+//	"a b"   /item/a b     /item/a%20b           /item/a%20b
+//	"a/b"   /item/a/b     /item/a%2Fb           /item/a/b
+//	"a?b"   /item/a?b     /item/a%3Fb           /item/a%3Fb
+//
+// The server did no encoding at all, so a slug with a slash became TWO
+// segments and stopped matching its own pattern, and one with a `?` became a
+// query string. Swift kept the slash, because `.urlPathAllowed` allows it in
+// a path — true of a path, false of a segment. Go's own `url.PathEscape`
+// would still have differed from `encodeURIComponent` on `& ' ( )`, which is
+// why the set is spelled here instead.
+func encodePathComponent(s string) string {
+	const hex = "0123456789ABCDEF"
+	var b strings.Builder
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c >= 'A' && c <= 'Z' || c >= 'a' && c <= 'z' || c >= '0' && c <= '9' ||
+			c == '-' || c == '.' || c == '_' || c == '~' {
+			b.WriteByte(c)
+			continue
+		}
+		b.WriteByte('%')
+		b.WriteByte(hex[c>>4])
+		b.WriteByte(hex[c&0x0F])
+	}
+	return b.String()
+}
+
 func encodePathSegment(v Value, ty string) (string, error) {
 	switch ty {
 	case "String":
@@ -255,7 +304,7 @@ func encodePathSegment(v Value, ty string) (string, error) {
 		if !ok {
 			return "", fmt.Errorf("expected String, got %T", v)
 		}
-		return s.V, nil
+		return encodePathComponent(s.V), nil
 	case "Int":
 		n, ok := v.(VInt)
 		if !ok {

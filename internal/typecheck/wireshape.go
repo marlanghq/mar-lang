@@ -25,7 +25,7 @@ type CtorArm struct {
 // values are ENUMERABLE, so it is the last thing that should go unchecked. A
 // tag the type does not declare, or the right tag with the wrong arguments,
 // reached a `case` the checker had proved total.
-type CtorLookup func(canonical string) ([]CtorArm, bool)
+type CtorLookup func(canonical string, useArgs []Type) ([]CtorArm, bool)
 
 // CtorsFromEnv builds the lookup out of a type environment's custom types,
 // which is where the checker already has them.
@@ -33,20 +33,48 @@ func CtorsFromEnv(env *TypeEnv) CtorLookup {
 	if env == nil {
 		return nil
 	}
-	return func(canonical string) ([]CtorArm, bool) {
+	return func(canonical string, useArgs []Type) ([]CtorArm, bool) {
 		// LookupCustom rather than the map: registrations live on the ROOT
 		// frame and the env in hand here is a child, so reading the field
 		// directly answered "no custom types exist" for every module.
 		ct, ok := env.LookupCustom(canonical)
-		// A PARAMETERISED union is still out of reach: its constructors'
-		// argument types mention type variables that only a use site
-		// resolves, and this lookup has no use site.
-		if !ok || len(ct.Params) > 0 || len(ct.CtorOrder) == 0 {
+		if !ok || len(ct.CtorOrder) == 0 {
 			return nil, false
+		}
+		// A PARAMETERISED union used to be turned away here, for want of a
+		// use site — and the use site is right there in the type being
+		// reduced. So `Result String Note` and `Box Int` were WireAny, and
+		// measured on a service taking `Box Int`: a body naming a
+		// constructor the type does not have answered 500 with
+		// "no case branch matched", on a `case` the checker proved total;
+		// and `Full "x"` where the type says `Full Int` answered 200 with a
+		// string in a field declared Int.
+		//
+		// The parameters' type variables are recoverable from any
+		// constructor's Result, which is `TCon{Name, [TVar(p1), ...]}`, and
+		// substituting the use site's arguments into the arms is what makes
+		// the payloads concrete enough to check.
+		sub := map[int]Type{}
+		if len(ct.Params) > 0 {
+			ids, ok := paramVarIDs(ct)
+			if !ok || len(ids) != len(useArgs) {
+				return nil, false
+			}
+			for i, id := range ids {
+				sub[id] = useArgs[i]
+			}
 		}
 		arms := make([]CtorArm, 0, len(ct.CtorOrder))
 		for _, name := range ct.CtorOrder {
-			arms = append(arms, CtorArm{Name: name, Args: ct.Constructors[name].Args})
+			args := ct.Constructors[name].Args
+			if len(sub) > 0 {
+				concrete := make([]Type, len(args))
+				for i, a := range args {
+					concrete[i] = substituteVars(a, sub)
+				}
+				args = concrete
+			}
+			arms = append(arms, CtorArm{Name: name, Args: args})
 		}
 		return arms, true
 	}
@@ -136,6 +164,20 @@ func wireShapeOf(t Type, depth int, path map[string]bool, tags CtorLookup) ast.W
 				elem := wireShapeOf(n.Args[0], depth+1, path, tags)
 				return ast.WireShape{Kind: ast.WireMaybe, Elem: &elem}
 			}
+		case "Set":
+			if len(n.Args) == 1 {
+				elem := wireShapeOf(n.Args[0], depth+1, path, tags)
+				return ast.WireShape{Kind: ast.WireSet, Elem: &elem}
+			}
+		case "Dict":
+			if len(n.Args) == 2 {
+				return ast.WireShape{Kind: ast.WireDict, Members: []ast.WireShape{
+					wireShapeOf(n.Args[0], depth+1, path, tags),
+					wireShapeOf(n.Args[1], depth+1, path, tags),
+				}}
+			}
+		case "Angle":
+			return ast.WireShape{Kind: ast.WireAngle}
 		default:
 			// A union has a finite, known set of legal wire values: the
 			// constructors it declares, each with the arguments it carries.
@@ -147,10 +189,18 @@ func wireShapeOf(t Type, depth int, path map[string]bool, tags CtorLookup) ast.W
 			// comments whose replies are comments closes its own cycle, and
 			// the shape gives up at exactly that point rather than six
 			// levels into every unrelated record.
-			if tags == nil || len(n.Args) != 0 || path[n.Name] {
+			// The `len(n.Args) != 0` that used to be here is gone: a
+			// parameterised union is checkable once its arguments are
+			// substituted in, which CtorsFromEnv now does.
+			if tags == nil {
 				break
 			}
-			arms, ok := tags(n.Name)
+			// Already inside this type: name the cycle instead of giving
+			// up. The checker follows it against the data, which ends.
+			if path[n.Name] {
+				return ast.WireShape{Kind: ast.WireRef, Name: n.Name}
+			}
+			arms, ok := tags(n.Name, n.Args)
 			if !ok {
 				break
 			}
@@ -166,11 +216,34 @@ func wireShapeOf(t Type, depth int, path map[string]bool, tags CtorLookup) ast.W
 				args = append(args, shapes)
 			}
 			delete(path, n.Name)
-			return ast.WireShape{Kind: ast.WireCtor, Tags: names, Args: args}
+			return ast.WireShape{Kind: ast.WireCtor, Tags: names, Args: args, Name: n.Name}
 		}
 	}
 	// What is left is what genuinely has no shape to assert: a type
 	// variable, a function, a parameterised union, and a named type at the
 	// point where it closes its own cycle.
 	return ast.WireShape{Kind: ast.WireAny}
+}
+
+// paramVarIDs recovers a union's parameter type variables from the result
+// type its constructors share, which is `TCon{Name, [TVar(p1), TVar(p2)…]}`.
+// CustomType records the parameters by NAME; the identity that matters for
+// substitution is the variable, and this is where it survives.
+func paramVarIDs(ct CustomType) ([]int, bool) {
+	for _, name := range ct.CtorOrder {
+		con, ok := StripForall(ct.Constructors[name].Result).(TCon)
+		if !ok || len(con.Args) != len(ct.Params) {
+			continue
+		}
+		ids := make([]int, len(con.Args))
+		for i, a := range con.Args {
+			v, ok := StripForall(a).(TVar)
+			if !ok {
+				return nil, false
+			}
+			ids[i] = v.ID
+		}
+		return ids, true
+	}
+	return nil, false
 }

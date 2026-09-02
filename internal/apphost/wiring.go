@@ -2,6 +2,7 @@ package apphost
 
 import (
 	"fmt"
+	"strings"
 
 	"mar/internal/runtime"
 )
@@ -30,13 +31,28 @@ import (
 // on; none is refused.
 
 // CheckWiring compares what the program REFERS to against what it REGISTERED.
-func CheckWiring(services []runtime.VExposedService, pages []runtime.VPage, auth *runtime.VAuth) error {
+// `noAdminPanel` is empty when this build serves `/_mar/admin`, and otherwise
+// says WHY it does not — the reason differs, and so does the advice.
+func CheckWiring(services []runtime.VExposedService, pages []runtime.VPage, auth *runtime.VAuth, noAdminPanel string) error {
 	served := map[string]bool{}
 	for _, p := range pages {
 		served[p.Path] = true
 	}
 
-	protected := firstProtectedPage(pages)
+	// `Page.adminProtected` sets IsProtected AND IsAdmin, and it is gated by
+	// the framework admin session rather than by `Auth.config`. Judging it as
+	// an ordinary protected page told developers to add an `Auth.config`,
+	// which would not have helped: the two gates are different surfaces.
+	if admin := firstAdminPage(pages); admin != nil && noAdminPanel != "" && !served["/_mar/admin"] {
+		return fmt.Errorf(
+			"the page on `%s` is admin-protected, and this build has no admin panel: %s.\n"+
+				"  An admin page is gated by the framework admin session, issued at "+
+				"`/_mar/admin`, so nobody can ever pass the gate here.\n"+
+				"  %s",
+			admin.Path, noAdminPanel, adminAdvice(noAdminPanel))
+	}
+
+	protected := firstUserProtectedPage(pages)
 
 	if protected != nil && auth == nil {
 		return fmt.Errorf(
@@ -78,6 +94,18 @@ func CheckWiring(services []runtime.VExposedService, pages []runtime.VPage, auth
 		return err
 	}
 
+	if err := runtime.CheckAuthRoles(auth, services); err != nil {
+		return err
+	}
+
+	if err := runtime.CheckAuthEmailBody(auth); err != nil {
+		return err
+	}
+
+	if err := CheckLandingPage(pages); err != nil {
+		return err
+	}
+
 	if auth != nil && auth.Role == nil {
 		for _, es := range services {
 			if es.Service.RequireRole == nil {
@@ -94,9 +122,31 @@ func CheckWiring(services []runtime.VExposedService, pages []runtime.VPage, auth
 	return nil
 }
 
-func firstProtectedPage(pages []runtime.VPage) *runtime.VPage {
+// firstUserProtectedPage skips the admin ones: they set IsProtected too, and
+// the gate they wait on is not `Auth.config`.
+func firstUserProtectedPage(pages []runtime.VPage) *runtime.VPage {
 	for i := range pages {
-		if pages[i].IsProtected {
+		if pages[i].IsProtected && !pages[i].IsAdmin {
+			return &pages[i]
+		}
+	}
+	return nil
+}
+
+// adminAdvice says what to do about it, which depends on why there is no
+// panel: a web app can gain one, a phone cannot.
+func adminAdvice(reason string) string {
+	if strings.Contains(reason, "iOS") {
+		return "Keep the admin screens out of the phone build, or use `Page.protected` " +
+			"with an `Auth.config` if this is the app's own sign-in"
+	}
+	return "Use `App.fullstack`, or `Page.protected` with an `Auth.config` if this is " +
+		"the app's own sign-in"
+}
+
+func firstAdminPage(pages []runtime.VPage) *runtime.VPage {
+	for i := range pages {
+		if pages[i].IsAdmin {
 			return &pages[i]
 		}
 	}
@@ -109,6 +159,56 @@ func firstProtectedPage(pages []runtime.VPage) *runtime.VPage {
 func servedBy(pages []runtime.VPage, path string) bool {
 	for _, p := range pages {
 		if p.Path == path || covers(p.Path, path) {
+			return true
+		}
+	}
+	return false
+}
+
+// CheckLandingPage refuses an app where no URL that fails to match has
+// anywhere to land.
+//
+// The web resolves a URL by literal match, then by dynamic pattern, then by
+// falling back to the first declared page. With no STATIC page there is
+// nothing safe to fall back to: the fallback used to take the first dynamic
+// page and hand it `params = null`, and its `view` reads the params the URL
+// was supposed to carry. Measured, on an app whose only page was
+// `/note/{id:Int}`, every non-matching URL — `/` included, the app's own front
+// door — painted "view failed: Cannot read properties of null".
+//
+// iOS never had this: it refuses to fall back and shows "Page not found". So
+// the same program was a crash screen in the browser and a tidy message on the
+// phone.
+//
+// Whether an app has a static page is decided by the program, so it is asked
+// here rather than by whoever opens the wrong URL first.
+func CheckLandingPage(pages []runtime.VPage) error {
+	if len(pages) == 0 {
+		return nil // a backend-only app serves no pages at all
+	}
+	var dynamic []string
+	for _, p := range pages {
+		pattern, err := runtime.ParsePathPattern(p.Path)
+		if err != nil {
+			return nil // not something to judge on
+		}
+		if !hasParam(pattern) {
+			return nil // a static page: every stray URL lands here
+		}
+		dynamic = append(dynamic, "`"+p.Path+"`")
+	}
+	return fmt.Errorf(
+		"every page in this app takes a parameter (%s), so a URL that matches none of them "+
+			"has nowhere to land.\n"+
+			"  `/` is one of those URLs: opening the app at its own address matches no page, and "+
+			"the browser paints a failure screen instead of a screen.\n"+
+			"  Add a page on a fixed path",
+		strings.Join(dynamic, ", "))
+}
+
+func hasParam(p runtime.VPath) bool {
+	for _, seg := range p.Segments {
+		if seg.IsParam {
 			return true
 		}
 	}

@@ -197,14 +197,27 @@ func isAllDigits(s string) bool {
 // The notes go to stderr rather than being swallowed, because a route that
 // can never be reached is invisible by construction — nobody files a bug
 // about a screen they have not noticed is missing.
+// `App.frontend` has no server, so it serves no admin panel. Every other web
+// entry point does.
 func reportRouteTable(who string, services []runtime.VExposedService, pages []runtime.Value) error {
+	noPanel := ""
+	if who == "App.frontend" {
+		noPanel = "`App.frontend` has no server to serve it"
+	}
+	return reportRouteTableOn(who, noPanel, services, pages)
+}
+
+// reportRouteTableOn is the same for a caller that knows something `who`
+// cannot say. A phone build registers itself as `App.fullstack` and still has
+// no admin panel: the panel has no iOS app at all.
+func reportRouteTableOn(who, noAdminPanel string, services []runtime.VExposedService, pages []runtime.Value) error {
 	var ps []runtime.VPage
 	for _, pv := range pages {
 		if p, ok := pv.(runtime.VPage); ok {
 			ps = append(ps, p)
 		}
 	}
-	if err := CheckWiring(services, ps, runtime.CurrentAuth()); err != nil {
+	if err := CheckWiring(services, ps, runtime.CurrentAuth(), noAdminPanel); err != nil {
 		return fmt.Errorf("%s: %w", who, err)
 	}
 	found := CheckRouteTable(services, ps)

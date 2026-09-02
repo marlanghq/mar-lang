@@ -170,10 +170,9 @@ func doRestore(o restoreOpts) int {
 	fmt.Fprintln(o.stdout, "  Lock:     no process is using it")
 
 	// 5. Compute the live schema fingerprint and compare. Opened
-	// with `immutable=1` so SQLite skips its own internal locking
-	// (which would otherwise conflict with our advisory flock on
-	// the same file). Safe because we hold the lock: nothing is
-	// going to write to this file while we read it.
+	// read-only: nothing is going to write to this file while we hold
+	// the lock, and a read-only open neither checkpoints the WAL nor
+	// ignores it. See fingerprintSQLiteFile for what ignoring it cost.
 	liveFingerprint, err := fingerprintSQLiteFile(livePath)
 	if err != nil {
 		fmt.Fprintf(o.stderr, "mar-runtime restore-db: read live schema: %v\n", err)
@@ -236,15 +235,26 @@ func doRestore(o restoreOpts) int {
 		return 1
 	}
 	// SQLite leaves -wal and -shm sidecar files when running in WAL
-	// mode. They belong to the old DB; if we leave them in place
-	// SQLite will try to reapply their contents over the freshly
-	// restored DB on next open, undoing our work.
-	_ = os.Remove(livePath + "-wal")
-	_ = os.Remove(livePath + "-shm")
+	// mode. They belong to the old DB — os.Rename moves only the main
+	// file — and if we leave them in place SQLite will reapply their
+	// contents over the freshly restored DB on next open, undoing our
+	// work. So they cannot stay.
+	//
+	// They used to be DELETED, and the rollback line printed below says
+	// to move the .bak back. Measured: a WAL holding an uncheckpointed
+	// commit is where the data is, so after that rollback the database
+	// came back missing everything since the last checkpoint — in the
+	// probe, `no such table`. The rollback path is the one someone takes
+	// when something has already gone wrong; it must not be the step that
+	// loses the data.
+	//
+	// So they move with the file they belong to, and the rollback brings
+	// the whole set back.
+	kept := keepSidecarsWithBackup(livePath, backupPath)
 
 	fmt.Fprintln(o.stdout)
 	fmt.Fprintln(o.stdout, "Done. Start the server when ready.")
-	fmt.Fprintf(o.stdout, "Rollback (if needed): mv %s %s\n", backupPath, livePath)
+	fmt.Fprintf(o.stdout, "Rollback (if needed): %s\n", rollbackCommand(livePath, backupPath, kept))
 	return 0
 }
 
@@ -358,7 +368,27 @@ func extractBundleDB(bundlePath, outPath string) error {
 // because we always call this while holding the flock, so no other
 // process can write to the file during the read.
 func fingerprintSQLiteFile(path string) (string, error) {
-	db, err := sql.Open("sqlite", "file:"+path+"?immutable=1")
+	// `mode=ro`, NOT `immutable=1`.
+	//
+	// `immutable=1` tells SQLite the file cannot change, and one thing it
+	// does with that is skip the WAL entirely. A database whose newest
+	// commits have not been checkpointed then fingerprints as EMPTY —
+	// measured, on three copies of one database with an uncheckpointed WAL:
+	//
+	//   ?immutable=1   0 tables, e3b0c442…   (the SHA-256 of nothing)
+	//   ?mode=ro       1 table,  7f344f3a…   WAL untouched
+	//   (normal)       1 table,  7f344f3a…   WAL checkpointed to 0 bytes
+	//
+	// So restore-db refused every database that had been stopped without a
+	// checkpoint — the situation you restore FROM — and blamed the operator
+	// for it: "the bundle was taken from a database with a different schema".
+	//
+	// The reason given for `immutable` was a conflict with the advisory
+	// flock this command holds. There is none: the flock is on a separate
+	// `.lock` file, and a normal open with the lock held reads the database
+	// fine. A plain read-write open would work too, and would CHECKPOINT the
+	// WAL — which `--dry-run` promises not to do. Read-only does neither.
+	db, err := sql.Open("sqlite", "file:"+path+"?mode=ro")
 	if err != nil {
 		return "", err
 	}
@@ -387,4 +417,41 @@ func formatBytes(n int64) string {
 	default:
 		return fmt.Sprintf("%d B", n)
 	}
+}
+
+// sidecarSuffixes are the files SQLite keeps beside a database in WAL mode.
+var sidecarSuffixes = []string{"-wal", "-shm"}
+
+// keepSidecarsWithBackup moves the old database's sidecars next to the .bak
+// it belongs to, and reports which ones were moved.
+//
+// The restored database must not be left with a foreign WAL — SQLite would
+// replay it over the fresh file — so a sidecar that cannot be moved is
+// removed instead. Losing the rollback's completeness is bad; corrupting the
+// restore that just succeeded is worse.
+func keepSidecarsWithBackup(livePath, backupPath string) []string {
+	var kept []string
+	for _, suffix := range sidecarSuffixes {
+		from := livePath + suffix
+		if _, err := os.Stat(from); err != nil {
+			continue
+		}
+		if err := os.Rename(from, backupPath+suffix); err != nil {
+			_ = os.Remove(from)
+			continue
+		}
+		kept = append(kept, suffix)
+	}
+	return kept
+}
+
+// rollbackCommand spells the move that puts the old database back, including
+// whichever sidecars went with it. Without them the command is a way of
+// losing every commit the WAL was still holding.
+func rollbackCommand(livePath, backupPath string, kept []string) string {
+	parts := []string{fmt.Sprintf("mv %s %s", backupPath, livePath)}
+	for _, suffix := range kept {
+		parts = append(parts, fmt.Sprintf("mv %s %s", backupPath+suffix, livePath+suffix))
+	}
+	return strings.Join(parts, " && ")
 }

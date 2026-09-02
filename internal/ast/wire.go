@@ -26,6 +26,13 @@ type WireShape struct {
 	Members []WireShape   // Tuple: one shape per position, in order
 	Tags    []string      // Ctor: the constructor names the type declares
 	Args    [][]WireShape // Ctor: the argument shapes of each tag, same order as Tags
+
+	// Name is the canonical type name a Ctor shape came from, and the one a
+	// Ref points back at. A shape is a TREE and a recursive type is not, so
+	// the point where a type re-enters itself used to become WireAny —
+	// checking nothing from there down. Naming the cycle instead lets a
+	// checker follow it against the DATA, which is finite.
+	Name string
 }
 
 type WireKind string
@@ -48,6 +55,30 @@ const (
 	// successfully by anyone. A tuple's arity is part of its type, so
 	// both the arity and the member shapes are checkable.
 	WireTuple WireKind = "Tuple"
+
+	// Set, Dict and Angle had no kind either, and the consequence was the
+	// same shape as the tuple's, one step worse. Measured, on a service
+	// whose request type says `Set Int`: a body of `{"tags":[1,2,3]}` — a
+	// plain list where the wire form is `{"__set":[...]}` — passed the
+	// guard, reached the handler, and answered 500 with
+	// `Set.toList: not a Set`. The guard exists to answer 422 naming the
+	// field instead of letting the handler fail downstream, and for these
+	// three it could not.
+	//
+	// Elem carries the element shape for Set; for Dict, Members carries the
+	// key shape then the value shape.
+	// WireRef is the point where a type re-enters itself: `Name` is the
+	// type already being checked, higher up. Measured before it existed, on
+	// `type Comment = Comment String (List Comment)` in a request: a wrong
+	// type at the FIRST level answered 422 naming the position, and the same
+	// mistake one level DEEPER was waved through — reaching the handler, and
+	// stopping only at the write guard, as a 500. Safe, and blamed on the
+	// server for a malformed request.
+	WireRef WireKind = "Ref"
+
+	WireSet   WireKind = "Set"
+	WireDict  WireKind = "Dict"
+	WireAngle WireKind = "Angle"
 
 	// WireCtor is a union: the finite set of constructors the type
 	// declares, and what each one carries.

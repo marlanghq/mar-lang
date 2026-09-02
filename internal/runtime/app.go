@@ -2,6 +2,8 @@ package runtime
 
 import (
 	"fmt"
+	"sort"
+	"strings"
 	"sync"
 )
 
@@ -132,9 +134,29 @@ func readPageRecord(arg Value, name string) (VPage, error) {
 	if !ok {
 		return VPage{}, fmt.Errorf("%s: missing `view` field", name)
 	}
+	// `title` is OPTIONAL, so it cannot be a field of the record TYPE — a
+	// field in a record type is required, and a page may have none. The type
+	// is an open record, so the tail accepts anything, and two mistakes went
+	// straight through `mar check` and a clean boot:
+	//
+	//	title = 42          the title silently became the module name
+	//	titel = "Notes"     the typo was accepted, ignored, same result
+	//
+	// The boot knows exactly which fields a page record may carry, so it is
+	// where both are answered.
 	title := ""
-	if t, ok := rec.Fields["title"].(VString); ok {
+	if raw, present := rec.Fields["title"]; present {
+		t, ok := raw.(VString)
+		if !ok {
+			return VPage{}, fmt.Errorf(
+				"%s: `title` is %s, and it has to be text.\n"+
+					"  It is what the browser tab and the phone's navigation bar show",
+				name, describeValueKind(raw))
+		}
 		title = t.V
+	}
+	if err := rejectUnknownPageFields(rec, name); err != nil {
+		return VPage{}, err
 	}
 	return VPage{
 		Path:     pathV.V,
@@ -163,81 +185,33 @@ func appBuiltins() map[string]Value {
 		// `title` is optional, when omitted the browser-tab title is left
 		// to whatever the host HTML set up.
 		"pageCreate": nativeFn(1, func(args []Value) (Value, error) {
-			rec, ok := args[0].(VRecord)
-			if !ok {
-				return nil, fmt.Errorf("Page.create: expected record argument (got %T)", args[0])
-			}
-			pathV, ok := rec.Fields["path"].(VString)
-			if !ok {
-				return nil, fmt.Errorf("Page.create: missing or non-String `path` field")
-			}
-			initFn, ok := rec.Fields["init"]
-			if !ok {
-				return nil, fmt.Errorf("Page.create: missing `init` field")
-			}
-			updateFn, ok := rec.Fields["update"]
-			if !ok {
-				return nil, fmt.Errorf("Page.create: missing `update` field")
-			}
-			viewFn, ok := rec.Fields["view"]
-			if !ok {
-				return nil, fmt.Errorf("Page.create: missing `view` field")
-			}
-			title := ""
-			if t, ok := rec.Fields["title"].(VString); ok {
-				title = t.V
-			}
-			return VPage{
-				Path:     pathV.V,
-				InitFn:   initFn,
-				UpdateFn: updateFn,
-				ViewFn:   viewFn,
-				Title:    title,
-			}, nil
+			// readPageRecord, not a copy of it. There were two readers of a
+			// page record in this file — four constructors shared this one
+			// and `Page.create` / `Page.protected` each had their own — so a
+			// check added to the shared reader landed on the four LEAST used
+			// and missed the two most used. Measured: a page with `titel`
+			// instead of `title` booted clean while the same mistake on a
+			// dynamic page was refused.
+			return readPageRecord(args[0], "Page.create")
 		}),
 
-		// Page.protected mirrors Page.create plus a `redirect` field
-		// and User-aware handler signatures. Server-side we only need
-		// the static metadata (path/title/redirect/origin): the JS
-		// runtime drives the Auth.me bootstrap and the User threading.
+		// Page.protected mirrors Page.create with User-aware handler
+		// signatures. Server-side we only need the static metadata
+		// (path/title/origin): the JS runtime drives the Auth.me bootstrap
+		// and the User threading, and sends a signed-out visitor to
+		// Auth.config's signInPage.
 		"pageProtected": nativeFn(1, func(args []Value) (Value, error) {
-			rec, ok := args[0].(VRecord)
-			if !ok {
-				return nil, fmt.Errorf("Page.protected: expected record argument (got %T)", args[0])
+			page, err := readPageRecord(args[0], "Page.protected")
+			if err != nil {
+				return nil, err
 			}
-			pathV, ok := rec.Fields["path"].(VString)
-			if !ok {
-				return nil, fmt.Errorf("Page.protected: missing or non-String `path` field")
-			}
-			initFn, ok := rec.Fields["init"]
-			if !ok {
-				return nil, fmt.Errorf("Page.protected: missing `init` field")
-			}
-			updateFn, ok := rec.Fields["update"]
-			if !ok {
-				return nil, fmt.Errorf("Page.protected: missing `update` field")
-			}
-			viewFn, ok := rec.Fields["view"]
-			if !ok {
-				return nil, fmt.Errorf("Page.protected: missing `view` field")
-			}
-			title := ""
-			if t, ok := rec.Fields["title"].(VString); ok {
-				title = t.V
-			}
-			// Marker: empty `Redirect` means "use Auth.config.signInPage".
-			// The browser dispatcher resolves it at render time. The
-			// non-empty case stays open as a future per-page override
-			// (would need a `signInPage : Page` field here too).
-			return VPage{
-				Path:        pathV.V,
-				InitFn:      initFn,
-				UpdateFn:    updateFn,
-				ViewFn:      viewFn,
-				Title:       title,
-				Redirect:    "",
-				IsProtected: true,
-			}, nil
+			// Empty `Redirect` means "use Auth.config.signInPage", which is
+			// the only source there is: `redirect` is NOT read from the page
+			// record, and the comment here used to say it was. A program
+			// writing one was silently ignored, and is now refused as the
+			// unknown field it always was.
+			page.IsProtected = true
+			return page, nil
 		}),
 
 		// Page.adminProtected mirrors Page.protected but is gated by the
@@ -493,4 +467,44 @@ func appBuiltins() map[string]Value {
 			return nil, fmt.Errorf("App.fullstack: only available via `mar dev` (the CLI installs the project-aware version)")
 		}),
 	}
+}
+
+// pageRecordFields is every field a page record may carry, across all the
+// Page.* constructors. The record type is OPEN — its tail has to accept the
+// optional ones — so a name outside this set is not caught by the checker and
+// is silently ignored at run time: measured, `titel = "Notes"` left the page
+// with the module name for a title and said nothing.
+var pageRecordFields = map[string]bool{
+	"path": true, "title": true, "init": true, "update": true,
+	"view": true, "subscriptions": true,
+}
+
+func rejectUnknownPageFields(rec VRecord, name string) error {
+	// The FIELDS, not the Order: a record whose Order is empty still has
+	// its fields, and reading the order would let the check pass silently
+	// on exactly the shape it is meant to catch.
+	unknown := make([]string, 0, len(rec.Fields))
+	for f := range rec.Fields {
+		if !pageRecordFields[f] {
+			unknown = append(unknown, f)
+		}
+	}
+	if len(unknown) == 0 {
+		return nil
+	}
+	sort.Strings(unknown)
+	return fmt.Errorf(
+		"%s: `%s` is not a field of a page, so it is being ignored.\n"+
+			"  A page carries %s.\n"+
+			"  Check the spelling, or remove it",
+		name, unknown[0], strings.Join(sortedKeys(pageRecordFields), ", "))
+}
+
+func sortedKeys(m map[string]bool) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, "`"+k+"`")
+	}
+	sort.Strings(out)
+	return out
 }

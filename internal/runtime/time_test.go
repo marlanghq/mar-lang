@@ -116,19 +116,36 @@ func TestTimeAddMonths_AcrossYear(t *testing.T) {
 	}
 }
 
-func TestTimeAddMonths_Jan31RollsForward(t *testing.T) {
-	// Jan 31 + 1 month overflows February → normalizes to early
-	// March (Mar 3 in non-leap years, Mar 2 in leap years) per Go's
-	// time.AddDate convention. Documents the trade-off: caller who
-	// needs "last day of month" semantics has to handle it
-	// explicitly.
+func TestTimeAddMonths_Jan31ClampsToTheShorterMonth(t *testing.T) {
+	// This test used to assert the opposite — Mar 3, from Go's
+	// time.AddDate overflow — and called it a documented trade-off, with
+	// the caller left to handle "last day of month" themselves.
+	//
+	// Three artefacts disagreed. The published reference says "adding a
+	// month to the 31st lands on the last day of a shorter month". Swift's
+	// Calendar clamps, so the phone already did that. Go and the browser
+	// overflowed. A subscription renewal came out on March 3 on the server
+	// and February 28 on the phone.
+	//
+	// The reference is the contract, so it settled it: clamping, in all
+	// three. Pinned across the runtimes by the Time block of the corpus.
 	base := VTime{Millis: ymdMillis(2026, 1, 31)}
 	got := callN(t, "timeAddMonths", base, VInt{V: 1})
-	// 2026 is non-leap, so Jan 31 + 1 month = Mar 3 (Feb 28 + 3 days
-	// of overflow).
-	want := ymdMillis(2026, 3, 3)
+	want := ymdMillis(2026, 2, 28) // 2026 is not a leap year
 	if got.(VTime).Millis != want {
-		t.Errorf("addMonths(Jan 31, 1) = %d, want Mar 3 (%d)", got.(VTime).Millis, want)
+		t.Errorf("addMonths(Jan 31, 1) = %d, want Feb 28 (%d)", got.(VTime).Millis, want)
+	}
+}
+
+func TestTimeAddDays_StillRollsOver(t *testing.T) {
+	// The clamp is for months and years only. Adding DAYS is exact and has
+	// to keep rolling into the next month, which is what makes the gate on
+	// the day-of-month worth having rather than a blanket clamp.
+	base := VTime{Millis: ymdMillis(2026, 1, 31)}
+	got := callN(t, "timeAddDays", base, VInt{V: 1})
+	want := ymdMillis(2026, 2, 1)
+	if got.(VTime).Millis != want {
+		t.Errorf("addDays(Jan 31, 1) = %d, want Feb 1 (%d)", got.(VTime).Millis, want)
 	}
 }
 
@@ -144,13 +161,13 @@ func TestTimeAddYears_Forward(t *testing.T) {
 }
 
 func TestTimeAddYears_LeapDay(t *testing.T) {
-	// Feb 29 + 1 year normalizes to Mar 1 in non-leap years (same
-	// rationale as Jan 31 + 1 month).
+	// Feb 29 + 1 year is Feb 28, the last day the shorter year has —
+	// same rule as Jan 31 + 1 month, and the same reversal.
 	base := VTime{Millis: ymdMillis(2024, 2, 29)} // 2024 is leap
 	got := callN(t, "timeAddYears", base, VInt{V: 1})
-	want := ymdMillis(2025, 3, 1)
+	want := ymdMillis(2025, 2, 28)
 	if got.(VTime).Millis != want {
-		t.Errorf("addYears(Feb 29 of leap, 1) = %d, want Mar 1 (%d)", got.(VTime).Millis, want)
+		t.Errorf("addYears(Feb 29 of leap, 1) = %d, want Feb 28 (%d)", got.(VTime).Millis, want)
 	}
 }
 

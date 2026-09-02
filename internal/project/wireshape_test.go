@@ -355,7 +355,7 @@ deep = Service.declare POST "/api/deep"
 
 // A recursive type closes its own cycle and gives up THERE, which is what the
 // depth cap was standing in for. Everything above the cycle stays checked.
-func TestRecursiveTypeStopsAtItsCycle(t *testing.T) {
+func TestRecursiveTypeNamesItsCycle(t *testing.T) {
 	dir := t.TempDir()
 	entry := filepath.Join(dir, "Main.mar")
 	src := `module Main exposing (post)
@@ -382,17 +382,46 @@ post = Service.declare POST "/api/post"
 	if top.Args[0][0].Kind != runtime.WireString {
 		t.Fatalf("the first argument is a String, got %s", top.Args[0][0].Kind)
 	}
+	// The recursive position NAMES the cycle rather than giving up. It used
+	// to be WireAny, which checked nothing from there down: measured on a
+	// running service, a wrong type at the first level answered 422 naming
+	// the position and the same mistake one level deeper was waved through,
+	// reaching the handler and stopping only at the write guard — as a 500,
+	// blaming the server for a malformed request.
 	inner := top.Args[0][1]
-	if inner.Kind != runtime.WireList || inner.Elem == nil || inner.Elem.Kind != runtime.WireAny {
-		t.Fatalf("the recursive position gives up as Any, got %+v", inner)
+	if inner.Kind != runtime.WireList || inner.Elem == nil {
+		t.Fatalf("the recursive position is a list, got %+v", inner)
 	}
-	// And it still rejects what it CAN see, rather than giving up wholesale.
-	bad := runtime.VRecord{
-		Fields: map[string]runtime.Value{"top": runtime.VCtor{Tag: "Comment",
-			Args: []runtime.Value{runtime.VInt{V: 1}, runtime.VList{}}}},
-		Order: []string{"top"},
+	if inner.Elem.Kind != runtime.WireRef || inner.Elem.Name != top.Name {
+		t.Fatalf("the recursive position points back at %q, got %+v", top.Name, inner.Elem)
 	}
-	if err := runtime.CheckWire(bad, *svc.InputShape); err == nil {
-		t.Fatal("the non-recursive argument is still checked")
+
+	comment := func(label runtime.Value, kids ...runtime.Value) runtime.Value {
+		return runtime.VCtor{Tag: "Comment", Args: []runtime.Value{label, runtime.VList{Elements: kids}}}
+	}
+	wrap := func(top runtime.Value) runtime.VRecord {
+		return runtime.VRecord{Fields: map[string]runtime.Value{"top": top}, Order: []string{"top"}}
+	}
+
+	if err := runtime.CheckWire(wrap(comment(runtime.VString{V: "ok"})), *svc.InputShape); err != nil {
+		t.Fatalf("a well-formed comment: %v", err)
+	}
+	if err := runtime.CheckWire(wrap(comment(runtime.VInt{V: 1})), *svc.InputShape); err == nil {
+		t.Fatal("the non-recursive argument is checked")
+	}
+	// The one the old shape could not see: wrong, one level down.
+	deep := wrap(comment(runtime.VString{V: "ok"}, comment(runtime.VInt{V: 1})))
+	err = runtime.CheckWire(deep, *svc.InputShape)
+	if err == nil {
+		t.Fatal("a wrong value below the cycle is still a wrong value")
+	}
+	if !strings.Contains(err.Error(), "should be a string") {
+		t.Errorf("the message must name what was expected, got: %v", err)
+	}
+	// And two levels down, to show it follows the cycle rather than
+	// unrolling it once.
+	deeper := wrap(comment(runtime.VString{V: "a"}, comment(runtime.VString{V: "b"}, comment(runtime.VInt{V: 9}))))
+	if err := runtime.CheckWire(deeper, *svc.InputShape); err == nil {
+		t.Fatal("the cycle is followed, not unrolled once")
 	}
 }

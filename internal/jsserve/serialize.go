@@ -100,6 +100,11 @@ func withImpl(m map[string]any, impl string) map[string]any {
 // which is what keeps an older bundle from becoming a new outage.
 func serializeWireShape(s ast.WireShape) map[string]any {
 	m := map[string]any{"kind": string(s.Kind)}
+	if s.Name != "" {
+		// Carried for both Ctor and Ref: the first opens a cycle, the
+		// second points back at it.
+		m["name"] = s.Name
+	}
 	if s.Elem != nil {
 		m["elem"] = serializeWireShape(*s.Elem)
 	}

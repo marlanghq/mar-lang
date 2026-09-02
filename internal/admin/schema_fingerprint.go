@@ -22,6 +22,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"fmt"
+	"hash"
 	"sort"
 	"strings"
 )
@@ -71,7 +72,54 @@ func SchemaFingerprint(db *sql.DB) (string, error) {
 	for _, e := range entries {
 		fmt.Fprintf(h, "%s\x00%s\x00%s\x00", e.kind, e.name, normalizeSQL(e.sql))
 	}
+	if err := foldDeclaredTypes(h, db); err != nil {
+		return "", err
+	}
 	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+// declaredTypeCatalog is the table the migrator writes each column's DECLARED
+// Mar type into. The name is duplicated from internal/runtime rather than
+// imported, because that package imports this one's neighbours; the two are
+// held together by a test in cmd/mar-runtime.
+const declaredTypeCatalog = "_mar_column_types"
+
+// DeclaredTypeCatalogName exposes the name the duplication test checks.
+func DeclaredTypeCatalogName() string { return declaredTypeCatalog }
+
+// foldDeclaredTypes folds the declared type of every column into the hash.
+//
+// sqlite_master is the STORAGE view, and the storage type erases the one thing
+// a restore most needs to compare. Measured: two databases differing only in
+// `Entity.decimal 2` against `Entity.decimal 3` fingerprinted IDENTICALLY,
+// because `amount INTEGER` is the SQL either way. So a bundle taken at scale 2
+// restored into a binary running scale 3 while restore-db printed
+// "Schema: matches the bundle", and every stored coefficient came to mean a
+// different amount — R$ 12,34 read back as R$ 1,234.
+//
+// The catalog records exactly what the SQL text erases, and its CREATE TABLE
+// is already in the hash; what was missing is its CONTENT.
+//
+// A database with no catalog is one written before it existed. It contributes
+// nothing rather than failing, which keeps the fingerprint of an old bundle
+// what it always was.
+func foldDeclaredTypes(h hash.Hash, db *sql.DB) error {
+	rows, err := db.Query(
+		`SELECT table_name, column_name, declared, scale FROM ` + declaredTypeCatalog +
+			` ORDER BY table_name, column_name`)
+	if err != nil {
+		return nil // no catalog: a database older than it
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var table, column, declared string
+		var scale int
+		if err := rows.Scan(&table, &column, &declared, &scale); err != nil {
+			return fmt.Errorf("admin.SchemaFingerprint declared types: %w", err)
+		}
+		fmt.Fprintf(h, "declared\x00%s\x00%s\x00%s\x00%d\x00", table, column, declared, scale)
+	}
+	return rows.Err()
 }
 
 // normalizeSQL collapses whitespace so two semantically-identical

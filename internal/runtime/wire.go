@@ -45,6 +45,10 @@ const (
 	WireMaybe   = ast.WireMaybe
 	WireRecord  = ast.WireRecord
 	WireTuple   = ast.WireTuple
+	WireSet     = ast.WireSet
+	WireDict    = ast.WireDict
+	WireAngle   = ast.WireAngle
+	WireRef     = ast.WireRef
 	WireCtor    = ast.WireCtor
 	WireAny     = ast.WireAny
 )
@@ -54,10 +58,19 @@ const (
 // answers a 400 to whoever sent the request, so it says what was expected and
 // what arrived, and never leaks anything else.
 func CheckWire(v Value, s WireShape) error {
+	// The named shapes seen on the way down, so a Ref can point back at the
+	// type it is inside. A shape is a TREE and a recursive type is not: the
+	// point where one re-entered itself used to become WireAny, checking
+	// nothing from there down. Following the cycle against the DATA
+	// terminates, because the data is finite.
 	return checkWireAt(v, s, "")
 }
 
 func checkWireAt(v Value, s WireShape, path string) error {
+	return checkWireIn(v, s, path, map[string]WireShape{})
+}
+
+func checkWireIn(v Value, s WireShape, path string, seen map[string]WireShape) error {
 	where := func() string {
 		if path == "" {
 			return "the request"
@@ -142,11 +155,21 @@ func checkWireAt(v Value, s WireShape, path string) error {
 			if s.Elem == nil {
 				return nil
 			}
-			return checkWireAt(c.Args[0], *s.Elem, path)
+			return checkWireIn(c.Args[0], *s.Elem, path, seen)
 		}
 		return bad("a Maybe (leave the field out for Nothing)")
 
 	case WireCtor:
+		// Remember this shape under its type name so a Ref below can find
+		// it. Copying the map keeps sibling branches independent.
+		if s.Name != "" {
+			next := make(map[string]WireShape, len(seen)+1)
+			for k, v := range seen {
+				next[k] = v
+			}
+			next[s.Name] = s
+			seen = next
+		}
 		c, ok := v.(VCtor)
 		if !ok {
 			return bad("one of " + strings.Join(quoteEach(s.Tags), ", "))
@@ -169,7 +192,7 @@ func checkWireAt(v Value, s WireShape, path string) error {
 					where(), tag, plural(len(want), "value"), len(c.Args))
 			}
 			for j, arg := range c.Args {
-				if err := checkWireAt(arg, want[j], fmt.Sprintf("%s.%s[%d]", path, tag, j)); err != nil {
+				if err := checkWireIn(arg, want[j], fmt.Sprintf("%s.%s[%d]", path, tag, j), seen); err != nil {
 					return err
 				}
 			}
@@ -177,6 +200,54 @@ func checkWireAt(v Value, s WireShape, path string) error {
 		}
 		return fmt.Errorf("%s should be one of %s, got `%s`",
 			where(), strings.Join(quoteEach(s.Tags), ", "), c.Tag)
+
+	case WireRef:
+		// The type this position re-enters, remembered on the way down. A
+		// Ref with nothing to point at is a shape from a bundle older than
+		// this kind; it asserts nothing rather than refusing, which is what
+		// keeps an old bundle from becoming a new outage.
+		target, ok := seen[s.Name]
+		if !ok {
+			return nil
+		}
+		return checkWireIn(v, target, path, seen)
+
+	case WireSet:
+		// The decoder rebuilds a `{"__set":[...]}` into a real Set, so
+		// anything else here is a body that did not carry one — measured, a
+		// plain `[1,2,3]` reached the handler and answered 500 with
+		// `Set.toList: not a Set`.
+		set, ok := v.(VSet)
+		if !ok {
+			return bad("a set")
+		}
+		for i, item := range set.Items {
+			if err := checkWireIn(item, *s.Elem, fmt.Sprintf("%s[%d]", path, i), seen); err != nil {
+				return err
+			}
+		}
+		return nil
+
+	case WireDict:
+		d, ok := v.(VDict)
+		if !ok {
+			return bad("a dictionary")
+		}
+		for i, pair := range d.Pairs {
+			if err := checkWireIn(pair.Key, s.Members[0], fmt.Sprintf("%s[%d].key", path, i), seen); err != nil {
+				return err
+			}
+			if err := checkWireIn(pair.Value, s.Members[1], fmt.Sprintf("%s[%d].value", path, i), seen); err != nil {
+				return err
+			}
+		}
+		return nil
+
+	case WireAngle:
+		if _, ok := v.(VAngle); !ok {
+			return bad("an angle")
+		}
+		return nil
 
 	case WireTuple:
 		// A tuple travels as a JSON array, and comes back from the decoder
@@ -197,7 +268,7 @@ func checkWireAt(v Value, s WireShape, path string) error {
 				where(), plural(len(s.Members), "value"), len(members))
 		}
 		for i, m := range members {
-			if err := checkWireAt(m, s.Members[i], fmt.Sprintf("%s[%d]", path, i)); err != nil {
+			if err := checkWireIn(m, s.Members[i], fmt.Sprintf("%s[%d]", path, i), seen); err != nil {
 				return err
 			}
 		}
@@ -211,7 +282,7 @@ func checkWireAt(v Value, s WireShape, path string) error {
 			return nil
 		}
 		for i, item := range l.Elements {
-			if err := checkWireAt(item, *s.Elem, fmt.Sprintf("%s[%d]", path, i)); err != nil {
+			if err := checkWireIn(item, *s.Elem, fmt.Sprintf("%s[%d]", path, i), seen); err != nil {
 				return err
 			}
 		}
@@ -233,7 +304,7 @@ func checkWireAt(v Value, s WireShape, path string) error {
 				}
 				return fmt.Errorf("%s is missing the field `%s`", where(), f.Name)
 			}
-			if err := checkWireAt(sub, f.Shape, joinWirePath(path, f.Name)); err != nil {
+			if err := checkWireIn(sub, f.Shape, joinWirePath(path, f.Name), seen); err != nil {
 				return err
 			}
 		}
@@ -338,7 +409,20 @@ func wireDescribe(v Value) string {
 // It runs only after CheckWire has passed, so it never has to decide what a
 // mismatch means: anything it does not recognise it returns untouched.
 func CoerceWire(v Value, s WireShape) Value {
+	return coerceWireIn(v, s, map[string]WireShape{})
+}
+
+// coerceWireIn threads the named shapes the same way checkWireIn does, so a
+// coercion below a cycle closure — an Int that has to become a Decimal, say —
+// happens at every depth rather than only above the first recursion.
+func coerceWireIn(v Value, s WireShape, seen map[string]WireShape) Value {
 	switch s.Kind {
+	case WireRef:
+		if target, ok := seen[s.Name]; ok {
+			return coerceWireIn(v, target, seen)
+		}
+		return v
+
 	case WireDecimal:
 		if i, ok := v.(VInt); ok {
 			return VDecimal{Coef: big.NewInt(i.V), Scale: 0}
@@ -355,7 +439,7 @@ func CoerceWire(v Value, s WireShape) Value {
 			return VCtor{Tag: "Nothing"}
 		}
 		if c, ok := v.(VCtor); ok && c.Tag == "Just" && len(c.Args) == 1 && s.Elem != nil {
-			return VCtor{Tag: "Just", Args: []Value{CoerceWire(c.Args[0], *s.Elem)}}
+			return VCtor{Tag: "Just", Args: []Value{coerceWireIn(c.Args[0], *s.Elem, seen)}}
 		}
 
 	case WireList:
@@ -365,7 +449,7 @@ func CoerceWire(v Value, s WireShape) Value {
 		}
 		out := make([]Value, len(l.Elements))
 		for i, item := range l.Elements {
-			out[i] = CoerceWire(item, *s.Elem)
+			out[i] = coerceWireIn(item, *s.Elem, seen)
 		}
 		return VList{Elements: out}
 
@@ -378,11 +462,21 @@ func CoerceWire(v Value, s WireShape) Value {
 		}
 		out := make([]Value, len(members))
 		for i, m := range members {
-			out[i] = CoerceWire(m, s.Members[i])
+			out[i] = coerceWireIn(m, s.Members[i], seen)
 		}
 		return VTuple{Members: out}
 
 	case WireCtor:
+		// Remembered under its type name so a Ref below can find it, the
+		// same way checkWireIn does.
+		if s.Name != "" {
+			next := make(map[string]WireShape, len(seen)+1)
+			for k, sh := range seen {
+				next[k] = sh
+			}
+			next[s.Name] = s
+			seen = next
+		}
 		c, ok := v.(VCtor)
 		if !ok {
 			return v
@@ -393,7 +487,7 @@ func CoerceWire(v Value, s WireShape) Value {
 			}
 			args := make([]Value, len(c.Args))
 			for j, a := range c.Args {
-				args[j] = CoerceWire(a, s.Args[i][j])
+				args[j] = coerceWireIn(a, s.Args[i][j], seen)
 			}
 			return VCtor{Tag: c.Tag, Args: args}
 		}
@@ -422,7 +516,7 @@ func CoerceWire(v Value, s WireShape) Value {
 				}
 				continue
 			}
-			fields[f.Name] = CoerceWire(sub, f.Shape)
+			fields[f.Name] = coerceWireIn(sub, f.Shape, seen)
 		}
 		return VRecord{Fields: fields, Order: order}
 	}

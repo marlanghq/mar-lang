@@ -438,12 +438,17 @@ func runFromPath(path string) error {
 	// devMode stays false so the JS bundle skips dev affordances and
 	// ServeLive (called with hub=nil below) doesn't register /_mar/reload.
 
-	// Parse-only loader (no typecheck pass): the embedded payload
-	// was already type-checked at `mar build` time, so re-checking
-	// every boot wastes startup AND pulls `internal/typecheck`
-	// (~100 KB + crypto/fips140 init data) into the link graph for
-	// no benefit. See LoadIntoEnvForRuntime's doc for the full
-	// rationale.
+	// This loader DOES type-check, and it has to. Not for the type errors
+	// — `mar build` already found those — but because checking is what
+	// ELABORATES the tree: which literals became Decimals, which references
+	// named an implementation, and the request shape each service is
+	// guarded against. A tree that skipped it is quietly wrong rather than
+	// rejected, and the guard would be live under `mar dev` and absent on
+	// deploy. See ADR 0017 and LoadIntoEnvForRuntime's own doc.
+	//
+	// This comment used to say "parse-only loader (no typecheck pass)",
+	// which was the opposite of what the function does and described the
+	// precise hazard the ADR exists to prevent.
 	rEnv, mods, err := project.LoadIntoEnvForRuntime(entryFile,
 		func(env *runtime.Env, mods []*ast.Module) {
 			apphost.Install(env, mods, port, lp)
