@@ -549,6 +549,18 @@ func CheckModuleWith(
 	// runtime boundary, so a decision the checker made has to be written
 	// back into the tree to survive. Doing it on the node means the
 	// serializer carries it to the JS and Swift runtimes for free.
+	// A decode whose result type the guard cannot check is the same hole the
+	// contract check refuses, at a different port: `JSON.decode` typed to a
+	// `Shape` reduces to "check nothing", so ANY document decodes and the
+	// program holds something the renderer will try to draw. Measured before
+	// this existed: `{"anything":1}` decoded to `Ok` at a `Result String Shape`.
+	//
+	// Asked here rather than in the shape lint because this is where the
+	// decode's own result type is already in hand, one line below.
+	if err := checkDecodeTargets(res.ExprTypes, CtorsFromEnv(valueEnv)); err != nil {
+		return nil, err
+	}
+
 	Elaborate(res.ExprTypes, CtorsFromEnv(valueEnv))
 
 	// Everything the runtimes cannot re-derive is now written into the

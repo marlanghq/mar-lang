@@ -124,3 +124,88 @@ s = Service.declare GET "/api/s"
 		})
 	}
 }
+
+// The same hole at the third port. `JSON.decode` reads the type it was asked
+// for and checks the document against it, so a type that reduces to "check
+// nothing" means every document decodes. Measured before this existed:
+//
+//	parse : String -> Result String Shape
+//	parse s = JSON.decode s
+//
+// answered `Ok` for `{"anything":1}`, and the program went on holding
+// something the renderer would try to draw.
+//
+// An UNPINNED decode reduces to the same "check nothing" and stays allowed:
+// nothing was promised there, and refusing it would break passing
+// `JSON.decode` around as a value. The rule is the pair — concrete AND
+// uncheckable.
+func TestADecodeCannotBeTypedToWhatTheDecoderCannotCheck(t *testing.T) {
+	cases := []struct {
+		name    string
+		src     string
+		refused bool
+	}{
+		{"pinned to a Shape", `module M exposing (..)
+
+
+parse : String -> Result String Shape
+parse s =
+    JSON.decode s
+`, true},
+		{"pinned to a View", `module M exposing (..)
+
+
+parse : String -> Result String (View Int)
+parse s =
+    JSON.decode s
+`, true},
+		{"pinned to a record", `module M exposing (..)
+
+
+parse : String -> Result String { id : Int }
+parse s =
+    JSON.decode s
+`, false},
+		{"not pinned at all", `module M exposing (..)
+
+
+parse : String -> Result String a
+parse s =
+    JSON.decode s
+`, false},
+		{"pinned by the use site", `module M exposing (..)
+
+
+out : String
+out =
+    case JSON.decode "{}" of
+        Ok r ->
+            r.name
+
+        Err e ->
+            e
+`, false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			mod, err := parser.Parse(tc.src)
+			if err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			_, err = CheckModule(mod)
+			if tc.refused {
+				if err == nil {
+					t.Fatal("this type-checked; every document would decode to it")
+				}
+				if !strings.Contains(err.Error(), "no wire form") {
+					t.Fatalf("refused for the wrong reason: %v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("this is an ordinary decode: %v", err)
+			}
+		})
+	}
+}

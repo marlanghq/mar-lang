@@ -2,6 +2,7 @@ package typecheck
 
 import (
 	"fmt"
+	"sort"
 
 	"mar/internal/ast"
 )
@@ -143,6 +144,61 @@ func hasTypeVar(t Type) bool {
 		}
 	}
 	return false
+}
+
+// checkDecodeTargets refuses a `JSON.decode` whose result type is concrete and
+// still reduces to "check nothing".
+//
+// An UNPINNED decode — passed around as a value, or a result nobody looked at —
+// also reduces to WireAny, and that one is fine: nothing was promised, so the
+// runtimes behave as they did before shapes existed. What is not fine is a
+// decode pinned to a type the guard cannot check, because there the program
+// DID promise something and the guard will wave any document through.
+func checkDecodeTargets(exprTypes map[ast.Expr]Type, tags CtorLookup) error {
+	// Sorted so the error is the same one on every run: the map's order is not.
+	type site struct {
+		pos ast.Pos
+		typ Type
+	}
+	var sites []site
+	for e, t := range exprTypes {
+		q, ok := e.(*ast.EQualified)
+		if !ok || joinName(q.Module, q.Name) != "JSON.decode" {
+			continue
+		}
+		res := StripForall(t)
+		arrow, ok := res.(TArrow)
+		if !ok {
+			continue
+		}
+		sites = append(sites, site{pos: q.Pos, typ: arrow.To})
+	}
+	sort.Slice(sites, func(i, j int) bool {
+		if sites[i].pos.Line != sites[j].pos.Line {
+			return sites[i].pos.Line < sites[j].pos.Line
+		}
+		return sites[i].pos.Column < sites[j].pos.Column
+	})
+
+	for _, s := range sites {
+		// `Result String a` with `a` unpinned: nothing was promised.
+		if hasTypeVar(s.typ) {
+			continue
+		}
+		decoded := s.typ
+		if con, ok := StripForall(decoded).(TCon); ok && con.Name == "Result" && len(con.Args) == 2 {
+			decoded = con.Args[1]
+		}
+		if where := uncheckableInside(WireShapeOf(decoded, tags), ""); where != "" {
+			return errorf(s.pos, "this `JSON.decode` is typed to produce a value with no wire form (%s: %s).\n"+
+				"  The decoder checks a document against the type it was asked for, and this type reduces to "+
+				"\"check nothing\": every document would decode, including one that has nothing to do with it. "+
+				"`View`, `Shape`, `Sound`, `Attr` and `Page` are built by a runtime for itself and hold closures.\n"+
+				"  Decode the data the value is built FROM, and build it after",
+				Pretty(decoded), where)
+		}
+	}
+	return nil
 }
 
 // uncheckableInside finds a position in a reduced wire shape that asserts
