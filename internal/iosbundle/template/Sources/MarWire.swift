@@ -374,13 +374,7 @@ enum MarWire {
                     path: "/_auth/verify-code",
                     body: req,
                     okOutcome: { user in .ctor(tag: "SignedIn", args: [user], origin: nil) },
-                    mapCode: { code in
-                        switch code {
-                        case "invalid_code": return .ctor(tag: "WrongCode", args: [], origin: nil)
-                        case "too_many_attempts": return .ctor(tag: "TooManyAttempts", args: [], origin: nil)
-                        default: return nil
-                        }
-                    },
+                    mapCode: MarHTTP.verifyCodeOutcome,
                     toMsg: toMsg,
                     userShape: shape)
                 return .unit

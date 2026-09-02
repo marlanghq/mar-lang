@@ -39,11 +39,17 @@ func TestThePhoneChecksWhoTheSignInEndpointSaysYouAre(t *testing.T) {
 
 	for _, c := range parityfixture.AuthPortCases {
 		t.Run(c.Why, func(t *testing.T) {
-			out, err := exec.Command(bin, "--auth-verify", "200", c.Body).CombinedOutput()
+			out, err := exec.Command(bin, "--auth-verify", itoa(c.Status), c.Body).CombinedOutput()
 			if err != nil {
 				t.Fatalf("driver: %v\n%s", err, out)
 			}
 			got := strings.TrimSuffix(string(out), "\n")
+			if c.Outcome != "" {
+				if got != "Ok "+c.Outcome {
+					t.Errorf("%d %q\n  want: %q\n  got:  %q", c.Status, c.Body, "Ok "+c.Outcome, got)
+				}
+				return
+			}
 			if c.Says == "" {
 				// The accepted case prints the built value; what matters is
 				// that it IS the signed-in ctor and carries the record.

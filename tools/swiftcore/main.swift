@@ -55,19 +55,20 @@ if args.count >= 4, args[1] == "--auth-verify" {
     let v = MarHTTP.makeAuthOutcomeResult(
         data: data, response: response, error: nil,
         okOutcome: { user in .ctor(tag: "SignedIn", args: [user], origin: nil) },
-        mapCode: { code in
-            switch code {
-            case "invalid_code": return .ctor(tag: "WrongCode", args: [], origin: nil)
-            case "too_many_attempts": return .ctor(tag: "TooManyAttempts", args: [], origin: nil)
-            default: return nil
-            }
-        },
+        mapCode: MarHTTP.verifyCodeOutcome,
         userShape: shape)
     if case .ctor(let tag, let cargs, _) = v {
         if tag == "Err", let inner = cargs.first, case .ctor(let etag, let eargs, _) = inner {
             if let m = eargs.first, case .string(let s) = m { print(s) } else { print(etag) }
         } else if let ok = cargs.first {
-            print("Ok " + String(describing: ok))
+            // An Ok carries either the SignedIn user or a domain outcome; the
+            // outcome's TAG is what a program cases on, so print that alone
+            // when it has no argument.
+            if case .ctor(let otag, let oargs, _) = ok, oargs.isEmpty {
+                print("Ok " + otag)
+            } else {
+                print("Ok " + String(describing: ok))
+            }
         }
     }
     exit(0)

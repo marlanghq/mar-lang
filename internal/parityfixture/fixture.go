@@ -304,22 +304,43 @@ var HTTPErrorCases = []HTTPErrorCase{
 // variable in `Auth.VerifyOutcome user` — so the shape is stamped on the node
 // exactly like Service.call's response shape, and both clients check it.
 type AuthPortCase struct {
-	Body string
-	Says string // "" means the body is accepted
-	Why  string
+	// Status is 200 unless the case is about the endpoint REFUSING, which is
+	// the other half of this port: a domain code the endpoint is known to emit
+	// becomes a typed outcome in the Ok, and anything else is transport and
+	// becomes a Service.Error in the Err. Both clients carry that mapping,
+	// both say they mirror the other, and nothing compared them.
+	Status int
+	Body   string
+	Says   string // "" means the body is accepted as a user
+	// Outcome is the ctor the program should receive for a case the server
+	// refused that is still an Ok in Mar's terms.
+	Outcome string
+	Why     string
 }
 
 var AuthPortCases = []AuthPortCase{
-	{`{"id":1,"email":"a@b.c"}`, "",
+	{200, `{"id":1,"email":"a@b.c"}`, "", "",
 		"the user the endpoint is supposed to answer with"},
-	{`{"nope":1}`, "the response does not match what this app expects: the value is missing the field `id`",
+	{200, `{"nope":1}`, "the response does not match what this app expects: the value is missing the field `id`", "",
 		"a record with none of the fields the program was promised"},
-	{`{"id":"1","email":"a@b.c"}`, "the response does not match what this app expects: `id` should be a whole number, got a string",
+	{200, `{"id":"1","email":"a@b.c"}`, "the response does not match what this app expects: `id` should be a whole number, got a string", "",
 		"the right fields with the wrong type: a String where the checker promised an Int"},
-	{`[1,2]`, "the response does not match what this app expects: the value should be an object, got a list",
+	{200, `[1,2]`, "the response does not match what this app expects: the value should be an object, got a list", "",
 		"JSON that is not an object at all"},
-	{`null`, "the response does not match what this app expects: the value should be an object, got nothing",
+	{200, `null`, "the response does not match what this app expects: the value should be an object, got nothing", "",
 		"a null where a user belongs"},
-	{`<html>`, "decode failed: the document is not valid JSON",
+	{200, `<html>`, "decode failed: the document is not valid JSON", "",
 		"a sign-in page from a proxy instead of a user"},
+
+	// The refusal half. A code the endpoint is known to emit is not an error
+	// the app shows -- it is a screen the app has a case for -- and a code it
+	// does not know is transport.
+	{400, `{"error":"invalid_code"}`, "", "WrongCode",
+		"the code the person typed was wrong: a screen, not an error"},
+	{400, `{"error":"too_many_attempts"}`, "", "TooManyAttempts",
+		"too many tries: also a screen"},
+	{500, `{"error":"something_else"}`, "something_else", "",
+		"a code the endpoint is not known to emit is transport, and reads as one"},
+	{500, `not json at all`, "not json at all", "",
+		"a refusal with no envelope carries the body itself"},
 }

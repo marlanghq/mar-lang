@@ -515,6 +515,31 @@ enum MarHTTP {
     /// Builds the Result a Service.call delivers: Ok decoded-value, or Err
     /// carrying a Service.Error. The String variant (makeJSONResult) stays
     /// for Http.get/post and auth, whose Err is still a bare String.
+    /// The domain codes /_auth/verify-code is known to emit, and the outcome
+    /// each becomes. A code here is a SCREEN the app has a case for; anything
+    /// else is transport and becomes a Service.Error.
+    ///
+    /// One definition, because there were three: the builtin, the shaped
+    /// builtin, and the offline driver each carried a copy, so sabotaging the
+    /// real one did not fail the test that compares it. Keep it identical to
+    /// authVerifyCode's mapCode in internal/jsserve/runtime.js.
+    static func verifyCodeOutcome(_ code: String) -> MarValue? {
+        switch code {
+        case "invalid_code":      return .ctor(tag: "WrongCode", args: [], origin: nil)
+        case "too_many_attempts": return .ctor(tag: "TooManyAttempts", args: [], origin: nil)
+        default:                  return nil
+        }
+    }
+
+    /// The codes /_auth/request-code is known to emit.
+    static func requestCodeOutcome(_ code: String) -> MarValue? {
+        switch code {
+        case "rate_limited":  return .ctor(tag: "RateLimited", args: [], origin: nil)
+        case "invalid_email": return .ctor(tag: "InvalidEmail", args: [], origin: nil)
+        default:              return nil
+        }
+    }
+
     /// The sentence a TRANSPORT failure gets.
     ///
     /// Foundation's `localizedDescription` is the host's wording and it is

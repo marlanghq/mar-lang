@@ -47,7 +47,7 @@ type promiseSource struct {
 }
 
 var promiseCensus = []promiseSource{
-	{"jsserve/runtime.js", 11, 2, "fixture", "8 of the 11 are values in Source and 1 (the math kernels) is generated; the domain-code boundary and RegisterEnumType need a server, and are gaps inside this file"},
+	{"jsserve/runtime.js", 11, 1, "fixture", "8 of the 11 are values in Source, 1 (the math kernels) is generated, and the domain-code boundary is held to AuthPortCases; RegisterEnumType needs a server, and is the gap inside this file"},
 	{"runtime/admin.go", 1, 1, "gap", "admin payload shapes have no second implementation to disagree with — the phone does not render the admin pages"},
 	{"runtime/device.go", 1, 1, "gap", "touchOnly / canHover read the host's matchMedia; there is no host in either harness"},
 	{"runtime/path.go", 1, 0, "fixture", "`link` encodes a space and a slash, which is where the three answers used to differ"},
@@ -57,7 +57,7 @@ var promiseCensus = []promiseSource{
 	{"iosbundle/MarIntRange.swift", 1, 0, "fixture", "`bigInt` and `decimalEdge` ride the bound; the refusal's wording is pinned in internal/runtime"},
 	{"iosbundle/MarJSONCodec.swift", 1, 0, "fixture", "collections: Set and Dict round-trip and keep their order"},
 	{"iosbundle/MarEval.swift", 1, 0, "fixture", "`no case branch matched`, matched by text on both clients"},
-	{"iosbundle/MarHTTP.swift", 4, 1, "table", "decodeServerError is held to HTTPErrorCases and authOutcomePost to AuthPortCases; the shape-mismatch sentence is held to AuthPortCases too; handleAuthExpired is the gap, because routing to a sign-in screen is only observable as a screen"},
+	{"iosbundle/MarHTTP.swift", 5, 1, "table", "decodeServerError is held to HTTPErrorCases and authOutcomePost to AuthPortCases; the shape-mismatch sentence and the domain-code table are held to AuthPortCases too; handleAuthExpired is the gap, because routing to a sign-in screen is only observable as a screen"},
 	{"iosbundle/MarRenderer.swift", 2, 0, "screens", "the renderer is compared by the screens it produces"},
 	{"iosbundle/MarPageRuntime.swift", 4, 0, "screens", "page lifecycle, compared by the navigation fixture"},
 	{"iosbundle/MarDispatcher.swift", 1, 0, "screens", "dispatch is observable only as a screen that changed"},

@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -103,7 +104,7 @@ verify =
 const fs = require('fs');
 globalThis.window = globalThis; globalThis.document = undefined;
 globalThis.fetch = () => Promise.resolve({
-  ok: true, status: 200, headers: { get: () => null },
+  ok: ` + okOf(c.Status) + `, status: ` + strconv.Itoa(c.Status) + `, headers: { get: () => null },
   text: () => Promise.resolve(` + string(q) + `),
 });
 (0, eval)(fs.readFileSync(process.argv[2], 'utf8'));
@@ -131,6 +132,12 @@ globalThis.__marTestRunCmd(program, 'Main.verify').then(v => process.stdout.writ
 			}
 			got := strings.Trim(rest, `"`)
 			got = strings.ReplaceAll(got, `\"`, `"`)
+			if c.Outcome != "" {
+				if got != c.Outcome {
+					t.Errorf("%d %q\n  want: %q\n  got:  %q", c.Status, c.Body, c.Outcome, got)
+				}
+				return
+			}
 			if c.Says == "" {
 				if !strings.HasPrefix(got, "SignedIn ") {
 					t.Errorf("%q should have signed the user in, and answered %q", c.Body, got)

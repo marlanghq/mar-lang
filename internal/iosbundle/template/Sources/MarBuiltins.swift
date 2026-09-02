@@ -2385,13 +2385,7 @@ enum MarBuiltins {
                 MarHTTP.fireAuthOutcome(path: "/_auth/request-code",
                                         body: req,
                                         okOutcome: { _ in .ctor(tag: "CodeSent", args: [], origin: nil) },
-                                        mapCode: { code in
-                                            switch code {
-                                            case "rate_limited": return .ctor(tag: "RateLimited", args: [], origin: nil)
-                                            case "invalid_email": return .ctor(tag: "InvalidEmail", args: [], origin: nil)
-                                            default: return nil
-                                            }
-                                        },
+                                        mapCode: MarHTTP.requestCodeOutcome,
                                         toMsg: toMsg)
                 return .unit
             })
@@ -2407,13 +2401,7 @@ enum MarBuiltins {
                 MarHTTP.fireAuthOutcome(path: "/_auth/verify-code",
                                         body: req,
                                         okOutcome: { user in .ctor(tag: "SignedIn", args: [user], origin: nil) },
-                                        mapCode: { code in
-                                            switch code {
-                                            case "invalid_code": return .ctor(tag: "WrongCode", args: [], origin: nil)
-                                            case "too_many_attempts": return .ctor(tag: "TooManyAttempts", args: [], origin: nil)
-                                            default: return nil
-                                            }
-                                        },
+                                        mapCode: MarHTTP.verifyCodeOutcome,
                                         toMsg: toMsg)
                 return .unit
             })
