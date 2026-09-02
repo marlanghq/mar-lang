@@ -238,6 +238,25 @@ func AllQualifiedSymbols() map[string]Type {
 	return out
 }
 
+// AllBareSymbols returns every user-writable name that carries NO module
+// qualifier, constructors included: `Just`, `Nothing`, `True`, `GET`, `EQ`,
+// `Coarse`, and the bare globals like `not` and `clamp`.
+//
+// BareGlobals answers a narrower question on purpose -- which names the
+// reference should document as module-less functions -- and so reports 9 of
+// these. The drift tests need the wider one: they iterate the QUALIFIED table,
+// so a bare constructor missing from a client was checked by nothing at all.
+// (Measured when this was added: all three runtimes carry all of them.)
+func AllBareSymbols() map[string]Type {
+	out := map[string]Type{}
+	for name, t := range baseBindings() {
+		if !strings.Contains(name, ".") {
+			out[name] = t
+		}
+	}
+	return out
+}
+
 // BareGlobals returns the user-facing builtins that live in no module:
 // the handful spelled without a qualifier, like Elm's Basics. It is the
 // bare-name counterpart to ExportsOf, and exists so tooling that walks
