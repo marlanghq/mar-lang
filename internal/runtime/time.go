@@ -33,7 +33,11 @@ func timeBuiltins() map[string]Value {
 			if !ok {
 				return nil, fmt.Errorf("Time.toSeconds: expected Duration (got %T)", args[0])
 			}
-			return VInt{V: int64(d.Seconds)}, nil
+			n, err := intFromSeconds("Time.toSeconds", d.Seconds)
+			if err != nil {
+				return nil, err
+			}
+			return VInt{V: n}, nil
 		}),
 
 		// Absolute time. Time.now reads the wall clock: wrapped as
@@ -100,7 +104,10 @@ func timeBuiltins() map[string]Value {
 			if !ok {
 				return nil, fmt.Errorf("Time.toIso: expected Time (got %T)", args[0])
 			}
-			return VString{V: time.UnixMilli(t.Millis).UTC().Format(time.RFC3339)}, nil
+			// Three decimal places, like the wire form and like the other
+			// two runtimes. RFC3339 alone renders 1700000000123 as
+			// "…:20Z", losing the milliseconds the value carries.
+			return VString{V: time.UnixMilli(t.Millis).UTC().Format(isoMillis)}, nil
 		}),
 
 		// Time.fromIso parses RFC 3339 (with millisecond precision).
@@ -147,10 +154,16 @@ func timeBuiltins() map[string]Value {
 
 		// Calendar-aware arithmetic. Differs from Time.add because
 		// months/years aren't fixed-length: addMonths(2026-01-31, 1)
-		// rolls to 2026-02-28 (or 2026-03-03 in Go's normalization;
-		// see below), not crash. addDays handles DST-free since we
-		// store UTC-only; switch to Calendar-aware days if we ever
-		// add timezone support.
+		// lands on 2026-02-28, the last day of the shorter month, which
+		// is what the reference promises.
+		//
+		// This comment used to say "or 2026-03-03 in Go's normalization",
+		// as an aside. That normalization was the behaviour, and it was
+		// the behaviour here and in the browser but not on the phone,
+		// where Swift's Calendar clamps. See makeCalendarShift.
+		//
+		// addDays handles DST-free since we store UTC-only; switch to
+		// Calendar-aware days if we ever add timezone support.
 		"timeAddDays":   nativeFn(2, makeCalendarShift("Time.addDays", 0, 0, 1)),
 		"timeAddMonths": nativeFn(2, makeCalendarShift("Time.addMonths", 0, 1, 0)),
 		"timeAddYears":  nativeFn(2, makeCalendarShift("Time.addYears", 1, 0, 0)),
@@ -191,7 +204,25 @@ func makeCalendarShift(name string, yearMul, monthMul, dayMul int) func([]Value)
 			return nil, fmt.Errorf("%s: expected (Time, Int) (got %T, %T)", name, args[0], args[1])
 		}
 		k := int(n.V)
-		shifted := time.UnixMilli(t.Millis).UTC().AddDate(yearMul*k, monthMul*k, dayMul*k)
+		from := time.UnixMilli(t.Millis).UTC()
+		shifted := from.AddDate(yearMul*k, monthMul*k, dayMul*k)
+		// Go's AddDate OVERFLOWS a short month: Jan 31 plus one month is
+		// March 2, and Feb 29 plus one year is March 1. The reference says
+		// the opposite — "adding a month to the 31st lands on the last day
+		// of a shorter month" — and the phone already did that, because
+		// Swift's Calendar clamps. So the server and the browser said
+		// March 2 while the phone said February 29, for a subscription
+		// renewal or a due date. Two runtimes against the documented
+		// contract and against the third.
+		//
+		// Only a month or year shift can overflow; adding DAYS is exact
+		// and must keep rolling over, which is why the clamp is gated on
+		// the day of the month moving.
+		if (yearMul != 0 || monthMul != 0) && shifted.Day() != from.Day() {
+			// Landed in the following month, so back up to the last day
+			// of the one that was asked for.
+			shifted = shifted.AddDate(0, 0, -shifted.Day())
+		}
 		return VTime{Millis: shifted.UnixMilli()}, nil
 	}
 }

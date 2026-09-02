@@ -24,6 +24,23 @@ enum MarInt {
         .message("Int out of range: \(v) from \(source) is outside the range of Int (\(min) to \(max))")
     }
 
+    /// A Duration's seconds converted to an Int, or a refusal.
+    ///
+    /// A Duration is a Double and holds far more than Int does: `Time.weeks`
+    /// of a legal Int is about 5e21 seconds. `Int(_:)` TRAPS on a Double that
+    /// large — the same uncatchable crash this file exists to end, still alive
+    /// in the one conversion that did not go through here.
+    static func fromSeconds(_ source: String, _ seconds: Double) throws -> Int {
+        let whole = seconds.rounded(.towardZero)
+        // max is exactly representable as a Double, so these are exact.
+        guard whole.isFinite, whole >= Double(min), whole <= Double(max) else {
+            throw MarRuntimeError.message(
+                "Int out of range: \(String(format: "%.0f", seconds)) seconds from \(source)"
+                + " is outside the range of Int (\(min) to \(max))")
+        }
+        return Int(whole)
+    }
+
     /// Both operands are already in range, so the sum reaches 2^54 and cannot
     /// trap. Only the range needs checking.
     static func add(_ a: Int, _ b: Int) throws -> Int {

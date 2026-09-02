@@ -1974,7 +1974,7 @@ enum MarBuiltins {
             guard case .duration(let s) = args[0] else {
                 throw MarRuntimeError.typeMismatch(expected: "Duration", got: Eval.typeOf(args[0]))
             }
-            return .int(Int(s))
+            return .int(try MarInt.fromSeconds("Time.toSeconds", s))
         }
         env.define("timeToSeconds",  .fn(timeToSeconds))
         env.define("Time.toSeconds", .fn(timeToSeconds))

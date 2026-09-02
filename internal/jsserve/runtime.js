@@ -5836,7 +5836,19 @@
     def('timeHours',   mkDuration(60*60));     def('Time.hours',   mkDuration(60*60));
     def('timeDays',    mkDuration(24*60*60));  def('Time.days',    mkDuration(24*60*60));
     def('timeWeeks',   mkDuration(7*24*60*60));def('Time.weeks',   mkDuration(7*24*60*60));
-    def('timeToSeconds', native(1, ([d]) => VInt(Math.trunc(d.seconds || 0))));
+    // A Duration is a float and holds far more than Int does: `Time.weeks` of
+    // a legal Int is about 5e21 seconds. Refusing is the only answer the three
+    // runtimes can share; before this the browser handed back a float that is
+    // not an Int, the server saturated, and the phone trapped.
+    def('timeToSeconds', native(1, ([d]) => {
+      const whole = Math.trunc(d.seconds || 0);
+      if (!Number.isSafeInteger(whole)) {
+        throw new Error('Int out of range: ' + (d.seconds || 0).toFixed(0) +
+          ' seconds from Time.toSeconds is outside the range of Int' +
+          ' (-9007199254740991 to 9007199254740991)');
+      }
+      return VInt(whole);
+    }));
     def('Time.toSeconds', envLookup(env, 'timeToSeconds'));
 
     // Time.now: Task Time. Reads the wall clock; same shape as

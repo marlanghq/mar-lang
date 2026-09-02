@@ -137,6 +137,9 @@ enum DecMath {
             if o2 { return nil }
             v = s
         }
+        // Int64 overflow is the wrong bound: Mar's Int is 53 bits, and a value
+        // between the two is one the browser refuses and this used to accept.
+        guard MarInt.inRange(v) else { return nil }
         return negative ? -v : v
     }
 

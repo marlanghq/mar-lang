@@ -291,7 +291,10 @@ func decToInt(v VDecimal, mode string) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
-	if !r.Coef.IsInt64() {
+	// IsInt64 is the wrong bound: Mar's Int is 53 bits, not 64. Using the
+	// wider one let this hand back numbers the browser refuses, so the same
+	// money computation succeeded on the server and failed in the page.
+	if !r.Coef.IsInt64() || !inIntRange(r.Coef.Int64()) {
 		return 0, fmt.Errorf("Decimal: value does not fit an Int")
 	}
 	return r.Coef.Int64(), nil
@@ -355,7 +358,7 @@ func decimalBuiltins() map[string]Value {
 			if err != nil {
 				return nil, err
 			}
-			if !r.Coef.IsInt64() {
+			if !r.Coef.IsInt64() || !inIntRange(r.Coef.Int64()) {
 				return nil, fmt.Errorf("Decimal.toCents: value does not fit an Int")
 			}
 			return VInt{V: r.Coef.Int64()}, nil
