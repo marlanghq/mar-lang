@@ -41,7 +41,17 @@ func LookupStdlib(name string) (Symbol, bool) {
 }
 
 func buildStdlib() {
-	bindings := typecheck.BaseQualifiedSymbols()
+	// AllQualifiedSymbols, not BaseQualifiedSymbols: the latter is built from a
+	// table of Qualified -> bare aliases, so a name already written qualified
+	// at the source never enters it. Measured: hover on `Decimal.toCents`,
+	// `Keyboard.KeyA` or `Service.Offline` -- all real names a program can
+	// write and the compiler accepts -- returned nothing, because 171 of the
+	// 544 qualified names were missing here.
+	//
+	// This was filed as a matter of taste ("what an editor offers"). It is
+	// not: an editor that describes List.map and cannot describe
+	// Decimal.toCents is wrong about the language, not opinionated.
+	bindings := typecheck.AllQualifiedSymbols()
 	customs := typecheck.BaseCustomTypes()
 
 	// Allocate exactly: one Symbol per qualified value + one per
