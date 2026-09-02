@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"mar/internal/parityfixture"
 	"mar/internal/parser"
 	"mar/internal/runtime"
 	"mar/internal/typecheck"
@@ -31,62 +32,7 @@ func TestTheBrowserAndTheServerDecodeTheSameDocumentTheSameWay(t *testing.T) {
 		t.Skip("node is not installed")
 	}
 
-	const src = `module Main exposing (..)
-
-
-parse : String -> Result String { id : Int, name : String }
-parse s =
-    JSON.decode s
-
-
-say : String -> String
-say s =
-    case parse s of
-        Ok r ->
-            "ok " ++ String.fromInt r.id ++ " " ++ r.name
-
-        Err e ->
-            "err " ++ e
-
-
-good : String
-good =
-    say "{\"id\":1,\"name\":\"a\"}"
-
-
-wrongType : String
-wrongType =
-    say "{\"id\":\"1\",\"name\":\"a\"}"
-
-
-missingField : String
-missingField =
-    say "{\"id\":1}"
-
-
-notAnObject : String
-notAnObject =
-    say "[1,2]"
-
-
-notJSONAtAll : String
-notJSONAtAll =
-    say "<html>"
-
-
--- The copy a user reads when a call fails. The code beside each of these says
--- to keep them identical across the three runtimes; the phone is compared in
--- internal/iosbundle/swift_core_test.go, and this is the browser's corner of
--- the same triangle.
-serviceErrors : String
-serviceErrors =
-    String.join "|"
-        [ Service.errorToString Service.Offline
-        , Service.errorToString Service.Unauthorized
-        , Service.errorToString Service.RateLimited
-        , Service.errorToString (Service.ServerError "boom")
-        ]
-`
+	const src = parityfixture.Source
 
 	mod, err := parser.Parse(src)
 	if err != nil {
@@ -96,7 +42,7 @@ serviceErrors =
 		t.Fatalf("check: %v", err)
 	}
 
-	names := []string{"good", "wrongType", "missingField", "notAnObject", "notJSONAtAll", "serviceErrors"}
+	names := parityfixture.Names
 
 	// The server's answers, from the same tree the browser will get.
 	loaded, err := runtime.LoadModule(mod)
@@ -174,5 +120,9 @@ process.stdout.write(JSON.stringify(out));
 			t.Errorf("%s:\n  server:  %q\n  browser: %q", n, goSays[n], got)
 		}
 	}
-	t.Logf("server and browser agree on %d documents; `good` decoded as %q", len(names), goSays["good"])
+	// Only claim agreement if there was agreement: a summary line that prints
+	// under a failure is a test lying in its own output.
+	if !t.Failed() {
+		t.Logf("server and browser agree on %d values; `good` decoded as %q", len(names), goSays["good"])
+	}
 }

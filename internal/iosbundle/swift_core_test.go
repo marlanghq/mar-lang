@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"mar/internal/jsserve"
+	"mar/internal/parityfixture"
 	"mar/internal/parser"
 	"mar/internal/runtime"
 	"mar/internal/typecheck"
@@ -139,66 +140,7 @@ func assembleSwiftCore(t *testing.T, dir string) error {
 // rather than against a string written here by hand.
 func swiftProbeProgram(t *testing.T) ([]byte, map[string]string) {
 	t.Helper()
-	const src = `module Main exposing (..)
-
-
-note : Path { slug : String }
-note =
-    "/notes/{slug:String}"
-
-
--- The path encoder: three runtimes once had three answers for this.
-link : String
-link =
-    linkTo note { slug = "a b/c" }
-
-
--- Decimal is exact on both sides or money is wrong on one of them.
-money : String
-money =
-    Decimal.toString (1.50 + 2.25)
-
-
--- A document that is not JSON. This one carried Foundation's message until
--- an hour ago, and Foundation's message changes with the phone's language.
-notJSON : String
-notJSON =
-    case JSON.decode "<html>" of
-        Ok r -> r.x
-        Err e -> e
-
-
--- A shape mismatch keeps ITS message, which is Mar's and not the host's.
-wrongShape : String
-wrongShape =
-    case JSON.decode "{\"id\":\"1\"}" of
-        Ok r -> String.fromInt r.id
-        Err e -> e
-
-
--- Int is 53 bits on every runtime, not 64 on one of them.
-bigInt : String
-bigInt =
-    String.fromInt (9007199254740991 - 1)
-
-
-sorted : String
-sorted =
-    String.join "," (List.sort [ "b", "a", "C" ])
-
-
--- The copy a user reads when a call fails. Three runtimes carry these
--- sentences and the code says to keep them identical; nothing checked that,
--- because comparing the phone used to cost a simulator.
-serviceErrors : String
-serviceErrors =
-    String.join "|"
-        [ Service.errorToString Service.Offline
-        , Service.errorToString Service.Unauthorized
-        , Service.errorToString Service.RateLimited
-        , Service.errorToString (Service.ServerError "boom")
-        ]
-`
+	const src = parityfixture.Source
 	mod, err := parser.Parse(src)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
@@ -215,7 +157,7 @@ serviceErrors =
 		t.Fatalf("load: %v", err)
 	}
 	want := map[string]string{}
-	for _, name := range []string{"link", "money", "notJSON", "wrongShape", "bigInt", "sorted", "serviceErrors"} {
+	for _, name := range parityfixture.Names {
 		v, ok := loaded.Env.Lookup(name)
 		if !ok {
 			t.Fatalf("%s is not bound", name)
