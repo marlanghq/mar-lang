@@ -84,10 +84,14 @@ func LoadIntoEnvForRuntime(
 	// in it (the App.* builtins carry that one, and the stub runs `main`), and
 	// `must be read-only` and `expected \`Cmd ()\`` were not.
 	//
-	// The shape lint is not here: it needs the expression types, which
-	// `checkOrdered` does not carry back. These two need only what it already
-	// returns.
+	// The shape lint is the one pass still missing here, and for a reason
+	// rather than an oversight: it needs the expression types, which
+	// `checkOrdered` does not carry back. The other three need only the
+	// modules or the value types it already returns.
 	if issues := typecheck.RunGetReadOnlyCheck(mods); len(issues) > 0 {
+		return nil, nil, fmt.Errorf("%s", issues[0].Message)
+	}
+	if issues := typecheck.RunSideCheck(mods); len(issues) > 0 {
 		return nil, nil, fmt.Errorf("%s", issues[0].Message)
 	}
 	qualified := map[string]typecheck.Type{}
