@@ -127,6 +127,21 @@ func TestAGuardAProgramCanReachDoesNotNameAGoType(t *testing.T) {
 	for _, p := range problems {
 		t.Error(p)
 	}
+	// The floor. Measured: with the glob changed to match nothing, every
+	// number above is zero and this test passed -- the census could stop
+	// looking entirely and stay green, which is the exact failure the rule
+	// two commits ago was written about, broken here in the same session.
+	//
+	// The total is pinned rather than merely non-zero, because the interesting
+	// direction is a guard silently LEAVING the population: rewording one out
+	// of the patterns above is invisible otherwise.
+	const total = 77
+	if pinned+reachable != total {
+		t.Errorf("the census sees %d argument guards and expects %d.\n"+
+			"    Up: a new guard needs its argument checked against the declared type.\n"+
+			"    Down: a guard left the patterns above, and leaving them is how one\n"+
+			"    stops being watched. Adjust the number deliberately.", pinned+reachable, total)
+	}
 	if !t.Failed() {
 		t.Logf("%d argument guards: %d unreachable because the declared type pins the"+
 			" argument, %d reachable and answering in Mar's words", pinned+reachable, pinned, reachable)
