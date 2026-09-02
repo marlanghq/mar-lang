@@ -192,15 +192,34 @@ enum MarRuntimeError: Error, LocalizedError {
     case applyOnNonFunction
     case noMatch
     case message(String)
+    /// Something a CHECKED program cannot do. The Go evaluator drew this line
+    /// and kept it -- of its twelve errors only two survived as real program
+    /// errors -- and this side had no line at all: a bug in Mar and a mistake
+    /// in the user's code arrived in the same voice, so the user read a
+    /// sentence that sounded like their fault and the report never came.
+    ///
+    /// Keep the sentence identical to internalErrorf in internal/runtime and
+    /// to marInternal in internal/jsserve/runtime.js; the parity fixture
+    /// compares it.
+    case internalError(String)
 
     var errorDescription: String? {
         switch self {
-        case .unboundName(let n):           return "unbound name: \(n)"
-        case .typeMismatch(let e, let g):   return "type mismatch: expected \(e), got \(g)"
-        case .applyOnNonFunction:           return "tried to apply a non-function value"
+        case .unboundName(let n):           return MarRuntimeError.internalText("unbound name: \(n)")
+        case .typeMismatch(let e, let g):   return MarRuntimeError.internalText("type mismatch: expected \(e), got \(g)")
+        case .applyOnNonFunction:           return MarRuntimeError.internalText("tried to apply a non-function value")
         case .noMatch:                      return "no case branch matched"
         case .message(let m):               return m
+        case .internalError(let m):         return MarRuntimeError.internalText(m)
         }
+    }
+
+    /// `noMatch` deliberately stays out of this: a case expression that matched
+    /// nothing is the user's program, both clients match on its text, and
+    /// there is a test that says so.
+    static func internalText(_ what: String) -> String {
+        "internal error: " + what +
+            " — a checked program cannot do this, so this is a bug in Mar rather than in your code. Please report it."
     }
 }
 

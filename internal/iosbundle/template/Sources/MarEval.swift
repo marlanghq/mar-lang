@@ -81,7 +81,7 @@ enum Eval {
             digits.reserveCapacity(coef.count)
             for ch in coef {
                 guard let d = ch.wholeNumberValue, d >= 0, d <= 9 else {
-                    throw MarRuntimeError.message("invalid decimal literal")
+                    throw MarRuntimeError.internalError("the parser accepted a decimal literal the evaluator cannot read")
                 }
                 digits.append(UInt8(d))
             }
@@ -125,7 +125,7 @@ enum Eval {
             case .decimal(let d):
                 return .decimal(MarDec(negative: !d.negative && !d.isZero, digits: d.digits, scale: d.scale))
             default:
-                throw MarRuntimeError.message("negate: unsupported type")
+                throw MarRuntimeError.internalError("negate applied to something that is not a number")
             }
 
         case .app:
@@ -164,13 +164,13 @@ enum Eval {
             // guard the author wrote was the thing being ignored.
             if op == "&&" || op == "||" {
                 guard case .bool(let a) = l else {
-                    throw MarRuntimeError.message("\(op): expected Bool")
+                    throw MarRuntimeError.internalError("an operand of `\(op)` evaluated to something that is not a Bool")
                 }
                 if op == "&&" && !a { return .bool(false) }
                 if op == "||" && a { return .bool(true) }
                 let rv = try eval(right, env)
                 guard case .bool(let b) = rv else {
-                    throw MarRuntimeError.message("\(op): expected Bool")
+                    throw MarRuntimeError.internalError("an operand of `\(op)` evaluated to something that is not a Bool")
                 }
                 return .bool(b)
             }
@@ -213,7 +213,7 @@ enum Eval {
                 case .var(let n):  return n
                 case .wildcard:    return "__wild"
                 default:
-                    throw MarRuntimeError.message("lambda params must be names or _")
+                    throw MarRuntimeError.internalError("a lambda parameter is not a name or `_`")
                 }
             }
             return .fn(MarFn.closure(params: names, body: body, env: env))
@@ -375,7 +375,7 @@ enum Eval {
                     }
                 } else {
                     guard let params = f.params, let body = f.body, let fnEnv = f.env else {
-                        throw MarRuntimeError.message("malformed function: no native and no body")
+                        throw MarRuntimeError.internalError("a closure carries a body that is not an expression")
                     }
                     // Bind straight into the frame: no intermediate
                     // `all` array; params of one call are distinct.

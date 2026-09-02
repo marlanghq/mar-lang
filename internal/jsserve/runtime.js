@@ -467,6 +467,23 @@
   }
   if (typeof globalThis !== 'undefined') globalThis.__marDecideAuthExpiry = decideAuthExpiry;
 
+  // Something a CHECKED program cannot do. The Go evaluator drew this line and
+  // kept it -- of its twelve errors only two survived as real program errors --
+  // and this side had no line at all: a bug in Mar and a mistake in the user's
+  // code arrived in the same voice, so a user read a sentence that sounded like
+  // their fault and the report never came.
+  //
+  // Keep the sentence identical to internalErrorf in internal/runtime and to
+  // MarRuntimeError.internalText on the phone; the parity fixture compares it.
+  //
+  // `no case branch matched` deliberately stays out of this: a case expression
+  // that matched nothing is the user's program, both clients match on its text,
+  // and there is a test that says so.
+  function marInternal(what) {
+    return new Error('internal error: ' + what +
+      ' — a checked program cannot do this, so this is a bug in Mar rather than in your code. Please report it.');
+  }
+
   function jsonBodyOrThrow(body) {
     try {
       return JSON.parse(body);
@@ -1447,7 +1464,7 @@
           if (chosen !== undefined) return chosen;
         }
         const v = envLookup(env, e.name);
-        if (v === undefined) throw new Error('unbound name: ' + e.name);
+        if (v === undefined) throw marInternal('unbound name: ' + e.name);
         return v;
       }
       case 'ECtor': {
@@ -1467,7 +1484,7 @@
         // means a registration bug, and it should be LOUD: the old
         // fallback (return VCtor(e.name)) let this class of bug hide for
         // weeks by silently manufacturing plausible values.
-        if (v === undefined) throw new Error('unbound constructor: ' + key);
+        if (v === undefined) throw marInternal('unbound constructor: ' + key);
         return v;
       }
       case 'EQualified': {
@@ -1502,7 +1519,7 @@
         }
         let v = envLookup(env, key);
         if (v === undefined) v = envLookup(env, e.name);
-        if (v === undefined) throw new Error('unbound name: ' + key);
+        if (v === undefined) throw marInternal('unbound name: ' + key);
         return v;
       }
       case 'ENegate': {
@@ -1529,11 +1546,11 @@
         // left side already False, and a recursion guarded by `depth < 80 && …`
         // used to spend the stack anyway. Elm short-circuits; so does this now.
         if (e.op === '&&' || e.op === '||') {
-          if (left.k !== 'B') throw new Error(e.op + ': expected Bool');
+          if (left.k !== 'B') throw marInternal('an operand of `' + e.op + '` evaluated to something that is not a Bool');
           if (e.op === '&&' && !left.b) return VBool(false);
           if (e.op === '||' && left.b) return VBool(true);
           const rv = evalExpr(e.right, env);
-          if (rv.k !== 'B') throw new Error(e.op + ': expected Bool');
+          if (rv.k !== 'B') throw marInternal('an operand of `' + e.op + '` evaluated to something that is not a Bool');
           return rv;
         }
         const right = evalExpr(e.right, env);
