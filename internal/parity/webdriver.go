@@ -135,7 +135,31 @@ function mkEl(tag) {
     addEventListener(t, f) { (this._on[t] = this._on[t] || []).push(f); },
     removeEventListener(t, f) {
       if (this._on[t]) this._on[t] = this._on[t].filter((x) => x !== f); },
-    dispatch(t, ev) { (this._on[t] || []).forEach((f) => f(ev)); },
+    // Events BUBBLE, because the runtime relies on it: the link interceptor
+    // is one delegated listener on the host covering every descendant anchor
+    // ("one listener per host covers every descendant anchor", says the code).
+    // A dispatch that stopped at the target made that listener unreachable —
+    // the click did nothing, the fake reported no error, and the matcher
+    // behind it was exercised by no test.
+    //
+    // stopPropagation is honoured, since a handler that calls it is saying
+    // exactly this should not happen.
+    dispatch(t, ev) {
+      ev = ev || {};
+      if (ev.target === undefined) ev.target = this;
+      let stopped = false;
+      const userStop = ev.stopPropagation;
+      ev.stopPropagation = function () {
+        stopped = true;
+        if (typeof userStop === 'function') userStop.call(ev);
+      };
+      let cur = this;
+      while (cur) {
+        (cur._on[t] || []).forEach((f) => f(ev));
+        if (stopped) return;
+        cur = cur.parentNode;
+      }
+    },
     // Only the ':scope > .a > .b' shape the renderer uses: walk one class
     // step at a time through direct children. Anything else returns null
     // loudly rather than pretending to match.
@@ -151,7 +175,33 @@ function mkEl(tag) {
       return cur === this ? null : cur;
     },
     querySelectorAll() { return []; },
-    closest() { return null; }, contains() { return false; },
+    // closest used to answer null always, and that made the fake LIE in the
+    // way this file warns about: the runtime's link interceptor starts with
+    // ev.target.closest('a[href^="/"]'), so with a null answer NO in-app link
+    // click was ever routed here — the runtime ran, did nothing, and the
+    // matcher behind it (matchesAnyPage) was reached by no test at all.
+    //
+    // Only the selector shapes the runtime actually uses are supported:
+    // a tag name, optionally with one [attr^="prefix"] or [attr] filter.
+    closest(sel) {
+      const m = /^([a-zA-Z]+)(?:\[([a-zA-Z-]+)(?:\^?=\"([^\"]*)\")?\])?$/.exec(String(sel || ''));
+      if (!m) return null;
+      const [, tag, attr, prefix] = m;
+      let cur = this;
+      while (cur) {
+        const tagOk = cur.tagName === tag.toUpperCase();
+        let attrOk = true;
+        if (attrOk && attr) {
+          const v = cur.getAttribute ? cur.getAttribute(attr) : null;
+          attrOk = v !== null && v !== undefined &&
+                   (prefix === undefined || String(v).startsWith(prefix));
+        }
+        if (tagOk && attrOk) return cur;
+        cur = cur.parentNode;
+      }
+      return null;
+    },
+    contains() { return false; },
     focus() {}, blur() {}, scrollIntoView() {}, remove() {},
     click() { this.dispatch('click', { preventDefault() {}, stopPropagation() {}, target: this }); },
     getBoundingClientRect() { return { top: 0, left: 0, right: 100, bottom: 100, width: 100, height: 100 }; },
