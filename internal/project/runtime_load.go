@@ -24,6 +24,7 @@ package project
 // about surfacing type errors before runtime.
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 
@@ -31,6 +32,7 @@ import (
 	"mar/internal/diag"
 	"mar/internal/parser"
 	"mar/internal/runtime"
+	"mar/internal/typecheck"
 )
 
 // LoadIntoEnvForRuntime parses `entry` plus its transitive imports
@@ -67,6 +69,37 @@ func LoadIntoEnvForRuntime(
 	)
 	if err != nil {
 		return nil, nil, err
+	}
+
+	// The project-wide passes, here too.
+	//
+	// The comment above says the build pipeline already caught the errors, and
+	// that holds for a bundle THIS binary's own CLI produced. The stub is
+	// pre-compiled and shipped, though, so the bundle and the binary running it
+	// are two versions that need not match — which is exactly the shape this
+	// work keeps finding: a check live on one path and absent on another, with
+	// the absent one being the deployed one.
+	//
+	// Measured on the shipped stub before this: `two pages are declared on` was
+	// in it (the App.* builtins carry that one, and the stub runs `main`), and
+	// `must be read-only` and `expected \`Cmd ()\`` were not.
+	//
+	// The shape lint is not here: it needs the expression types, which
+	// `checkOrdered` does not carry back. These two need only what it already
+	// returns.
+	if issues := typecheck.RunGetReadOnlyCheck(mods); len(issues) > 0 {
+		return nil, nil, fmt.Errorf("%s", issues[0].Message)
+	}
+	qualified := map[string]typecheck.Type{}
+	for modName, values := range checked {
+		for vname, t := range values {
+			qualified[modName+"."+vname] = t
+		}
+	}
+	if name, t := mainTypeIn(qualified); t != nil {
+		if msg := typecheck.MainSignatureProblem(t); msg != "" {
+			return nil, nil, fmt.Errorf("%s: %s", name, msg)
+		}
 	}
 
 	rEnv := runtime.BaseEnv()

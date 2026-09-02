@@ -46,8 +46,10 @@ hof =
     let built = build2 Point
     in built.x * 100 + built.y
 
-main : Int
-main = 0
+-- A real entry point: this loader is the production runtime's, and it now
+-- holds main to Cmd () the way every other load path does.
+main : Cmd ()
+main = Cmd.none
 `
 	dir := t.TempDir()
 	entry := filepath.Join(dir, "Main.mar")
