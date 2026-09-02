@@ -17,6 +17,27 @@ if args.count >= 4, args[1] == "--http-error" {
     exit(0)
 }
 
+// Third mode: the wire port itself. Bytes and a status in, a Mar value out --
+// the same journey a real response makes, minus URLSession.
+if args.count >= 4, args[1] == "--service-result" {
+    let status = Int(args[2]) ?? 0
+    let body = args[3]
+    let data = body.data(using: .utf8) ?? Data()
+    let response = HTTPURLResponse(url: URL(string: "https://example.invalid/api/ping")!,
+                                   statusCode: status, httpVersion: nil, headerFields: nil)
+    let v = MarHTTP.makeServiceResult(data: data, response: response, error: nil, responseShape: nil)
+    // Print the Err's message, or "Ok <value>", so both clients are compared
+    // on the sentence a program actually receives.
+    if case .ctor(let tag, let cargs, _) = v {
+        if tag == "Err", let inner = cargs.first, case .ctor(let etag, let eargs, _) = inner {
+            if let m = eargs.first, case .string(let s) = m { print(s) } else { print(etag) }
+        } else if let ok = cargs.first {
+            print("Ok " + String(describing: ok))
+        }
+    }
+    exit(0)
+}
+
 guard args.count >= 3 else {
     FileHandle.standardError.write("usage: driver <program.json> <Module.value>\n".data(using: .utf8)!)
     exit(2)

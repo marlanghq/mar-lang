@@ -271,4 +271,16 @@ var HTTPErrorCases = []HTTPErrorCase{
 		"blank is not empty: the server said something, even if it is spaces"},
 	{500, `null`, `null`,
 		"a JSON fragment is not an object either"},
+
+	// A body that ARRIVES fine and is not JSON. The status is 200, so these
+	// go down the decode path rather than the error path -- the other half of
+	// the same port, and where the phone was answering in whatever language
+	// it had been set to: Foundation's localizedDescription, "The data
+	// couldn't be read because it isn't in the correct format."
+	{200, `<html>`, "decode failed: the document is not valid JSON",
+		"a page where a document was expected"},
+	{200, ``, "decode failed: the document is not valid JSON",
+		"a 200 with nothing in it"},
+	{200, `{"a":1`, "decode failed: the document is not valid JSON",
+		"JSON that stops halfway"},
 }

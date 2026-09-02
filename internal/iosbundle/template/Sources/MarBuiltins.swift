@@ -2191,7 +2191,13 @@ enum MarBuiltins {
                 )
                 return .string(String(data: data, encoding: .utf8) ?? "")
             } catch {
-                throw MarRuntimeError.message("JSON.encode failed: \(error.localizedDescription)")
+                // Not the host's message: `localizedDescription` here is
+                // Foundation's, and it changes with the phone's language, so
+                // the same value would fail differently per device. The other
+                // two runtimes cannot reach this at all (a Mar value is a
+                // finite tree with no cycles), which is why the sentence says
+                // what is true rather than quoting a serializer.
+                throw MarRuntimeError.message("JSON.encode failed: the value cannot be written as JSON")
             }
         }))
         env.define("JSON.encode", env.lookup("jsonEncode")!)

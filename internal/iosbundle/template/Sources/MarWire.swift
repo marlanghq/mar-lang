@@ -66,6 +66,11 @@ final class MarWireShape {
 }
 
 enum MarWire {
+    /// What a document that parsed but could not become a Mar value says when
+    /// the failure carries no sentence of its own. Fixed text, because the
+    /// host's is localized and would make the answer depend on the device.
+    static let notReadable = "the document could not be read"
+
 
     /// Answers nil when the value fits the shape, or the sentence that says
     /// how it does not. The wording is the Go runtime's, to the character.
@@ -322,10 +327,16 @@ enum MarWire {
                     return .ctor(tag: "Err", args: [.string(err)], origin: nil)
                 }
                 return .ctor(tag: "Ok", args: [coerce(v, shape)], origin: nil)
-            } catch {
+            } catch let e as MarRuntimeError {
+                // MarRuntimeError's errorDescription is MAR's sentence, so
+                // this one is safe to pass through. Catching it by type rather
+                // than relying on "only Mar errors get here" is what makes
+                // that a guarantee instead of a comment.
                 return .ctor(tag: "Err",
-                             args: [.string(error.localizedDescription)],
+                             args: [.string(e.errorDescription ?? notReadable)],
                              origin: nil)
+            } catch {
+                return .ctor(tag: "Err", args: [.string(notReadable)], origin: nil)
             }
         })
     }

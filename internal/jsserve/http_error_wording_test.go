@@ -85,7 +85,7 @@ call =
 const fs = require('fs');
 globalThis.window = globalThis; globalThis.document = undefined;
 globalThis.fetch = () => Promise.resolve({
-  ok: false, status: ` + strconv.Itoa(c.Status) + `, headers: { get: () => null },
+  ok: ` + okOf(c.Status) + `, status: ` + strconv.Itoa(c.Status) + `, headers: { get: () => null },
   text: () => Promise.resolve(` + string(body) + `),
 });
 (0, eval)(fs.readFileSync(process.argv[2], 'utf8'));
@@ -126,4 +126,13 @@ globalThis.__marTestRunCmd(program, 'Main.call').then(v => process.stdout.write(
 			}
 		})
 	}
+}
+
+// fetch's `ok` is the 2xx flag, and the table has both kinds: a 200 whose body
+// is not JSON goes down the decode path, not the error path.
+func okOf(status int) string {
+	if status >= 200 && status < 300 {
+		return "true"
+	}
+	return "false"
 }

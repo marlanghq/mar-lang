@@ -428,6 +428,24 @@
   // collapses to Nothing, which silently redirects authenticated
   // users back to /sign-in instead of mounting the protected page.
 
+  // A response body that is not JSON answers with MAR's sentence, the same one
+  // JSON.decode gives and the same one on every runtime. A body that IS JSON
+  // but does not become a Mar value keeps its own words: those two failures
+  // are not the same failure.
+  //
+  // The host parser's message is neither. V8's wording is a V8 detail, and
+  // Foundation's is LOCALIZED -- the same broken response read differently
+  // depending on the language the phone was set to, which is how a user could
+  // be shown "The data couldn't be read because it isn't in the correct
+  // format." where the browser said "Unexpected token '<'".
+  function jsonBodyOrThrow(body) {
+    try {
+      return JSON.parse(body);
+    } catch (_) {
+      throw new Error('the document is not valid JSON');
+    }
+  }
+
   function jsToMar(v) {
     // null → VUnit. Previously null → VCtor('Nothing'), but that
     // collided with VUnit's wire encoding (Go encodes () as null):
@@ -5273,7 +5291,7 @@
             return;
           }
           let parsed;
-          try { parsed = jsToMar(JSON.parse(r.body)); }
+          try { parsed = jsToMar(jsonBodyOrThrow(r.body)); }
           catch (e) {
             if (currentDispatch) currentDispatch(apply(toMsg, VCtor('Err', [VString('decode failed: ' + (e && e.message || e))])));
             return;
@@ -6436,7 +6454,7 @@
             }
             let parsed;
             try {
-              parsed = jsToMar(JSON.parse(r.body));
+              parsed = jsToMar(jsonBodyOrThrow(r.body));
             } catch (e) {
               // Response arrived but its body was not decodable: a server
               // contract bug, surfaced as a ServerError so the app can show it.
@@ -6756,7 +6774,7 @@
             }
             let parsed;
             try {
-              const raw = JSON.parse(r.body);
+              const raw = jsonBodyOrThrow(r.body);
               parsed = raw == null
                 ? VCtor('Nothing', [])
                 : VCtor('Just', [jsToMar(raw)]);

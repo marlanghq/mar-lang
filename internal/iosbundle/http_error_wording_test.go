@@ -19,6 +19,12 @@ import (
 // screens, produced by the one branch that treated an empty code as no
 // envelope at all.
 //
+// It drives makeServiceResult -- the phone's WIRE PORT, where bytes off the
+// network become a Mar value -- rather than the decoder alone, so the error
+// path and the decode path are both the real one. The decode path was carrying
+// a second bug of the same family: Foundation's localizedDescription, which
+// changes with the language the phone is set to.
+//
 // The table lives in internal/parityfixture next to the browser's half, so the
 // two clients are held to one list rather than to two copies of it.
 func TestThePhoneWordsAFailedCallLikeTheBrowser(t *testing.T) {
@@ -44,7 +50,7 @@ func TestThePhoneWordsAFailedCallLikeTheBrowser(t *testing.T) {
 
 	for _, c := range parityfixture.HTTPErrorCases {
 		t.Run(c.Why, func(t *testing.T) {
-			out, err := exec.Command(bin, "--http-error", itoa(c.Status), c.Body).CombinedOutput()
+			out, err := exec.Command(bin, "--service-result", itoa(c.Status), c.Body).CombinedOutput()
 			if err != nil {
 				t.Fatalf("driver: %v\n%s", err, out)
 			}

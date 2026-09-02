@@ -254,7 +254,7 @@ enum MarHTTP {
             URLSession.shared.dataTask(with: req) { data, response, error in
                 let outcome: FetchOutcome
                 if let error {
-                    outcome = .err(error.localizedDescription)
+                    outcome = .err(transportMessage(error))
                 } else if let http = response as? HTTPURLResponse,
                           !(200..<300).contains(http.statusCode) {
                     let body = data.flatMap { String(data: $0, encoding: .utf8) } ?? ""
@@ -280,7 +280,7 @@ enum MarHTTP {
     private static func decodeAuthResponse(
         data: Data?, response: URLResponse?, error: Error?, decode: AuthDecode
     ) -> FetchOutcome {
-        if let error { return .err(error.localizedDescription) }
+        if let error { return .err(transportMessage(error)) }
         let raw = data ?? Data()
         let body = String(data: raw, encoding: .utf8) ?? ""
         if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
@@ -294,7 +294,7 @@ enum MarHTTP {
                 let any = try JSONSerialization.jsonObject(with: raw, options: [.fragmentsAllowed])
                 return .okJSON(try MarJSONCodec.jsonToMar(any))
             } catch {
-                return .err("decode failed: \(error.localizedDescription)")
+                return .err(notJSONMessage)
             }
         }
     }
@@ -337,7 +337,7 @@ enum MarHTTP {
     }
 
     private static func makeStringResult(data: Data?, response: URLResponse?, error: Error?) -> FetchOutcome {
-        if let error { return .err(error.localizedDescription) }
+        if let error { return .err(transportMessage(error)) }
         let raw = data ?? Data()
         let body = String(data: raw, encoding: .utf8) ?? ""
         if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
@@ -347,7 +347,7 @@ enum MarHTTP {
     }
 
     private static func makeJSONResult(data: Data?, response: URLResponse?, error: Error?) -> FetchOutcome {
-        if let error { return .err(error.localizedDescription) }
+        if let error { return .err(transportMessage(error)) }
         let bodyData = data ?? Data()
         let bodyString = String(data: bodyData, encoding: .utf8) ?? ""
         if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
@@ -357,7 +357,7 @@ enum MarHTTP {
             let any = try JSONSerialization.jsonObject(with: bodyData, options: [.fragmentsAllowed])
             return .okJSON(try MarJSONCodec.jsonToMar(any))
         } catch {
-            return .err("decode failed: \(error.localizedDescription)")
+            return .err(notJSONMessage)
         }
     }
 
@@ -482,7 +482,31 @@ enum MarHTTP {
     /// Builds the Result a Service.call delivers: Ok decoded-value, or Err
     /// carrying a Service.Error. The String variant (makeJSONResult) stays
     /// for Http.get/post and auth, whose Err is still a bare String.
-    private static func makeServiceResult(data: Data?, response: URLResponse?, error: Error?, responseShape: MarWireShape?) -> MarValue {
+    /// The sentence a TRANSPORT failure gets.
+    ///
+    /// Foundation's `localizedDescription` is the host's wording and it is
+    /// LOCALIZED: the same dropped connection read one way on an English
+    /// phone and another way on a Portuguese one, while the browser answered
+    /// with one of two fixed sentences either way. These are those two
+    /// sentences; friendlyFetchError in internal/jsserve/runtime.js is the
+    /// other half, and internal/parityfixture holds them both.
+    static func transportMessage(_ error: Error) -> String {
+        // navigator.onLine === false is what the browser branches on, and
+        // notConnectedToInternet is the same condition: no route at all,
+        // rather than a request that started and failed.
+        if (error as NSError).code == NSURLErrorNotConnectedToInternet {
+            return "You appear to be offline. Check your connection and try again."
+        }
+        return "Couldn't reach the server. Try again in a moment."
+    }
+
+    /// The sentence a body that is not JSON gets, on every runtime.
+    static let notJSONMessage = "decode failed: the document is not valid JSON"
+
+    // Not private: this is the phone's WIRE PORT — where bytes off the network
+    // become a Mar value — and internal/iosbundle drives it directly so the
+    // port is compared with the browser's without needing a real request.
+    static func makeServiceResult(data: Data?, response: URLResponse?, error: Error?, responseShape: MarWireShape?) -> MarValue {
         if error != nil {
             return .ctor(tag: "Err", args: [serviceErrorOffline()], origin: nil)
         }
@@ -492,8 +516,21 @@ enum MarHTTP {
             let se = serviceErrorFromResponse(status: http.statusCode, body: bodyData, fallbackBody: bodyString)
             return .ctor(tag: "Err", args: [se], origin: nil)
         }
+        // Two failures live here and they are not the same failure. A body
+        // that is not JSON is Mar's own sentence, identical on every runtime;
+        // anything after that keeps its own words. Foundation's message is
+        // neither: it is LOCALIZED, so the same broken response read
+        // differently depending on the language the phone was set to. Fixed
+        // once already in MarWire; it was alive here too.
+        let any: Any
         do {
-            let any = try JSONSerialization.jsonObject(with: bodyData, options: [.fragmentsAllowed])
+            any = try JSONSerialization.jsonObject(with: bodyData, options: [.fragmentsAllowed])
+        } catch {
+            let se: MarValue = .ctor(tag: "ServerError",
+                args: [.string(notJSONMessage)], origin: nil)
+            return .ctor(tag: "Err", args: [se], origin: nil)
+        }
+        do {
             let decoded = try MarJSONCodec.jsonToMar(any)
             // The response was not produced by the type system either. It
             // comes from this app's own server, so the realistic mismatch is
@@ -511,7 +548,7 @@ enum MarHTTP {
             }
             return .ctor(tag: "Ok", args: [decoded], origin: nil)
         } catch {
-            let se: MarValue = .ctor(tag: "ServerError", args: [.string("decode failed: \(error.localizedDescription)")], origin: nil)
+            let se: MarValue = .ctor(tag: "ServerError", args: [.string(notJSONMessage)], origin: nil)
             return .ctor(tag: "Err", args: [se], origin: nil)
         }
     }
