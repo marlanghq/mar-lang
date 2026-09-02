@@ -696,23 +696,12 @@ func lookupMainType(valueTypes map[string]typecheck.Type) typecheck.Type {
 	return nil
 }
 
-// checkMainSignature reports whether t is `Cmd ()`. Returns an empty
-// string when the signature is acceptable, else a short human-readable
-// message describing the mismatch. Wrapping in a `forall` is fine: main
-// can be polymorphic in unused variables.
-func checkMainSignature(t typecheck.Type) string {
-	if f, ok := t.(typecheck.TForall); ok {
-		t = f.Body
-	}
-	con, ok := t.(typecheck.TCon)
-	if !ok || con.Name != "Cmd" || len(con.Args) != 1 {
-		return fmt.Sprintf("main has type `%s`, expected `Cmd ()`", typecheck.Pretty(t))
-	}
-	if _, uOk := con.Args[0].(typecheck.TUnit); !uOk {
-		return fmt.Sprintf("main has type `%s`, expected `Cmd ()` (success value must be unit `()`)", typecheck.Pretty(t))
-	}
-	return ""
-}
+// The rule itself lives in typecheck.MainSignatureProblem, which every load
+// path now asks. This is the second reader of that answer, and it exists only
+// to wrap it in the hint the CLI can give and a library cannot: which builtin
+// to reach for. It used to be a SECOND IMPLEMENTATION of the same rule, which
+// is the drift this work keeps finding — two copies of a check agreeing today
+// and disagreeing after the next edit to one of them.
 
 // version and commit are populated at build time via -ldflags.
 // See Makefile.
@@ -1333,7 +1322,7 @@ func runDev(path string, noOpen bool) int {
 				entryFile)
 		}
 		if mainType := lookupMainType(valueTypes); mainType != nil {
-			if msg := checkMainSignature(mainType); msg != "" {
+			if msg := typecheck.MainSignatureProblem(mainType); msg != "" {
 				return newHintedError(
 					"%s: %s",
 					"mar entry points must be `main : Cmd ()` and pick a topology with App.frontend / App.backend / App.fullstack.",

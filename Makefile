@@ -159,6 +159,23 @@ release-macos: release
 test: ios-template
 	@go test ./...
 
+# A guard nobody exercises is a guard free to rot, and it rots quietly: the
+# check still compiles, still gets called, and stops meaning anything. This is
+# how `get_readonly.go` — the pass that keeps a GET service from writing to the
+# database — turned out to have no test at all while being wired into two load
+# paths.
+#
+# -coverpkg is not optional here: without it, a function used only from another
+# package's tests reports 0% and the list fills with things that are fine.
+guards: ios-template
+	@echo "Guard functions with no test coverage"
+	@go test ./... -coverpkg=./... -coverprofile=/tmp/mar-guards.out > /dev/null 2>&1 || true
+	@go tool cover -func=/tmp/mar-guards.out 2>/dev/null \
+		| awk -F'\t+' '$$3 ~ /^0\.0%/ && tolower($$2) ~ /check|guard|valid|verif|refus|reject|require/ { print "  " $$1 " " $$2 }' \
+		| grep -vE '/lsp/|/scaffold/init|cloudflare|fly\.go|fly_health' || true
+	@rm -f /tmp/mar-guards.out
+	@echo "(empty above means every guard runs at least once)"
+
 check-examples: build
 	@ok=0; fail=0; \
 	if ls examples/*.mar > /dev/null 2>&1; then \
