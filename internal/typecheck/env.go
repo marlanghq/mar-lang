@@ -206,6 +206,30 @@ func BaseQualifiedSymbols() map[string]Type {
 	return qualifiedAliases(baseBindings())
 }
 
+// AllQualifiedSymbols returns EVERY user-facing name that carries a module
+// qualifier: the aliases BaseQualifiedSymbols reports, plus the names that are
+// already written qualified in the binding table and which the alias mapping
+// therefore never mentions.
+//
+// The difference is not small. BaseQualifiedSymbols answers 373 names and this
+// answers 544: the whole of Decimal's functions, and every Keyboard / Gamepad
+// / Canvas / Sound constructor, are qualified at the source and so fall
+// outside the alias view. Anything that asks "is this a name a program can
+// write" has to ask this one, or it quietly answers no for a fifth of the
+// stdlib -- which is how a census of the runtime's argument guards came to
+// skip every Decimal guard it was written to inspect.
+func AllQualifiedSymbols() map[string]Type {
+	out := qualifiedAliases(baseBindings())
+	for name, t := range baseBindings() {
+		if strings.Contains(name, ".") {
+			if _, seen := out[name]; !seen {
+				out[name] = t
+			}
+		}
+	}
+	return out
+}
+
 // BareGlobals returns the user-facing builtins that live in no module:
 // the handful spelled without a qualifier, like Elm's Basics. It is the
 // bare-name counterpart to ExportsOf, and exists so tooling that walks

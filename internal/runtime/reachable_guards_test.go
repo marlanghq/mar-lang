@@ -33,9 +33,25 @@ import (
 // an argument that cannot be a record at all); this is what is left over when
 // the lint cannot be sure, and it is the message that reaches the user.
 func TestAGuardAProgramCanReachDoesNotNameAGoType(t *testing.T) {
-	guard := regexp.MustCompile(`fmt\.Errorf\("([A-Za-z.]+): expected ([^(]+?) \(got %T\)", args\[(\d)\]\)`)
+	// Every shape an argument guard is written in, not one of them. The first
+	// version of this census matched only `Name: expected X (got %T)` and so
+	// counted 57 of the runtime's guards while claiming to count them all;
+	// `must be a X (got %T)` and the asDecimal-style helpers went unseen. The
+	// rule that actually holds is broader and simpler: a message that prints a
+	// value with %T, or a helper that will, applied to a numbered argument.
+	//
+	// A guard that already answers in Mar's words is matched too, on purpose:
+	// fixing one must not remove it from the census, or the three this test
+	// exists for would drop out of view the moment they were fixed.
+	leaking := []*regexp.Regexp{
+		// fmt.Errorf("Name: ... %T ...", args[i])
+		regexp.MustCompile(`fmt\.Errorf\("([A-Za-z][A-Za-z.]*)[^"]*%T[^"]*", *args\[(\d)\]`),
+		// asDecimal("Name", args[i]) and its siblings
+		regexp.MustCompile(`as[A-Z][A-Za-z]*\("([A-Za-z][A-Za-z.]*)", *args\[(\d)\]`),
+	}
+	worded := regexp.MustCompile(`fmt\.Errorf\("([A-Za-z][A-Za-z.]*)[^"]*", *marKindOf\(args\[(\d)\]`)
 
-	syms := typecheck.BaseQualifiedSymbols()
+	syms := typecheck.AllQualifiedSymbols()
 	files, err := filepath.Glob("*.go")
 	if err != nil {
 		t.Fatal(err)
@@ -50,18 +66,42 @@ func TestAGuardAProgramCanReachDoesNotNameAGoType(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		for _, m := range guard.FindAllStringSubmatch(string(b), -1) {
+		type hit struct {
+			m       []string
+			leaksGo bool
+		}
+		var matches []hit
+		for _, g := range leaking {
+			for _, m := range g.FindAllStringSubmatch(string(b), -1) {
+				matches = append(matches, hit{m, true})
+			}
+		}
+		for _, m := range worded.FindAllStringSubmatch(string(b), -1) {
+			matches = append(matches, hit{m, false})
+		}
+		for _, h := range matches {
+			m := h.m
 			name := m[1]
-			i, _ := strconv.Atoi(m[3])
+			i, _ := strconv.Atoi(m[2])
 			ty, ok := syms[name]
 			if !ok {
-				// Not a name a program can write: the drift tests own that
-				// question, and an unwritable name has no reachable guard.
+				// A guard naming something that is not a builtin is either a
+				// typo or dead code, and either way it silently leaves the
+				// census: measured, renaming one guard's builtin dropped it
+				// from the count without failing anything. Names that are
+				// deliberately not builtins are listed, with the reason.
+				if why, allowed := notABuiltin[name]; allowed {
+					_ = why
+					continue
+				}
+				problems = append(problems, name+": this guard names something that is not a"+
+					" builtin, so nothing here can say whether a program can reach it.\n"+
+					"    Fix the name, or list it in notABuiltin with the reason.")
 				continue
 			}
 			arg, found := nthArgOf(ty, i)
 			if !found {
-				problems = append(problems, name+": the guard reads argument "+m[3]+
+				problems = append(problems, name+": the guard reads argument "+m[2]+
 					", and the declared type has no such argument.\n"+
 					"    One of the two is wrong, and the type is what the program obeys.")
 				continue
@@ -71,7 +111,13 @@ func TestAGuardAProgramCanReachDoesNotNameAGoType(t *testing.T) {
 				continue
 			}
 			reachable++
-			problems = append(problems, name+": argument "+m[3]+" is a bare type variable, so a"+
+			if !h.leaksGo {
+				// Reachable, and it says what the value is in Mar's words.
+				// That is the whole ask; it stays counted so the number a
+				// reader sees is the number of guards a program can hit.
+				continue
+			}
+			problems = append(problems, name+": argument "+m[2]+" is a bare type variable, so a"+
 				" checked program CAN reach this guard, and it answers with Go's name for the value"+
 				" (%T).\n    Say what the value is in Mar's words -- marKindOf does it -- or pin the"+
 				" argument in the type so the guard becomes unreachable.")
@@ -82,10 +128,14 @@ func TestAGuardAProgramCanReachDoesNotNameAGoType(t *testing.T) {
 		t.Error(p)
 	}
 	if !t.Failed() {
-		t.Logf("%d argument guards, all with the argument pinned by the declared type;"+
-			" %d reachable and still naming a Go type", pinned, reachable)
+		t.Logf("%d argument guards: %d unreachable because the declared type pins the"+
+			" argument, %d reachable and answering in Mar's words", pinned+reachable, pinned, reachable)
 	}
 }
+
+// Guards whose leading word is not a builtin's name. Each needs a reason,
+// because the alternative is a typo that leaves the census in silence.
+var notABuiltin = map[string]string{}
 
 func nthArgOf(t typecheck.Type, i int) (typecheck.Type, bool) {
 	for {
