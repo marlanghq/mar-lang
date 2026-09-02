@@ -176,6 +176,19 @@ guards: ios-template
 	@rm -f /tmp/mar-guards.out
 	@echo "(empty above means every guard runs at least once)"
 
+# The same question for the web runtime, which `go tool cover` cannot see:
+# runtime.js is a 700KB file the Go tests drive through node. Node writes V8
+# coverage when NODE_V8_COVERAGE points somewhere, and the spawned children
+# inherit it. Pass a name filter as FILTER=... to narrow the list.
+#
+# This is how the browser's half of the path round trip turned out to have no
+# test at all while the server's half had a census.
+guards-js: ios-template
+	@rm -rf /tmp/mar-js-cov && mkdir -p /tmp/mar-js-cov
+	@NODE_V8_COVERAGE=/tmp/mar-js-cov go test ./... -count=1 > /dev/null 2>&1 || true
+	@python3 tools/js_coverage.py /tmp/mar-js-cov internal/jsserve/runtime.js "$(FILTER)"
+	@rm -rf /tmp/mar-js-cov
+
 check-examples: build
 	@ok=0; fail=0; \
 	if ls examples/*.mar > /dev/null 2>&1; then \
