@@ -198,6 +198,31 @@ enumPath =
     linkTo numbered { slug = "x y", n = 42 }
 
 
+-- A Path segment typed as a USER'S OWN enum. This is what
+-- runtime.RegisterEnumType exists for: a union whose constructors are all
+-- nullary is path-eligible, and a URL segment names one of them. The earlier
+-- enumPath value did not have an enum in it at all, it had a String and an
+-- Int, so the promise it was recorded as covering was not covered.
+--
+-- (No backticks in this file: Source is a Go raw string, and one ends it.)
+type Role
+    = Admin
+    | Member
+
+
+member : Path { who : Role }
+member =
+    "/team/{who:Role}"
+
+
+rolePath : String
+rolePath =
+    String.join "|"
+        [ linkTo member { who = Admin }
+        , linkTo member { who = Member }
+        ]
+
+
 -- Device.touchOnly / canHover, which the Go runtime's comment says mirror the
 -- JS logic. Recorded as uncomparable because the record comes from the host's
 -- matchMedia -- which was wrong: only the SOURCE is host-dependent, and the
@@ -263,6 +288,7 @@ var Names = []string{
 	"devices",
 	"seeded",
 	"enumPath",
+	"rolePath",
 	"serviceErrors",
 }
 

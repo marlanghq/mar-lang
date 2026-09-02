@@ -47,13 +47,13 @@ type promiseSource struct {
 }
 
 var promiseCensus = []promiseSource{
-	{"jsserve/runtime.js", 11, 1, "fixture", "8 of the 11 are values in Source, 1 (the math kernels) is generated, and the domain-code boundary is held to AuthPortCases; RegisterEnumType needs a server, and is the gap inside this file"},
+	{"jsserve/runtime.js", 11, 0, "fixture", "8 of the 11 are values in Source, 1 (the math kernels) is generated, the domain-code boundary is held to AuthPortCases, and RegisterEnumType to rolePath"},
 	{"runtime/admin.go", 1, 0, "table", "not a cross-runtime promise at all: the bodies are checked against their declared type by internal/jsserve admin_shape_test.go, which is the wire checker pointed the other way"},
 	{"runtime/device.go", 1, 0, "fixture", "`devices` compares touchOnly / canHover over four records: only the SOURCE of a Device is the host's matchMedia, and the logic is a pure function"},
 	{"runtime/path.go", 1, 0, "fixture", "`link` encodes a space and a slash, which is where the three answers used to differ"},
 	{"iosbundle/MarBuiltins.swift", 5, 0, "fixture", "builtin tables: durations, listMove, charEdges, seeded, and Device.touchOnly / canHover, which moved here out of a file that imports a screen"},
 	{"iosbundle/MarValue.swift", 2, 0, "fixture", "decimalScale and bigInt are the two representations that used to drift"},
-	{"iosbundle/MarPath.swift", 2, 0, "fixture", "the phone's half of `link` and `enumPath`"},
+	{"iosbundle/MarPath.swift", 2, 0, "fixture", "the phone's half of link, enumPath and rolePath; rolePath is the one with an actual enum in it, which enumPath never had"},
 	{"iosbundle/MarIntRange.swift", 1, 0, "fixture", "`bigInt` and `decimalEdge` ride the bound; the refusal's wording is pinned in internal/runtime"},
 	{"iosbundle/MarJSONCodec.swift", 1, 0, "fixture", "collections: Set and Dict round-trip and keep their order"},
 	{"iosbundle/MarEval.swift", 1, 0, "fixture", "`no case branch matched`, matched by text on both clients"},
