@@ -484,16 +484,45 @@ func validateIOS(m *Manifest) error {
 	// Accept https:// always. Accept http://localhost only, never
 	// http://example.com. App Store ATS rejects plain HTTP except
 	// for localhost (debug-only).
-	if httpsURLRegex.MatchString(url) {
-		return nil
+	if !httpsURLRegex.MatchString(url) && !localhostURLRegex.MatchString(url) {
+		return fmt.Errorf(
+			"mar.json: ios.serverUrl must be https:// (or http://localhost for local testing); got %q",
+			url,
+		)
 	}
-	if localhostURLRegex.MatchString(url) {
-		return nil
+	// A path here is accepted by the URL and then thrown away. The phone builds
+	// each request as `URL(string: "/api/notes", relativeTo: base)`, and an
+	// absolute-path reference REPLACES the base's path (RFC 3986 §5.3).
+	// Measured with Foundation:
+	//
+	//	https://x.example.com/sub  +  /api/notes  ->  https://x.example.com/api/notes
+	//
+	// So a backend deployed under a sub-path is configured, ignored, and
+	// answers 404 from the phone with nothing to point at. Refused here rather
+	// than dropped there.
+	if p := urlPathOf(url); p != "" && p != "/" {
+		return fmt.Errorf(
+			"mar.json: ios.serverUrl has the path %q, and the phone would not use it: "+
+				"each request is built from the service's own path, which starts at the root, "+
+				"so `%s/api/...` becomes `/api/...`.\n"+
+				"  Give the host without a path, and mount the backend at the root of it",
+			p, url,
+		)
 	}
-	return fmt.Errorf(
-		"mar.json: ios.serverUrl must be https:// (or http://localhost for local testing); got %q",
-		url,
-	)
+	return nil
+}
+
+// urlPathOf returns the path part of an already scheme-checked URL, without
+// pulling in net/url for a string the two regexes above have already shaped.
+func urlPathOf(raw string) string {
+	rest := raw
+	if i := strings.Index(rest, "://"); i >= 0 {
+		rest = rest[i+3:]
+	}
+	if i := strings.Index(rest, "/"); i >= 0 {
+		return rest[i:]
+	}
+	return ""
 }
 
 // validateDatabaseAutoBackup enforces the bounds on the auto-backup

@@ -573,7 +573,12 @@ func TestValidate_IOSServerURL(t *testing.T) {
 		wantErr bool
 	}{
 		{"https valid", "https://my-app.fly.dev", false},
-		{"https with path", "https://my-app.fly.dev/api/v1", false},
+		// Was `false`. The phone builds each request as
+		// `URL(string: "/api/notes", relativeTo: base)`, and an absolute-path
+		// reference replaces the base's path — measured with Foundation, the
+		// `/api/v1` never appears in the request. Accepting it accepted a lie.
+		{"https with path", "https://my-app.fly.dev/api/v1", true},
+		{"https with a bare trailing slash", "https://my-app.fly.dev/", false},
 		{"https with port", "https://my-app.fly.dev:8080", false},
 		{"localhost http allowed", "http://localhost:3000", false},
 		{"127.0.0.1 http allowed", "http://127.0.0.1:3000", false},
