@@ -30,7 +30,7 @@ func TestNoBuiltinWaitsForMoreArgumentsThanItsTypeHas(t *testing.T) {
 	env := runtime.BaseEnv()
 
 	var bad []string
-	for name, ty := range typecheck.BaseQualifiedSymbols() {
+	for name, ty := range typecheck.AllQualifiedSymbols() {
 		v, ok := env.Lookup(name)
 		if !ok {
 			continue // the drift test owns "is it defined at all"

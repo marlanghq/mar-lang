@@ -375,7 +375,7 @@ func TestEverySubscriptionHasASourceInBothClientRuntimes(t *testing.T) {
 // back a Sub.
 func subReturningBuiltins() []string {
 	var out []string
-	for name, ty := range typecheck.BaseQualifiedSymbols() {
+	for name, ty := range typecheck.AllQualifiedSymbols() {
 		if strings.HasPrefix(resultType(ty).String(), "Sub") {
 			out = append(out, name)
 		}
@@ -429,7 +429,7 @@ func TestBothClientRuntimesBuildTheSameAttributes(t *testing.T) {
 	// builtin deliberately reuses one, say so here — the point of the count
 	// is that "the same names" cannot hide a builtin missing from both.
 	attrBuiltins := 0
-	for _, ty := range typecheck.BaseQualifiedSymbols() {
+	for _, ty := range typecheck.AllQualifiedSymbols() {
 		if strings.HasPrefix(resultType(ty).String(), "Attr") {
 			attrBuiltins++
 		}

@@ -25,7 +25,7 @@ import (
 // typecheck.IsBackendOnlyBuiltin (the iOS test will pick the same
 // answer up automatically).
 func TestJSBuiltinsCoverClientStdlib(t *testing.T) {
-	required := typecheck.BaseQualifiedSymbols()
+	required := typecheck.AllQualifiedSymbols()
 
 	defined, err := readJSBuiltinNames()
 	if err != nil {
@@ -104,7 +104,7 @@ func TestJSDefinesNoServerOnlyBuiltins(t *testing.T) {
 	// test does not pretend to have an answer for them.
 	serverOnlyData := []string{"Entity.", "Repo.", "Db.", "Server."}
 	var present []string
-	for name := range typecheck.BaseQualifiedSymbols() {
+	for name := range typecheck.AllQualifiedSymbols() {
 		inData := false
 		for _, p := range serverOnlyData {
 			if strings.HasPrefix(name, p) {

@@ -211,6 +211,14 @@ func BaseQualifiedSymbols() map[string]Type {
 // already written qualified in the binding table and which the alias mapping
 // therefore never mentions.
 //
+// This is what any CHECK must ask. The three-runtime drift tests, the arity
+// test, the node-coverage test and the importable-module set all asked
+// BaseQualifiedSymbols, so each was answering about two thirds of its own
+// subject: 373 of 544 names. Nothing was actually missing from a runtime when
+// this was widened -- measured, all three carry all 171 -- but the coverage
+// was accidental rather than checked, and `import Decimal` was rejected
+// outright, because Decimal has no aliased name and so no module entry.
+//
 // The difference is not small. BaseQualifiedSymbols answers 373 names and this
 // answers 544: the whole of Decimal's functions, and every Keyboard / Gamepad
 // / Canvas / Sound constructor, are qualified at the source and so fall

@@ -740,7 +740,13 @@ func stdlibModules() map[string]bool {
 		// has no qualified functions of its own and isn't in the qualified
 		// symbol map, but `import View` is still valid.
 		set := map[string]bool{"View": true}
-		for qualified := range typecheck.BaseQualifiedSymbols() {
+		// AllQualifiedSymbols, not BaseQualifiedSymbols: the latter is built
+		// from a table of Qualified -> bare aliases, so a module whose names
+		// are already written qualified at the source never appears in it.
+		// Measured: `import Decimal` answered "cannot find imported module
+		// Decimal" while every other stdlib module imported fine and
+		// `Decimal.toString` worked without the import.
+		for qualified := range typecheck.AllQualifiedSymbols() {
 			if i := strings.IndexByte(qualified, '.'); i > 0 {
 				set[qualified[:i]] = true
 			}

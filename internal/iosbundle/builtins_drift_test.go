@@ -28,7 +28,7 @@ import (
 // add it to typecheck.IsBackendOnlyBuiltin (and the parallel JS test
 // will pick the same answer up).
 func TestIOSBuiltinsCoverClientStdlib(t *testing.T) {
-	required := typecheck.BaseQualifiedSymbols()
+	required := typecheck.AllQualifiedSymbols()
 
 	defined, err := readSwiftBuiltinNames()
 	if err != nil {
@@ -175,7 +175,7 @@ func TestSwiftDeclarationStubsAreComplete(t *testing.T) {
 	}
 
 	var missing []string
-	for name := range typecheck.BaseQualifiedSymbols() {
+	for name := range typecheck.AllQualifiedSymbols() {
 		if !strings.HasPrefix(name, "Entity.") {
 			continue
 		}

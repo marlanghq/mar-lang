@@ -24,9 +24,29 @@ import (
 // IsBackendOnlyBuiltin is intentionally NOT applied: backend-only
 // names still have to be runtime-resolvable on the Go side (which
 // IS the backend). The filter only matters for client-side runtimes.
+//
+// What "defined" means widened with the question. The subject used to be the
+// alias TABLE, so the question could only be asked of the 373 names that table
+// is built from; asking it of all 544 named 154 constructors as missing, which
+// they are not -- Keyboard.KeyA and Service.Offline are VCtor values from the
+// generated registry, resolvable and simply not aliases. The failure this test
+// exists to catch is "unbound qualified name" at load, so the honest question
+// is whether the name RESOLVES, by whichever route, and now it covers every
+// name a program can write rather than the two thirds that happen to be
+// aliases.
 func TestRuntimeQualifiedAliasesMatchTypecheck(t *testing.T) {
-	required := typecheck.BaseQualifiedSymbols()
-	defined := runtime.QualifiedAliasNames()
+	required := typecheck.AllQualifiedSymbols()
+	env := runtime.BaseEnv()
+	aliases := runtime.QualifiedAliasNames()
+	defined := map[string]bool{}
+	for name := range aliases {
+		defined[name] = true
+	}
+	for name := range required {
+		if _, ok := env.Lookup(name); ok {
+			defined[name] = true
+		}
+	}
 
 	var missing []string
 	for name := range required {
@@ -38,6 +58,9 @@ func TestRuntimeQualifiedAliasesMatchTypecheck(t *testing.T) {
 		return
 	}
 	sort.Strings(missing)
-	t.Fatalf("runtime is missing %d qualified alias(es) that typecheck advertises:\n  %s\n\nFix: add each entry to qualifiedAliasMapping() in internal/runtime/builtins.go.",
+	t.Fatalf("the runtime cannot resolve %d qualified name(s) that typecheck advertises:\n  %s\n\n"+
+		"A program using one loads and then dies with `unbound qualified name`.\n"+
+		"Fix: add a function to qualifiedAliasMapping() in internal/runtime/builtins.go,\n"+
+		"or, for a constructor, to the table internal/ctorgen generates from.",
 		len(missing), strings.Join(missing, "\n  "))
 }
