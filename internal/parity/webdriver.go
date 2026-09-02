@@ -86,6 +86,20 @@ func RunWeb(runtimeJS string, programJSON []byte, driver string) (string, error)
 // deterministic: the runtime's popstate handler is a plain render() call, so
 // nothing about the behavior under test depends on the delay.
 const FakeBrowser = `
+// nextSibling / previousSibling, kept in step with every mutation.
+//
+// Not decoration: moveGrabbed picks its insertBefore anchor with
+// rows[target].nextSibling, so without these the row was appended to the END
+// on every arrow press instead of moving one place — the keyboard reorder
+// "worked" and reported the wrong thing, which is worse than not working.
+function relink(parent) {
+  const kids = parent.children || [];
+  for (let i = 0; i < kids.length; i++) {
+    kids[i].nextSibling = kids[i + 1] || null;
+    kids[i].previousSibling = kids[i - 1] || null;
+  }
+}
+
 // A DOM element, faked only as far as the renderer actually reaches.
 //
 // Three of these are load-bearing rather than filler, and each was added
@@ -115,18 +129,18 @@ function mkEl(tag) {
       contains(c) { return classes().indexOf(c) >= 0; },
     },
     appendChild(c) { this.children.push(c); this.childNodes.push(c);
-      this.firstChild = this.children[0]; c.parentNode = this; return c; },
+      this.firstChild = this.children[0]; c.parentNode = this; relink(this); return c; },
     insertBefore(c, ref) {
       const i = ref ? this.children.indexOf(ref) : -1;
       if (i < 0) return this.appendChild(c);
       this.children.splice(i, 0, c); this.childNodes.splice(i, 0, c);
-      this.firstChild = this.children[0]; c.parentNode = this; return c;
+      this.firstChild = this.children[0]; c.parentNode = this; relink(this); return c;
     },
     removeChild(c) { const i = this.children.indexOf(c);
       if (i >= 0) { this.children.splice(i, 1); this.childNodes.splice(i, 1); }
-      this.firstChild = this.children[0] || null; return c; },
+      this.firstChild = this.children[0] || null; relink(this); return c; },
     replaceChild(n, o) { const i = this.children.indexOf(o);
-      if (i >= 0) { this.children[i] = n; this.childNodes[i] = n; n.parentNode = this; }
+      if (i >= 0) { this.children[i] = n; this.childNodes[i] = n; n.parentNode = this; relink(this); }
       this.firstChild = this.children[0] || null; return o; },
     setAttribute(k, v) { if (k === 'class') { cls = String(v); } else { this[k] = v; } },
     getAttribute(k) { if (k === 'class') return cls; return this[k] === undefined ? null : this[k]; },
@@ -181,25 +195,44 @@ function mkEl(tag) {
     // click was ever routed here — the runtime ran, did nothing, and the
     // matcher behind it (matchesAnyPage) was reached by no test at all.
     //
-    // Only the selector shapes the runtime actually uses are supported:
-    // a tag name, optionally with one [attr^="prefix"] or [attr] filter.
+    // Two selector shapes, both taken from the runtime:
+    //   a[href^="/"]           a tag, optionally filtered on one attribute
+    //   .mar-section-body > *  the ancestor that is a direct child of a class
+    //
+    // Anything else THROWS. Returning null for a selector this does not
+    // understand is how the first version of this hid a whole listener: a
+    // fake that cannot answer has to say so, not guess "no".
     closest(sel) {
-      const m = /^([a-zA-Z]+)(?:\[([a-zA-Z-]+)(?:\^?=\"([^\"]*)\")?\])?$/.exec(String(sel || ''));
-      if (!m) return null;
-      const [, tag, attr, prefix] = m;
-      let cur = this;
-      while (cur) {
-        const tagOk = cur.tagName === tag.toUpperCase();
-        let attrOk = true;
-        if (attrOk && attr) {
-          const v = cur.getAttribute ? cur.getAttribute(attr) : null;
-          attrOk = v !== null && v !== undefined &&
-                   (prefix === undefined || String(v).startsWith(prefix));
+      const raw = String(sel || '').trim();
+      const child = /^\.([A-Za-z0-9_-]+)\s*>\s*\*$/.exec(raw);
+      if (child) {
+        const parentClass = child[1];
+        let cur = this;
+        while (cur && cur.parentNode) {
+          if (cur.parentNode.classList && cur.parentNode.classList.contains(parentClass)) return cur;
+          cur = cur.parentNode;
         }
-        if (tagOk && attrOk) return cur;
-        cur = cur.parentNode;
+        return null;
       }
-      return null;
+      const simple = /^([a-zA-Z]+)(?:\[([a-zA-Z-]+)(?:\^?=\"([^\"]*)\")?\])?$/.exec(raw);
+      if (simple) {
+        const [, tag, attr, prefix] = simple;
+        let cur = this;
+        while (cur) {
+          const tagOk = cur.tagName === tag.toUpperCase();
+          let attrOk = true;
+          if (attr) {
+            const v = cur.getAttribute ? cur.getAttribute(attr) : null;
+            attrOk = v !== null && v !== undefined &&
+                     (prefix === undefined || String(v).startsWith(prefix));
+          }
+          if (tagOk && attrOk) return cur;
+          cur = cur.parentNode;
+        }
+        return null;
+      }
+      throw new Error('FakeBrowser.closest does not understand the selector ' +
+        JSON.stringify(raw) + ' — teach it that shape rather than letting it answer "no"');
     },
     contains() { return false; },
     focus() {}, blur() {}, scrollIntoView() {}, remove() {},
