@@ -1012,6 +1012,14 @@ func runCheck(path string) int {
 		// guarding the merge and `mar build`, the step after, was the one
 		// that refused. Measured on two pages declared on `/`:
 		// `mar check .` said OK and `mar build .` refused.
+		//
+		// It costs a full evaluation of `main`, which is what reaching the
+		// checks requires. Measured, best of five: +0.00s on counter, +0.10s
+		// on quiz-duel, +1.54s on iron-meridian (0.89s → 2.43s), where the
+		// top-level values are a game's map data. That is the price `mar dev`
+		// and `mar build` were already paying, and paying it here is the
+		// whole point — the command that guards the merge now costs what the
+		// command that ships costs.
 		if _, err := scaffold.CheckBoot(path); err != nil {
 			printError("mar check", err)
 			return 1
