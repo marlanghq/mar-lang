@@ -621,17 +621,6 @@ func inferCase(n *ast.ECase, env *TypeEnv, s *Subst) (Type, error) {
 	return s.Apply(tResult), nil
 }
 
-// isCatchAllPattern reports whether `p` matches every value of its type
-// (i.e. binds without inspecting). PVar and PWildcard qualify; constructor
-// patterns and literal patterns do not.
-func isCatchAllPattern(p ast.Pattern) bool {
-	switch p.(type) {
-	case *ast.PVar, *ast.PWildcard:
-		return true
-	}
-	return false
-}
-
 // instantiateCtorArg specializes a constructor's declared argument type for
 // the concrete subject being matched, so exhaustiveness recursion descends
 // into the right instantiated type instead of a bare type parameter.

@@ -174,6 +174,16 @@ func LoadForServeTypedWithOverrides(entry string, overrides map[string]string) (
 		return nil, nil, nil, diag.Wrap(modPath, modSrc, &issue)
 	}
 
+	// `main` has to be `Cmd ()`. Asked on THIS load path too, not just in
+	// project.Load: the build pipelines come through here, and a
+	// `main : Cmd Int` reached `mar build` as "nothing to build" — true, and
+	// not the problem the reader has.
+	if name, t := mainTypeIn(valueTypes); t != nil {
+		if msg := typecheck.MainSignatureProblem(t); msg != "" {
+			return nil, nil, nil, fmt.Errorf("%s: %s", paths[name], msg)
+		}
+	}
+
 	// GET services must be read-only. Project-wide pass: a GET handler
 	// that reaches a database write (even through helpers) is rejected.
 	if issues := typecheck.RunGetReadOnlyCheck(out); len(issues) > 0 {

@@ -1,6 +1,7 @@
 package typecheck
 
 import (
+	"fmt"
 	"sort"
 	"strings"
 )
@@ -3592,11 +3593,42 @@ func stdlibBindings() map[string]Type {
 		// row is intentionally permissive: every field is opaque to the
 		// type checker and we don't reject extra fields, since the runtime
 		// only inspects the known names.
+		// Auth.config : { r | entity, identify, signup, email, sessionDuration } -> Auth user
+		//
+		// The argument used to be a bare type variable, so the checker
+		// asserted NOTHING about it and every field requirement was
+		// hand-checked at boot: `missing \`signup\``, `missing \`identify\``,
+		// `email.subject is required`, `\`entity\` must be an Entity`. Same
+		// shape as the `Service a b` hole — a variable where a structure
+		// belongs.
+		//
+		// The record is OPEN, which is what makes this possible at all:
+		// `role` and `signInPage` are optional, and a closed type could not
+		// have both of them absent and present. The tail carries them, and
+		// the boot check still reads them.
+		//
+		// `signup` returns the row MINUS its id, which the type system has
+		// no way to spell, so it stays a variable. Requiring the field to
+		// exist and be a function of the email is what moves.
 		"authConfig": TForall{
-			Vars: []int{a.ID, b.ID},
+			// -60 and -61 are the row variables of the two open records,
+			// bound here like Page.create binds -8 and -10: a scheme that
+			// leaves one free makes BaseEnv carry it, and generalization
+			// goes quadratic on every project.
+			Vars: []int{a.ID, b.ID, -60, -61},
 			Body: TArrow{
-				From: TVar{ID: a.ID},
-				To:   TAuth(TVar{ID: b.ID}),
+				From: TRecord{
+					Fields: map[string]Type{
+						"entity":          TEntity(TVar{ID: a.ID}),
+						"identify":        TArrow{From: TVar{ID: a.ID}, To: TString},
+						"signup":          TArrow{From: TString, To: TVar{ID: b.ID}},
+						"email":           TRecord{Fields: map[string]Type{"subject": TString}, Order: []string{"subject"}, Tail: TVar{ID: -61}},
+						"sessionDuration": TDuration,
+					},
+					Order: []string{"entity", "identify", "signup", "email", "sessionDuration"},
+					Tail:  TVar{ID: -60},
+				},
+				To: TAuth(TVar{ID: a.ID}),
 			},
 		},
 
@@ -4207,4 +4239,24 @@ func qualifiedAliases(flat map[string]Type) map[string]Type {
 		}
 	}
 	return out
+}
+
+// MainSignatureProblem reports why `t` is not `Cmd ()`, or "" when it is.
+//
+// A program's entry point produces no value: `Cmd ()` says the runtime performs
+// it and there is nothing to hand back. `Cmd Int` type-checks as an ordinary
+// value and then has nowhere to go. Wrapping in a `forall` is fine — `main`
+// generalizes when nothing constrains it.
+func MainSignatureProblem(t Type) string {
+	if f, ok := t.(TForall); ok {
+		t = f.Body
+	}
+	con, ok := t.(TCon)
+	if !ok || con.Name != "Cmd" || len(con.Args) != 1 {
+		return fmt.Sprintf("main has type `%s`, expected `Cmd ()`", Pretty(t))
+	}
+	if _, isUnit := con.Args[0].(TUnit); !isUnit {
+		return fmt.Sprintf("main has type `%s`, expected `Cmd ()` (the success value must be unit `()`)", Pretty(t))
+	}
+	return ""
 }

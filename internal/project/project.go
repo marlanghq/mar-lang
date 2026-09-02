@@ -187,6 +187,26 @@ func Load(root string) (*Project, error) {
 		issue := issues[0]
 		return nil, diag.Wrap(paths[issue.Module], sources[issue.Module], &issue)
 	}
+	// `main` has to be `Cmd ()`. This lived inside `mar dev` alone, so a
+	// `main : Cmd Int` passed `mar check` clean, and `mar build` refused it
+	// for the wrong reason ("nothing to build" — true, and not the problem).
+	// It is a fact about a TYPE, so it belongs on every load path rather than
+	// in one command, and it does not wait for `main` to be evaluated.
+	//
+	// Only checked when a `main` exists: a directory of modules that is not an
+	// entry point is not broken, and `mar check` still has plenty to say
+	// about one.
+	qualified := map[string]typecheck.Type{}
+	for modName, m := range mods {
+		for vname, t := range m.ValueTypes {
+			qualified[modName+"."+vname] = t
+		}
+	}
+	if name, t := mainTypeIn(qualified); t != nil {
+		if msg := typecheck.MainSignatureProblem(t); msg != "" {
+			return nil, fmt.Errorf("%s: %s", paths[name], msg)
+		}
+	}
 	if issues := typecheck.RunGetReadOnlyCheck(orderedMods); len(issues) > 0 {
 		issue := issues[0]
 		return nil, diag.Wrap(paths[issue.Module], sources[issue.Module], &issue)
@@ -372,6 +392,31 @@ func loadIntoEnv(mod *ast.Module, modName string, rEnv *runtime.Env, modulesByNa
 // intentionally not consulted: per-module env scoping (see
 // loadIntoEnv) keeps bare names module-local, so a bare `main` in
 // the shared `rEnv` is never registered.
+// mainTypeIn finds the entry point's `main` among values keyed by their
+// qualified name, and returns the module it lives in with its type.
+//
+// Prefers `Main.main`, the convention every project follows, and otherwise
+// takes the first `main` in sorted order — the map's iteration order is not
+// stable, and an error message that changes between runs is worse than useless.
+// Both load paths call this, so `mar check`, `mar build` and `mar dev` cannot
+// disagree about what an entry point is.
+func mainTypeIn(valueTypes map[string]typecheck.Type) (string, typecheck.Type) {
+	if t, ok := valueTypes["Main.main"]; ok {
+		return "Main", t
+	}
+	names := make([]string, 0, len(valueTypes))
+	for name := range valueTypes {
+		if strings.HasSuffix(name, ".main") {
+			names = append(names, name)
+		}
+	}
+	sort.Strings(names)
+	if len(names) == 0 {
+		return "", nil
+	}
+	return strings.TrimSuffix(names[0], ".main"), valueTypes[names[0]]
+}
+
 func LookupMain(rEnv *runtime.Env, mods []*ast.Module) (runtime.Value, bool) {
 	if v, ok := rEnv.Lookup("Main.main"); ok {
 		return v, true
