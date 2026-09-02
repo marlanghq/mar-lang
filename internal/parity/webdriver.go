@@ -92,6 +92,23 @@ const FakeBrowser = `
 // rows[target].nextSibling, so without these the row was appended to the END
 // on every arrow press instead of moving one place — the keyboard reorder
 // "worked" and reported the wrong thing, which is worse than not working.
+// detach removes a node from whatever parent it currently has, so a re-insert
+// moves it instead of cloning it into two places at once.
+function detach(c) {
+  const p = c && c.parentNode;
+  if (!p || !p.children) return;
+  const i = p.children.indexOf(c);
+  if (i < 0) return;
+  p.children.splice(i, 1);
+  if (p.childNodes) {
+    const j = p.childNodes.indexOf(c);
+    if (j >= 0) p.childNodes.splice(j, 1);
+  }
+  p.firstChild = p.children[0] || null;
+  c.parentNode = null;
+  relink(p);
+}
+
 function relink(parent) {
   const kids = parent.children || [];
   for (let i = 0; i < kids.length; i++) {
@@ -128,9 +145,16 @@ function mkEl(tag) {
       toggle(c, on) { on ? this.add(c) : this.remove(c); },
       contains(c) { return classes().indexOf(c) >= 0; },
     },
-    appendChild(c) { this.children.push(c); this.childNodes.push(c);
+    // appendChild and insertBefore MOVE a node that already has a parent, as
+    // the DOM does. The fake used to splice it in a second time, so any code
+    // that reorders by re-inserting an existing child DUPLICATED it — the row
+    // appeared twice, the index the reorder reported was computed over a list
+    // that does not exist in a browser, and nothing said a word.
+    appendChild(c) { detach(c); this.children.push(c); this.childNodes.push(c);
       this.firstChild = this.children[0]; c.parentNode = this; relink(this); return c; },
     insertBefore(c, ref) {
+      if (ref === c) return c;
+      detach(c);
       const i = ref ? this.children.indexOf(ref) : -1;
       if (i < 0) return this.appendChild(c);
       this.children.splice(i, 0, c); this.childNodes.splice(i, 0, c);
