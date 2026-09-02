@@ -72,6 +72,20 @@ notAnObject =
 notJSONAtAll : String
 notJSONAtAll =
     say "<html>"
+
+
+-- The copy a user reads when a call fails. The code beside each of these says
+-- to keep them identical across the three runtimes; the phone is compared in
+-- internal/iosbundle/swift_core_test.go, and this is the browser's corner of
+-- the same triangle.
+serviceErrors : String
+serviceErrors =
+    String.join "|"
+        [ Service.errorToString Service.Offline
+        , Service.errorToString Service.Unauthorized
+        , Service.errorToString Service.RateLimited
+        , Service.errorToString (Service.ServerError "boom")
+        ]
 `
 
 	mod, err := parser.Parse(src)
@@ -82,7 +96,7 @@ notJSONAtAll =
 		t.Fatalf("check: %v", err)
 	}
 
-	names := []string{"good", "wrongType", "missingField", "notAnObject", "notJSONAtAll"}
+	names := []string{"good", "wrongType", "missingField", "notAnObject", "notJSONAtAll", "serviceErrors"}
 
 	// The server's answers, from the same tree the browser will get.
 	loaded, err := runtime.LoadModule(mod)

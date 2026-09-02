@@ -185,6 +185,19 @@ bigInt =
 sorted : String
 sorted =
     String.join "," (List.sort [ "b", "a", "C" ])
+
+
+-- The copy a user reads when a call fails. Three runtimes carry these
+-- sentences and the code says to keep them identical; nothing checked that,
+-- because comparing the phone used to cost a simulator.
+serviceErrors : String
+serviceErrors =
+    String.join "|"
+        [ Service.errorToString Service.Offline
+        , Service.errorToString Service.Unauthorized
+        , Service.errorToString Service.RateLimited
+        , Service.errorToString (Service.ServerError "boom")
+        ]
 `
 	mod, err := parser.Parse(src)
 	if err != nil {
@@ -202,7 +215,7 @@ sorted =
 		t.Fatalf("load: %v", err)
 	}
 	want := map[string]string{}
-	for _, name := range []string{"link", "money", "notJSON", "wrongShape", "bigInt", "sorted"} {
+	for _, name := range []string{"link", "money", "notJSON", "wrongShape", "bigInt", "sorted", "serviceErrors"} {
 		v, ok := loaded.Env.Lookup(name)
 		if !ok {
 			t.Fatalf("%s is not bound", name)
