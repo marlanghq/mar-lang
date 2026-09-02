@@ -91,3 +91,39 @@ func TestGuardMailSinkIgnoresProjectsThatSendNoMail(t *testing.T) {
 		t.Fatalf("a project with no auth and no admin panel must boot, got: %v", err)
 	}
 }
+
+// The other half of the pair. `guardMailSink` refuses a boot that COULD send
+// codes with no SMTP behind it; `maybeVerifySMTP` refuses one whose SMTP is
+// fully configured and does not answer. Between them, a deploy that can send
+// codes either has working mail or does not start.
+//
+// The second had no test. Its wrapper is two lines, and the line that matters
+// is the one that does NOT return early: once the config is complete, the
+// connection is attempted, and a host that cannot be reached stops the deploy
+// instead of failing on the first sign-in — hours later, for a user.
+func TestSMTPThatDoesNotAnswerStopsTheBoot(t *testing.T) {
+	t.Run("nothing configured is not an error", func(t *testing.T) {
+		withAuthState(t, "s", auth.SMTPConfig{}, "")
+		if err := maybeVerifySMTP(); err != nil {
+			t.Fatalf("an app with no mail has nothing to verify: %v", err)
+		}
+	})
+
+	t.Run("a complete config that cannot be reached", func(t *testing.T) {
+		// Port 1 on loopback: reserved, and nothing listens there.
+		withAuthState(t, "s", auth.SMTPConfig{
+			Host:     "127.0.0.1",
+			Port:     1,
+			Username: "u",
+			Password: "p",
+		}, "")
+		err := maybeVerifySMTP()
+		if err == nil {
+			t.Fatal("the deploy would start and fail on the first sign-in instead")
+		}
+		if !strings.Contains(strings.ToLower(err.Error()), "smtp") &&
+			!strings.Contains(err.Error(), "127.0.0.1") {
+			t.Fatalf("the error should say what could not be reached: %v", err)
+		}
+	})
+}
