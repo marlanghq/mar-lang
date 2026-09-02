@@ -33,12 +33,32 @@ func TestNoHostMessageReachesAMarProgram(t *testing.T) {
 	if err != nil || len(files) == 0 {
 		t.Fatalf("no Swift sources: %v", err)
 	}
+	// Every way Foundation will hand you its own words about an error, not one
+	// of them. Measured: a leak written as `localizedFailureReason` slipped
+	// through the first version of this test without a sound, because the
+	// pattern named a single accessor.
+	hostWords := regexp.MustCompile(`localizedDescription|localizedFailureReason|` +
+		`localizedRecoverySuggestion|failureReason|recoverySuggestion|\\\(error\)`)
 	// A line that only LOGS or only records is fine; anything else that names
 	// the host's message is a value going somewhere.
 	logging := regexp.MustCompile(`(print\(|record\()`)
 
+	// The population, pinned. Classifying the leaks is only half the job: a
+	// leak REWORDED out of the pattern leaves no trace unless the number it
+	// belonged to is watched. Measured -- a new leak written with a different
+	// Foundation accessor passed this test in silence until the count existed.
+	population := map[string]int{
+		"APIClient.swift":      2,
+		"AppViewModel.swift":   3,
+		"MarAppContext.swift":  1,
+		"MarHTTP.swift":        4,
+		"MarPageRuntime.swift": 5,
+		"MarSharedStore.swift": 2,
+	}
+
 	var problems []string
 	used := map[string]bool{}
+	counted := map[string]int{}
 	for _, f := range files {
 		b, err := os.ReadFile(f)
 		if err != nil {
@@ -47,12 +67,13 @@ func TestNoHostMessageReachesAMarProgram(t *testing.T) {
 		name := filepath.Base(f)
 		for i, line := range strings.Split(string(b), "\n") {
 			trimmed := strings.TrimSpace(line)
-			if !strings.Contains(trimmed, "localizedDescription") {
+			if !hostWords.MatchString(trimmed) {
 				continue
 			}
 			if strings.HasPrefix(trimmed, "//") || strings.HasPrefix(trimmed, "///") {
 				continue
 			}
+			counted[name]++
 			if logging.MatchString(trimmed) {
 				continue
 			}
@@ -61,7 +82,7 @@ func TestNoHostMessageReachesAMarProgram(t *testing.T) {
 				continue
 			}
 			problems = append(problems, name+":"+itoa(i+1)+
-				" hands the host's localizedDescription somewhere that is not a log.\n"+
+				" hands the host's own words about an error somewhere that is not a log.\n"+
 				"    It is localized: the same failure reads differently depending on the\n"+
 				"    language the phone is set to. Answer with Mar's own sentence (see\n"+
 				"    MarHTTP.transportMessage and MarHTTP.notJSONMessage), or add the file\n"+
@@ -71,6 +92,26 @@ func TestNoHostMessageReachesAMarProgram(t *testing.T) {
 	for name := range allowed {
 		if !used[name] {
 			problems = append(problems, "the list allows "+name+", which no longer carries one; drop the row")
+		}
+	}
+	for name, n := range counted {
+		want, listed := population[name]
+		if !listed {
+			problems = append(problems, name+" names the host's words "+itoa(n)+
+				" time(s) and is not in the population.\n"+
+				"    Add it, so a later rewording cannot take it back out of view.")
+			continue
+		}
+		if want != n {
+			problems = append(problems, name+": the population says "+itoa(want)+
+				", the file names the host's words "+itoa(n)+" time(s).\n"+
+				"    A leak that moves out of the pattern leaves no other trace; adjust the count deliberately.")
+		}
+	}
+	for name, want := range population {
+		if _, ok := counted[name]; !ok {
+			problems = append(problems, name+" is in the population with "+itoa(want)+
+				" and now names the host's words nowhere; drop the row")
 		}
 	}
 	sort.Strings(problems)
