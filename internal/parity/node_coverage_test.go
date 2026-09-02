@@ -467,3 +467,34 @@ func resultType(t typecheck.Type) typecheck.Type {
 		return t
 	}
 }
+
+// The same question one level up from the attributes: the view nodes
+// themselves. A tag one client builds and the other does not is a screen that
+// renders on the web and comes up blank on the phone.
+//
+// Both runtimes spell them two ways — a literal tag for the leaf views, and a
+// container helper that takes the tag as an argument for the stacks, the list,
+// the section and the form. Reading only the literals, as a first pass of this
+// did, sees 20 of the 27 and calls the rest "covered by the parity harness" —
+// which covers a container only if an example uses it.
+func TestBothClientRuntimesBuildTheSameViewTags(t *testing.T) {
+	jsTags := attrNames(readFile(t, filepath.Join("..", "jsserve", "runtime.js")),
+		`VView\('([a-zA-Z]+)'|uiContainer\('([a-zA-Z]+)'\)|uiContentOnly\('([a-zA-Z]+)'\)`)
+	swiftTags := attrNames(readAll(t, filepath.Join("..", "iosbundle", "template", "Sources"), ".swift"),
+		`MarView\(\s*tag:\s*"([a-zA-Z]+)"|\bcontainer\("([a-zA-Z]+)"\)|contentOnlyContainer\("([a-zA-Z]+)"\)`)
+
+	if len(jsTags) < 20 || len(swiftTags) < 20 {
+		t.Fatalf("found %d view tags in runtime.js and %d in the Swift sources; "+
+			"the scan is broken, not the runtimes", len(jsTags), len(swiftTags))
+	}
+	for tag := range jsTags {
+		if !swiftTags[tag] {
+			t.Errorf("the web builds the view %q and the phone does not", tag)
+		}
+	}
+	for tag := range swiftTags {
+		if !jsTags[tag] {
+			t.Errorf("the phone builds the view %q and the web does not", tag)
+		}
+	}
+}
