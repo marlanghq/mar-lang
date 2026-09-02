@@ -394,6 +394,15 @@ func subReturningBuiltins() []string {
 // The two runtimes build the names with the same two helpers, so the sets are
 // directly comparable — and each `Attr`-returning builtin has its own name,
 // which is what makes "the same names" mean "the same attributes".
+//
+// The Go runtime is deliberately NOT here, and a scan that adds it naively
+// reports five false misses. Go builds all 34 too, but through two more
+// helpers (`stringAttrCtor`, `viewAttrCtor`) — and, measured, nothing in Go
+// ever READS an attribute name: `VView.Attrs` is filled and never consulted,
+// because the server ships program.json and the client renders. So Go's
+// constructors exist to let a program that names them evaluate on the server,
+// and the question worth asking about Go is "does the name resolve", which the
+// builtin drift tests already ask.
 func TestBothClientRuntimesBuildTheSameAttributes(t *testing.T) {
 	jsNames := attrNames(readFile(t, filepath.Join("..", "jsserve", "runtime.js")),
 		`makeAttr\('([a-zA-Z]+)'|flagAttr\('([a-zA-Z]+)'`)
