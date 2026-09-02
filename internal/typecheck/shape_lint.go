@@ -100,6 +100,12 @@ func (k columnKind) String() string {
 type columnInfo struct {
 	kind   columnKind
 	serial bool // auto-incrementing PK; not required in create payloads
+
+	// acceptedCtors is the set an `Entity.enum [A, B]` column takes. The
+	// row type's own constructor list can be LARGER, and nothing compared
+	// the two: the program could build a value the column refuses. See
+	// compareRowWithColumns.
+	acceptedCtors []string
 }
 
 // entitySchema is the resolved view of an `Entity.define` binding.
@@ -145,7 +151,7 @@ func RunShapeLint(mods []*ast.Module, exprTypes map[ast.Expr]Type) []ShapeIssue 
 	if len(schemas) == 0 {
 		return issues
 	}
-	ctx := lintCtx{schemas: schemas, exprTypes: exprTypes}
+	ctx := lintCtx{schemas: schemas, exprTypes: exprTypes, unions: unionCtors(mods)}
 	issues = append(issues, checkRowTypesAgainstSchemas(schemas, ctx)...)
 	for _, m := range mods {
 		modName := strings.Join(m.Name, ".")
@@ -169,6 +175,13 @@ func RunShapeLint(mods []*ast.Module, exprTypes map[ast.Expr]Type) []ShapeIssue 
 type lintCtx struct {
 	schemas   map[string]entitySchema
 	exprTypes map[ast.Expr]Type // optional; nil = no inference info
+
+	// unions maps a union type's name to the constructors it declares,
+	// under both the bare name and the canonical `Module.Name` (ADR 0027),
+	// because a checked type comes back canonical and the declaration is
+	// written bare. Used to compare a row field's type with the set its
+	// `Entity.enum` column accepts.
+	unions map[string][]string
 }
 
 // extractEntities scans every top-level value declaration looking
@@ -227,6 +240,10 @@ func extractEntities(mods []*ast.Module) (map[string]entitySchema, []ShapeIssue)
 
 			schema := parse.schema
 			schema.define, schema.module, schema.bind = v.Body, modName, v.Name
+			for _, issue := range checkUniques(parse.uniques, schema) {
+				issue.Module = modName
+				issues = append(issues, issue)
+			}
 			out[v.Name] = schema
 			if modName != "" {
 				out[modName+"."+v.Name] = schema
@@ -249,10 +266,11 @@ type nameDeclSite struct {
 // pointing the error at).
 type parsedEntityDefine struct {
 	schema      entitySchema
-	nameLiteral string  // "" when name wasn't a string literal
-	namePos     ast.Pos // position of the name value (or the spec record if missing)
-	nameKnown   bool    // false when the `name` field is missing OR non-literal
-	specPos     ast.Pos // position of the spec record literal itself
+	nameLiteral string     // "" when name wasn't a string literal
+	uniques     *ast.EList // the uniques list, when it is a literal one
+	namePos     ast.Pos    // position of the name value (or the spec record if missing)
+	nameKnown   bool       // false when the `name` field is missing OR non-literal
+	specPos     ast.Pos    // position of the spec record literal itself
 }
 
 // tryParseEntityDefine recognizes the new single-record call shape:
@@ -289,6 +307,7 @@ func tryParseEntityDefine(e ast.Expr) (parsedEntityDefine, bool) {
 	out.namePos = spec.Position() // fallback if name field is absent
 
 	var columnsRec *ast.ERecord
+	var uniquesList *ast.EList
 	for _, f := range spec.Fields {
 		switch f.Name {
 		case "name":
@@ -303,9 +322,16 @@ func tryParseEntityDefine(e ast.Expr) (parsedEntityDefine, bool) {
 			if rec, ok := f.Value.(*ast.ERecord); ok {
 				columnsRec = rec
 			}
+		case "uniques":
+			// Read, not merely acknowledged. Three things about this list
+			// are facts about the literal — a column it names that the
+			// entity does not declare, an empty index, a column repeated
+			// inside one index — and all three were caught only at boot.
+			// The columns are right here in the same expression.
+			if list, ok := f.Value.(*ast.EList); ok {
+				uniquesList = list
+			}
 		}
-		// uniques is parsed at runtime only: the lint doesn't need to
-		// understand its values, just acknowledge the field exists.
 	}
 
 	if columnsRec != nil {
@@ -320,8 +346,62 @@ func tryParseEntityDefine(e ast.Expr) (parsedEntityDefine, bool) {
 			order = append(order, f.Name)
 		}
 		out.schema = entitySchema{tableName: out.nameLiteral, columns: cols, order: order}
+		out.uniques = uniquesList
 	}
 	return out, true
+}
+
+// checkUniques compares the `uniques` list with the columns declared beside
+// it. All three of these were caught only at boot, and all three are facts
+// about one expression: measured, `uniques = [ [ "emial" ] ]` checked clean
+// and the app refused to start with
+// `uniques[0] references column "emial" which is not declared`.
+func checkUniques(list *ast.EList, schema entitySchema) []ShapeIssue {
+	if list == nil {
+		return nil
+	}
+	var issues []ShapeIssue
+	for i, entry := range list.Elements {
+		inner, ok := entry.(*ast.EList)
+		if !ok {
+			continue // not a literal list: the boot check still has it
+		}
+		if len(inner.Elements) == 0 {
+			issues = append(issues, ShapeIssue{
+				Pos: inner.Position(),
+				Message: fmt.Sprintf(
+					"Entity.define %q: uniques[%d] is empty, and a unique index needs at least one column",
+					schema.tableName, i),
+			})
+			continue
+		}
+		seen := map[string]bool{}
+		for _, colExpr := range inner.Elements {
+			lit, ok := colExpr.(*ast.EString)
+			if !ok {
+				continue
+			}
+			if seen[lit.Value] {
+				issues = append(issues, ShapeIssue{
+					Pos: colExpr.Position(),
+					Message: fmt.Sprintf(
+						"Entity.define %q: uniques[%d] names %q twice, and an index over one column twice is the index over it once",
+						schema.tableName, i, lit.Value),
+				})
+				continue
+			}
+			seen[lit.Value] = true
+			if _, declared := schema.columns[lit.Value]; !declared {
+				issues = append(issues, ShapeIssue{
+					Pos: colExpr.Position(),
+					Message: fmt.Sprintf(
+						"Entity.define %q: uniques[%d] names %q, which is not a column of this entity (has: %s)",
+						schema.tableName, i, lit.Value, strings.Join(schema.order, ", ")),
+				})
+			}
+		}
+	}
+	return issues
 }
 
 // validateEntityDefineName runs the static name-validation rules
@@ -412,13 +492,37 @@ func parseColumnType(e ast.Expr) (columnInfo, bool) {
 	//   →  EApp { EApp { Entity.X, arg }, constraint }
 	if innerApp, ok := app.Fn.(*ast.EApp); ok {
 		if isQualified(innerApp.Fn, "Entity", "enum") {
-			return columnInfo{kind: kindEnum}, true
+			return columnInfo{kind: kindEnum, acceptedCtors: ctorListNames(innerApp.Arg)}, true
 		}
 		if isQualified(innerApp.Fn, "Entity", "decimal") {
 			return columnInfo{kind: kindDecimal}, true
 		}
 	}
 	return columnInfo{}, false
+}
+
+// ctorListNames reads the constructor names out of `Entity.enum [ A, B ]`.
+// Anything that is not a list of plain names yields nil, and the comparison
+// that uses it is skipped rather than guessed at.
+func ctorListNames(e ast.Expr) []string {
+	list, ok := e.(*ast.EList)
+	if !ok {
+		return nil
+	}
+	out := make([]string, 0, len(list.Elements))
+	for _, el := range list.Elements {
+		switch n := el.(type) {
+		case *ast.ECtor:
+			out = append(out, n.Name)
+		case *ast.EVar:
+			out = append(out, n.Name)
+		case *ast.EQualified:
+			out = append(out, n.Name)
+		default:
+			return nil
+		}
+	}
+	return out
 }
 
 // isQualified is true when e == ModulePath.Name. Compares both the
@@ -544,10 +648,27 @@ func matchRepoOp(app *ast.EApp, ctx lintCtx) []ShapeIssue {
 		op = "update"
 	case isQualified(head, "Repo", "findBy"):
 		op = "findBy"
+	case isQualified(head, "Repo", "findById"):
+		return needsPrimaryKey(app, args, "findById", ctx)
+	case isQualified(head, "Repo", "deleteById"):
+		return needsPrimaryKey(app, args, "deleteById", ctx)
 	}
 	if op == "" {
 		return nil
 	}
+	// Four Repo operations need the entity's primary key, and the runtime
+	// refuses each of them by name when there is none. Whether an entity has
+	// an `Entity.serial` column is written in its declaration, so a call that
+	// can only ever fail does not have to wait for a request to say so.
+	//
+	// Measured: an app with a serial-less entity boots clean, creates the
+	// table, and answers 500 to every `Repo.create` — which is nearly every
+	// app — with "entity rows has no Entity.serial primary key" reaching
+	// only the operator's log.
+	//
+	// Only the CALL is refused, not the entity. An entity read with
+	// `Repo.all` or `Repo.findBy` never needs a key, and an app doing only
+	// that works today.
 	var entityExpr, recordExpr ast.Expr
 	switch op {
 	case "create", "findBy":
@@ -567,6 +688,9 @@ func matchRepoOp(app *ast.EApp, ctx lintCtx) []ShapeIssue {
 	schema, ok := ctx.schemas[name]
 	if !ok {
 		return nil
+	}
+	if issues := needsPrimaryKey(app, args, op, ctx); len(issues) > 0 {
+		return issues
 	}
 	if rec, isLiteral := recordExpr.(*ast.ERecord); isLiteral {
 		return checkRecordAgainstSchema(rec, schema, "Repo."+op, requireFull, ctx)
@@ -688,6 +812,7 @@ func checkRecordAgainstSchema(rec *ast.ERecord, schema entitySchema, op string, 
 // quietly replaced by Time.now.
 func checkSignupRecord(rec *ast.ERecord, schema entitySchema, ctx lintCtx) []ShapeIssue {
 	var issues []ShapeIssue
+	given := map[string]bool{}
 	for _, f := range rec.Fields {
 		col, ok := schema.columns[f.Name]
 		if !ok {
@@ -708,6 +833,35 @@ func checkSignupRecord(rec *ast.ERecord, schema entitySchema, ctx lintCtx) []Sha
 				Message: fmt.Sprintf("Auth.config.signup: field %q expects %s; %s", f.Name, col.kind, msg),
 			})
 		}
+		given[f.Name] = true
+	}
+
+	// A column the hook does not fill and the database cannot supply.
+	//
+	// This used to be left alone, with a note that a future iteration could
+	// surface it "once we're confident the lint doesn't over-fire". Measured
+	// in the meantime, on an auth entity with a required `name` the hook
+	// omits: `mar check` passed, the app booted clean, and the FIRST sign-in
+	// answered `500 {"error":"signup_failed"}` — the first user, and nothing
+	// naming the column.
+	//
+	// The two exemptions are the ones Repo.create already makes, for the
+	// same reasons: a serial column is filled by the database, and a
+	// timestamp by fillTimestampsForSignup.
+	for _, name := range schema.order {
+		col := schema.columns[name]
+		if col.serial || col.kind == kindTime || given[name] {
+			continue
+		}
+		issues = append(issues, ShapeIssue{
+			Pos: rec.Pos,
+			Message: fmt.Sprintf(
+				"Auth.config.signup: %q needs a %s and the hook does not give it one.\n"+
+					"  Nothing else can: the database has no default, so the first person to "+
+					"sign in gets a 500 and the row is never written.\n"+
+					"  Add %q to the record `signup` returns",
+				name, col.kind, name),
+		})
 	}
 	return issues
 }
@@ -749,13 +903,32 @@ func checkValueAgainstKind(e ast.Expr, kind columnKind, ctx lintCtx) string {
 // acceptable; false positives would be confusing because the
 // typechecker already approved the expression's type.
 func checkInferredAgainstKind(t Type, kind columnKind) string {
-	con, ok := t.(TCon)
-	if !ok {
-		// TVar / TRecord / TArrow etc.: the value isn't a primitive
-		// scalar, which is mismatched for every column kind we know.
-		// Skip rather than report (the column might genuinely take a
-		// scalar that's typed as a record alias somewhere).
+	// Every message here starts with "got ", because the row-type caller
+	// slices that prefix off to build its own sentence.
+	switch shape := t.(type) {
+	case TVar:
+		// Nothing is pinned yet, so there is nothing to disagree with.
 		return ""
+	case TRecord:
+		return "got a record"
+	case TTuple:
+		return "got a tuple"
+	case TArrow:
+		return "got a function"
+	case TUnit:
+		return "got ()"
+	case TCon:
+		_ = shape
+	default:
+		return ""
+	}
+	con := t.(TCon)
+	// A column holds ONE value. Nothing that groups values can be stored in
+	// or read back from one, and `Maybe` never reaches here — the caller
+	// answers optionality first, with a better sentence.
+	switch con.Name {
+	case "List", "Set", "Dict":
+		return "got a " + con.Name
 	}
 	switch con.Name {
 	case "Int":
@@ -792,7 +965,18 @@ func checkInferredAgainstKind(t Type, kind columnKind) string {
 		}
 		return "got Decimal"
 	}
-	return "" // unknown constructor (Maybe, List, custom types): skip
+	// A name this switch does not know is a type the PROGRAM declares — a
+	// union, almost always. Against an enum column that is the ordinary
+	// case, and compareEnumSets owns it: it compares the constructor sets,
+	// which is the sharper question. Against any other column it is a
+	// mismatch nobody was reporting: the write path refuses a constructor
+	// where TEXT wants a string, and the read hands back the string while
+	// the row type promises the union, so a `case` over it reaches "no case
+	// branch matched" on a program the checker proved total.
+	if con.Name != "Maybe" && kind != kindEnum {
+		return "got " + con.Name
+	}
+	return "" // Maybe (the caller answers it) and the enum case above
 }
 
 // checkLiteralAgainstKind compares a literal value expression with
@@ -948,7 +1132,7 @@ func checkRowTypesAgainstSchemas(schemas map[string]entitySchema, ctx lintCtx) [
 		if !ok {
 			continue
 		}
-		issues = append(issues, compareRowWithColumns(row, schema)...)
+		issues = append(issues, compareRowWithColumns(row, schema, ctx)...)
 	}
 	sortIssues(issues)
 	return issues
@@ -972,7 +1156,7 @@ func entityRowType(define ast.Expr, ctx lintCtx) (TRecord, bool) {
 	return rec, true
 }
 
-func compareRowWithColumns(row TRecord, schema entitySchema) []ShapeIssue {
+func compareRowWithColumns(row TRecord, schema entitySchema, ctx lintCtx) []ShapeIssue {
 	var issues []ShapeIssue
 	pos := schema.define.Position()
 	for _, name := range row.Order {
@@ -1003,6 +1187,10 @@ func compareRowWithColumns(row TRecord, schema entitySchema) []ShapeIssue {
 			})
 			continue
 		}
+		if issue := compareEnumSets(name, row.Fields[name], col, schema, ctx); issue != nil {
+			issues = append(issues, *issue)
+			continue
+		}
 		if msg := checkInferredAgainstKind(row.Fields[name], col.kind); msg != "" {
 			issues = append(issues, ShapeIssue{
 				Module: schema.module,
@@ -1023,4 +1211,123 @@ func compareRowWithColumns(row TRecord, schema entitySchema) []ShapeIssue {
 func isOptional(t Type) bool {
 	con, ok := StripForall(t).(TCon)
 	return ok && con.Name == "Maybe" && len(con.Args) == 1
+}
+
+// unionCtors indexes every union declared in the project by the constructors
+// it has. Read from the AST rather than from a TypeEnv so the lint keeps the
+// arguments it already takes.
+func unionCtors(mods []*ast.Module) map[string][]string {
+	out := map[string][]string{}
+	for _, m := range mods {
+		modName := strings.Join(m.Name, ".")
+		for _, d := range m.Decls {
+			ct, ok := d.(*ast.CustomTypeDecl)
+			if !ok {
+				continue
+			}
+			names := make([]string, 0, len(ct.Constructors))
+			for _, c := range ct.Constructors {
+				names = append(names, c.Name)
+			}
+			out[ct.Name] = names
+			if modName != "" {
+				out[modName+"."+ct.Name] = names
+			}
+		}
+	}
+	return out
+}
+
+// compareEnumSets reports a row field whose type has constructors the column
+// does not accept.
+//
+// Measured on a running app, `status : Status` with three constructors over
+// `Entity.enum [ Open, Closed ]`:
+//
+//	POST {"status":{"__ctor":"Open"}}      200, stored
+//	POST {"status":{"__ctor":"Pending"}}   500 Internal Server Error
+//
+// `Pending` is a perfectly good `Status`, the wire guard accepts it because
+// the contract says `Status`, and the write fails on a CHECK the source never
+// mentions. Both halves — the type's constructor list and the column's
+// accepted list — are written down in the same file.
+//
+// The other direction is left alone: a column accepting MORE than the type
+// has is a set nothing in the program can produce, and the read path already
+// refuses a row holding one.
+func compareEnumSets(fieldName string, fieldType Type, col columnInfo, schema entitySchema, ctx lintCtx) *ShapeIssue {
+	if col.kind != kindEnum || len(col.acceptedCtors) == 0 {
+		return nil
+	}
+	con, ok := StripForall(fieldType).(TCon)
+	if !ok {
+		return nil
+	}
+	declared, known := ctx.unions[con.Name]
+	if !known || len(declared) == 0 {
+		return nil
+	}
+	accepted := map[string]bool{}
+	for _, c := range col.acceptedCtors {
+		accepted[c] = true
+	}
+	var missing []string
+	for _, c := range declared {
+		if !accepted[c] {
+			missing = append(missing, "`"+c+"`")
+		}
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+	return &ShapeIssue{
+		Module: schema.module,
+		Pos:    schema.define.Position(),
+		Message: fmt.Sprintf(
+			"Entity.define: %q holds %s, and the column does not accept %s.\n"+
+				"  The program can build %s and the column refuses it, so writing one fails "+
+				"inside a request on a CHECK the source never mentions.\n"+
+				"  Add %s to the `Entity.enum` list, or remove %s from the type",
+			fieldName, con.Name, strings.Join(missing, ", "),
+			pickOne(missing), strings.Join(missing, ", "), strings.Join(missing, ", ")),
+	}
+}
+
+func pickOne(names []string) string {
+	if len(names) == 0 {
+		return "one"
+	}
+	return names[0]
+}
+
+// pkOperations are the Repo calls that address a row by its primary key. Each
+// is refused by the runtime, by name, when the entity has no `Entity.serial`.
+var pkOperations = map[string]bool{
+	"create": true, "update": true, "findById": true, "deleteById": true,
+}
+
+// needsPrimaryKey reports a call that can only ever fail because the entity it
+// names has no serial column.
+func needsPrimaryKey(app *ast.EApp, args []ast.Expr, op string, ctx lintCtx) []ShapeIssue {
+	if !pkOperations[op] || len(args) == 0 {
+		return nil
+	}
+	schema, ok := ctx.schemas[resolveEntityName(args[0])]
+	if !ok {
+		return nil
+	}
+	for _, name := range schema.order {
+		if schema.columns[name].serial {
+			return nil
+		}
+	}
+	return []ShapeIssue{{
+		Pos: app.Position(),
+		Message: fmt.Sprintf(
+			"Repo.%s: %q has no `Entity.serial` column, and this call addresses a row by its key.\n"+
+				"  It fails on every request, with the table already created and the app booted clean.\n"+
+				"  Give %q an `Entity.serial` column, or read it with `Repo.all` / `Repo.findBy`, "+
+				"which need no key",
+			op, schema.tableName, schema.tableName),
+	}}
 }
