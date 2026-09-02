@@ -902,6 +902,34 @@ func checkValueAgainstKind(e ast.Expr, kind columnKind, ctx lintCtx) string {
 // generic) is treated as "unknown, skip". False negatives are
 // acceptable; false positives would be confusing because the
 // typechecker already approved the expression's type.
+// definitelyNotARecord names the type when it cannot be a record under any
+// substitution, and answers "" when it might still become one. A type variable
+// might; `Int` cannot.
+func definitelyNotARecord(t Type) string {
+	switch shape := t.(type) {
+	case TVar:
+		return ""
+	case TTuple:
+		return "a tuple"
+	case TArrow:
+		return "a function"
+	case TUnit:
+		return "()"
+	case TCon:
+		if len(shape.Args) > 0 {
+			return shape.Name
+		}
+		switch shape.Name {
+		case "Int", "String", "Bool", "Time", "Decimal", "Char", "Angle", "Duration":
+			return shape.Name
+		}
+		// A user's own union or an opaque builtin: naming it would be
+		// guessing, and this pass does not guess.
+		return ""
+	}
+	return ""
+}
+
 func checkInferredAgainstKind(t Type, kind columnKind) string {
 	// Every message here starts with "got ", because the row-type caller
 	// slices that prefix off to build its own sentence.
@@ -1052,7 +1080,24 @@ func checkRecordTypeAgainstSchema(e ast.Expr, schema entitySchema, op string, re
 		return nil
 	}
 	rec, ok := StripForall(t).(TRecord)
-	if !ok || rec.Tail != nil {
+	if !ok {
+		// Not a record AT ALL. `Repo.create : Entity a -> b -> Task a` says
+		// nothing about b, so `Repo.create items n` with `n : Int` checks
+		// clean and fails when the request arrives — the runtime guard reads
+		// "expected input record", which is the right sentence at the wrong
+		// time. When the type is definitely not a record this is a compile
+		// error, and when it is a type variable or anything unresolved it
+		// stays silent, which is the same discipline as the rest of this pass.
+		if named := definitelyNotARecord(StripForall(t)); named != "" {
+			return []ShapeIssue{{
+				Pos: e.Position(),
+				Message: fmt.Sprintf("%s: expected a record of the columns of %q, got %s",
+					op, schema.tableName, named),
+			}}
+		}
+		return nil
+	}
+	if rec.Tail != nil {
 		return nil
 	}
 	pos := e.Position()

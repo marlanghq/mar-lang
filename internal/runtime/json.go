@@ -93,6 +93,39 @@ func marKindOf(v Value) string {
 		return "a function"
 	case VEffect:
 		return "a Cmd or Task"
+
+	// The ordinary kinds. They were missing, so the one place this function
+	// exists to serve -- an argument the checker did not pin, where the value
+	// really can be anything -- still answered "this value (runtime.VInt)",
+	// with Go's name for a type the program's author never wrote.
+	case VInt:
+		return "a whole number"
+	case VFloat:
+		return "a number"
+	case VDecimal:
+		return "a decimal"
+	case VString:
+		return "a string"
+	case VChar:
+		return "a character"
+	case VBool:
+		return "a true/false"
+	case VUnit:
+		return "()"
+	case VRecord:
+		return "a record"
+	case VList:
+		return "a list"
+	case VTuple:
+		return "a tuple"
+	case VDict:
+		return "a Dict"
+	case VSet:
+		return "a Set"
+	case VTime:
+		return "a Time"
+	case VDuration:
+		return "a Duration"
 	}
 	return fmt.Sprintf("this value (%T)", v)
 }

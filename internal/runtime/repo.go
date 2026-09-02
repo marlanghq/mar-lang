@@ -95,7 +95,7 @@ func repoFindBy(args []Value) (Value, error) {
 	}
 	filter, ok := args[1].(VRecord)
 	if !ok {
-		return nil, fmt.Errorf("Repo.findBy: expected filter record (got %T)", args[1])
+		return nil, fmt.Errorf("Repo.findBy: expected a filter record, got %s", marKindOf(args[1]))
 	}
 	return VEffect{
 		Tag: "repoFindBy",
@@ -122,7 +122,7 @@ func repoCreate(args []Value) (Value, error) {
 	}
 	input, ok := args[1].(VRecord)
 	if !ok {
-		return nil, fmt.Errorf("Repo.create: expected input record (got %T)", args[1])
+		return nil, fmt.Errorf("Repo.create: expected an input record, got %s", marKindOf(args[1]))
 	}
 	return VEffect{
 		Tag: "repoCreate",
@@ -181,7 +181,7 @@ func repoUpdate(args []Value) (Value, error) {
 	}
 	patch, ok := args[2].(VRecord)
 	if !ok {
-		return nil, fmt.Errorf("Repo.update: expected patch record (got %T)", args[2])
+		return nil, fmt.Errorf("Repo.update: expected a patch record, got %s", marKindOf(args[2]))
 	}
 	return VEffect{
 		Tag: "repoUpdate",
