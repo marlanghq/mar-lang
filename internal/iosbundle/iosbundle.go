@@ -38,6 +38,7 @@ package iosbundle
 
 import (
 	"embed"
+	"encoding/xml"
 	"fmt"
 	"io/fs"
 	"os"
@@ -253,7 +254,22 @@ func Generate(spec Spec, outDir string) (projectDir string, err error) {
 		if err != nil {
 			return err
 		}
-		out := applySubstitutions(string(raw), subs)
+		// Info.plist is XML, and the values here come from mar.json: an app
+		// called `Tom & Jerry` is an ordinary name and an unescaped `&` is a
+		// broken document. Measured before this, `plutil -lint` on the
+		// generated file said "Encountered unknown ampersand-escape sequence",
+		// and the developer met that in Xcode, far from the field that caused
+		// it. Escaping is a no-op for a name with no markup in it.
+		//
+		// Only the plist needs it: the other files that take these values are
+		// project.yml (never shipped, and it carries the placeholders rather
+		// than the values when the template itself is regenerated) and the
+		// pbxproj, which only takes the bundle id — already validated.
+		fileSubs := subs
+		if filepath.Ext(dest) == ".plist" {
+			fileSubs = xmlEscaped(subs)
+		}
+		out := applySubstitutions(string(raw), fileSubs)
 		if filepath.Ext(dest) == ".swift" {
 			out = swiftHeader + out
 		}
@@ -280,6 +296,24 @@ func Generate(spec Spec, outDir string) (projectDir string, err error) {
 	}
 
 	return projectDir, nil
+}
+
+// xmlEscaped returns the substitution table with every value escaped for XML
+// character data, which is what a .plist holds.
+func xmlEscaped(subs map[string]string) map[string]string {
+	out := make(map[string]string, len(subs))
+	for k, v := range subs {
+		var b strings.Builder
+		if err := xml.EscapeText(&b, []byte(v)); err != nil {
+			// EscapeText only fails if the writer does, and a strings.Builder
+			// does not. Falling back to the raw value would ship the broken
+			// document this exists to prevent.
+			out[k] = v
+			continue
+		}
+		out[k] = b.String()
+	}
+	return out
 }
 
 func applySubstitutions(s string, subs map[string]string) string {
