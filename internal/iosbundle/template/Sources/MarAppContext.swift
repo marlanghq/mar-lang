@@ -163,11 +163,16 @@ final class AppContext {
     /// should NOT dispatch the Err); false when there's no signInPath
     /// configured (caller falls through to its default error path).
     func handleAuthExpired() -> Bool {
-        guard !signInPath.isEmpty else { return false }
-        if redirectingToSignIn { return true }
+        // The decision is MarHTTP.decideAuthExpiry, shared with the browser and
+        // compared against it; what is left here is this platform's half of it.
+        let d = MarHTTP.decideAuthExpiry(signInPath: signInPath,
+                                         alreadyRedirecting: redirectingToSignIn,
+                                         currentPath: currentPath)
+        guard d.handled else { return false }
+        guard d.navigate else { return true }
         redirectingToSignIn = true
-        if currentPath != signInPath {
-            pendingReturnPath = currentPath
+        if let capture = d.capture {
+            pendingReturnPath = capture
         }
         navigate(path: signInPath, replace: true)
         return true

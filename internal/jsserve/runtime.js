@@ -447,6 +447,26 @@
     return e;
   }
 
+  // What a 401 from a Service.call decides, as a function of three facts.
+  // Shared with the phone -- MarHTTP.decideAuthExpiry is the same three lines --
+  // and held to the same table in internal/parityfixture, because both sides
+  // were READ as agreeing, and reading is not checking.
+  //
+  // What stays on the platform: WHERE the remembered path is kept and how it is
+  // filtered. This side's ?next= rides in a URL a person can type, so it runs
+  // isSafeReturnPath over it; the phone keeps it in memory, reached only from
+  // its own nav stack.
+  function decideAuthExpiry(signInPath, alreadyRedirecting, currentPath) {
+    if (!signInPath) return { handled: false, navigate: false, capture: null };
+    if (alreadyRedirecting) return { handled: true, navigate: false, capture: null };
+    return {
+      handled: true,
+      navigate: true,
+      capture: currentPath === signInPath ? null : currentPath,
+    };
+  }
+  if (typeof globalThis !== 'undefined') globalThis.__marDecideAuthExpiry = decideAuthExpiry;
+
   function jsonBodyOrThrow(body) {
     try {
       return JSON.parse(body);
@@ -6571,22 +6591,22 @@
     // means the caller should fall through to its default error path.
     function handleAuthExpired() {
       const signInPath = globalThis.__marAuthSignInPath;
-      if (!signInPath) return false;
-      if (globalThis.__marRedirectingToSignIn) return true;
+      let here = '';
+      try { here = window.location.pathname + window.location.search; } catch (_) { here = ''; }
+      const d = decideAuthExpiry(signInPath, !!globalThis.__marRedirectingToSignIn, here);
+      if (!d.handled) return false;
+      if (!d.navigate) return true;
       const nav = globalThis.__marNav;
       if (!nav) return false;
 
       globalThis.__marRedirectingToSignIn = true;
 
-      // Capture where we were. Skip when the user is already on the
-      // sign-in page (no point in `?next=/sign-in`).
+      // isSafeReturnPath is this platform's half: the captured path rides in a
+      // URL here, so it has to survive being typed by somebody else.
       let target = signInPath;
-      try {
-        const here = window.location.pathname + window.location.search;
-        if (here && here !== signInPath && isSafeReturnPath(here)) {
-          target = signInPath + '?next=' + encodeURIComponent(here);
-        }
-      } catch (_) { /* fall through with bare signInPath */ }
+      if (d.capture && isSafeReturnPath(d.capture)) {
+        target = signInPath + '?next=' + encodeURIComponent(d.capture);
+      }
 
       // replaceFresh resets marDepth to 0: /sign-in is an entry
       // point, regardless of how deep into the app the user was

@@ -515,6 +515,44 @@ enum MarHTTP {
     /// Builds the Result a Service.call delivers: Ok decoded-value, or Err
     /// carrying a Service.Error. The String variant (makeJSONResult) stays
     /// for Http.get/post and auth, whose Err is still a bare String.
+    /// What a 401 from a Service.call decides, as a function of three facts.
+    ///
+    /// The decision used to live inside MarAppContext, reading instance fields
+    /// and calling navigate, which put it out of reach of any harness that
+    /// cannot build an @Observable object. Both clients agreed when read side
+    /// by side -- and four readings this same day turned out to be wrong, so
+    /// reading is not the same as checking. Here it is a function, and
+    /// internal/parityfixture holds it to the browser's answers.
+    ///
+    /// What stays on the platform: WHERE the remembered path is kept, and the
+    /// filtering of it. The browser's ?next= comes from a URL a person can
+    /// type and needs isSafeReturnPath; the phone's comes from its own nav
+    /// stack and does not. That is chrome. The lifecycle is this:
+    struct AuthExpiry: Equatable {
+        /// The runtime took over, and the caller must not surface the Err.
+        let handled: Bool
+        /// It should navigate to the sign-in path now. False when a redirect
+        /// is already under way: the second 401 of a burst must not re-navigate.
+        let navigate: Bool
+        /// Remember this path to return to, or nil for none. Nil when the user
+        /// is already on the sign-in page, because ?next=/sign-in is a loop.
+        let capture: String?
+    }
+
+    static func decideAuthExpiry(signInPath: String, alreadyRedirecting: Bool,
+                                 currentPath: String) -> AuthExpiry {
+        // No sign-in page configured: nothing to take over with, so the Err
+        // reaches the app and it at least sees something.
+        if signInPath.isEmpty {
+            return AuthExpiry(handled: false, navigate: false, capture: nil)
+        }
+        if alreadyRedirecting {
+            return AuthExpiry(handled: true, navigate: false, capture: nil)
+        }
+        return AuthExpiry(handled: true, navigate: true,
+                          capture: currentPath == signInPath ? nil : currentPath)
+    }
+
     /// The domain codes /_auth/verify-code is known to emit, and the outcome
     /// each becomes. A code here is a SCREEN the app has a case for; anything
     /// else is transport and becomes a Service.Error.

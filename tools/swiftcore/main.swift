@@ -74,6 +74,15 @@ if args.count >= 4, args[1] == "--auth-verify" {
     exit(0)
 }
 
+// Fifth mode: what a 401 decides. Three facts in, three answers out.
+if args.count >= 5, args[1] == "--auth-expiry" {
+    let d = MarHTTP.decideAuthExpiry(signInPath: args[2],
+                                     alreadyRedirecting: args[3] == "true",
+                                     currentPath: args[4])
+    print("\(d.handled)|\(d.navigate)|\(d.capture ?? "")")
+    exit(0)
+}
+
 guard args.count >= 3 else {
     FileHandle.standardError.write("usage: driver <program.json> <Module.value>\n".data(using: .utf8)!)
     exit(2)

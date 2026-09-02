@@ -403,3 +403,40 @@ var AuthPortCases = []AuthPortCase{
 	{500, `not json at all`, "not json at all", "",
 		"a refusal with no envelope carries the body itself"},
 }
+
+// AuthExpiryCase is what a 401 from a Service.call decides, given three facts.
+//
+// This was the last promise in the census with no comparator, and its reason
+// was "both hang off stateful objects the offline harnesses cannot build".
+// True of the objects; not true of the decision, which is a function of three
+// strings and a flag. Reading the two implementations side by side said they
+// agreed -- and four readings the same day turned out to be wrong, so the
+// decision was extracted on both sides and is compared here.
+//
+// What stays on the platform, and should: WHERE the remembered path is kept
+// and how it is filtered. The browser puts it in ?next=, which comes back
+// through a URL a person can type, so it runs isSafeReturnPath over it; the
+// phone keeps it in memory, reached only from its own nav stack. That is
+// chrome. The lifecycle is these three answers.
+type AuthExpiryCase struct {
+	SignInPath         string
+	AlreadyRedirecting bool
+	CurrentPath        string
+	Handled            bool
+	Navigate           bool
+	Capture            string // "" means nothing captured
+	Why                string
+}
+
+var AuthExpiryCases = []AuthExpiryCase{
+	{"", false, "/tasks", false, false, "",
+		"no sign-in page configured: the Err reaches the app, which at least sees something"},
+	{"/sign-in", false, "/tasks/edit/42", true, true, "/tasks/edit/42",
+		"a session that expired deep in the app: take over, and remember where"},
+	{"/sign-in", true, "/tasks", true, false, "",
+		"the second 401 of a burst: taken over already, and it must not navigate twice"},
+	{"/sign-in", false, "/sign-in", true, true, "",
+		"already on the sign-in page: nothing to come back to, and ?next=/sign-in is a loop"},
+	{"/sign-in", false, "", true, true, "",
+		"no current path yet, the window between cold start and the first route"},
+}
