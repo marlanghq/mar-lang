@@ -23,6 +23,9 @@ final class MarWireShape {
     var members: [MarWireShape] = []
     var tags: [String] = []
     var args: [[MarWireShape]] = []
+    /// The canonical type name a Ctor shape came from, and the one a Ref
+    /// points back at.
+    var name: String = ""
 
     init(kind: String) {
         self.kind = kind
@@ -35,6 +38,7 @@ final class MarWireShape {
         guard let dict = any as? [String: Any],
               let kind = dict["kind"] as? String else { return nil }
         let shape = MarWireShape(kind: kind)
+        shape.name = dict["name"] as? String ?? ""
         if let elem = dict["elem"] {
             shape.elem = MarWireShape.decode(elem)
         }
@@ -65,7 +69,16 @@ enum MarWire {
 
     /// Answers nil when the value fits the shape, or the sentence that says
     /// how it does not. The wording is the Go runtime's, to the character.
+    /// `seen` carries the named shapes met on the way down, so a Ref can point
+    /// back at the type it is inside. A shape is a TREE and a recursive type is
+    /// not: the point where one re-entered itself used to be Any, checking
+    /// nothing from there down. Following the cycle against the DATA ends,
+    /// because the data is finite.
     static func check(_ v: MarValue, _ s: MarWireShape, _ path: String = "") -> String? {
+        check(v, s, path, [:])
+    }
+
+    static func check(_ v: MarValue, _ s: MarWireShape, _ path: String, _ seen: [String: MarWireShape]) -> String? {
         let where_ = path.isEmpty ? "the value" : "`\(path)`"
         func bad(_ want: String) -> String {
             "\(where_) should be \(want), got \(describe(v))"
@@ -121,7 +134,17 @@ enum MarWire {
             }
             return bad("a Maybe (leave the field out for Nothing)")
 
+        case "Ref":
+            // The type this position re-enters, remembered on the way down.
+            // A Ref with nothing to point at came from a bundle older than
+            // this kind: it asserts nothing rather than refusing.
+            guard let target = seen[s.name] else { return nil }
+            return check(v, target, path, seen)
+
         case "Ctor":
+            // Remembered under its type name so a Ref below can find it.
+            var seen = seen
+            if !s.name.isEmpty { seen[s.name] = s }
             guard case .ctor(let tag, let carried, _) = v else {
                 return bad("one of \(quoteEach(s.tags))")
             }
@@ -135,9 +158,34 @@ enum MarWire {
                 return "\(where_): `\(tag)` takes \(plural(want.count, "value")), got \(carried.count)"
             }
             for (j, arg) in carried.enumerated() {
-                if let err = check(arg, want[j], "\(path).\(tag)[\(j)]") { return err }
+                if let err = check(arg, want[j], "\(path).\(tag)[\(j)]", seen) { return err }
             }
             return nil
+
+        case "Set":
+            // Set, Dict and Angle had no arm here, the same hole the tuple
+            // had: measured on the server, a plain `[1,2,3]` where the type
+            // says `Set Int` sailed through the guard and answered 500 with
+            // `Set.toList: not a Set`.
+            guard case .set(let items) = v else { return bad("a set") }
+            guard let elem = s.elem else { return nil }
+            for (i, item) in items.enumerated() {
+                if let err = check(item, elem, "\(path)[\(i)]", seen) { return err }
+            }
+            return nil
+
+        case "Dict":
+            guard case .dict(let pairs) = v else { return bad("a dictionary") }
+            if s.members.count != 2 { return nil }
+            for (i, pair) in pairs.enumerated() {
+                if let err = check(pair.0, s.members[0], "\(path)[\(i)].key", seen) { return err }
+                if let err = check(pair.1, s.members[1], "\(path)[\(i)].value", seen) { return err }
+            }
+            return nil
+
+        case "Angle":
+            if case .angle = v { return nil }
+            return bad("an angle")
 
         case "Tuple":
             // A tuple travels as a JSON array and comes back as a LIST: an
@@ -150,7 +198,7 @@ enum MarWire {
                 return "\(where_) should be a list of \(plural(s.members.count, "value")), got \(xs.count)"
             }
             for (i, m) in xs.enumerated() {
-                if let err = check(m, s.members[i], "\(path)[\(i)]") { return err }
+                if let err = check(m, s.members[i], "\(path)[\(i)]", seen) { return err }
             }
             return nil
 
@@ -158,7 +206,7 @@ enum MarWire {
             guard case .list(let xs) = v else { return bad("a list") }
             guard let elem = s.elem else { return nil }
             for (i, item) in xs.enumerated() {
-                if let err = check(item, elem, "\(path)[\(i)]") { return err }
+                if let err = check(item, elem, "\(path)[\(i)]", seen) { return err }
             }
             return nil
 
@@ -173,7 +221,7 @@ enum MarWire {
                     return "\(where_) is missing the field `\(f.name)`"
                 }
                 let next = path.isEmpty ? f.name : "\(path).\(f.name)"
-                if let err = check(sub, f.shape, next) { return err }
+                if let err = check(sub, f.shape, next, seen) { return err }
             }
             // Extra fields are allowed on purpose: a newer client sending a
             // field this build does not know about should not be a rejection.
@@ -249,12 +297,27 @@ enum MarWire {
             guard case .string(let raw) = args[0] else {
                 throw MarRuntimeError.typeMismatch(expected: "String", got: Eval.typeOf(args[0]))
             }
+            // The two failures are kept apart on purpose. A document that is
+            // not JSON gets Mar's own sentence, the same one the other two
+            // runtimes give — Foundation's `localizedDescription` changes with
+            // the PHONE'S LANGUAGE, so the value a program received depended on
+            // the device. Everything after the parse (a tagged value that
+            // cannot be one, a shape mismatch) already has a Mar sentence of
+            // its own, and lumping them together told someone who sent
+            // `{"__char":"abc"}` — valid JSON — that their document was not.
+            let parsed: Any
             do {
-                let any = try JSONSerialization.jsonObject(
+                parsed = try JSONSerialization.jsonObject(
                     with: Data(raw.utf8),
                     options: [.fragmentsAllowed]
                 )
-                let v = MarJSONCodec.jsonToMar(any)
+            } catch {
+                return .ctor(tag: "Err",
+                             args: [.string("the document is not valid JSON")],
+                             origin: nil)
+            }
+            do {
+                let v = try MarJSONCodec.jsonToMar(parsed)
                 if let err = check(v, shape) {
                     return .ctor(tag: "Err", args: [.string(err)], origin: nil)
                 }
