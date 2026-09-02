@@ -117,6 +117,44 @@ enum MarBuiltins {
         // so negation is an ordinary function.
         env.define("not", .fn(MarFn.native(1) { args in .bool(!asBool(args[0])) }))
 
+        // The BARE builtin constructors -- Pointer's Coarse / Fine and
+        // CanvasMode's Pixelated / Crisp. The qualified ones come from the
+        // generated MarBuiltinCtors.swift; these four have no module, so they
+        // fall outside that generator and used to be registered inside
+        // MarInput and MarCanvas, which import SwiftUI, UIKit and
+        // GameController.
+        //
+        // A data constructor is not a UI concern, and the import put these out
+        // of reach of everything that runs without a screen: the offline core
+        // answered `unbound name: Coarse` for a program that only asks whether
+        // a Device is touch-only, which is a pure function of a record.
+        env.define("Coarse",    .ctor(tag: "Coarse", args: [], origin: nil))
+        env.define("Fine",      .ctor(tag: "Fine", args: [], origin: nil))
+        env.define("Pixelated", .ctor(tag: "Pixelated", args: [], origin: nil))
+        env.define("Crisp",     .ctor(tag: "Crisp", args: [], origin: nil))
+
+        // Device.touchOnly / canHover: pure readings off a Device record, and
+        // here for the same reason. Only the SOURCE of the record is the
+        // host's matchMedia; the logic is a function anyone can call, and the
+        // Go runtime's comment says it mirrors the JS -- which nothing checked
+        // while it sat behind an import of SwiftUI.
+        func deviceBool(_ v: MarValue, _ k: String) -> Bool {
+            if case .record(let f, _) = v, case .bool(let b)? = f[k] { return b }
+            return false
+        }
+        env.defineFn("deviceTouchOnly", "Device.touchOnly", 1) { a in
+            let coarse: Bool = {
+                if case .record(let f, _) = a[0], case .ctor(let t, _, _)? = f["pointer"] {
+                    return t == "Coarse"
+                }
+                return false
+            }()
+            return .bool(coarse && !deviceBool(a[0], "anyFine") && !deviceBool(a[0], "supportsHover"))
+        }
+        env.defineFn("deviceCanHover", "Device.canHover", 1) { a in
+            .bool(deviceBool(a[0], "supportsHover"))
+        }
+
         // The numeric kit, bare and Elm-named. max/min/clamp go through
         // compareMar, the same ordering `<` uses, so Comparable is one
         // definition of order across Int, Decimal, String and Char.

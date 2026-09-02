@@ -49,9 +49,9 @@ type promiseSource struct {
 var promiseCensus = []promiseSource{
 	{"jsserve/runtime.js", 11, 1, "fixture", "8 of the 11 are values in Source, 1 (the math kernels) is generated, and the domain-code boundary is held to AuthPortCases; RegisterEnumType needs a server, and is the gap inside this file"},
 	{"runtime/admin.go", 1, 1, "gap", "admin payload shapes have no second implementation to disagree with — the phone does not render the admin pages"},
-	{"runtime/device.go", 1, 1, "gap", "touchOnly / canHover read the host's matchMedia; there is no host in either harness"},
+	{"runtime/device.go", 1, 0, "fixture", "`devices` compares touchOnly / canHover over four records: only the SOURCE of a Device is the host's matchMedia, and the logic is a pure function"},
 	{"runtime/path.go", 1, 0, "fixture", "`link` encodes a space and a slash, which is where the three answers used to differ"},
-	{"iosbundle/MarBuiltins.swift", 4, 0, "fixture", "builtin tables: durations, listMove, charEdges, seeded"},
+	{"iosbundle/MarBuiltins.swift", 5, 0, "fixture", "builtin tables: durations, listMove, charEdges, seeded, and Device.touchOnly / canHover, which moved here out of a file that imports a screen"},
 	{"iosbundle/MarValue.swift", 2, 0, "fixture", "decimalScale and bigInt are the two representations that used to drift"},
 	{"iosbundle/MarPath.swift", 2, 0, "fixture", "the phone's half of `link` and `enumPath`"},
 	{"iosbundle/MarIntRange.swift", 1, 0, "fixture", "`bigInt` and `decimalEdge` ride the bound; the refusal's wording is pinned in internal/runtime"},

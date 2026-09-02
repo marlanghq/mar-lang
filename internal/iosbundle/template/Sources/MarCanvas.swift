@@ -55,10 +55,10 @@ enum MarCanvas {
         // Transform / Align / Blend constructors (Canvas.Translate, ...) come
         // from the generated registry: see MarBuiltinCtors.swift.
 
-        // CanvasMode constructors: global (bare), nullary, like Pointer's
-        // Coarse / Fine. The mandatory first arg of `canvas`.
-        env.define("Pixelated", .ctor(tag: "Pixelated", args: [], origin: nil))
-        env.define("Crisp",     .ctor(tag: "Crisp", args: [], origin: nil))
+        // CanvasMode's Pixelated / Crisp are registered in MarBuiltins, with
+        // Pointer's Coarse / Fine: a data constructor is not a UI concern, and
+        // registering it in a file that imports SwiftUI put it out of reach of
+        // every check that runs without one.
 
         // canvas : CanvasMode -> List (Attr Canvas) -> List Shape -> View a.
         // The mode + shapes ride as attrs; MarCanvasView reads them + the

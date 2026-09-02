@@ -198,6 +198,38 @@ enumPath =
     linkTo numbered { slug = "x y", n = 42 }
 
 
+-- Device.touchOnly / canHover, which the Go runtime's comment says mirror the
+-- JS logic. Recorded as uncomparable because the record comes from the host's
+-- matchMedia -- which was wrong: only the SOURCE is host-dependent, and the
+-- LOGIC is a pure function of a closed record anyone can write. A phone, a
+-- desktop, a tablet with a stylus, and a hybrid that reports both.
+-- A let binding cannot take a parameter in Mar, so this is a top-level one.
+askDevice : Device -> String
+askDevice d =
+    (if Device.touchOnly d then
+        "t"
+
+     else
+        "-"
+    )
+        ++ (if Device.canHover d then
+                "h"
+
+            else
+                "-"
+           )
+
+
+devices : String
+devices =
+    String.join "|"
+        [ askDevice { pointer = Coarse, anyFine = False, supportsHover = False, width = 390, height = 844, prefersDark = False, prefersReducedMotion = False }
+        , askDevice { pointer = Fine, anyFine = True, supportsHover = True, width = 1440, height = 900, prefersDark = False, prefersReducedMotion = False }
+        , askDevice { pointer = Coarse, anyFine = True, supportsHover = False, width = 1024, height = 1366, prefersDark = False, prefersReducedMotion = False }
+        , askDevice { pointer = Coarse, anyFine = False, supportsHover = True, width = 800, height = 1280, prefersDark = False, prefersReducedMotion = False }
+        ]
+
+
 -- The copy a user reads when a call fails. The code beside each of these says
 -- to keep them identical across the three runtimes, and nothing checked it,
 -- because comparing the phone used to cost a simulator.
@@ -228,6 +260,7 @@ var Names = []string{
 	"durations",
 	"collections",
 	"decimalEdge",
+	"devices",
 	"seeded",
 	"enumPath",
 	"serviceErrors",

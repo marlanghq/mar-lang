@@ -281,9 +281,7 @@ enum MarInput {
         // the same typecheck lists the exhaustiveness checker uses: this
         // file used to hold its own copy of the ~100 key codes, and the two
         // copies could drift with nothing failing.
-        // Pointer constructors: global, like Order / Method.
-        env.define("Coarse", .ctor(tag: "Coarse", args: [], origin: nil))
-        env.define("Fine",   .ctor(tag: "Fine", args: [], origin: nil))
+        // Pointer's Coarse / Fine are registered in MarBuiltins; see there.
 
         func sub(_ tag: String, _ tagger: MarValue) -> MarValue {
             .ctor(tag: "__Sub", args: [.ctor(tag: tag, args: [tagger], origin: nil)], origin: nil)
@@ -292,13 +290,8 @@ enum MarInput {
         env.defineFn("gamepadWatch",  "Gamepad.watch",  1) { a in sub("__SubGamepad", a[0]) }
         env.defineFn("deviceWatch",   "Device.watch",   1) { a in sub("__SubDevice", a[0]) }
 
-        // Device.touchOnly / canHover: pure readings off a Device record.
-        func boolField(_ v: MarValue, _ k: String) -> Bool { if case .record(let f, _) = v, case .bool(let b)? = f[k] { return b }; return false }
-        env.defineFn("deviceTouchOnly", "Device.touchOnly", 1) { a in
-            let coarse: Bool = { if case .record(let f, _) = a[0], case .ctor(let t, _, _)? = f["pointer"] { return t == "Coarse" }; return false }()
-            return .bool(coarse && !boolField(a[0], "anyFine") && !boolField(a[0], "supportsHover"))
-        }
-        env.defineFn("deviceCanHover", "Device.canHover", 1) { a in .bool(boolField(a[0], "supportsHover")) }
+        // Device.touchOnly / canHover moved to MarBuiltins: they are pure
+        // readings off a Device record, and this file imports a screen.
     }
 
 }
