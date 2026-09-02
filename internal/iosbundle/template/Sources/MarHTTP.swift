@@ -229,8 +229,9 @@ enum MarHTTP {
                 return nil
             }
             let any = (try? JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed]))
-            if let any, !(any is NSNull) {
-                let user = MarJSONCodec.jsonToMar(any)
+            // A body that will not decode is "no user", which is the
+            // failure this function already has a shape for.
+            if let any, !(any is NSNull), let user = try? MarJSONCodec.jsonToMar(any) {
                 return .ctor(tag: "Just", args: [user], origin: nil)
             }
             return .ctor(tag: "Nothing", args: [], origin: nil)
@@ -263,8 +264,7 @@ enum MarHTTP {
                     let any = (try? JSONSerialization.jsonObject(
                         with: raw, options: [.fragmentsAllowed])
                     )
-                    if let any, !(any is NSNull) {
-                        let user = MarJSONCodec.jsonToMar(any)
+                    if let any, !(any is NSNull), let user = try? MarJSONCodec.jsonToMar(any) {
                         outcome = .okJSON(.ctor(tag: "Just", args: [user], origin: nil))
                     } else {
                         outcome = .okJSON(.ctor(tag: "Nothing", args: [], origin: nil))
@@ -292,7 +292,7 @@ enum MarHTTP {
         case .userJSON:
             do {
                 let any = try JSONSerialization.jsonObject(with: raw, options: [.fragmentsAllowed])
-                return .okJSON(MarJSONCodec.jsonToMar(any))
+                return .okJSON(try MarJSONCodec.jsonToMar(any))
             } catch {
                 return .err("decode failed: \(error.localizedDescription)")
             }
@@ -311,12 +311,21 @@ enum MarHTTP {
     /// a 429 from the gateway limiter would surface in a Result.Err
     /// as the literal JSON string `{"error":"rate_limited",...}`,
     /// defeating the point of having stable codes server-side.
-    private static func decodeServerError(body data: Data, fallbackBody: String, status: Int) -> String {
+    // Not private: internal/iosbundle/swift_core_test.go calls this directly.
+    // The wording a failed call surfaces is the only thing a user sees when a
+    // service is down, and it used to be compared on no runtime at all.
+    static func decodeServerError(body data: Data, fallbackBody: String, status: Int) -> String {
+        var decoded = fallbackBody
         if let any = try? JSONSerialization.jsonObject(with: data, options: []) as? [String: Any],
-           let code = any["error"] as? String, !code.isEmpty {
-            return code
+           let code = any["error"] as? String {
+            // Even when the code is EMPTY. An empty code is no code, and the
+            // envelope was still understood, so the raw JSON is not what to
+            // show a user. Refusing empty here and falling back to the body
+            // was how `{"error":""}` reached the phone as the literal
+            // `{"error":""}` while the browser said `HTTP 500`.
+            decoded = code
         }
-        return fallbackBody.isEmpty ? "HTTP \(status)" : fallbackBody
+        return decoded.isEmpty ? "HTTP \(status)" : decoded
     }
 
     // MARK: - Result builders
@@ -346,7 +355,7 @@ enum MarHTTP {
         }
         do {
             let any = try JSONSerialization.jsonObject(with: bodyData, options: [.fragmentsAllowed])
-            return .okJSON(MarJSONCodec.jsonToMar(any))
+            return .okJSON(try MarJSONCodec.jsonToMar(any))
         } catch {
             return .err("decode failed: \(error.localizedDescription)")
         }
@@ -447,7 +456,7 @@ enum MarHTTP {
             return .ctor(tag: "Err", args: [se], origin: nil)
         }
         let any = (try? JSONSerialization.jsonObject(with: bodyData, options: [.fragmentsAllowed]))
-        let decoded: MarValue = any.map { MarJSONCodec.jsonToMar($0) } ?? .unit
+        let decoded: MarValue = any.flatMap { try? MarJSONCodec.jsonToMar($0) } ?? .unit
         return .ctor(tag: "Ok", args: [okOutcome(decoded)], origin: nil)
     }
 
@@ -485,7 +494,7 @@ enum MarHTTP {
         }
         do {
             let any = try JSONSerialization.jsonObject(with: bodyData, options: [.fragmentsAllowed])
-            let decoded = MarJSONCodec.jsonToMar(any)
+            let decoded = try MarJSONCodec.jsonToMar(any)
             // The response was not produced by the type system either. It
             // comes from this app's own server, so the realistic mismatch is
             // version skew: a phone still running an embedded snapshot

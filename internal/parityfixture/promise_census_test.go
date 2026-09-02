@@ -31,30 +31,37 @@ import (
 //	sound     the playback comparator, internal/conformance
 //	generated all three sides are rendered from one source, so they cannot
 //	          disagree; internal/mathgen and its staleness test
+//	table     a shared table of inputs and answers both clients are held
+//	          to, for a promise no third runtime can arbitrate
 //	gap       no comparator; the reason is in the note
 type promiseSource struct {
-	path       string
-	promises   int
+	path     string
+	promises int
+	// gaps is how many of this file's promises no comparator covers. It is
+	// its own number because coverage is per PROMISE and the table is per
+	// file: MarHTTP makes three and one of them is checked, and a row that
+	// rounded that to "covered" or to "gap" would be a lie either way.
+	gaps       int
 	comparator string
 	note       string
 }
 
 var promiseCensus = []promiseSource{
-	{"jsserve/runtime.js", 11, "fixture", "8 of the 11 are values in Source and 1 (the math kernels) is generated; the domain-code boundary and RegisterEnumType need a server, and are gaps inside this file"},
-	{"runtime/admin.go", 1, "gap", "admin payload shapes have no second implementation to disagree with — the phone does not render the admin pages"},
-	{"runtime/device.go", 1, "gap", "touchOnly / canHover read the host's matchMedia; there is no host in either harness"},
-	{"runtime/path.go", 1, "fixture", "`link` encodes a space and a slash, which is where the three answers used to differ"},
-	{"iosbundle/MarBuiltins.swift", 4, "fixture", "builtin tables: durations, listMove, charEdges, seeded"},
-	{"iosbundle/MarValue.swift", 2, "fixture", "decimalScale and bigInt are the two representations that used to drift"},
-	{"iosbundle/MarPath.swift", 2, "fixture", "the phone's half of `link` and `enumPath`"},
-	{"iosbundle/MarIntRange.swift", 1, "fixture", "`bigInt` and `decimalEdge` ride the bound; the refusal's wording is pinned in internal/runtime"},
-	{"iosbundle/MarJSONCodec.swift", 1, "fixture", "collections: Set and Dict round-trip and keep their order"},
-	{"iosbundle/MarEval.swift", 1, "fixture", "`no case branch matched`, matched by text on both clients"},
-	{"iosbundle/MarHTTP.swift", 3, "gap", "the network boundary: no harness makes a real request from the phone"},
-	{"iosbundle/MarRenderer.swift", 2, "screens", "the renderer is compared by the screens it produces"},
-	{"iosbundle/MarPageRuntime.swift", 4, "screens", "page lifecycle, compared by the navigation fixture"},
-	{"iosbundle/MarDispatcher.swift", 1, "screens", "dispatch is observable only as a screen that changed"},
-	{"iosbundle/MarSound.swift", 2, "sound", "the playback comparator reads the automation events"},
+	{"jsserve/runtime.js", 11, 2, "fixture", "8 of the 11 are values in Source and 1 (the math kernels) is generated; the domain-code boundary and RegisterEnumType need a server, and are gaps inside this file"},
+	{"runtime/admin.go", 1, 1, "gap", "admin payload shapes have no second implementation to disagree with — the phone does not render the admin pages"},
+	{"runtime/device.go", 1, 1, "gap", "touchOnly / canHover read the host's matchMedia; there is no host in either harness"},
+	{"runtime/path.go", 1, 0, "fixture", "`link` encodes a space and a slash, which is where the three answers used to differ"},
+	{"iosbundle/MarBuiltins.swift", 4, 0, "fixture", "builtin tables: durations, listMove, charEdges, seeded"},
+	{"iosbundle/MarValue.swift", 2, 0, "fixture", "decimalScale and bigInt are the two representations that used to drift"},
+	{"iosbundle/MarPath.swift", 2, 0, "fixture", "the phone's half of `link` and `enumPath`"},
+	{"iosbundle/MarIntRange.swift", 1, 0, "fixture", "`bigInt` and `decimalEdge` ride the bound; the refusal's wording is pinned in internal/runtime"},
+	{"iosbundle/MarJSONCodec.swift", 1, 0, "fixture", "collections: Set and Dict round-trip and keep their order"},
+	{"iosbundle/MarEval.swift", 1, 0, "fixture", "`no case branch matched`, matched by text on both clients"},
+	{"iosbundle/MarHTTP.swift", 3, 2, "table", "decodeServerError is held to parityfixture.HTTPErrorCases; handleAuthExpired and authOutcomePost still need a real request, and are the gaps"},
+	{"iosbundle/MarRenderer.swift", 2, 0, "screens", "the renderer is compared by the screens it produces"},
+	{"iosbundle/MarPageRuntime.swift", 4, 0, "screens", "page lifecycle, compared by the navigation fixture"},
+	{"iosbundle/MarDispatcher.swift", 1, 0, "screens", "dispatch is observable only as a screen that changed"},
+	{"iosbundle/MarSound.swift", 2, 0, "sound", "the playback comparator reads the automation events"},
 }
 
 // The wordings actually in use. "Mirrors internal/..." is here because a
@@ -129,17 +136,17 @@ func TestEveryCrossRuntimePromiseIsAccountedFor(t *testing.T) {
 		t.Error(p)
 	}
 
+	total, gaps := 0, 0
 	byComparator := map[string]int{}
 	for _, p := range promiseCensus {
-		byComparator[p.comparator] += p.promises
-	}
-	total := 0
-	for _, n := range byComparator {
-		total += n
+		total += p.promises
+		gaps += p.gaps
+		byComparator[p.comparator] += p.promises - p.gaps
 	}
 	if !t.Failed() {
-		t.Logf("%d cross-runtime promises: %d compared by the fixture, %d by screens, %d by sound, %d with no comparator",
-			total, byComparator["fixture"], byComparator["screens"], byComparator["sound"], byComparator["gap"])
+		t.Logf("%d cross-runtime promises: %d by the fixture, %d by the shared table, %d by screens, %d by sound, %d with no comparator",
+			total, byComparator["fixture"], byComparator["table"], byComparator["screens"],
+			byComparator["sound"], gaps)
 	}
 }
 

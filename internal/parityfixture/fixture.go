@@ -232,3 +232,43 @@ var Names = []string{
 	"enumPath",
 	"serviceErrors",
 }
+
+// HTTPErrorCase is one (status, body) a service can fail with, and the single
+// sentence both clients must turn it into.
+//
+// This one cannot be a value in Source: a failed call is an effect, not an
+// expression, and the server is the thing that FAILS rather than a third
+// answer to compare against. So the agreement is pinned here instead, and each
+// client's test asserts its own runtime against this table — which is still
+// one table rather than two copies, and that is the property that matters.
+//
+// `{"error":""}` is in here because it was the divergence: the browser said
+// `HTTP 500` and the phone handed the user the literal `{"error":""}`, which
+// is precisely the raw JSON that decodeServerError exists to keep off screens.
+type HTTPErrorCase struct {
+	Status int
+	Body   string
+	Says   string
+	Why    string
+}
+
+var HTTPErrorCases = []HTTPErrorCase{
+	{500, `{"error":"note_not_found"}`, "note_not_found",
+		"the envelope the framework's own handlers send"},
+	{500, `{"error":""}`, "HTTP 500",
+		"an empty code is no code; the status is more use than the raw envelope"},
+	{500, `{"error":123}`, `{"error":123}`,
+		"an error field that is not a string is not a code"},
+	{500, `{"errors":"x"}`, `{"errors":"x"}`,
+		"a near-miss field name is not the field"},
+	{500, `[1,2]`, `[1,2]`,
+		"JSON that is not an object has no envelope to read"},
+	{502, `Bad Gateway`, "Bad Gateway",
+		"a bare body from something that is not the framework"},
+	{503, ``, "HTTP 503",
+		"an empty body still names the status rather than nothing"},
+	{500, `{"error":"  "}`, "  ",
+		"blank is not empty: the server said something, even if it is spaces"},
+	{500, `null`, `null`,
+		"a JSON fragment is not an object either"},
+}
