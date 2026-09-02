@@ -21,6 +21,9 @@ func TestCorpusCoversEveryFunctionInScope(t *testing.T) {
 		if !Scope[name[:i]] {
 			continue
 		}
+		if _, excused := OutOfScopeFunc[name]; excused {
+			continue
+		}
 		if !strings.Contains(Source, name) {
 			missing = append(missing, name)
 		}
@@ -29,7 +32,8 @@ func TestCorpusCoversEveryFunctionInScope(t *testing.T) {
 	if len(missing) > 0 {
 		t.Fatalf("%d stdlib functions are not exercised by the corpus, so the runtimes\n"+
 			"are free to disagree about them. Add a case to Source for each, or move\n"+
-			"its module to OutOfScope with a reason:\n  %s",
+			"its module to OutOfScope, or the function to OutOfScopeFunc,\n"+
+			"with a reason:\n  %s",
 			len(missing), strings.Join(missing, "\n  "))
 	}
 }
@@ -170,5 +174,43 @@ func TestExpectationsAreWellFormed(t *testing.T) {
 		if !strings.Contains(Source, `"`+label+`="`) {
 			t.Errorf("expectation %q has no matching case label in the corpus", name)
 		}
+	}
+}
+
+// An exemption that outlives its reason weakens the gate silently: the
+// function is gone, or its module moved out of Scope, and the entry sits there
+// looking like a decision somebody made about code that exists.
+//
+// The module-level table already has this check; the per-function one did not.
+// It is the smaller table and the one whose entries are easiest to forget,
+// because a function is renamed far more often than a module is.
+func TestNoFunctionExemptionOutlivesItsFunction(t *testing.T) {
+	inScope := map[string]bool{}
+	for _, name := range typecheck.BaseEnv().Names() {
+		i := strings.Index(name, ".")
+		if i <= 0 {
+			continue
+		}
+		if Scope[name[:i]] {
+			inScope[name] = true
+		}
+	}
+
+	var stale []string
+	for name, why := range OutOfScopeFunc {
+		if inScope[name] {
+			continue
+		}
+		reason := "the stdlib no longer has it"
+		if i := strings.Index(name, "."); i > 0 && !Scope[name[:i]] {
+			reason = "its module `" + name[:i] + "` is no longer in Scope, so the whole module is excused already"
+		}
+		stale = append(stale, name+" — "+reason+" (excused as: "+why+")")
+	}
+	if len(stale) > 0 {
+		sort.Strings(stale)
+		t.Errorf("%d function exemption(s) no longer apply to anything:\n  %s\n\n"+
+			"Remove them. An exemption nobody can reach reads as a decision about live code.",
+			len(stale), strings.Join(stale, "\n  "))
 	}
 }
