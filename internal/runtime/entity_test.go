@@ -196,13 +196,13 @@ func TestBuildCreateTableSQL_EmitsCheckForEnum(t *testing.T) {
 		},
 	}
 	sql := buildCreateTableSQL(entity)
-	want := "CHECK(role IN ('Member', 'Admin'))"
+	want := `CHECK("role" IN ('Member', 'Admin'))` // identifiers are quoted: see quoteIdent
 	if !strings.Contains(sql, want) {
 		t.Errorf("CREATE TABLE missing CHECK clause.\nGot:  %s\nWant substring: %s", sql, want)
 	}
 	// The NOT NULL must come before the CHECK so the column declaration
 	// stays valid SQLite syntax.
-	if !strings.Contains(sql, "role TEXT NOT NULL CHECK") {
+	if !strings.Contains(sql, `"role" TEXT NOT NULL CHECK`) {
 		t.Errorf("CREATE TABLE has malformed enum column.\nGot: %s", sql)
 	}
 }

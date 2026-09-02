@@ -80,7 +80,7 @@ func repoFindByID(args []Value) (Value, error) {
 				return nil, err
 			}
 			return runSelectOne(db, entity,
-				"WHERE "+pk.Name+" = ?",
+				"WHERE "+quoteIdent(pk.Name)+" = ?",
 				[]any{idVal.V})
 		},
 	}, nil
@@ -141,7 +141,7 @@ func repoCreate(args []Value) (Value, error) {
 			}
 			placeholders := strings.Repeat("?, ", len(cols))
 			placeholders = strings.TrimSuffix(placeholders, ", ")
-			sqlText := "INSERT INTO " + entity.Table + " (" + strings.Join(cols, ", ") + ") VALUES (" + placeholders + ")"
+			sqlText := "INSERT INTO " + quoteIdent(entity.Table) + " (" + strings.Join(cols, ", ") + ") VALUES (" + placeholders + ")"
 			res, err := db.Exec(sqlText, params...)
 			if err != nil {
 				return nil, fmt.Errorf("Repo.create: %w", err)
@@ -154,7 +154,7 @@ func repoCreate(args []Value) (Value, error) {
 			// the just-assigned id). This is the simplest cross-DB path
 			// without RETURNING; fine for SQLite.
 			result, err := runSelectOne(db, entity,
-				"WHERE "+pk.Name+" = ?",
+				"WHERE "+quoteIdent(pk.Name)+" = ?",
 				[]any{id})
 			if err != nil {
 				return nil, err
@@ -197,7 +197,7 @@ func repoUpdate(args []Value) (Value, error) {
 			if len(patch.Order) == 0 {
 				// Empty patch: just return the current row. Avoids generating
 				// `UPDATE ... SET WHERE id = ?` which is invalid SQL.
-				return runSelectOne(db, entity, "WHERE "+pk.Name+" = ?", []any{idVal.V})
+				return runSelectOne(db, entity, "WHERE "+quoteIdent(pk.Name)+" = ?", []any{idVal.V})
 			}
 			sets := make([]string, 0, len(patch.Order))
 			params := make([]any, 0, len(patch.Order)+1)
@@ -209,7 +209,7 @@ func repoUpdate(args []Value) (Value, error) {
 				if field.Serial {
 					return nil, fmt.Errorf("Repo.update: cannot update primary key %q", fname)
 				}
-				sets = append(sets, fname+" = ?")
+				sets = append(sets, quoteIdent(fname)+" = ?")
 				p, err := marValueToSQLForField(field, patch.Fields[fname])
 				if err != nil {
 					return nil, fmt.Errorf("Repo.update: field %q: %w", fname, err)
@@ -217,7 +217,7 @@ func repoUpdate(args []Value) (Value, error) {
 				params = append(params, p)
 			}
 			params = append(params, idVal.V)
-			sqlText := "UPDATE " + entity.Table + " SET " + strings.Join(sets, ", ") + " WHERE " + pk.Name + " = ?"
+			sqlText := "UPDATE " + quoteIdent(entity.Table) + " SET " + strings.Join(sets, ", ") + " WHERE " + quoteIdent(pk.Name) + " = ?"
 			res, err := db.Exec(sqlText, params...)
 			if err != nil {
 				return nil, fmt.Errorf("Repo.update: %w", err)
@@ -229,7 +229,7 @@ func repoUpdate(args []Value) (Value, error) {
 			if affected == 0 {
 				return VCtor{Tag: "Nothing"}, nil
 			}
-			return runSelectOne(db, entity, "WHERE "+pk.Name+" = ?", []any{idVal.V})
+			return runSelectOne(db, entity, "WHERE "+quoteIdent(pk.Name)+" = ?", []any{idVal.V})
 		},
 	}, nil
 }
@@ -256,7 +256,7 @@ func repoDeleteByID(args []Value) (Value, error) {
 			if err != nil {
 				return nil, err
 			}
-			_, err = db.Exec("DELETE FROM "+entity.Table+" WHERE "+pk.Name+" = ?", idVal.V)
+			_, err = db.Exec("DELETE FROM "+quoteIdent(entity.Table)+" WHERE "+quoteIdent(pk.Name)+" = ?", idVal.V)
 			if err != nil {
 				return nil, fmt.Errorf("Repo.deleteById: %w", err)
 			}
@@ -392,9 +392,9 @@ func runSelectOne(db *sql.DB, entity VEntity, whereClause string, params []any) 
 func buildSelectSQL(entity VEntity, whereClause string) string {
 	cols := make([]string, len(entity.Fields))
 	for i, f := range entity.Fields {
-		cols[i] = f.Name
+		cols[i] = quoteIdent(f.Name)
 	}
-	sql := "SELECT " + strings.Join(cols, ", ") + " FROM " + entity.Table
+	sql := "SELECT " + strings.Join(cols, ", ") + " FROM " + quoteIdent(entity.Table)
 	if whereClause != "" {
 		sql += " " + whereClause
 	}
@@ -414,7 +414,7 @@ func buildWhereClause(entity VEntity, filter VRecord) (string, []any, error) {
 		if field == nil {
 			return "", nil, fmt.Errorf("Repo.findBy: %s has no column %q", entity.Table, fname)
 		}
-		conds = append(conds, fname+" = ?")
+		conds = append(conds, quoteIdent(fname)+" = ?")
 		p, err := marValueToSQLForField(field, filter.Fields[fname])
 		if err != nil {
 			return "", nil, fmt.Errorf("Repo.findBy: field %q: %w", fname, err)
@@ -439,7 +439,7 @@ func buildInsertColsParams(entity VEntity, input VRecord) ([]string, []any, erro
 			// Skip serial PK in inserts; SQLite assigns it.
 			continue
 		}
-		cols = append(cols, fname)
+		cols = append(cols, quoteIdent(fname))
 		p, err := marValueToSQLForField(field, input.Fields[fname])
 		if err != nil {
 			return nil, nil, fmt.Errorf("Repo.create: field %q: %w", fname, err)
@@ -491,24 +491,16 @@ func marValueToSQLForField(field *EntityField, v Value) (any, error) {
 		}
 		return coef, nil
 	}
-	if field != nil {
-		return storableAs(*field, v)
+	if field == nil {
+		// Every caller resolves the column and refuses by name when the
+		// entity has none, so this cannot happen from any path that
+		// exists. It used to fall back to transcribing the value, with a
+		// comment about "a filter built without a column" — a caller that
+		// was never written. A fallback nobody reaches is a hole waiting
+		// for the first caller who forgets, so it says so instead.
+		return nil, fmt.Errorf("internal: a value was written with no column to check it against (got %T)", v)
 	}
-	// No column in hand: a filter built without one. There is nothing to
-	// check against, so this stays a transcription.
-	switch x := v.(type) {
-	case VInt:
-		return x.V, nil
-	case VString:
-		return x.V, nil
-	case VBool:
-		return x.V, nil
-	case VFloat:
-		return x.V, nil
-	case VTime:
-		return x.Millis, nil
-	}
-	return nil, fmt.Errorf("unsupported value type %T", v)
+	return storableAs(*field, v)
 }
 
 // scanRow reads one row from rows and produces a record value shaped per
@@ -780,4 +772,20 @@ func describeValueKind(v Value) string {
 		return "()"
 	}
 	return fmt.Sprintf("%T", v)
+}
+
+// ColumnIsCheckedBothWays reports whether a column's declared kind has an arm
+// in BOTH `decodeColumn` (the read) and `storableAs` / the enum and time and
+// decimal branches above it (the write).
+//
+// Exported for the census in internal/apphost, which walks every entity in
+// every example. A kind neither switch has falls through to an error, so
+// nothing is silently transcribed — but the failure surfaces only for a
+// program that uses that kind, which is why the census exists.
+func ColumnIsCheckedBothWays(f EntityField) bool {
+	switch f.SQLType {
+	case "INTEGER", "TEXT", "BOOLEAN", "TIMESTAMP", "DECIMAL":
+		return true
+	}
+	return false
 }

@@ -47,7 +47,7 @@ func TestEntityDecimalColumn(t *testing.T) {
 		f,
 	}}
 	sql := buildCreateTableSQL(e)
-	if !strings.Contains(sql, "amount INTEGER") {
+	if !strings.Contains(sql, `"amount" INTEGER`) {
 		t.Fatalf("DDL should store DECIMAL as INTEGER: %s", sql)
 	}
 }

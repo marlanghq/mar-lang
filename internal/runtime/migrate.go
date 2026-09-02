@@ -73,6 +73,11 @@ const (
 	// index resolve). Idempotent: re-running the migrator against a
 	// DB that already has the index is a no-op.
 	StepCreateUniqueIndex
+	// StepRestateColumn: the stored numbers stay where they are and are
+	// multiplied so they keep meaning the same amount, after a change the
+	// storage type cannot show — today, a Decimal scale. See
+	// migrate_declared.go.
+	StepRestateColumn
 )
 
 // MigrationStep is one item in the diff plan.
@@ -340,6 +345,16 @@ func (m *Migrator) Run() (RunSummary, error) {
 			applied = append(applied, step)
 		}
 	}
+	// Only once every step has applied. The catalog says what the numbers
+	// in each column MEAN, so it has to describe the table as it now is —
+	// writing it earlier would record a claim the data had not caught up
+	// with. A blocked plan returns above and writes nothing.
+	for _, ent := range m.entities {
+		if err := m.rememberDeclaredTypes(ent); err != nil {
+			return RunSummary{}, fmt.Errorf("record declared types for %s: %w", ent.Table, err)
+		}
+	}
+
 	return RunSummary{
 		Applied: applied,
 		Notes:   notes,
@@ -482,6 +497,11 @@ func isSqliteBusy(err error) bool {
 // ---------- Audit ----------
 
 func (m *Migrator) ensureMigrationMetaTable() error {
+	// The declared-type catalog is part of the same bookkeeping: both
+	// answer "what has already happened to this database".
+	if err := m.ensureDeclaredTypeCatalog(); err != nil {
+		return err
+	}
 	_, err := m.db.Exec(`
 		CREATE TABLE IF NOT EXISTS _mar_schema_migrations (
 			id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -642,6 +662,16 @@ func (m *Migrator) planEntity(ent VEntity) ([]MigrationStep, error) {
 		return nil, err
 	}
 	steps = append(steps, orphanSteps...)
+
+	// Changes the storage type ERASES: a Decimal scale, and Int against
+	// Time. INTEGER covers all of them, so nothing in the database says
+	// which one the numbers in a column are. See migrate_declared.go for
+	// what that cost, measured.
+	declaredSteps, err := m.planDeclaredTypeChanges(ent)
+	if err != nil {
+		return nil, err
+	}
+	steps = append(steps, declaredSteps...)
 
 	// Unique indexes: emit unconditionally as IF NOT EXISTS. The
 	// migrator doesn't track per-index drift: an index that already
@@ -890,7 +920,7 @@ Fill in a constant and restart, or drop `+"`"+`Entity.notNull`+"`"+` to make the
 		Kind:        StepAddColumn,
 		Table:       ent.Table,
 		Column:      f.Name,
-		SQL:         fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s", ent.Table, columnDefSQL(f)),
+		SQL:         fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s", quoteIdent(ent.Table), columnDefSQL(f)),
 		Description: fmt.Sprintf("add column %s.%s (%s)", ent.Table, f.Name, f.SQLType),
 	}, nil
 }
@@ -1184,7 +1214,7 @@ func (m *Migrator) liveTableNames() ([]string, error) {
 // the migrator can produce ALTER fragments without rebuilding the
 // whole table SQL.
 func columnDefSQL(f EntityField) string {
-	parts := []string{f.Name, sqlTypeForDDL(f.SQLType)}
+	parts := []string{quoteIdent(f.Name), sqlTypeForDDL(f.SQLType)}
 	if f.Serial {
 		parts = append(parts, "PRIMARY KEY AUTOINCREMENT")
 	} else if f.NotNull {

@@ -507,7 +507,12 @@ func (e VEntity) primaryKey() *EntityField {
 // Constraints supported: NOT NULL, INTEGER PRIMARY KEY AUTOINCREMENT,
 // CHECK(name IN (...)) for Entity.enum columns.
 func buildCreateTableSQL(e VEntity) string {
-	sql := "CREATE TABLE IF NOT EXISTS " + e.Table + " ("
+	// Every identifier is quoted, here and everywhere else SQL is built.
+	// A field named `order` is an ordinary name in Mar and a reserved word in
+	// SQL: unquoted, it took the whole app down at boot with
+	// `near "order": syntax error`, which says nothing about the field the
+	// developer wrote. Quoting removes the failure rather than reporting it.
+	sql := "CREATE TABLE IF NOT EXISTS " + quoteIdent(e.Table) + " ("
 	for i, f := range e.Fields {
 		if i > 0 {
 			sql += ", "
@@ -519,7 +524,7 @@ func buildCreateTableSQL(e VEntity) string {
 		if sqlType == "TIMESTAMP" || sqlType == "DECIMAL" {
 			sqlType = "INTEGER"
 		}
-		sql += f.Name + " " + sqlType
+		sql += quoteIdent(f.Name) + " " + sqlType
 		if f.Serial {
 			sql += " PRIMARY KEY AUTOINCREMENT"
 		} else if f.NotNull {
@@ -532,7 +537,7 @@ func buildCreateTableSQL(e VEntity) string {
 				// only concern is single quotes; defensively escape.
 				quoted[j] = "'" + strings.ReplaceAll(t, "'", "''") + "'"
 			}
-			sql += " CHECK(" + f.Name + " IN (" + strings.Join(quoted, ", ") + "))"
+			sql += " CHECK(" + quoteIdent(f.Name) + " IN (" + strings.Join(quoted, ", ") + "))"
 		}
 	}
 	sql += ")"

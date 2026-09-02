@@ -3,6 +3,7 @@ package runtime
 import (
 	"database/sql"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -269,10 +270,32 @@ func makeAuthConfig(args []Value) (Value, error) {
 	if pageVal, ok := rec.Fields["signInPage"]; ok {
 		page, ok := pageVal.(VPage)
 		if !ok {
-			return nil, fmt.Errorf("Auth.config: `signInPage` must be a Page (got %T)", pageVal)
+			// `describeValueKind`, not `%T`. `signInPage` is OPTIONAL, so it
+			// cannot be typed — a field in a record type is required — which
+			// makes this one of the few boot messages a developer can
+			// actually reach. Answering it with `runtime.VInt` names a Go
+			// type they have never heard of.
+			return nil, fmt.Errorf(
+				"`Auth.config`'s `signInPage` is %s, and it has to be a Page.\n"+
+					"  It is where a signed-out visitor is sent, so it names one of the app's own "+
+					"pages.\n"+
+					"  Pass the page value itself, as in `signInPage = Frontend.SignIn.page`",
+				describeValueKind(pageVal))
 		}
 		signInPath = page.Path
 	}
+	// The record type is OPEN — its tail has to carry the optional fields —
+	// so a name outside this set is accepted by the checker and then read by
+	// nobody. `rol = \\u -> u.role` leaves the app with no role getter at
+	// all, and the only thing that notices is a service using
+	// `Auth.requireRole`, if there is one.
+	//
+	// Symmetric with the page record, and for the same reason: an open
+	// record cannot tell a typo from an optional field, so the boot does.
+	if err := rejectUnknownAuthFields(rec); err != nil {
+		return nil, err
+	}
+
 	cfg := VAuth{
 		Entity:          entity,
 		Identify:        identify,
@@ -367,9 +390,21 @@ func makeAuthRequireOwner(args []Value) (Value, error) {
 		if err != nil {
 			return nil, fmt.Errorf("Auth.requireOwner: selector failed: %w", err)
 		}
-		userID, err := projectField(pargs[1], "id")
+		// The key field's NAME, not the literal "id". `Entity.serial` can be
+		// called anything, `idColumnName` is what the rest of the framework
+		// asks, and this asked for "id" — so every request to an ownership-
+		// gated service answered 500 on an app whose users table has a `pk`.
+		//
+		// Read here rather than when the policy was built: top-level values
+		// evaluate in file order, so `Auth.config` may not have run yet at
+		// that point. By the time a request arrives, `main` has finished.
+		key := "id"
+		if cfg := CurrentAuth(); cfg != nil {
+			key = idColumnName(cfg.Entity)
+		}
+		userID, err := projectField(pargs[1], key)
 		if err != nil {
-			return nil, fmt.Errorf("Auth.requireOwner: user has no `id` field: %w", err)
+			return nil, fmt.Errorf("Auth.requireOwner: the signed-in user has no `%s` field: %w", key, err)
 		}
 		return VBool{V: equalValues(ownerID, userID)}, nil
 	})
@@ -485,7 +520,7 @@ func LookupUserID(cfg VAuth, email string) (int64, error) {
 	}
 	idCol := idColumnName(cfg.Entity)
 	row := db.QueryRow(
-		"SELECT "+idCol+" FROM "+cfg.Entity.Table+" WHERE "+emailCol+" = ? LIMIT 1",
+		"SELECT "+quoteIdent(idCol)+" FROM "+quoteIdent(cfg.Entity.Table)+" WHERE "+quoteIdent(emailCol)+" = ? LIMIT 1",
 		email,
 	)
 	var id int64
@@ -635,15 +670,26 @@ func identifyColumn(cfg VAuth) (string, error) {
 // can express, and a projection that does something else simply fails to name
 // a field, which the caller treats as "not resolved".
 func projectedIdentityColumn(cfg VAuth) (string, bool) {
-	if cfg.Identify == nil || len(cfg.Entity.Fields) == 0 {
+	if cfg.Identify == nil {
+		return "", false
+	}
+	return projectedField(cfg.Identify, cfg.Entity)
+}
+
+// projectedField reads the field name a projection picks, by applying it to a
+// record whose every field holds its own name. Shared by `identify` and by the
+// role getter: both are `user -> something`, and both are only useful when
+// they are a plain field read.
+func projectedField(fn Value, entity VEntity) (string, bool) {
+	if fn == nil || len(entity.Fields) == 0 {
 		return "", false
 	}
 	named := VRecord{Fields: map[string]Value{}}
-	for _, f := range cfg.Entity.Fields {
+	for _, f := range entity.Fields {
 		named.Fields[f.Name] = VString{V: f.Name}
 		named.Order = append(named.Order, f.Name)
 	}
-	out, err := Apply(cfg.Identify, named)
+	out, err := Apply(fn, named)
 	if err != nil {
 		return "", false
 	}
@@ -670,6 +716,128 @@ func ResolveIdentityColumn(cfg VAuth) (string, bool) {
 		return "", false
 	}
 	return col, false
+}
+
+// authConfigFields is every field `Auth.config` reads, required and optional.
+var authConfigFields = map[string]bool{
+	"entity": true, "identify": true, "signup": true, "email": true,
+	"sessionDuration": true, "role": true, "signInPage": true,
+}
+
+func rejectUnknownAuthFields(rec VRecord) error {
+	unknown := make([]string, 0, len(rec.Fields))
+	for f := range rec.Fields {
+		if !authConfigFields[f] {
+			unknown = append(unknown, f)
+		}
+	}
+	if len(unknown) == 0 {
+		return nil
+	}
+	sort.Strings(unknown)
+	known := make([]string, 0, len(authConfigFields))
+	for k := range authConfigFields {
+		known = append(known, "`"+k+"`")
+	}
+	sort.Strings(known)
+	return fmt.Errorf(
+		"`Auth.config`: `%s` is not one of its fields, so it is being ignored.\n"+
+			"  It reads %s.\n"+
+			"  Check the spelling, or remove it",
+		unknown[0], strings.Join(known, ", "))
+}
+
+// CheckAuthEmailBody exercises the optional `email.body` once, at boot.
+//
+// It is OPTIONAL, so it cannot be a field of `Auth.config`'s record type: a
+// field in a record type is required, and most apps do not write one. So its
+// type is unchecked — measured, `body = \\code -> code` (one argument where
+// two belong) passes `mar check`.
+//
+// At request time ApplyEmailBody fails and the framework falls back to the
+// default body, deliberately, so a typo does not take auth down. The cost is
+// that the app's branded email silently becomes the generic one, forever,
+// with nobody told. Applying it here turns that into a refusal the operator
+// sees before anyone signs in.
+//
+// Safe to call: `String -> Int -> String` is pure by contract, and a sample
+// code exercises the same path a real one does.
+func CheckAuthEmailBody(cfg *VAuth) error {
+	if cfg == nil || cfg.EmailBody == nil {
+		return nil
+	}
+	if _, err := ApplyEmailBody(cfg.EmailBody, "000000", 15); err != nil {
+		// The error is deliberately NOT passed through. Applying two
+		// arguments to a one-argument function raises the runtime's
+		// internal-error text — "a checked program cannot do this, so this
+		// is a bug in Mar rather than in your code. Please report it" —
+		// which is exactly backwards here: the mistake is in the app, and
+		// the reason a checked program CAN do this is that the field is
+		// optional and so cannot be typed.
+		return fmt.Errorf(
+			"`Auth.config`'s `email.body` is not a function of a code and a number of minutes.\n" +
+				"  It is called with the sign-in code and the minutes it stays valid, and has to " +
+				"answer the body as a String. When it does not, the framework sends its own body " +
+				"instead — so the app's own email would never go out, and nothing would say so.\n" +
+				"  Write it as `\\code minutes -> ...`")
+	}
+	return nil
+}
+
+// CheckAuthRoles reports a service that demands a role the getter can never
+// answer.
+//
+// The two halves are written in different places with nothing tying them
+// together, and the type system cannot: `Auth.requireRole` receives no
+// reference to the `Auth.config` whose getter it will be compared against.
+// The lint cannot either — by the time it runs, the unification that pinned
+// the getter's result has been generalized away.
+//
+// The boot can, with the trick `identify` uses: apply the getter to a record
+// whose every field holds its own name, and the field it reads comes back as
+// a string. The entity then says what that column holds, and the demanded
+// value either fits or it does not.
+//
+// It matters because the dispatcher compares with equalValues and answers 403
+// on a mismatch — which for two different types is EVERY request, for
+// everyone, with no error anywhere. A route dead in silence.
+func CheckAuthRoles(cfg *VAuth, services []VExposedService) error {
+	if cfg == nil || cfg.Role == nil {
+		return nil
+	}
+	column, ok := projectedField(cfg.Role, cfg.Entity)
+	if !ok {
+		return nil // not a plain field read: nothing certain to compare
+	}
+	var field *EntityField
+	for i := range cfg.Entity.Fields {
+		if cfg.Entity.Fields[i].Name == column {
+			field = &cfg.Entity.Fields[i]
+			break
+		}
+	}
+	if field == nil {
+		return nil
+	}
+	for _, es := range services {
+		want := es.Service.RequireRole
+		if want == nil {
+			continue
+		}
+		// marValueToSQLForField, not storableAs: a role column is usually an
+		// `Entity.enum`, and the enum arm lives above the plain-kind check.
+		// Calling the inner one refused `requireRole Admin` on two shipped
+		// examples — the floor test caught it before anyone else would have.
+		if _, err := marValueToSQLForField(field, want); err != nil {
+			return fmt.Errorf(
+				"the service on `%s %s` requires a role of a kind `%s` never holds: it asks for %s.\n"+
+					"  The two are compared for equality, so they never match: every request to it "+
+					"is refused, for everyone, with no error anywhere.\n"+
+					"  Ask for a value of the same kind the column holds",
+				es.Service.Verb, es.Service.Path, column, describeValueKind(want))
+		}
+	}
+	return nil
 }
 
 // CheckAuthIdentity reports an `Auth.config` whose `identify` does not name a
