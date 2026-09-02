@@ -71,33 +71,37 @@ call =
 	write("runtime.js", rt)
 	write("program.json", programJSON)
 
-	cases := []struct{ name, status, body, want string }{
+	// `absent` is what makes the envelope cases mean anything: `want` alone
+	// passes even with the unwrapping removed, because the raw body CONTAINS
+	// the message it wraps. Measured — the first version of this test went
+	// green with `decodeServerError` gutted.
+	cases := []struct{ name, status, body, want, absent string }{
 		{
 			"a JSON envelope, which is what the framework's own handlers send",
-			"500", `{"error":"note_not_found"}`, "note_not_found",
+			"500", `{"error":"note_not_found"}`, "note_not_found", `error\`,
 		},
 		{
 			"a bare body from something that is not the framework",
-			"500", `upstream exploded`, "upstream exploded",
+			"500", `upstream exploded`, "upstream exploded", "",
 		},
 		{
 			// The whole body comes through. Matched on its content rather
 			// than its exact spelling: the display form escapes the quotes,
 			// and this test is about what survives, not about quoting.
 			"JSON without an error field falls back to the raw body",
-			"500", `{"detail":"nope"}`, "detail",
+			"500", `{"detail":"nope"}`, "detail", "",
 		},
 		{
 			"an empty body still names the status, rather than nothing",
-			"503", ``, "HTTP 503",
+			"503", ``, "HTTP 503", "",
 		},
 		{
 			"401 is its own case, whatever the body says",
-			"401", `{"error":"expired"}`, "Unauthorized",
+			"401", `{"error":"expired"}`, "Unauthorized", "expired",
 		},
 		{
 			"429 is its own case too",
-			"429", `{"error":"slow down"}`, "RateLimited",
+			"429", `{"error":"slow down"}`, "RateLimited", "slow down",
 		},
 	}
 
@@ -125,6 +129,10 @@ globalThis.__marTestRunCmd(program, 'Main.call').then(v => process.stdout.write(
 			if !strings.Contains(string(out), tc.want) {
 				t.Errorf("status %s with body %q\n  got:  %s\n  want: it to contain %q",
 					tc.status, tc.body, out, tc.want)
+			}
+			if tc.absent != "" && strings.Contains(string(out), tc.absent) {
+				t.Errorf("status %s with body %q\n  got:  %s\n  the message still carries %q, so the body was passed through rather than read",
+					tc.status, tc.body, out, tc.absent)
 			}
 		})
 	}
