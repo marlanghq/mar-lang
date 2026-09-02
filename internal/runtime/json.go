@@ -2,7 +2,9 @@ package runtime
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"math"
 	"sort"
 	"strconv"
 	"strings"
@@ -31,6 +33,14 @@ func jsonBuiltins() map[string]Value {
 			}
 			v, err := decodeJSON(s.V)
 			if err != nil {
+				// Mar's sentence, not the host parser's. Every OTHER decode
+				// failure here is already Mar's own ("missing the field `x`",
+				// "should be a string, got a whole number") and reads the same
+				// on all three runtimes; this one leaked whatever the host
+				// said, so the same program answered differently on each —
+				// Go's "invalid character '<'...", V8's "Unexpected token
+				// '<'...", and on iOS a message that changes with the PHONE'S
+				// LANGUAGE, because it came from localizedDescription.
 				return VCtor{Tag: "Err", Args: []Value{VString{V: err.Error()}}}, nil
 			}
 			return VCtor{Tag: "Ok", Args: []Value{v}}, nil
@@ -111,7 +121,13 @@ func encodeValue(v Value) (string, error) {
 		// recognize it and produce a VTime, not a plain VString).
 		// The value itself is ISO so the same wire is readable by
 		// non-mar consumers inspecting raw JSON.
-		iso := time.UnixMilli(x.Millis).UTC().Format(time.RFC3339)
+		// Milliseconds included, always three places. RFC3339 alone drops
+		// them: measured, a Time carrying 1700000000123 encoded to
+		// "…:20Z" and decoded back to …000, so every service response
+		// with a sub-second Time lost it — while the browser's own
+		// encoder (toISOString) kept it. The loss was one-directional and
+		// silent.
+		iso := time.UnixMilli(x.Millis).UTC().Format(isoMillis)
 		b, _ := json.Marshal(iso)
 		return `{"__time":` + string(b) + `}`, nil
 	case VList:
@@ -277,18 +293,54 @@ func EncodeValueJSON(v Value) (string, error) {
 	return encodeValue(v)
 }
 
+// wholeNumber reads a deci-degree payload. Deci-degrees are integral by
+// construction and no Mar encoder writes a fraction, so a fractional one is
+// refused rather than truncated — the same rule the `__char` payload follows.
+func wholeNumber(raw any) (int64, error) {
+	switch n := raw.(type) {
+	case json.Number:
+		if i, err := n.Int64(); err == nil {
+			return i, nil
+		}
+		return 0, fmt.Errorf("the value should be a whole number of deci-degrees, got %s", n.String())
+	case float64:
+		if n == math.Trunc(n) {
+			return int64(n), nil
+		}
+		return 0, fmt.Errorf("the value should be a whole number of deci-degrees, got %v", n)
+	}
+	return 0, fmt.Errorf("the value should be a whole number of deci-degrees, got %v", raw)
+}
+
+// isoMillis is the wire form of a Time: RFC 3339 in UTC with exactly three
+// decimal places, which is what JavaScript's toISOString produces. Parsing
+// still accepts a value without them, so anything already stored or in flight
+// reads back unchanged.
+const isoMillis = "2006-01-02T15:04:05.000Z07:00"
+
 // decodeJSON parses a JSON string into a generic Value.
 // Numbers become VInt (if integer) or VFloat. Objects become VRecord.
 // Arrays become VList. null becomes VUnit. Booleans become VBool.
 //
 // Note: this is "untyped" decoding. It does not coerce into custom types.
 // For typed decoding, use type-directed conversion at the boundary.
+// notJSONMessage is what a document that is not JSON answers, on all three
+// runtimes. See the comment at the `jsonDecode` builtin for why it cannot be
+// the host parser's own sentence.
+const notJSONMessage = "the document is not valid JSON"
+
+// errNotJSON is the SYNTAX failure, kept apart from every other failure
+// decodeJSON can report. The two used to arrive as one `error`, and giving
+// them one message told a caller who sent `{"__char":"abc"}` — valid JSON, and
+// not a character — that their document was not JSON at all.
+var errNotJSON = errors.New(notJSONMessage)
+
 func decodeJSON(s string) (Value, error) {
 	var raw any
 	dec := json.NewDecoder(strings.NewReader(s))
 	dec.UseNumber()
 	if err := dec.Decode(&raw); err != nil {
-		return nil, err
+		return nil, errNotJSON
 	}
 	return convertJSON(raw)
 }
@@ -351,9 +403,13 @@ func convertJSON(raw any) (Value, error) {
 		if raw, ok := x["__dec"]; ok && len(x) == 1 {
 			s, ok := raw.(string)
 			if !ok {
-				return nil, fmt.Errorf("JSON.decode: __dec must be a string")
+				return nil, fmt.Errorf("the value should be a decimal number, got `%v`", raw)
 			}
-			return parseDecimalString(s)
+			d, err := parseDecimalString(s)
+			if err != nil {
+				return nil, fmt.Errorf("the value should be a decimal number, got `%s`", s)
+			}
+			return d, nil
 		}
 		if tag, ok := x["__ctor"].(string); ok {
 			var argsV []Value
@@ -382,13 +438,13 @@ func convertJSON(raw any) (Value, error) {
 		if rawPairs, ok := x["__dict"]; ok && len(x) == 1 {
 			arr, ok := rawPairs.([]any)
 			if !ok {
-				return nil, fmt.Errorf("JSON.decode: __dict must be an array of pairs")
+				return nil, fmt.Errorf("the value should be a list of key/value pairs")
 			}
 			d := VDict{}
 			for _, p := range arr {
 				pair, ok := p.([]any)
 				if !ok || len(pair) != 2 {
-					return nil, fmt.Errorf("JSON.decode: __dict pair must be a 2-element array")
+					return nil, fmt.Errorf("the value should be a key/value pair of two items")
 				}
 				k, err := convertJSON(pair[0])
 				if err != nil {
@@ -398,9 +454,12 @@ func convertJSON(raw any) (Value, error) {
 				if err != nil {
 					return nil, err
 				}
+				// Same as the set below: a dictionary is sorted by key,
+				// so keys of mixed types fail the comparison rather than
+				// the request.
 				next, err := dictInsert(d, k, v)
 				if err != nil {
-					return nil, err
+					return nil, fmt.Errorf("the value should be a list of key/value pairs whose keys are one type")
 				}
 				d = next.(VDict)
 			}
@@ -412,7 +471,7 @@ func convertJSON(raw any) (Value, error) {
 		if rawItems, ok := x["__set"]; ok && len(x) == 1 {
 			arr, ok := rawItems.([]any)
 			if !ok {
-				return nil, fmt.Errorf("JSON.decode: __set must be an array")
+				return nil, fmt.Errorf("the value should be a list of items")
 			}
 			s := VSet{}
 			for _, e := range arr {
@@ -420,43 +479,77 @@ func convertJSON(raw any) (Value, error) {
 				if err != nil {
 					return nil, err
 				}
+				// A set is sorted, so building one compares its items —
+				// and a payload mixing types made that comparison fail
+				// with `comparison: type mismatch`, which says nothing
+				// about the request. The items are what is wrong, and
+				// saying so is the whole job of a 422.
 				next, err := setInsert(s, v)
 				if err != nil {
-					return nil, err
+					return nil, fmt.Errorf("the value should be a list of items of one type")
 				}
 				s = next.(VSet)
 			}
 			return s, nil
 		}
 		// Tagged char, `{"__char": "x"}`. Counterpart to VChar's
-		// encoder. Takes the FIRST Unicode scalar of the string
-		// (covers ASCII, BMP, and supplementary planes). A multi-char
-		// payload would mean the producer is buggy; we tolerate it
-		// silently (first scalar wins) rather than failing loudly,
-		// since the type system already enforces single-codepoint
-		// semantics at the call site.
+		// encoder, and exactly one Unicode scalar or nothing.
+		//
+		// It used to take the FIRST scalar and drop the rest, on the
+		// grounds that the type system enforces single-codepoint
+		// semantics at the call site. The input here is EXTERNAL: it did
+		// not come from a Mar encoder, which cannot write more than one.
+		// So `{"__char":"abc"}` answered 'a' and `{"__char":"日本"}`
+		// answered '日', silently — while an EMPTY payload failed loudly,
+		// in this runtime only. The browser and the phone answered U+FFFD
+		// for it. Three runtimes, three answers to one JSON document.
 		if s, ok := x["__char"].(string); ok && len(x) == 1 {
+			n := 0
+			var first rune
 			for _, r := range s {
-				return VChar{V: r}, nil
+				if n == 0 {
+					first = r
+				}
+				n++
 			}
-			return nil, fmt.Errorf("JSON.decode: empty __char")
+			if n != 1 {
+				return nil, fmt.Errorf("the value should be a single character, got %d", n)
+			}
+			return VChar{V: first}, nil
 		}
 		// Tagged angle, `{"__angle": 450}`, deci-degrees. Counterpart to
 		// the VAngle encoder. Wrapped on the way in rather than trusted:
 		// the payload crossed a network boundary, and every other way to
 		// build an Angle normalizes, so this one does too.
-		if d, ok := x["__angle"].(float64); ok && len(x) == 1 {
-			return VAngle{Deci: posMod(int64(d), deciFull)}, nil
+		//
+		// The type assertion here used to be `.(float64)`, which this
+		// decoder can never produce: it runs with `UseNumber()`, so every
+		// JSON number arrives as a `json.Number`. The branch was dead, and
+		// an encoded Angle came back as the plain RECORD
+		// `{ __angle = 4500 }` — while the browser and the phone rebuilt an
+		// Angle from the same bytes. A rules engine replayed on both sides
+		// is exactly what the encoder's comment says this marker is for.
+		if raw, present := x["__angle"]; present && len(x) == 1 {
+			d, err := wholeNumber(raw)
+			if err != nil {
+				return nil, err
+			}
+			return VAngle{Deci: posMod(d, deciFull)}, nil
 		}
 		// Tagged time, `{"__time": "ISO 8601"}`. Counterpart to the
 		// VTime encoder; reconstructing a VTime here keeps round-trip
 		// fidelity so `createdAt : Time` stays a Time after a service
 		// call (rather than degrading to a VString that no longer
 		// pattern-matches against Time-shaped APIs).
+		//
+		// The message carries no host detail. It used to quote Go's own
+		// `time.Parse` error, which no other runtime can produce — and the
+		// other two did not fail at all: a payload that would not parse
+		// fell through to a plain RECORD there.
 		if iso, ok := x["__time"].(string); ok && len(x) == 1 {
 			t, err := time.Parse(time.RFC3339, iso)
 			if err != nil {
-				return nil, fmt.Errorf("JSON.decode: invalid __time %q: %v", iso, err)
+				return nil, fmt.Errorf("the value should be a date and time, got `%s`", iso)
 			}
 			return VTime{Millis: t.UnixMilli()}, nil
 		}

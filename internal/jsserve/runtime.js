@@ -1350,7 +1350,9 @@
       try {
         parsed = JSON.parse(raw.s);
       } catch (e) {
-        return VCtor('Err', [VString(String((e && e.message) || e))]);
+        // Mar's sentence, not V8's: see internal/runtime/json.go. The other
+        // failures below are already Mar's own and match across runtimes.
+        return VCtor('Err', [VString('the document is not valid JSON')]);
       }
       // jsToMar is inside the guard too. It rejects a tagged value that
       // cannot be one — `{"__char":"abc"}` is not a character — and that
@@ -6262,7 +6264,7 @@
         const parsed = JSON.parse(raw.s);
         return VCtor('Ok', [jsToMar(parsed)]);
       } catch (e) {
-        return VCtor('Err', [VString(String(e && e.message || e))]);
+        return VCtor('Err', [VString('the document is not valid JSON')]);
       }
     }));
     def('JSON.decode', envLookup(env, 'jsonDecode'));

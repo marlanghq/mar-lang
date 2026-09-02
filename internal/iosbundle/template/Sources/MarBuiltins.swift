@@ -2054,17 +2054,14 @@ enum MarBuiltins {
         env.define("timeAfter",   .fn(mkCompare(>)))
         env.define("Time.after",  .fn(mkCompare(>)))
 
-        let isoFormatter: ISO8601DateFormatter = {
-            let f = ISO8601DateFormatter()
-            f.formatOptions = [.withInternetDateTime]
-            return f
-        }()
+        // One pair of helpers for reading and writing an instant, shared
+        // with the JSON codec: three decimal places out, with or without
+        // them in. See MarJSONCodec.parseISO.
         let timeToIso = MarFn.native(1) { args in
             guard case .time(let ms) = args[0] else {
                 throw MarRuntimeError.typeMismatch(expected: "Time", got: Eval.typeOf(args[0]))
             }
-            let d = Date(timeIntervalSince1970: TimeInterval(ms) / 1000)
-            return .string(isoFormatter.string(from: d))
+            return .string(MarJSONCodec.formatISO(ms))
         }
         env.define("timeToIso",  .fn(timeToIso))
         env.define("Time.toIso", .fn(timeToIso))
@@ -2073,7 +2070,7 @@ enum MarBuiltins {
             guard case .string(let s) = args[0] else {
                 throw MarRuntimeError.typeMismatch(expected: "String", got: Eval.typeOf(args[0]))
             }
-            if let d = isoFormatter.date(from: s) {
+            if let d = MarJSONCodec.parseISO(s) {
                 return .ctor(tag: "Just",
                              args: [.time(Int(d.timeIntervalSince1970 * 1000))],
                              origin: nil)
@@ -2166,10 +2163,13 @@ enum MarBuiltins {
                     with: Data(raw.utf8),
                     options: [.fragmentsAllowed]
                 )
-                return .ctor(tag: "Ok", args: [MarJSONCodec.jsonToMar(any)], origin: nil)
+                return .ctor(tag: "Ok", args: [try MarJSONCodec.jsonToMar(any)], origin: nil)
             } catch {
+                // Mar's sentence, not Foundation's: see internal/runtime/json.go.
+                // `localizedDescription` made the value a program receives depend
+                // on the PHONE'S LANGUAGE.
                 return .ctor(tag: "Err",
-                             args: [.string(error.localizedDescription)],
+                             args: [.string("the document is not valid JSON")],
                              origin: nil)
             }
         }))
@@ -3243,7 +3243,10 @@ enum MarBuiltins {
             guard let colon = inner.firstIndex(of: ":") else { return s }
             let name = String(inner[inner.startIndex..<colon])
             hadParam = true
-            let enc = percentEncodePathComponent(pathParamString(fields[name]))
+            // The same encoder linkTo and Nav.* use, via MarPath. This had
+            // its own, mirroring JS encodeURIComponent, so a service call
+            // and a link to the same value asked for different URLs.
+            let enc = MarPath.encodePathComponent(pathParamString(fields[name]))
             fields.removeValue(forKey: name)
             return enc
         }
@@ -3306,10 +3309,6 @@ enum MarBuiltins {
     /// encodeURIComponent for a path segment. URLComponents would
     /// re-interpret reserved characters, so we percent-encode against an
     /// explicit allowed set that matches JS encodeURIComponent.
-    private static func percentEncodePathComponent(_ s: String) -> String {
-        s.addingPercentEncoding(withAllowedCharacters: uriComponentAllowed) ?? s
-    }
-
     private static func percentEncodeQueryValue(_ s: String) -> String {
         s.addingPercentEncoding(withAllowedCharacters: uriComponentAllowed) ?? s
     }
