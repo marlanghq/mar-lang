@@ -94,6 +94,13 @@ const FakeBrowser = `
 // "worked" and reported the wrong thing, which is worse than not working.
 // detach removes a node from whatever parent it currently has, so a re-insert
 // moves it instead of cloning it into two places at once.
+let attrRead = 0;
+// Every name the runtime uses as an ATTRIBUTE. Attributes are stored as plain
+// properties here, so reading one that was never set is indistinguishable from
+// reading a DOM member the fake lacks — and only the second is worth
+// reporting. Collected rather than listed, so it cannot go stale.
+const attrNames = new Set();
+
 function detach(c) {
   const p = c && c.parentNode;
   if (!p || !p.children) return;
@@ -166,10 +173,23 @@ function mkEl(tag) {
     replaceChild(n, o) { const i = this.children.indexOf(o);
       if (i >= 0) { this.children[i] = n; this.childNodes[i] = n; n.parentNode = this; relink(this); }
       this.firstChild = this.children[0] || null; return o; },
-    setAttribute(k, v) { if (k === 'class') { cls = String(v); } else { this[k] = v; } },
-    getAttribute(k) { if (k === 'class') return cls; return this[k] === undefined ? null : this[k]; },
-    removeAttribute(k) { delete this[k]; },
-    hasAttribute(k) { return this[k] !== undefined; },
+    setAttribute(k, v) { attrNames.add(k); if (k === 'class') { cls = String(v); } else { this[k] = v; } },
+    getAttribute(k) {
+      attrNames.add(k);
+      if (k === 'class') return cls;
+      // Attributes live as plain properties here, so reading one that was
+      // never set looks the same as reading a DOM member the fake lacks. Only
+      // the second is worth reporting, so the gap recorder stands down while
+      // an attribute is being read.
+      attrRead++;
+      try { return this[k] === undefined ? null : this[k]; } finally { attrRead--; }
+    },
+    removeAttribute(k) { attrNames.add(k); delete this[k]; },
+    hasAttribute(k) {
+      attrNames.add(k);
+      attrRead++;
+      try { return this[k] !== undefined; } finally { attrRead--; }
+    },
     addEventListener(t, f) { (this._on[t] = this._on[t] || []).push(f); },
     removeEventListener(t, f) {
       if (this._on[t]) this._on[t] = this._on[t].filter((x) => x !== f); },
@@ -279,14 +299,42 @@ function mkEl(tag) {
     const t = el.tagName.toLowerCase();
     return '<' + t + ' class="' + cls + '">' + String(el.textContent || '') + kids + '</' + t + '>';
   } });
-  return el;
+  // Every element is handed out wrapped, so a member the runtime reads and
+  // this fake does not have gets RECORDED instead of coming back undefined.
+  //
+  // Four times in one afternoon a missing member made the fake lie rather than
+  // fail: closest answered null, nextSibling was absent (and a || null
+  // swallowed it), insertBefore cloned instead of moving, and events did not
+  // bubble. Each one hid a whole listener from every test, and each was found
+  // by hand, hours apart. __marFakeGaps is so the fake says it first.
+  //
+  // Reads only, and only of names that look like DOM members: the runtime also
+  // parks its own bookkeeping on nodes (__marView and friends), and a read
+  // of one that is not there yet is ordinary.
+  const proxied = new Proxy(el, {
+    get(target, prop, recv) {
+      if (attrRead === 0 && typeof prop === 'string' && !(prop in target) &&
+          !attrNames.has(prop) &&
+          !prop.startsWith('__') && !prop.startsWith('_') &&
+          prop !== 'then' && /^[a-z]/.test(prop)) {
+        (globalThis.__marFakeGaps || (globalThis.__marFakeGaps = new Set())).add(prop);
+      }
+      return Reflect.get(target, prop, recv);
+    },
+  });
+  el.self = proxied;
+  return proxied;
 }
 
 const marRoot = mkEl('div');
 marRoot.id = 'mar-root';
 
 global.document = {
-  documentElement: mkEl('html'),
+  // <html lang> carries the app's locale: the shell writes it from mar.json,
+  // and App.locale reads it back. Without it here every web test ran on the
+  // "en" fallback, so the locale path was never the one under test. The value
+  // is the one the shell emits for a project that declares none.
+  documentElement: (() => { const h = mkEl('html'); h.lang = 'en'; return h; })(),
   head: mkEl('head'),
   body: mkEl('body'),
   title: '',
