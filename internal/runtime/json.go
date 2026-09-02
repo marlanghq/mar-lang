@@ -352,9 +352,15 @@ func encodeValue(v Value) (string, error) {
 	// A Go type name is not something the reader wrote. These are the values a
 	// runtime builds for itself — a Page, a View, an Entity — and `JSON.encode`
 	// takes `a`, so the type system lets one through and the encoder meets it
-	// here. Naming the Mar kind is the least this can do; moving it earlier
-	// would need the API to stop being polymorphic, which is a language
-	// decision rather than a fix.
+	// here.
+	//
+	// This comment used to end "moving it earlier would need the API to stop
+	// being polymorphic, which is a language decision rather than a fix". That
+	// is true of changing the TYPE and only of that: a call site whose argument
+	// is definitely one of these is refused at compile time by the shape lint
+	// (see noJSONForm in internal/typecheck/shape_lint.go), with the signature
+	// untouched. What is left here is the case the lint cannot be sure about,
+	// which is why the sentence still has to be worth reading.
 	return "", fmt.Errorf("JSON.encode: %s has no JSON form.\n"+
 		"  Encode the data it was built FROM, and build it on the side that uses it", marKindOf(v))
 }

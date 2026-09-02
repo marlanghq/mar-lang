@@ -546,6 +546,7 @@ func walkExpr(e ast.Expr, ctx lintCtx) []ShapeIssue {
 	if app, ok := e.(*ast.EApp); ok {
 		issues = append(issues, matchRepoOp(app, ctx)...)
 		issues = append(issues, matchAuthConfig(app, ctx)...)
+		issues = append(issues, matchJSONEncode(app, ctx)...)
 	}
 	issues = append(issues, walkChildren(e, ctx)...)
 	return issues
@@ -701,6 +702,69 @@ func matchRepoOp(app *ast.EApp, ctx lintCtx) []ShapeIssue {
 	// `payload = { emial = "ada" }` followed by `Repo.findBy users payload`
 	// checks clean and answers 500 to every request.
 	return checkRecordTypeAgainstSchema(recordExpr, schema, "Repo."+op, requireFull, ctx)
+}
+
+// noJSONForm names the types the JSON encoder has no case for, keyed by the
+// type constructor the checker uses. A function is handled separately: it is a
+// TArrow, not a TCon.
+//
+// `JSON.encode : a -> String` accepts anything, and the encoder meets a Page or
+// a View at RUNTIME, saying "a Page has no JSON form" to whoever was using the
+// app. The runtime's own comment concluded that moving it earlier "would need
+// the API to stop being polymorphic, which is a language decision rather than a
+// fix" -- and that is only true of changing the TYPE. A call site whose
+// argument is definitely one of these is a mistake nobody can talk out of, and
+// refusing it needs no change to the signature, exactly as the Repo lint refuses
+// a non-record without pinning Repo's second parameter.
+//
+// The list is not written from memory: encoder_cases_test.go derives it from
+// the `case` arms of encodeValue and fails when the two disagree.
+var noJSONForm = map[string]string{
+	"Page":           "a Page",
+	"View":           "a View",
+	"Entity":         "an Entity",
+	"Service":        "a Service",
+	"ExposedService": "an exposed Service",
+	"Auth":           "an Auth config",
+	"Path":           "a Path",
+	"Column":         "a Column",
+	"Constraint":     "a Constraint",
+	"Attr":           "an Attr",
+	"App.Shared":     "a shared store",
+	"Cmd":            "a Cmd",
+	"Task":           "a Task",
+}
+
+// matchJSONEncode refuses `JSON.encode x` when x is definitely one of the
+// values a runtime builds for itself. It stays silent on a type variable, on a
+// record, and on anything else: the point is the definite case, not a guess.
+func matchJSONEncode(app *ast.EApp, ctx lintCtx) []ShapeIssue {
+	head, args := flattenApp(app)
+	if !isQualified(head, "JSON", "encode") || len(args) != 1 {
+		return nil
+	}
+	if ctx.exprTypes == nil {
+		return nil
+	}
+	t, ok := ctx.exprTypes[args[0]]
+	if !ok {
+		return nil
+	}
+	var named string
+	switch shape := StripForall(t).(type) {
+	case TArrow:
+		named = "a function"
+	case TCon:
+		named = noJSONForm[shape.Name]
+	}
+	if named == "" {
+		return nil
+	}
+	return []ShapeIssue{{
+		Pos: args[0].Position(),
+		Message: fmt.Sprintf("JSON.encode: %s has no JSON form. "+
+			"Encode the data it was built FROM, and build it on the side that uses it", named),
+	}}
 }
 
 // matchAuthConfig recognizes Auth.config { entity = X, signup = (\e -> {...}) }
