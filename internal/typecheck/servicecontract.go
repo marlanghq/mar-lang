@@ -65,6 +65,31 @@ func checkServiceContracts(mod *ast.Module, types map[string]Type, tags CtorLook
 					v.Name, side, where)
 			}
 			if !hasTypeVar(con.Args[i]) {
+				// A side that reduces to WireAny is a side the guard cannot
+				// check: it asserts nothing, so a malformed body reaches the
+				// handler unchecked — the same failure the open-type case
+				// below describes, arrived at by a different route.
+				//
+				// What lands here is a RUNTIME-INTERNAL type: `View`, `Shape`,
+				// `Sound`, `Attr`, `Page`. They are values the renderer and the
+				// synthesiser build for themselves, they hold closures, and they
+				// have no JSON form — so no list of them is needed here, and
+				// none can go stale: the wire reduction already answers "can
+				// this be checked", and this asks it.
+				//
+				// Measured before this existed: `Service () Shape` type-checked,
+				// and the three runtimes do not even agree on the tag for a
+				// canvas text shape (`text` on the server and the web,
+				// `canvasText` on the phone), so what crossed would have drawn
+				// nothing on one of them.
+				if where := uncheckableInside(WireShapeOf(con.Args[i], tags), ""); where != "" {
+					return errorf(v.Pos, "the contract `%s` puts a value with no wire form in its %s type (%s: %s).\n"+
+						"  A request and a response are JSON, and this type reduces to \"check nothing\": the guard "+
+						"would accept any shape at all and hand it to the handler. `View`, `Shape`, `Sound`, `Attr` "+
+						"and `Page` are built by a runtime for itself and hold closures.\n"+
+						"  Send the data the value is built FROM, and build it on the side that shows it",
+						v.Name, side, Pretty(con.Args[i]), where)
+				}
 				continue
 			}
 			return errorf(v.Pos, "the contract `%s` leaves its %s type open (`%s`), so it is not a contract.\n"+
@@ -120,6 +145,55 @@ func hasTypeVar(t Type) bool {
 	return false
 }
 
+// uncheckableInside finds a position in a reduced wire shape that asserts
+// nothing, and describes where it is. Empty means every position is checked.
+//
+// It walks the SHAPE rather than the type because the shape is what the guard
+// runs on: whatever reduces to WireAny is exactly what the guard will wave
+// through, whether that is a renderer's `View` or something added later that
+// the reduction does not know either.
+func uncheckableInside(s ast.WireShape, path string) string {
+	where := path
+	if where == "" {
+		where = "the whole type"
+	}
+	switch s.Kind {
+	case ast.WireAny:
+		return where
+	case ast.WireRecord:
+		for _, f := range s.Fields {
+			if got := uncheckableInside(f.Shape, "the field `"+f.Name+"`"); got != "" {
+				return got
+			}
+		}
+	case ast.WireList, ast.WireMaybe, ast.WireSet:
+		if s.Elem != nil {
+			if got := uncheckableInside(*s.Elem, "the element of "+where); got != "" {
+				return got
+			}
+		}
+	case ast.WireTuple, ast.WireDict:
+		for i, m := range s.Members {
+			if got := uncheckableInside(m, fmt.Sprintf("position %d of %s", i+1, where)); got != "" {
+				return got
+			}
+		}
+	case ast.WireCtor:
+		for i, args := range s.Args {
+			tag := ""
+			if i < len(s.Tags) {
+				tag = s.Tags[i]
+			}
+			for _, a := range args {
+				if got := uncheckableInside(a, "an argument of `"+tag+"`"); got != "" {
+					return got
+				}
+			}
+		}
+	}
+	return ""
+}
+
 // functionInside names the first place a function appears inside a type, and
 // is empty when there is none. It reads through unions to their constructor
 // payloads, because `type Job = Run (Int -> Int)` hides one just as well as a
@@ -152,7 +226,7 @@ func functionInside(t Type, tags CtorLookup, seen map[string]bool) string {
 		if tags == nil || seen[n.Name] {
 			return ""
 		}
-		arms, ok := tags(n.Name)
+		arms, ok := tags(n.Name, n.Args)
 		if !ok {
 			return ""
 		}
