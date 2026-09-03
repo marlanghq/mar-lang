@@ -55,7 +55,7 @@ var promiseCensus = []promiseSource{
 	{"iosbundle/MarValue.swift", 2, 0, "fixture", "decimalScale and bigInt are the two representations that used to drift"},
 	{"iosbundle/MarPath.swift", 2, 0, "fixture", "the phone's half of link, enumPath and rolePath; rolePath is the one with an actual enum in it, which enumPath never had"},
 	{"iosbundle/MarIntRange.swift", 1, 0, "fixture", "`bigInt` and `decimalEdge` ride the bound; the refusal's wording is pinned in internal/runtime"},
-	{"iosbundle/MarJSONCodec.swift", 1, 0, "fixture", "collections: Set and Dict round-trip and keep their order"},
+	{"iosbundle/MarJSONCodec.swift", 2, 0, "fixture", "collections round-trip through the fixture; and the no-JSON-form sentences, which internal/iosbundle division_encode_test.go checks by BEHAVIOUR, because a source scan cannot tell a refusal from one that was switched off"},
 	{"iosbundle/MarEval.swift", 2, 0, "fixture", "`no case branch matched`, matched by text on both clients"},
 	{"iosbundle/MarHTTP.swift", 8, 0, "table", "decodeServerError to HTTPErrorCases, the shape-mismatch sentence and the domain-code table to AuthPortCases, and handleAuthExpired to AuthExpiryCases. That last one was the gap: the decision was inside an @Observable the offline harnesses cannot build, so it is a function now, and the platform keeps only WHERE the remembered path lives"},
 	{"iosbundle/AppViewModel.swift", 2, 0, "screens", "the snapshot and cache formats, whose only requirement is being the same on both platforms; observable as a screen that does or does not come back"},

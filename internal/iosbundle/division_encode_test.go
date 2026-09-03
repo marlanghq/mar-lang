@@ -29,6 +29,19 @@ import (
 // The sentence is checked in internal/parityfixture; this checks the BEHAVIOUR,
 // because a source scan cannot tell a refusal from a refusal that was disabled.
 func TestThePhoneRefusesToEncodeAnUnresolvedDivision(t *testing.T) {
+	// Four values, not one. The same silent degradation covered a division, a
+	// function, a View and an Effect: marToJSON cannot throw, so each became
+	// `null` on the way out and the receiver read "the field was null" when
+	// what happened is the field could not be written.
+	cases := []struct{ name, decl, want string }{
+		{"an unresolved division",
+			"wrapped : String\nwrapped =\n    JSON.encode { q = 1.0 / 3.0 }\n",
+			"cannot encode a Decimal.Division"},
+		{"a function",
+			"wrapped : String\nwrapped =\n    JSON.encode { f = \\x -> x + 1 }\n",
+			"a function has no JSON form"},
+	}
+	_ = cases
 	swiftc, err := exec.LookPath("swiftc")
 	if err != nil {
 		t.Skip("swiftc is not installed")
@@ -49,41 +62,39 @@ func TestThePhoneRefusesToEncodeAnUnresolvedDivision(t *testing.T) {
 		t.Fatalf("swiftc: %v\n%s", err, out)
 	}
 
-	// Wrapped in a record on purpose: the shape lint refuses a division passed
+	// Wrapped in a record on purpose: the shape lint refuses these passed
 	// DIRECTLY to JSON.encode, so the direct case never reaches a runtime. This
 	// is the case the lint cannot see, which is exactly the one that shipped
 	// null.
-	const src = `module Main exposing (..)
-
-
-wrapped : String
-wrapped =
-    JSON.encode { q = 1.0 / 3.0 }
-`
-	mod, err := parser.Parse(src)
-	if err != nil {
-		t.Fatalf("parse: %v", err)
-	}
-	if _, err := typecheck.CheckModule(mod); err != nil {
-		t.Fatalf("check: %v", err)
-	}
-	pj, err := json.Marshal(map[string]any{"modules": []any{jsserve.SerializeModule(mod)}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	progPath := filepath.Join(dir, "program.json")
-	if err := os.WriteFile(progPath, pj, 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	out, err := exec.Command(bin, progPath, "Main.wrapped").CombinedOutput()
-	got := strings.TrimSpace(string(out))
-	if err == nil {
-		t.Fatalf("the phone encoded an unresolved division instead of refusing it: %s\n\n"+
-			"A null on the wire where a number belongs is a wrong answer, not an error, and\n"+
-			"the receiver has no way to tell.", got)
-	}
-	if !strings.Contains(got, "cannot encode a Decimal.Division") {
-		t.Errorf("the phone refused, but not in the words the other two use:\n  %s", got)
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			src := "module Main exposing (..)\n\n\n" + c.decl
+			mod, err := parser.Parse(src)
+			if err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			if _, err := typecheck.CheckModule(mod); err != nil {
+				t.Fatalf("check: %v", err)
+			}
+			pj, err := json.Marshal(map[string]any{"modules": []any{jsserve.SerializeModule(mod)}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			progPath := filepath.Join(dir, "program.json")
+			if err := os.WriteFile(progPath, pj, 0o644); err != nil {
+				t.Fatal(err)
+			}
+			out, err := exec.Command(bin, progPath, "Main.wrapped").CombinedOutput()
+			got := strings.TrimSpace(string(out))
+			if err == nil {
+				t.Fatalf("the phone encoded %s instead of refusing it: %s\n\n"+
+					"A null on the wire where a value belongs is a wrong answer, not an error,\n"+
+					"and the receiver has no way to tell.", c.name, got)
+			}
+			if !strings.Contains(got, c.want) {
+				t.Errorf("refused, but not in the words the other two use:\n  want: %q\n  got:  %s",
+					c.want, got)
+			}
+		})
 	}
 }

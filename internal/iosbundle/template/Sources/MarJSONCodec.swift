@@ -264,22 +264,58 @@ enum MarJSONCodec {
     /// MarValue → Foundation JSON value. Mirrors `marToJs` in
     /// runtime.js: Maybe.Just/Nothing/Result.Ok/Err unwrap; other
     /// ctors serialize as `{tag, args}`.
-    /// Whether a value carries an unresolved Decimal.Division anywhere inside
-    /// it. marToJSON cannot throw, so the refusal has to be decided before the
-    /// walk rather than during it.
-    static func holdsDivision(_ v: MarValue) -> Bool {
+    /// The first value inside this one that has no JSON form, or nil.
+    ///
+    /// marToJSON cannot throw, so it DEGRADED: a division, a function, a View
+    /// and an Effect each became `null` on the way out, silently. The server
+    /// refuses all four. Four values that a receiver would read as "the field
+    /// was null" when what happened is that the field could not be written.
+    ///
+    /// The refusal has to be decided before the walk rather than during it,
+    /// which is why this exists as its own pass.
+    static func unencodable(_ v: MarValue) -> MarValue? {
         switch v {
-        case .division:
-            return true
+        case .division, .fn, .view, .effect:
+            return v
         case .list(let xs), .tuple(let xs):
-            return xs.contains(where: holdsDivision)
+            for x in xs {
+                if let bad = unencodable(x) { return bad }
+            }
+            return nil
         case .record(let fs, _):
-            return fs.values.contains(where: holdsDivision)
+            for f in fs.values {
+                if let bad = unencodable(f) { return bad }
+            }
+            return nil
         case .ctor(_, let args, _):
-            return args.contains(where: holdsDivision)
+            for a in args {
+                if let bad = unencodable(a) { return bad }
+            }
+            return nil
         default:
-            return false
+            // `.unit` is NOT here: () encodes as null on every runtime, which
+            // is a form and not an absence of one.
+            return nil
         }
+    }
+
+    /// The sentence the other two runtimes give for a value with no JSON form.
+    /// A division gets its own, because its answer is not "encode something
+    /// else" but "resolve it first".
+    static func noJSONFormMessage(_ v: MarValue) -> String {
+        if case .division = v {
+            return "JSON.encode: cannot encode a Decimal.Division — resolve it with "
+                + "Decimal.rounded or Decimal.withRemainder first"
+        }
+        let kind: String
+        switch v {
+        case .fn:     kind = "a function"
+        case .view:   kind = "a View"
+        case .effect: kind = "a Cmd or Task"
+        default:      kind = "this value"
+        }
+        return "JSON.encode: \(kind) has no JSON form.\n"
+            + "  Encode the data it was built FROM, and build it on the side that uses it"
     }
 
     static func marToJSON(_ v: MarValue) -> Any {

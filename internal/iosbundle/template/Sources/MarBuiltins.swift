@@ -2227,10 +2227,8 @@ enum MarBuiltins {
             // more helpful and is deliberately NOT done here: any runtime could
             // name it, so one runtime saying more is a divergence rather than
             // platform chrome. Add it to all three or to none.
-            if MarJSONCodec.holdsDivision(args[0]) {
-                throw MarRuntimeError.message(
-                    "JSON.encode: cannot encode a Decimal.Division — resolve it with "
-                        + "Decimal.rounded or Decimal.withRemainder first")
+            if let bad = MarJSONCodec.unencodable(args[0]) {
+                throw MarRuntimeError.message(MarJSONCodec.noJSONFormMessage(bad))
             }
             let any = MarJSONCodec.marToJSON(args[0])
             do {
