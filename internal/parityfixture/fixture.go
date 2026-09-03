@@ -303,6 +303,30 @@ pairedHelpers =
         ]
 
 
+-- posMod, the one pair the previous value was claimed to cover and did not.
+--
+-- An Angle is opaque: it is built from an Int and leaves only through sin and
+-- cos, which are periodic and therefore hide exactly the wrapping posMod does.
+-- JSON.encode is the way out -- an Angle rides the wire as its raw deci value,
+-- so the normalisation becomes visible.
+--
+-- The negative cases are the whole point: plain % gives -900 where posMod gives
+-- 2700, and a runtime that reached for the obvious operator would agree on
+-- every positive angle and differ on every negative one.
+angles : String
+angles =
+    String.join "|"
+        [ JSON.encode (Math.degrees 45)
+        , JSON.encode (Math.degrees (-90))
+        , JSON.encode (Math.opposite (Math.degrees 30))
+        , JSON.encode (Math.add (Math.degrees 350) (Math.degrees 30))
+        , JSON.encode (Math.subtract (Math.degrees 10) (Math.degrees 30))
+        , JSON.encode (Math.turns (-1))
+        , String.fromInt (Math.sin (Math.degrees 30))
+        , String.fromInt (Math.cos (Math.degrees 60))
+        ]
+
+
 -- Device.touchOnly / canHover, which the Go runtime's comment says mirror the
 -- JS logic. Recorded as uncomparable because the record comes from the host's
 -- matchMedia -- which was wrong: only the SOURCE is host-dependent, and the
@@ -369,6 +393,7 @@ var Names = []string{
 	"devices",
 	"intDivision",
 	"pairedHelpers",
+	"angles",
 	"seeded",
 	"enumPath",
 	"rolePath",

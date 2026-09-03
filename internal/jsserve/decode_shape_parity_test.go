@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -112,10 +113,22 @@ process.stdout.write(JSON.stringify(out));
 	}
 
 	for _, n := range names {
-		// The browser renders a String with quotes; the server hands back the
-		// bare characters. Compare what the program computed, not how each
-		// side prints it.
-		got := strings.Trim(jsSays[n], `"`)
+		// The browser renders a String the way Mar DISPLAYS it: surrounding
+		// quotes, and inner quotes escaped. The server hands back the bare
+		// characters. Compare what the program computed, not how each side
+		// prints it.
+		//
+		// Trimming the outer quotes is not enough, and the failure looks
+		// exactly like drift: a value containing a quote -- JSON.encode of
+		// anything, say -- came back with every inner quote still escaped and
+		// was reported as a difference between the runtimes. That is the third
+		// measurement artifact in this work to imitate a finding.
+		got := jsSays[n]
+		if unquoted, err := strconv.Unquote(got); err == nil {
+			got = unquoted
+		} else {
+			got = strings.Trim(got, `"`)
+		}
 		if got != goSays[n] {
 			t.Errorf("%s:\n  server:  %q\n  browser: %q", n, goSays[n], got)
 		}
