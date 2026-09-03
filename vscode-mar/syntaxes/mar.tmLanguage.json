@@ -84,7 +84,7 @@
         },
         {
           "name": "constant.language.mar",
-          "match": "\\b(True|False|Nothing|Ok|Err|Just|LT|EQ|GT)\\b"
+          "match": "\\b(True|False|Nothing|Ok|Err|Just|LT|EQ|GT|GET|POST|PUT|PATCH|DELETE|Coarse|Fine|Crisp|Pixelated)\\b"
         },
         {
           "comment": "Capitalized identifier, type or constructor",

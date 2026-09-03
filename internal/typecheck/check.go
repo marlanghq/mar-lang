@@ -95,6 +95,20 @@ var reservedTypeNames = map[string]bool{
 	"Auth": true, "Page": true, "Method": true,
 }
 
+// ReservedTypeNames is the language's own type vocabulary: the names a module
+// may not reuse. Exported so the editor's grammar can be held to it -- the
+// plugin colours 44 names and 24 of them are these; the rest are the view
+// host's phantom types, which app authors legitimately model and which are the
+// plugin's own taste rather than the language's.
+func ReservedTypeNames() []string {
+	out := make([]string, 0, len(reservedTypeNames))
+	for n := range reservedTypeNames {
+		out = append(out, n)
+	}
+	sort.Strings(out)
+	return out
+}
+
 // CheckModule runs the full type-check pass over a parsed module using the
 // default (BaseEnv) value environment.
 func CheckModule(mod *ast.Module) (*CheckResult, error) {
