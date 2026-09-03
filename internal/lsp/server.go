@@ -1387,7 +1387,7 @@ func (s *Server) projectAnalyze(path, content string) ([]lspDiagnostic, bool) {
 	// imports and surface every qualified type as opaque ("cannot
 	// unify { id : a, … } with User" because User comes from Shared
 	// which we never loaded).
-	root, ok := findProjectRoot(filepath.Dir(path))
+	root, ok := project.RootFor(path)
 	if !ok {
 		return nil, false
 	}
@@ -1415,29 +1415,6 @@ func (s *Server) projectAnalyze(path, content string) ([]lspDiagnostic, bool) {
 	}
 	// Project (with override) compiles cleanly: no diagnostics.
 	return nil, true
-}
-
-// findProjectRoot walks up from `start` looking for a directory
-// containing mar.json (preferred) or Main.mar. Bounded to 20 levels
-// so a runaway path doesn't iterate to the filesystem root forever.
-//
-// Returns ("", false) if no project marker is found within bounds.
-func findProjectRoot(start string) (string, bool) {
-	dir := start
-	for i := 0; i < 20; i++ {
-		if _, err := os.Stat(filepath.Join(dir, "mar.json")); err == nil {
-			return dir, true
-		}
-		if _, err := os.Stat(filepath.Join(dir, "Main.mar")); err == nil {
-			return dir, true
-		}
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			return "", false // hit filesystem root
-		}
-		dir = parent
-	}
-	return "", false
 }
 
 func (s *Server) singleFileAnalyze(content string) []lspDiagnostic {

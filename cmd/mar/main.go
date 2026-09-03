@@ -1035,7 +1035,7 @@ func runCheck(path string) int {
 	// argument was spelled. The file argument now selects the project it
 	// belongs to; a file with no mar.json above it is still checked alone,
 	// which is what that mode is for.
-	if root, ok := projectRootFor(path); ok {
+	if root, ok := project.RootFor(path); ok {
 		fmt.Printf("%s is part of the project in %s; checking that.\n\n",
 			colorMagenta(filepath.Base(path)), colorMagenta(root))
 		return runCheck(root)
@@ -1076,28 +1076,6 @@ func runCheck(path string) int {
 		}
 	}
 	return 0
-}
-
-// projectRootFor finds the mar.json a .mar file belongs to, walking up from
-// its directory. It stops at the filesystem root, and returns false when there
-// is none -- a scratch file outside any project, which is the single-module
-// mode's actual audience.
-func projectRootFor(file string) (string, bool) {
-	abs, err := filepath.Abs(file)
-	if err != nil {
-		return "", false
-	}
-	dir := filepath.Dir(abs)
-	for {
-		if _, err := os.Stat(filepath.Join(dir, "mar.json")); err == nil {
-			return dir, true
-		}
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			return "", false
-		}
-		dir = parent
-	}
 }
 
 // topologyNeedsDB reports whether `mar dev` should provision a SQLite

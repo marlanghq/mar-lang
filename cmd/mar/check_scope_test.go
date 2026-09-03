@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"mar/internal/project"
 )
 
 // `mar check` gave two different answers for the same project depending on how
@@ -33,7 +35,7 @@ double : Int -> Int
 double n =
     n * 2
 `)
-		if root, ok := projectRootFor(filepath.Join(dir, "Solo.mar")); ok {
+		if root, ok := project.RootFor(filepath.Join(dir, "Solo.mar")); ok {
 			t.Fatalf("found a project at %s for a file that is not in one", root)
 		}
 	})
@@ -42,7 +44,7 @@ double n =
 		dir := t.TempDir()
 		writeFile(t, filepath.Join(dir, "mar.json"), `{"name":"p","locale":"en"}`)
 		writeFile(t, filepath.Join(dir, "Main.mar"), "module Main exposing (..)\n")
-		root, ok := projectRootFor(filepath.Join(dir, "Main.mar"))
+		root, ok := project.RootFor(filepath.Join(dir, "Main.mar"))
 		if !ok {
 			t.Fatal("a file beside a mar.json was not recognised as part of a project")
 		}
@@ -61,7 +63,7 @@ double n =
 			t.Fatal(err)
 		}
 		writeFile(t, filepath.Join(sub, "Data.mar"), "module Backend.Data exposing (..)\n")
-		root, ok := projectRootFor(filepath.Join(sub, "Data.mar"))
+		root, ok := project.RootFor(filepath.Join(sub, "Data.mar"))
 		if !ok {
 			t.Fatal("a file under a project's directory was not recognised as part of it")
 		}
@@ -75,7 +77,7 @@ double n =
 	t.Run("the walk stops at the filesystem root", func(t *testing.T) {
 		done := make(chan bool, 1)
 		go func() {
-			_, ok := projectRootFor(filepath.Join(t.TempDir(), "None.mar"))
+			_, ok := project.RootFor(filepath.Join(t.TempDir(), "None.mar"))
 			done <- ok
 		}()
 		if <-done {

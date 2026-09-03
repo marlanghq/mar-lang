@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"mar/internal/project"
 )
 
 // TestFindProjectRoot covers the walk-up-the-tree logic that
@@ -37,7 +39,7 @@ func TestFindProjectRoot(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got, ok := findProjectRoot(tc.from)
+			got, ok := project.RootFor(tc.from)
 			if !ok {
 				t.Fatalf("expected to find root from %s; got false", tc.from)
 			}
@@ -55,11 +57,17 @@ func TestFindProjectRoot_NoMarker(t *testing.T) {
 	tmp := t.TempDir()
 	mustWriteFile(t, filepath.Join(tmp, "random.mar"), "module Random")
 
-	if _, ok := findProjectRoot(tmp); ok {
+	if _, ok := project.RootFor(tmp); ok {
 		t.Errorf("expected no project root in unmarked dir; got ok=true")
 	}
 }
 
+// These three now drive project.RootFor, the single implementation. They stay
+// here rather than moving because what they pin is the EDITOR's requirement --
+// a file deep in Frontend/Pages resolves against the project's own root, and an
+// unmarked directory falls back to single-file analysis rather than running
+// project mode against an unrelated tree.
+//
 // TestFindProjectRoot_MainMarOnly: projects without mar.json (just
 // Main.mar at the root) are also detected. Useful for `mar dev path`
 // invocations on simple example projects.
@@ -68,7 +76,7 @@ func TestFindProjectRoot_MainMarOnly(t *testing.T) {
 	mustWriteFile(t, filepath.Join(tmp, "Main.mar"), "module Main")
 	mustWriteFile(t, filepath.Join(tmp, "Helpers", "X.mar"), "module Helpers.X")
 
-	got, ok := findProjectRoot(filepath.Join(tmp, "Helpers"))
+	got, ok := project.RootFor(filepath.Join(tmp, "Helpers"))
 	if !ok || got != tmp {
 		t.Errorf("expected %s; got %s ok=%v", tmp, got, ok)
 	}
