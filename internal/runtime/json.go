@@ -453,7 +453,17 @@ func convertJSON(raw any) (Value, error) {
 		}
 		f, err := x.Float64()
 		if err != nil {
-			return nil, err
+			// Go's own strconv sentence used to travel from here into a Mar
+			// program: "strconv.ParseFloat: parsing \"1e400\": value out of
+			// range". A host library's words in something a person reads, the
+			// same family as Foundation's localizedDescription on the phone.
+			//
+			// What the three runtimes do with a number none of them can hold
+			// still differs, and that is recorded as a gap in the promise
+			// census rather than papered over here: the browser makes it
+			// Infinity and fails the shape check, and Foundation refuses the
+			// whole document.
+			return nil, fmt.Errorf("JSON: %s is too large a number for Mar to hold", x.String())
 		}
 		return VFloat{V: f}, nil
 	case []any:
