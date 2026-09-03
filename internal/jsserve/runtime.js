@@ -694,7 +694,29 @@
         return { __dict: v.pairs.map(p => [marToJs(p.key), marToJs(p.value)]) };
       case 'Se':
         return { __set: v.items.map(marToJs) };
-      default: return null;
+      default:
+        // Refuse rather than degrade. This arm used to answer null, so
+        // `JSON.encode { f = \x -> x }` produced {"f":null} and a receiver
+        // read "the field was null" when the field could not be written at
+        // all. The server refuses these and so, now, does the phone; this side
+        // was found last, by asking whether the fix on one runtime had a twin
+        // here -- which is the same question the fix itself was about.
+        throw new Error('JSON.encode: ' + marKindName(v) + ' has no JSON form.\n' +
+          '  Encode the data it was built FROM, and build it on the side that uses it');
+    }
+  }
+
+  // The Mar name for a value, for the sentence above. Keep these in step with
+  // marKindOf in internal/runtime/json.go, which the same message uses.
+  function marKindName(v) {
+    switch (v && v.k) {
+      case 'Fn':  return 'a function';
+      case 'V':   return 'a View';
+      case 'E':   return 'a Cmd or Task';
+      case 'SND': return 'a Sound';
+      case 'SUB': return 'a Sub';
+      case 'F':   return 'a number';
+      default:    return 'this value';
     }
   }
 
