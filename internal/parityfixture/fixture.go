@@ -223,6 +223,29 @@ rolePath =
         ]
 
 
+-- Integer division. Both clients carry the same comment beside it -- "//,
+-- truncating Int division, total: /0 yields 0 on every runtime" -- and nothing
+-- compared it. Total means it answers for every pair, division by zero
+-- included, so there is no error to notice a difference by: the wrong answer
+-- is just a number.
+--
+-- Truncation toward zero is the half that bites: -7 // 2 is -3 and not -4, and
+-- a language that floors instead would agree on the first case and differ on
+-- the second.
+intDivision : String
+intDivision =
+    String.join "|"
+        (List.map String.fromInt
+            [ 7 // 2
+            , (-7) // 2
+            , 7 // (-2)
+            , 7 // 0
+            , 0 // 0
+            , (-7) // 0
+            ]
+        )
+
+
 -- Device.touchOnly / canHover, which the Go runtime's comment says mirror the
 -- JS logic. Recorded as uncomparable because the record comes from the host's
 -- matchMedia -- which was wrong: only the SOURCE is host-dependent, and the
@@ -286,6 +309,7 @@ var Names = []string{
 	"collections",
 	"decimalEdge",
 	"devices",
+	"intDivision",
 	"seeded",
 	"enumPath",
 	"rolePath",
