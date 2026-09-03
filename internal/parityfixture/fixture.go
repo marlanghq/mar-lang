@@ -270,6 +270,39 @@ intDivision =
         )
 
 
+-- More of the pairs the structural scan turned up. What each line here is
+-- verified to reach was measured, not assumed, because two of the claims I
+-- first wrote were wrong:
+--
+--   padLeft / padRight   reaches padString: breaking its left/right flag on
+--                        one client fails this value
+--   isqrt                reaches isqrtInt
+--   toScale, comparison  reach decToScale and decCompare
+--   modBy, remainderBy   are their OWN implementations on each runtime, NOT
+--                        posMod: the phone writes the sign correction by hand
+--                        in the builtin. posMod is reached through Angle, and
+--                        this value does not exercise it
+--
+-- The rounding modes here are honest but not load-bearing: decimalEdge already
+-- fails when HalfEven breaks, and this one does not.
+pairedHelpers : String
+pairedHelpers =
+    String.join "|"
+        [ String.padLeft 5 '0' "42"
+        , String.padRight 4 '.' "ab"
+        , String.fromInt (Math.isqrt 17)
+        , Decimal.toString (Decimal.toScale Decimal.HalfEven 2 1.005)
+        , Decimal.toString (Decimal.toScale Decimal.Down 1 (-1.25))
+        , if 1.10 < 1.2 then
+            "lt"
+
+          else
+            "ge"
+        , String.fromInt (modBy 3 (-7))
+        , String.fromInt (remainderBy 3 (-7))
+        ]
+
+
 -- Device.touchOnly / canHover, which the Go runtime's comment says mirror the
 -- JS logic. Recorded as uncomparable because the record comes from the host's
 -- matchMedia -- which was wrong: only the SOURCE is host-dependent, and the
@@ -335,6 +368,7 @@ var Names = []string{
 	"decimalEdge",
 	"devices",
 	"intDivision",
+	"pairedHelpers",
 	"seeded",
 	"enumPath",
 	"rolePath",
