@@ -32,6 +32,12 @@ type Symbol struct {
 	// For SymTypeAlias / SymCustomType: a one-line summary of the type's
 	// shape (rhs).
 	Summary string
+	// For stdlib symbols: the prose and the worked examples authored for the
+	// reference page. The editor had neither -- hover on `Decimal.toCents`
+	// gave a type and the word "built-in" while a sentence describing it, and
+	// an example VERIFIED to evaluate True, sat in internal/refgen.
+	Doc      string
+	Examples []string
 }
 
 // DocIndex is the per-document analysis cached by the LSP server: the
@@ -191,6 +197,32 @@ func IdentifierAt(source string, line, col int) string {
 // a code block containing the type signature. Stdlib symbols (flagged
 // via stdlibBuiltinTag in Summary) get a "_built-in_" footer instead of
 // a regular summary line.
+// docSection renders the prose and examples a stdlib symbol carries, or
+// nothing. The examples are the reference page's, which means they are the ones
+// a test evaluates and requires to be True -- so what hover shows cannot drift
+// from what the language does.
+func docSection(s Symbol) string {
+	var b strings.Builder
+	if s.Doc != "" {
+		b.WriteString("\n\n")
+		b.WriteString(s.Doc)
+	}
+	if len(s.Examples) > 0 {
+		b.WriteString("\n\n```mar\n")
+		for i, ex := range s.Examples {
+			if i > 0 {
+				b.WriteString("\n")
+			}
+			// Authored as `expr == result`; shown the way the reference page
+			// shows it, with the result as a Mar comment.
+			b.WriteString(strings.Replace(ex, " == ", "    -- ", 1))
+			b.WriteString("\n")
+		}
+		b.WriteString("```")
+	}
+	return b.String()
+}
+
 func HoverMarkdown(s Symbol) string {
 	builtin := s.Summary == stdlibBuiltinTag
 	switch s.Kind {
@@ -199,6 +231,7 @@ func HoverMarkdown(s Symbol) string {
 		if s.Type != "" {
 			body = fmt.Sprintf("```mar\n%s : %s\n```", s.Name, s.Type)
 		}
+		body += docSection(s)
 		if builtin {
 			return body + "\n_built-in_"
 		}
@@ -208,6 +241,7 @@ func HoverMarkdown(s Symbol) string {
 		if s.Type != "" {
 			body = fmt.Sprintf("```mar\n%s : %s\n```", s.Name, s.Type)
 		}
+		body += docSection(s)
 		if builtin {
 			return body + "\n_built-in constructor_"
 		}

@@ -810,6 +810,15 @@ func (s *Server) handleCompletion(msg *message) {
 			"kind":   completionKind(sym.Kind),
 			"detail": detail,
 		}
+		// The description and its worked example, when the reference has
+		// them. Without this the popup shows a type and nothing else, and
+		// the sentence explaining the function sits unused in the tree.
+		if doc := docSection(sym); doc != "" {
+			ci["documentation"] = map[string]any{
+				"kind":  "markdown",
+				"value": strings.TrimLeft(doc, "\n"),
+			}
+		}
 		if origin != "" {
 			ci["sortText"] = origin + sym.Name
 		}

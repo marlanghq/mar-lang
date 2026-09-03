@@ -4,6 +4,7 @@ import (
 	"sort"
 	"sync"
 
+	"mar/internal/refgen"
 	"mar/internal/typecheck"
 )
 
@@ -53,6 +54,7 @@ func buildStdlib() {
 	// Decimal.toCents is wrong about the language, not opinionated.
 	bindings := typecheck.AllQualifiedSymbols()
 	customs := typecheck.BaseCustomTypes()
+	docs := stdlibDocs()
 
 	// Allocate exactly: one Symbol per qualified value + one per
 	// custom type + one per its constructor.
@@ -62,10 +64,12 @@ func buildStdlib() {
 
 	for name, t := range bindings {
 		s := Symbol{
-			Name:    name,
-			Kind:    SymValue,
-			Type:    typecheck.Pretty(t),
-			Summary: stdlibBuiltinTag,
+			Name:     name,
+			Kind:     SymValue,
+			Type:     typecheck.Pretty(t),
+			Summary:  stdlibBuiltinTag,
+			Doc:      docs[name].Desc,
+			Examples: docs[name].Examples,
 		}
 		stdlibCache = append(stdlibCache, s)
 		stdlibIndex[name] = s
@@ -80,10 +84,12 @@ func buildStdlib() {
 		stdlibIndex[name] = s
 		for _, ctorName := range ct.CtorOrder {
 			cs := Symbol{
-				Name:    ctorName,
-				Kind:    SymConstructor,
-				Type:    constructorTypeFromCustom(ct, ctorName),
-				Summary: stdlibBuiltinTag,
+				Name:     ctorName,
+				Kind:     SymConstructor,
+				Type:     constructorTypeFromCustom(ct, ctorName),
+				Summary:  stdlibBuiltinTag,
+				Doc:      docs[ctorName].Desc,
+				Examples: docs[ctorName].Examples,
 			}
 			stdlibCache = append(stdlibCache, cs)
 			// First-write wins: value-env entries (Just/Nothing/Ok/Err)
@@ -98,6 +104,31 @@ func buildStdlib() {
 	sort.Slice(stdlibCache, func(i, j int) bool {
 		return stdlibCache[i].Name < stdlibCache[j].Name
 	})
+}
+
+// stdlibDocs indexes the reference's authored prose and examples by the name a
+// program actually writes.
+//
+// The reference and the editor described the same 544 names and only one of
+// them had anything to say about them: 526 carry a sentence and a worked
+// example, all 535 of the reference's entries have one, and hover showed a
+// type and the word "built-in".
+//
+// `Basics` is the reference's name for the bare globals and is not a module
+// anyone can import -- `Basics.not` does not compile -- so its entries are
+// keyed by the bare name, which is how a program spells them and how
+// refgen's own side lookup already treats them.
+func stdlibDocs() map[string]refgen.FnEntry {
+	entries := refgen.Entries()
+	out := make(map[string]refgen.FnEntry, len(entries))
+	for _, e := range entries {
+		if e.Module == refgen.BasicsModule {
+			out[e.Name] = e
+			continue
+		}
+		out[e.Qualified()] = e
+	}
+	return out
 }
 
 // stdlibBuiltinTag flags Symbol.Summary so HoverMarkdown can render a
