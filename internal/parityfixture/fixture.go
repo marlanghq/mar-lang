@@ -63,6 +63,30 @@ notJSONAtAll =
     say "<html>"
 
 
+-- Three copies of one pluralisation rule -- wire.go, runtime.js and
+-- MarWire.swift each have their own plural(n, noun) -- and it writes the
+-- wire errors a person reads. Nothing compared them: no case in this fixture
+-- produced a plural until this one.
+--
+-- Found structurally rather than by vocabulary: a scan for function names
+-- implemented in two or more runtimes turns up 69 pairs, and this was one with
+-- no comment claiming they should agree. An unclaimed pair is worse than a
+-- claimed one, because nobody even said it mattered.
+pluralWireError : String
+pluralWireError =
+    case pairOf "[1,\"a\",3]" of
+        Ok _ ->
+            "ok"
+
+        Err e ->
+            e
+
+
+pairOf : String -> Result String ( Int, String )
+pairOf s =
+    JSON.decode s
+
+
 note : Path { slug : String }
 note =
     "/notes/{slug:String}"
@@ -298,6 +322,7 @@ var Names = []string{
 	"missingField",
 	"notAnObject",
 	"notJSONAtAll",
+	"pluralWireError",
 	"link",
 	"money",
 	"decimalScale",
