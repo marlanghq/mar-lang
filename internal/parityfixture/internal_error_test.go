@@ -69,3 +69,80 @@ func TestTheThreeRuntimesSayTheSameThingAboutABugInMar(t *testing.T) {
 		}
 	}
 }
+
+// The two sentences that are NOT internal errors and are still written three
+// times: the ones a user reads when their own program went wrong.
+//
+// Found on the third structural axis -- string literals appearing in two or
+// more runtimes. That axis is noisy in general (a naive scan over runtime.js
+// returns hundreds of code fragments), but filtered to non-comment lines of
+// real prose it answers cleanly: eleven sentences are shared, and all but
+// these two were already compared by the fixture through Service.errorToString
+// and the not-JSON message.
+//
+// Neither can ride in the fixture. Both are raised: one when the stack budget
+// runs out, one when a record arrives without a field the program's types
+// promised. So this is the source-level check again, and honest about proving
+// the wording rather than the behaviour.
+func TestTheSentencesAUserReadsAreWrittenTheSameThreeTimes(t *testing.T) {
+	// The SHARED part, not the whole message. The browser appends advice only
+	// a browser can act on -- "Under `mar dev` that usually means the page is
+	// still holding the model it loaded with... Reload the page." -- and a
+	// phone has no page to reload. Measured, not assumed: the first version of
+	// this test asked for the whole sentence and reported the browser as
+	// having lost it, when what it had was a tail the other two should not
+	// have. Chrome belongs to the platform; the sentence does not.
+	for _, c := range []struct{ what, sentence string }{
+		{"runaway recursion", "A function is calling itself without reaching a base case"},
+		{"a field the types promised", "did not come from this program's types"},
+	} {
+		for _, f := range []struct{ label, path string }{
+			{"server", "../runtime"},
+			{"browser", "../jsserve"},
+			{"phone", "../iosbundle/template/Sources"},
+		} {
+			if !sentenceIn(t, f.path, c.sentence) {
+				t.Errorf("the %s runtime no longer says %q.\n"+
+					"    It is the sentence a user reads about %s, and the other two still say it.",
+					f.label, c.sentence, c.what)
+			}
+		}
+	}
+}
+
+func sentenceIn(t *testing.T, dir, sentence string) bool {
+	t.Helper()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seen := 0
+	for _, e := range entries {
+		if e.IsDir() || strings.HasSuffix(e.Name(), "_test.go") {
+			continue
+		}
+		ext := filepath.Ext(e.Name())
+		if ext != ".go" && ext != ".js" && ext != ".swift" {
+			continue
+		}
+		seen++
+		b, err := os.ReadFile(filepath.Join(dir, e.Name()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		// Source text, not runtime values, so the escaping is each language's.
+		// The browser writes this sentence inside single quotes and escapes the
+		// apostrophe: `program\'s`. Comparing raw bytes reported the browser as
+		// having lost a sentence it says. Fourth measurement artifact in this
+		// work, and the same shape as the other three -- the instrument
+		// appearing to accuse the code.
+		body := strings.NewReplacer(`\'`, "'", `\"`, `"`).Replace(string(b))
+		if strings.Contains(body, sentence) {
+			return true
+		}
+	}
+	if seen == 0 {
+		t.Fatalf("no sources scanned in %s; the walk is wrong, not the code", dir)
+	}
+	return false
+}
