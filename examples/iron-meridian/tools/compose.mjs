@@ -62,7 +62,6 @@ const kBass = [
   [[73, 1], [73, 1], [73, 2], [110, 1], [110, 1], [110, 2], [87, 1], [87, 1], [87, 2], [73, 4]], // 11 the gallop
   [[117, 4], [131, 4], [147, 4], [110, 4]],                                            // 12 Bb C D A: the walk home
 ];
-kBass.push(tr(kBass[0], 5), tr(kBass[7], 5), tr(kBass[3], 5));                          // 13 14 15: G minor
 
 const kCounter = [
   [[147, 2], [175, 1], [_, 1], [220, 2], [196, 1], [175, 1], [147, 3], [_, 1], [175, 2], [156, 1], [147, 1]], // 0
@@ -78,19 +77,12 @@ const kCounter = [
   [[175, 6], [233, 4], [196, 6]],                                                                             // 9
   [[147, 16]],                                                                                                // 10 one note, held
 ];
-kCounter.push(tr(kCounter[0], 5), tr(kCounter[3], 5), tr(kCounter[6], 5));               // 11 12 13: G minor
-// 14: the G-minor counter with one note moved. Transposing kCounter[3] up a
-// fourth lands its step-11 E4 on A4, and the lead is holding A#4 a semitone
-// above it -- in the same octave, three times over (bars 37, 41, 45). That was
-// the only true semitone left in the piece and the harshest interval there is.
-// G4 instead: a minor 3rd under the lead, and the tonic of the movement.
-kCounter.push(kCounter[12].map(([hz, n]) => (hz === 440 ? [392, n] : [hz, n])));
 
 const kLead = [
   [[_, 1], [294, 2], [392, 5], [_, 1], [392, 3], [440, 2], [392, 1], [349, 1]],   // 0 THE HOOK: D4 up to G4, held
   [[_, 1], [262, 2], [349, 5], [_, 1], [349, 3], [392, 2], [349, 1], [311, 1]],   // 1 the answer, C4-F4-Eb4
   [[_, 1], [294, 2], [392, 5], [_, 1], [392, 3], [415, 2], [392, 1], [349, 1]],   // 2 the hook, soured to Ab4
-  [[_, 1], [587, 2], [784, 5], [_, 1], [784, 3], [831, 2], [784, 1], [698, 1]],   // 3 the hook an octave up
+  [[_, 1], [587, 2], [784, 5], [_, 1], [784, 3], [880, 2], [784, 1], [698, 1]],   // 3 the hook an octave up
   [[_, 1], [523, 2], [698, 5], [_, 1], [698, 3], [784, 2], [698, 1], [622, 1]],   // 4 the answer an octave up
   [[415, 2], [_, 1], [294, 3], [_, 2], [415, 2], [_, 1], [494, 2], [_, 1], [587, 2]], // 5 the tritone fanfare
   [[466, 3], [523, 3], [587, 3], [_, 1], [659, 2], [587, 2], [523, 2]],           // 6 over the bridge
@@ -100,7 +92,6 @@ const kLead = [
   [[_, 2], [392, 3], [349, 2], [311, 3], [294, 4], [_, 2]],                       // 9 the field: the hook, exhausted
   [[880, 6], [784, 4], [698, 6]],                                                 // 10 high and slow, over the peak
 ];
-kLead.push(tr(kLead[0], 5), tr(kLead[1], 5), tr(kLead[6], 5));                      // 11 12 13: G minor
 
 const kDrum = [
   [74, 18, 0, 26, 46, 18, 0, 60, 0, 26, 0, 0, 46, 0, 24, 0],       // 0
@@ -119,7 +110,7 @@ const kDrum = [
 const T1 = {
   id: 1, title: 'Dust and Iron', wave: 'Sawtooth',
   note: 'D minor at 100 BPM, and the war march of the five. The hook is the rising fourth D4-G4 over a bass that keeps moving underneath the held G.',
-  vol: { bass: 26, counter: 17, lead: 22, drum: 62 },
+  vol: { bass: 19, counter: 29, lead: 29, drum: 58 },
   bass: kBass, counter: kCounter, lead: kLead, drum: kDrum,
   form: [
     // I  the original cue, bars 1-10: fanfare, statement and answer, the A7
@@ -160,9 +151,9 @@ const T1 = {
     // V  a fourth up, in G minor: the same hook, the same bass, one key over.
     {
       bars: 12, gain: { bass: 86, counter: 80, lead: 88, drum: 84 },
-      bass: [13, 14, 13, 15],
-      counter: [11, 14, 11, 13],
-      lead: [11, 12, 11, 13],
+      bass: [7, 4, 7, 0],
+      counter: [7, 4, 7, 1],
+      lead: [3, 4, 2, 1],
       drum: [0, 1, 2, 3],
     },
     // VI the break: bass and kit, nothing else, and the gallop underneath.
@@ -265,7 +256,7 @@ const rDrum = [
 const T2 = {
   id: 2, title: 'The Silo Gambit', wave: 'Triangle',
   note: 'D minor implied and never stated. A pedal that enters off the downbeat, a chromatic wedge that descends one step further every time it returns, and a hook with a fixed rhythm that is sequenced, inverted and finally stretched.',
-  vol: { bass: 28, counter: 15, lead: 19, drum: 54 },
+  vol: { bass: 10, counter: 27, lead: 27, drum: 62 },
   bass: rBass, counter: rCounter, lead: rLead, drum: rDrum,
   form: [
     // I  the original cue, bars 1-10.
@@ -404,7 +395,7 @@ const bDrum = [
 const T3 = {
   id: 3, title: 'Static', wave: 'Square',
   note: 'E minor. One alien beep that never changes pitch, and a floor that moves under it until the same note has been every interval in the piece and finally the root. The hook is a three-note siren, never transposed.',
-  vol: { bass: 24, counter: 14, lead: 17, drum: 58 },
+  vol: { bass: 6, counter: 30, lead: 42, drum: 58 },
   bass: bBass, counter: bCounter, lead: bLead, drum: bDrum,
   form: [
     // I  the original cue, bars 1-12: the floor holds E, the counter phases, the
@@ -565,7 +556,7 @@ const T4 = {
   note: 'E phrygian dominant, the fast one, and the only piece that changes key: bars 9 to 14 are a real move to D harmonic minor, pivoted in by an A7 and returned by a Bb-F-E cadence. The hook puts its long note on the augmented second and leaves two rests, so it has a silhouette.',
   // The counter is the voice that made this piece read as busy: it is the third
   // stream and the one nobody is listening FOR. Two notches down.
-  vol: { bass: 25, counter: 13, lead: 21, drum: 60 },
+  vol: { bass: 18, counter: 27, lead: 29, drum: 56 },
   bass: dBass, counter: dCounter, lead: dLead, drum: dDrum,
   form: [
     // I  the original cue, bars 1-8: the riff bare, statement and answer, the A7
@@ -719,7 +710,7 @@ const eDrum = [
 const T5 = {
   id: 5, title: 'Meridian Engine', wave: 'Sawtooth',
   note: 'C minor, new, and the only piece written for this game. Built on the Neapolitan Db as a pedal, which is the same semitone-above-the-root wound the other four get from a tritone or a b2. Movement VII states mission 1 verbatim.',
-  vol: { bass: 27, counter: 17, lead: 22, drum: 62 },
+  vol: { bass: 19, counter: 29, lead: 29, drum: 58 },
   bass: eBass, counter: eCounter, lead: eLead, drum: eDrum,
   form: [
     // I  the engine, cold. The motto has not been stated.
@@ -980,7 +971,32 @@ parts.push(`
 -- disagree
 skirmishThemeCount : Int
 skirmishThemeCount = ${THEMES.length}
+
+
+-- ===== diagnostics =====
+--
+-- One value per theme per part, so a balance question can be MEASURED instead
+-- of guessed at. Rendering the parts alone is the only thing that catches an
+-- accompaniment sitting on top of the thing it accompanies, and every mix in
+-- this repo that has been checked that way turned out to have one.
+--
+-- Nothing in the game reads these; they exist for tools/render.mjs.
 `);
+
+THEMES.forEach((t) => {
+  parts.push(`dBass${t.id} : Sound
+dBass${t.id} = bassOf Sound.${t.wave} ${t.vol.bass} (arrange m${t.id}Bass m${t.id}BassOrder)
+
+dCounter${t.id} : Sound
+dCounter${t.id} = counterOf ${t.vol.counter} (arrange m${t.id}Counter m${t.id}CounterOrder)
+
+dLead${t.id} : Sound
+dLead${t.id} = leadOf ${t.vol.lead} (arrange m${t.id}Lead m${t.id}LeadOrder)
+
+dDrum${t.id} : Sound
+dDrum${t.id} = drumLine ${t.vol.drum} (arrange m${t.id}Drum m${t.id}DrumOrder)
+`);
+});
 
 fs.writeFileSync(process.argv[2], parts.join('\n').replace(/\n{4,}/g, '\n\n\n'));
 

@@ -1,4 +1,4 @@
-module Music exposing (missionTheme, skirmishThemeCount)
+module Music exposing (..)
 
 import Sound
 
@@ -76,13 +76,15 @@ import Sound
 --     hats                30 right, so the counter has something opposite it and
 --                         the image does not lean left all piece.
 --
--- HOW IT KEEPS Sound.loop's INVARIANT (all voices summing to identical
--- milliseconds) true BY CONSTRUCTION rather than by anyone counting: every
--- pattern is exactly 16 steps and every voice plays the same number of bars, so
--- the four cannot drift apart. A voice that summed short would slide further out
--- of phase on every repeat until the loop was mush. The generator refuses to
--- write this file otherwise, and it also refuses if any piece falls under three
--- minutes.
+-- HOW IT KEEPS EVERY VOICE THE SAME LENGTH BY CONSTRUCTION rather than by
+-- anyone counting: every pattern is exactly 16 steps and every voice plays the
+-- same number of bars. A voice that summed short would fall silent in its own
+-- channel for the rest of the cycle -- a hole in the arrangement, on every
+-- repeat. (It would NOT drift: one cycle of Sound.loop is the longest voice's
+-- span and every voice is booked once per cycle from a shared origin. This
+-- comment used to say otherwise, of an older scheduler.) The generator refuses
+-- to write this file otherwise, and it also refuses if any piece falls under
+-- three minutes.
 --
 -- Only missionTheme and skirmishThemeCount escape the module.
 
@@ -120,8 +122,18 @@ level vol v =
 -- ONE KNOB for how loud the whole soundtrack sits under the game. The balance
 -- BETWEEN the voices is set per piece, where it belongs; this scales all of them
 -- together, so turning it changes the level and never the mix.
+-- Measured before this was touched: the five themes peaked between -8.8 and
+-- -12.0 dB with ZERO samples crossing the ceiling knee, i.e. the whole
+-- soundtrack was using about half the room it had. This is the number that
+-- fixes that, and it is the right one to turn because it cannot change the
+-- balance -- only the level.
+--
+-- The ceiling on it is the volume clamp, not the mixer: level() feeds
+-- Sound.volume, which saturates at 100, so a value high enough to push the
+-- loudest part past 100 would silently flatten the mix instead of raising it.
+-- At 150 the loudest computed level in the five themes is 93.
 musicGain : Int
-musicGain = 100
+musicGain = 150
 
 
 -- THE BASS. Two oscillators at the SAME pitch: the piece's own wave carries the
@@ -132,10 +144,10 @@ musicGain = 100
 -- the harmonics and drops the fundamental, so the line reads as a buzz an octave
 -- up rather than as a bass. The sine is the missing fundamental, put back.
 --
--- The volume and the ceiling are applied INSIDE each layer, not around the
--- chord, because those two are patchLast: wrapping the chord would set them on
--- the sine alone and leave the saw at full level with no ceiling. attack,
--- release and decay are patchAll and correctly go outside.
+-- The volume and the ceiling are applied INSIDE each layer because the two
+-- layers are mixed AGAINST each other: the saw carries the note and the sine
+-- puts the fundamental back under it, at its own level. One volume around the
+-- chord would set both to the same number and lose exactly that balance.
 bassOf : Sound.Wave -> Int -> List Note -> Sound
 bassOf wave vol notes =
     Sound.sequence (List.map (bassNote wave vol) notes)
@@ -152,13 +164,37 @@ bassNote wave vol n =
                 (Sound.decay 150 58
                     (Sound.attack 6
                         (Sound.chord
-                            [ Sound.highCut 2400
-                                (Sound.volume (level vol n.v)
-                                    (Sound.tone wave n.hz (n.n * stepMs - 30))
-                                )
-                            , Sound.volume (level vol n.v * 46 // 100)
-                                (Sound.tone Sound.Sine n.hz (n.n * stepMs - 30))
-                            ]
+                            (List.concat
+                                [ [ Sound.highCut 2400
+                                        (Sound.volume (level vol n.v)
+                                            (Sound.tone wave n.hz (n.n * stepMs - 30))
+                                        )
+                                  , Sound.volume (level vol n.v * 46 // 100)
+                                        (Sound.tone Sound.Sine n.hz (n.n * stepMs - 30))
+                                  ]
+
+                            -- And a SUB an octave down, but only where the
+                            -- written note is high enough that the octave below
+                            -- still lands in useful bass. Measured, the five
+                            -- themes disagreed wildly about the bottom: 1, 4 and
+                            -- 5 put 4-7% of their energy below 120 Hz while 2
+                            -- and 3 put 86-93% there, because 2 and 3 are
+                            -- WRITTEN an octave lower (theme 2's bass has a
+                            -- median of 73 Hz against theme 1's 110). A flat
+                            -- sub would have widened that gap instead of
+                            -- closing it. This condition closes it: a line
+                            -- already down there is its own sub and gets
+                            -- nothing, and a line up at 110 gets the 55 it was
+                            -- missing.
+                                , if n.hz >= 90 then
+                                    [ Sound.volume (level vol n.v * 34 // 100)
+                                        (Sound.tone Sound.Sine (n.hz // 2) (n.n * stepMs - 30))
+                                    ]
+
+                                  else
+                                    []
+                                ]
+                            )
                         )
                     )
                 )
@@ -173,7 +209,7 @@ bassNote wave vol n =
 -- held.
 counterOf : Int -> List Note -> Sound
 counterOf vol notes =
-    Sound.pan (0 - 38) (Sound.sequence (List.map (counterNote vol) notes))
+    Sound.pan (0 - 42) (Sound.sequence (List.map (counterNote vol) notes))
 
 
 counterNote : Int -> Note -> Sound
@@ -220,8 +256,8 @@ leadNote vol n =
             [ Sound.release 80
                 (Sound.decay 280 74
                     (Sound.chord
-                        [ Sound.pan (0 - 22) (Sound.detune (0 - 9) (leadLayer vol n))
-                        , Sound.pan 22 (Sound.detune 9 (leadLayer vol n))
+                        [ Sound.pan (0 - 32) (Sound.detune (0 - 9) (leadLayer vol n))
+                        , Sound.pan 32 (Sound.detune 9 (leadLayer vol n))
                         ]
                     )
                 )
@@ -315,7 +351,7 @@ snareHit vol v =
 hatHit : Int -> Int -> Sound
 hatHit vol v =
     Sound.sequence
-        [ Sound.pan 30
+        [ Sound.pan 40
             (Sound.decay 22 6
             (Sound.highCut 9000
                 (Sound.lowCut 3200

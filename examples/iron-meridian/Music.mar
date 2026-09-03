@@ -1,4 +1,4 @@
-module Music exposing (missionTheme, skirmishThemeCount)
+module Music exposing (..)
 
 import Sound
 
@@ -76,13 +76,15 @@ import Sound
 --     hats                30 right, so the counter has something opposite it and
 --                         the image does not lean left all piece.
 --
--- HOW IT KEEPS Sound.loop's INVARIANT (all voices summing to identical
--- milliseconds) true BY CONSTRUCTION rather than by anyone counting: every
--- pattern is exactly 16 steps and every voice plays the same number of bars, so
--- the four cannot drift apart. A voice that summed short would slide further out
--- of phase on every repeat until the loop was mush. The generator refuses to
--- write this file otherwise, and it also refuses if any piece falls under three
--- minutes.
+-- HOW IT KEEPS EVERY VOICE THE SAME LENGTH BY CONSTRUCTION rather than by
+-- anyone counting: every pattern is exactly 16 steps and every voice plays the
+-- same number of bars. A voice that summed short would fall silent in its own
+-- channel for the rest of the cycle -- a hole in the arrangement, on every
+-- repeat. (It would NOT drift: one cycle of Sound.loop is the longest voice's
+-- span and every voice is booked once per cycle from a shared origin. This
+-- comment used to say otherwise, of an older scheduler.) The generator refuses
+-- to write this file otherwise, and it also refuses if any piece falls under
+-- three minutes.
 --
 -- Only missionTheme and skirmishThemeCount escape the module.
 
@@ -120,8 +122,18 @@ level vol v =
 -- ONE KNOB for how loud the whole soundtrack sits under the game. The balance
 -- BETWEEN the voices is set per piece, where it belongs; this scales all of them
 -- together, so turning it changes the level and never the mix.
+-- Measured before this was touched: the five themes peaked between -8.8 and
+-- -12.0 dB with ZERO samples crossing the ceiling knee, i.e. the whole
+-- soundtrack was using about half the room it had. This is the number that
+-- fixes that, and it is the right one to turn because it cannot change the
+-- balance -- only the level.
+--
+-- The ceiling on it is the volume clamp, not the mixer: level() feeds
+-- Sound.volume, which saturates at 100, so a value high enough to push the
+-- loudest part past 100 would silently flatten the mix instead of raising it.
+-- At 150 the loudest computed level in the five themes is 93.
 musicGain : Int
-musicGain = 100
+musicGain = 150
 
 
 -- THE BASS. Two oscillators at the SAME pitch: the piece's own wave carries the
@@ -132,10 +144,10 @@ musicGain = 100
 -- the harmonics and drops the fundamental, so the line reads as a buzz an octave
 -- up rather than as a bass. The sine is the missing fundamental, put back.
 --
--- The volume and the ceiling are applied INSIDE each layer, not around the
--- chord, because those two are patchLast: wrapping the chord would set them on
--- the sine alone and leave the saw at full level with no ceiling. attack,
--- release and decay are patchAll and correctly go outside.
+-- The volume and the ceiling are applied INSIDE each layer because the two
+-- layers are mixed AGAINST each other: the saw carries the note and the sine
+-- puts the fundamental back under it, at its own level. One volume around the
+-- chord would set both to the same number and lose exactly that balance.
 bassOf : Sound.Wave -> Int -> List Note -> Sound
 bassOf wave vol notes =
     Sound.sequence (List.map (bassNote wave vol) notes)
@@ -152,13 +164,37 @@ bassNote wave vol n =
                 (Sound.decay 150 58
                     (Sound.attack 6
                         (Sound.chord
-                            [ Sound.highCut 2400
-                                (Sound.volume (level vol n.v)
-                                    (Sound.tone wave n.hz (n.n * stepMs - 30))
-                                )
-                            , Sound.volume (level vol n.v * 46 // 100)
-                                (Sound.tone Sound.Sine n.hz (n.n * stepMs - 30))
-                            ]
+                            (List.concat
+                                [ [ Sound.highCut 2400
+                                        (Sound.volume (level vol n.v)
+                                            (Sound.tone wave n.hz (n.n * stepMs - 30))
+                                        )
+                                  , Sound.volume (level vol n.v * 46 // 100)
+                                        (Sound.tone Sound.Sine n.hz (n.n * stepMs - 30))
+                                  ]
+
+                            -- And a SUB an octave down, but only where the
+                            -- written note is high enough that the octave below
+                            -- still lands in useful bass. Measured, the five
+                            -- themes disagreed wildly about the bottom: 1, 4 and
+                            -- 5 put 4-7% of their energy below 120 Hz while 2
+                            -- and 3 put 86-93% there, because 2 and 3 are
+                            -- WRITTEN an octave lower (theme 2's bass has a
+                            -- median of 73 Hz against theme 1's 110). A flat
+                            -- sub would have widened that gap instead of
+                            -- closing it. This condition closes it: a line
+                            -- already down there is its own sub and gets
+                            -- nothing, and a line up at 110 gets the 55 it was
+                            -- missing.
+                                , if n.hz >= 90 then
+                                    [ Sound.volume (level vol n.v * 34 // 100)
+                                        (Sound.tone Sound.Sine (n.hz // 2) (n.n * stepMs - 30))
+                                    ]
+
+                                  else
+                                    []
+                                ]
+                            )
                         )
                     )
                 )
@@ -173,7 +209,7 @@ bassNote wave vol n =
 -- held.
 counterOf : Int -> List Note -> Sound
 counterOf vol notes =
-    Sound.pan (0 - 38) (Sound.sequence (List.map (counterNote vol) notes))
+    Sound.pan (0 - 42) (Sound.sequence (List.map (counterNote vol) notes))
 
 
 counterNote : Int -> Note -> Sound
@@ -220,8 +256,8 @@ leadNote vol n =
             [ Sound.release 80
                 (Sound.decay 280 74
                     (Sound.chord
-                        [ Sound.pan (0 - 22) (Sound.detune (0 - 9) (leadLayer vol n))
-                        , Sound.pan 22 (Sound.detune 9 (leadLayer vol n))
+                        [ Sound.pan (0 - 32) (Sound.detune (0 - 9) (leadLayer vol n))
+                        , Sound.pan 32 (Sound.detune 9 (leadLayer vol n))
                         ]
                     )
                 )
@@ -315,7 +351,7 @@ snareHit vol v =
 hatHit : Int -> Int -> Sound
 hatHit vol v =
     Sound.sequence
-        [ Sound.pan 30
+        [ Sound.pan 40
             (Sound.decay 22 6
             (Sound.highCut 9000
                 (Sound.lowCut 3200
@@ -383,13 +419,13 @@ m1Bass i =
         [ ntv 98 6 58, ntv 73 4 58, ntv 110 6 58 ]
 
     else if i == 14 then
-        [ ntv 97 3 86, nt 0 1, ntv 97 2 86, ntv 97 1 86, ntv 156 3 86, nt 0 1, ntv 131 2 86, ntv 131 2 86, ntv 147 1 86 ]
+        [ ntv 73 3 86, nt 0 1, ntv 73 2 86, ntv 73 1 86, ntv 73 3 86, nt 0 1, ntv 73 2 86, ntv 104 2 86, ntv 104 1 86 ]
 
     else if i == 15 then
-        [ ntv 97 3 86, nt 0 1, ntv 97 2 86, ntv 97 1 86, ntv 97 3 86, nt 0 1, ntv 97 2 86, ntv 139 2 86, ntv 139 1 86 ]
+        [ ntv 117 6 86, nt 0 1, ntv 117 1 86, ntv 131 3 86, nt 0 1, ntv 131 2 86, ntv 65 2 86 ]
 
     else if i == 16 then
-        [ ntv 147 3 86, nt 0 1, ntv 147 2 86, ntv 147 1 86, ntv 147 2 86, ntv 186 2 86, ntv 220 2 86, ntv 262 2 86, ntv 147 1 86 ]
+        [ ntv 73 3 86, nt 0 1, ntv 73 2 86, ntv 73 1 86, ntv 117 3 86, nt 0 1, ntv 98 2 86, ntv 98 2 86, ntv 110 1 86 ]
 
     else if i == 17 then
         [ ntv 73 1 96, ntv 73 1 96, ntv 73 2 96, ntv 110 1 96, ntv 110 1 96, ntv 110 2 96, ntv 87 1 96, ntv 87 1 96, ntv 87 2 96, ntv 73 4 96 ]
@@ -469,13 +505,13 @@ m1Counter i =
         [ ntv 147 16 50 ]
 
     else if i == 18 then
-        [ ntv 196 2 80, ntv 234 1 80, nt 0 1, ntv 294 2 80, ntv 262 1 80, ntv 234 1 80, ntv 196 3 80, nt 0 1, ntv 234 2 80, ntv 208 1 80, ntv 196 1 80 ]
+        [ nt 0 1, ntv 147 2 80, ntv 196 6 80, nt 0 1, ntv 196 3 80, ntv 175 3 80 ]
 
     else if i == 19 then
-        [ ntv 294 3 80, nt 0 1, ntv 294 2 80, ntv 262 2 80, ntv 370 2 80, nt 0 1, ntv 392 2 80, ntv 370 2 80, ntv 294 1 80 ]
+        [ ntv 233 3 80, nt 0 1, ntv 233 2 80, ntv 175 2 80, ntv 262 3 80, nt 0 1, ntv 330 2 80, ntv 262 2 80 ]
 
     else if i == 20 then
-        [ nt 0 1, ntv 294 2 80, nt 0 1, ntv 278 2 80, ntv 262 2 80, nt 0 1, ntv 234 2 80, ntv 220 2 80, ntv 294 3 80 ]
+        [ nt 0 1, ntv 175 2 80, ntv 233 1 80, ntv 147 2 80, ntv 175 2 80, ntv 196 2 80, nt 0 1, ntv 233 2 80, ntv 196 2 80, ntv 175 1 80 ]
 
     else if i == 21 then
         [ ntv 220 3 94, nt 0 1, ntv 220 2 94, ntv 196 2 94, ntv 277 2 94, nt 0 1, ntv 330 2 94, ntv 277 2 94, ntv 220 1 94 ]
@@ -528,7 +564,7 @@ m1Lead i =
         [ nt 0 10, ntv 330 2 96, ntv 392 2 96, nt 0 1, ntv 294 1 96 ]
 
     else if i == 7 then
-        [ nt 0 1, ntv 587 2 96, ntv 784 5 96, nt 0 1, ntv 784 3 96, ntv 831 2 96, ntv 784 1 96, ntv 698 1 96 ]
+        [ nt 0 1, ntv 587 2 96, ntv 784 5 96, nt 0 1, ntv 784 3 96, ntv 880 2 96, ntv 784 1 96, ntv 698 1 96 ]
 
     else if i == 8 then
         [ ntv 466 3 70, ntv 523 3 70, ntv 587 3 70, nt 0 1, ntv 659 2 70, ntv 587 2 70, ntv 523 2 70 ]
@@ -543,7 +579,7 @@ m1Lead i =
         [ nt 0 10, ntv 330 2 70, ntv 392 2 70, nt 0 1, ntv 294 1 70 ]
 
     else if i == 12 then
-        [ nt 0 1, nt 587 2, nt 784 5, nt 0 1, nt 784 3, nt 831 2, nt 784 1, nt 698 1 ]
+        [ nt 0 1, nt 587 2, nt 784 5, nt 0 1, nt 784 3, nt 880 2, nt 784 1, nt 698 1 ]
 
     else if i == 13 then
         [ nt 0 1, nt 523 2, nt 698 5, nt 0 1, nt 698 3, nt 784 2, nt 698 1, nt 622 1 ]
@@ -564,27 +600,30 @@ m1Lead i =
         [ nt 0 2, ntv 392 3 44, ntv 349 2 44, ntv 311 3 44, ntv 294 4 44, nt 0 2 ]
 
     else if i == 19 then
-        [ nt 0 1, ntv 392 2 88, ntv 523 5 88, nt 0 1, ntv 523 3 88, ntv 587 2 88, ntv 523 1 88, ntv 466 1 88 ]
+        [ nt 0 1, ntv 587 2 88, ntv 784 5 88, nt 0 1, ntv 784 3 88, ntv 880 2 88, ntv 784 1 88, ntv 698 1 88 ]
 
     else if i == 20 then
-        [ nt 0 1, ntv 350 2 88, ntv 466 5 88, nt 0 1, ntv 466 3 88, ntv 523 2 88, ntv 466 1 88, ntv 415 1 88 ]
+        [ nt 0 1, ntv 523 2 88, ntv 698 5 88, nt 0 1, ntv 698 3 88, ntv 784 2 88, ntv 698 1 88, ntv 622 1 88 ]
 
     else if i == 21 then
-        [ ntv 622 3 88, ntv 698 3 88, ntv 784 3 88, nt 0 1, ntv 880 2 88, ntv 784 2 88, ntv 698 2 88 ]
+        [ nt 0 1, ntv 294 2 88, ntv 392 5 88, nt 0 1, ntv 392 3 88, ntv 415 2 88, ntv 392 1 88, ntv 349 1 88 ]
 
     else if i == 22 then
-        [ nt 466 3, nt 523 3, nt 587 3, nt 0 1, nt 659 2, nt 587 2, nt 523 2 ]
+        [ nt 0 1, ntv 262 2 88, ntv 349 5 88, nt 0 1, ntv 349 3 88, ntv 392 2 88, ntv 349 1 88, ntv 311 1 88 ]
 
     else if i == 23 then
-        [ nt 880 6, nt 784 4, nt 698 6 ]
+        [ nt 466 3, nt 523 3, nt 587 3, nt 0 1, nt 659 2, nt 587 2, nt 523 2 ]
 
     else if i == 24 then
-        [ nt 0 1, ntv 294 2 68, ntv 392 5 68, nt 0 1, ntv 392 3 68, ntv 440 2 68, ntv 392 1 68, ntv 349 1 68 ]
+        [ nt 880 6, nt 784 4, nt 698 6 ]
 
     else if i == 25 then
-        [ nt 0 1, ntv 262 2 68, ntv 349 5 68, nt 0 1, ntv 349 3 68, ntv 392 2 68, ntv 349 1 68, ntv 311 1 68 ]
+        [ nt 0 1, ntv 294 2 68, ntv 392 5 68, nt 0 1, ntv 392 3 68, ntv 440 2 68, ntv 392 1 68, ntv 349 1 68 ]
 
     else if i == 26 then
+        [ nt 0 1, ntv 262 2 68, ntv 349 5 68, nt 0 1, ntv 349 3 68, ntv 392 2 68, ntv 349 1 68, ntv 311 1 68 ]
+
+    else if i == 27 then
         [ ntv 415 2 68, nt 0 1, ntv 294 3 68, nt 0 2, ntv 415 2 68, nt 0 1, ntv 494 2 68, nt 0 1, ntv 587 2 68 ]
 
     else
@@ -692,9 +731,9 @@ m1CounterOrder =
 m1LeadOrder : List Int
 m1LeadOrder =
     [ 0, 1, 2, 3, 4, 5, 0, 6, 7, 5, 8, 9, 10, 1, 11, 12, 13, 14, 15, 16, 12, 13, 12, 17
-    , 1, 18, 1, 1, 1, 18, 1, 1, 1, 18, 1, 1, 19, 20, 19, 21, 19, 20, 19, 21, 19, 20, 19, 21
-    , 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 12, 13, 22, 23, 12, 13, 22, 23, 12, 13, 22, 23, 24, 25
-    , 26, 1, 27, 27
+    , 1, 18, 1, 1, 1, 18, 1, 1, 1, 18, 1, 1, 19, 20, 21, 22, 19, 20, 21, 22, 19, 20, 21, 22
+    , 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 12, 13, 23, 24, 12, 13, 23, 24, 12, 13, 23, 24, 25, 26
+    , 27, 1, 28, 28
     ]
 
 m1DrumOrder : List Int
@@ -2089,47 +2128,47 @@ missionTheme m =
     if m == 1 then
         -- Dust and Iron
         Sound.chord
-            [ bassOf Sound.Sawtooth 26 (arrange m1Bass m1BassOrder)
-            , counterOf 17 (arrange m1Counter m1CounterOrder)
-            , leadOf 22 (arrange m1Lead m1LeadOrder)
-            , drumLine 62 (arrange m1Drum m1DrumOrder)
+            [ bassOf Sound.Sawtooth 19 (arrange m1Bass m1BassOrder)
+            , counterOf 29 (arrange m1Counter m1CounterOrder)
+            , leadOf 29 (arrange m1Lead m1LeadOrder)
+            , drumLine 58 (arrange m1Drum m1DrumOrder)
             ]
 
     else if m == 2 then
         -- The Silo Gambit
         Sound.chord
-            [ bassOf Sound.Triangle 28 (arrange m2Bass m2BassOrder)
-            , counterOf 15 (arrange m2Counter m2CounterOrder)
-            , leadOf 19 (arrange m2Lead m2LeadOrder)
-            , drumLine 54 (arrange m2Drum m2DrumOrder)
+            [ bassOf Sound.Triangle 10 (arrange m2Bass m2BassOrder)
+            , counterOf 27 (arrange m2Counter m2CounterOrder)
+            , leadOf 27 (arrange m2Lead m2LeadOrder)
+            , drumLine 62 (arrange m2Drum m2DrumOrder)
             ]
 
     else if m == 3 then
         -- Static
         Sound.chord
-            [ bassOf Sound.Square 24 (arrange m3Bass m3BassOrder)
-            , counterOf 14 (arrange m3Counter m3CounterOrder)
-            , leadOf 17 (arrange m3Lead m3LeadOrder)
+            [ bassOf Sound.Square 6 (arrange m3Bass m3BassOrder)
+            , counterOf 30 (arrange m3Counter m3CounterOrder)
+            , leadOf 42 (arrange m3Lead m3LeadOrder)
             , drumLine 58 (arrange m3Drum m3DrumOrder)
             ]
 
     else if m == 4 then
         -- Scrap Truce
         Sound.chord
-            [ bassOf Sound.Sawtooth 25 (arrange m4Bass m4BassOrder)
-            , counterOf 13 (arrange m4Counter m4CounterOrder)
-            , leadOf 21 (arrange m4Lead m4LeadOrder)
-            , drumLine 60 (arrange m4Drum m4DrumOrder)
+            [ bassOf Sound.Sawtooth 18 (arrange m4Bass m4BassOrder)
+            , counterOf 27 (arrange m4Counter m4CounterOrder)
+            , leadOf 29 (arrange m4Lead m4LeadOrder)
+            , drumLine 56 (arrange m4Drum m4DrumOrder)
             ]
 
     else
         -- Meridian Engine, and the fallback for any number outside 1..5,
         -- which is what skirmish rides on when its draw lands here.
         Sound.chord
-            [ bassOf Sound.Sawtooth 27 (arrange m5Bass m5BassOrder)
-            , counterOf 17 (arrange m5Counter m5CounterOrder)
-            , leadOf 22 (arrange m5Lead m5LeadOrder)
-            , drumLine 62 (arrange m5Drum m5DrumOrder)
+            [ bassOf Sound.Sawtooth 19 (arrange m5Bass m5BassOrder)
+            , counterOf 29 (arrange m5Counter m5CounterOrder)
+            , leadOf 29 (arrange m5Lead m5LeadOrder)
+            , drumLine 58 (arrange m5Drum m5DrumOrder)
             ]
 
 
@@ -2137,3 +2176,73 @@ missionTheme m =
 -- disagree
 skirmishThemeCount : Int
 skirmishThemeCount = 5
+
+
+-- ===== diagnostics =====
+--
+-- One value per theme per part, so a balance question can be MEASURED instead
+-- of guessed at. Rendering the parts alone is the only thing that catches an
+-- accompaniment sitting on top of the thing it accompanies, and every mix in
+-- this repo that has been checked that way turned out to have one.
+--
+-- Nothing in the game reads these; they exist for tools/render.mjs.
+
+dBass1 : Sound
+dBass1 = bassOf Sound.Sawtooth 19 (arrange m1Bass m1BassOrder)
+
+dCounter1 : Sound
+dCounter1 = counterOf 29 (arrange m1Counter m1CounterOrder)
+
+dLead1 : Sound
+dLead1 = leadOf 29 (arrange m1Lead m1LeadOrder)
+
+dDrum1 : Sound
+dDrum1 = drumLine 58 (arrange m1Drum m1DrumOrder)
+
+dBass2 : Sound
+dBass2 = bassOf Sound.Triangle 10 (arrange m2Bass m2BassOrder)
+
+dCounter2 : Sound
+dCounter2 = counterOf 27 (arrange m2Counter m2CounterOrder)
+
+dLead2 : Sound
+dLead2 = leadOf 27 (arrange m2Lead m2LeadOrder)
+
+dDrum2 : Sound
+dDrum2 = drumLine 62 (arrange m2Drum m2DrumOrder)
+
+dBass3 : Sound
+dBass3 = bassOf Sound.Square 6 (arrange m3Bass m3BassOrder)
+
+dCounter3 : Sound
+dCounter3 = counterOf 30 (arrange m3Counter m3CounterOrder)
+
+dLead3 : Sound
+dLead3 = leadOf 42 (arrange m3Lead m3LeadOrder)
+
+dDrum3 : Sound
+dDrum3 = drumLine 58 (arrange m3Drum m3DrumOrder)
+
+dBass4 : Sound
+dBass4 = bassOf Sound.Sawtooth 18 (arrange m4Bass m4BassOrder)
+
+dCounter4 : Sound
+dCounter4 = counterOf 27 (arrange m4Counter m4CounterOrder)
+
+dLead4 : Sound
+dLead4 = leadOf 29 (arrange m4Lead m4LeadOrder)
+
+dDrum4 : Sound
+dDrum4 = drumLine 56 (arrange m4Drum m4DrumOrder)
+
+dBass5 : Sound
+dBass5 = bassOf Sound.Sawtooth 19 (arrange m5Bass m5BassOrder)
+
+dCounter5 : Sound
+dCounter5 = counterOf 29 (arrange m5Counter m5CounterOrder)
+
+dLead5 : Sound
+dLead5 = leadOf 29 (arrange m5Lead m5LeadOrder)
+
+dDrum5 : Sound
+dDrum5 = drumLine 58 (arrange m5Drum m5DrumOrder)

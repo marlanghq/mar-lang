@@ -16,6 +16,16 @@
 // classes two octaves apart is a minor 9th and is a colour, not a clash. So the
 // absolute distance decides, not the interval class.
 //
+// A BLIND SPOT worth knowing about, since a listener caught one by ear that
+// this did not: a note against its OWN sharp -- G natural under G# two octaves
+// up -- is a cross relation, and the ear hears the harmony contradicting
+// itself rather than a wide interval. Distance does not soften it. Detecting
+// those generally was tried and abandoned: without the spelling, C-against-C#
+// (a real cross relation) is indistinguishable from E-against-F (an ordinary
+// minor 9th and perfectly fine), and a pass over the five themes flagged 48 to
+// 197 per theme, almost all of them the harmless kind. Until that is separated
+// properly, the ear is still the instrument for this one.
+//
 //   node harmony.mjs            all five themes, worst bars first
 //   node harmony.mjs 4          one theme, every flagged bar
 //   node harmony.mjs 4 26       one bar, note by note, which is what you need
