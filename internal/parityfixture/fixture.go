@@ -270,14 +270,18 @@ intDivision =
         )
 
 
--- More of the pairs the structural scan turned up. What each line here is
--- verified to reach was measured, not assumed, because two of the claims I
--- first wrote were wrong:
+-- More of the pairs the structural scan turned up. Every line below was
+-- verified by BREAKING the function it claims to reach and watching this value
+-- fail -- because two of the claims I first wrote here were wrong, and reading
+-- the code had not told me so:
 --
---   padLeft / padRight   reaches padString: breaking its left/right flag on
---                        one client fails this value
---   isqrt                reaches isqrtInt
---   toScale, comparison  reach decToScale and decCompare
+--   padLeft / padRight   padString: invert its left/right flag and 00042
+--                        becomes 42000
+--   isqrt                isqrtInt: return the input and 4 becomes 17
+--   toScale              decToScale: return the input unrounded and 1.00|-1.2
+--                        becomes 1.005|-1.25
+--   comparison           decCompare: return 1 always and lt becomes ge, and
+--                        decimalScale's eq becomes ne
 --   modBy, remainderBy   are their OWN implementations on each runtime, NOT
 --                        posMod: the phone writes the sign correction by hand
 --                        in the builtin. posMod is reached through Angle, and
