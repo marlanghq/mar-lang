@@ -66,6 +66,35 @@ final class MarWireShape {
 }
 
 enum MarWire {
+    /// Why JSONSerialization refused, in Mar's words.
+    ///
+    /// It reports every failure as NSCocoaErrorDomain 3840, so the CODE says
+    /// nothing; what separates them is NSDebugDescription. Measured:
+    ///
+    ///   {"v":1e400}   Number wound up as NaN around line 1, column 5.
+    ///   <html>        Invalid value around line 1, column 0.
+    ///   {oops}        No string key for value in object around line 1, column 1.
+    ///
+    /// The first is VALID JSON that Foundation will not hold, and calling it
+    /// "not valid JSON" is a false statement to whoever reads it -- the same
+    /// defect as any wrong message, except this one sends a person looking for
+    /// a syntax error that is not there.
+    ///
+    /// Reading a debug string is fragile, so it is used only to say something
+    /// MORE precise: no match falls back to the sentence this always gave, and
+    /// an OS that reworded it degrades to today's behaviour rather than worse.
+    ///
+    /// The three runtimes still answer this document differently, and that is
+    /// recorded in internal/runtime/json.go: agreeing means deciding what each
+    /// one ACCEPTS as a number, which is a decision and not a fix.
+    static func whyNotJSON(_ error: Error) -> String {
+        let debug = (error as NSError).userInfo["NSDebugDescription"] as? String ?? ""
+        if debug.contains("NaN") || debug.contains("out of range") {
+            return "the document holds a number too large for Mar to hold"
+        }
+        return "the document is not valid JSON"
+    }
+
     /// What a document that parsed but could not become a Mar value says when
     /// the failure carries no sentence of its own. Fixed text, because the
     /// host's is localized and would make the answer depend on the device.
@@ -318,7 +347,7 @@ enum MarWire {
                 )
             } catch {
                 return .ctor(tag: "Err",
-                             args: [.string("the document is not valid JSON")],
+                             args: [.string(whyNotJSON(error))],
                              origin: nil)
             }
             do {

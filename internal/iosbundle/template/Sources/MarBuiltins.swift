@@ -2207,7 +2207,7 @@ enum MarBuiltins {
                 // `localizedDescription` made the value a program receives depend
                 // on the PHONE'S LANGUAGE.
                 return .ctor(tag: "Err",
-                             args: [.string("the document is not valid JSON")],
+                             args: [.string(MarWire.whyNotJSON(error))],
                              origin: nil)
             }
         }))
