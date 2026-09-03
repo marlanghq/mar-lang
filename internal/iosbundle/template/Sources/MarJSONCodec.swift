@@ -264,6 +264,24 @@ enum MarJSONCodec {
     /// MarValue → Foundation JSON value. Mirrors `marToJs` in
     /// runtime.js: Maybe.Just/Nothing/Result.Ok/Err unwrap; other
     /// ctors serialize as `{tag, args}`.
+    /// Whether a value carries an unresolved Decimal.Division anywhere inside
+    /// it. marToJSON cannot throw, so the refusal has to be decided before the
+    /// walk rather than during it.
+    static func holdsDivision(_ v: MarValue) -> Bool {
+        switch v {
+        case .division:
+            return true
+        case .list(let xs), .tuple(let xs):
+            return xs.contains(where: holdsDivision)
+        case .record(let fs, _):
+            return fs.values.contains(where: holdsDivision)
+        case .ctor(_, let args, _):
+            return args.contains(where: holdsDivision)
+        default:
+            return false
+        }
+    }
+
     static func marToJSON(_ v: MarValue) -> Any {
         switch v {
         case .int(let n): return n

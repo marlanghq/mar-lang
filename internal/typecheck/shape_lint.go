@@ -720,19 +720,20 @@ func matchRepoOp(app *ast.EApp, ctx lintCtx) []ShapeIssue {
 // The list is not written from memory: encoder_cases_test.go derives it from
 // the `case` arms of encodeValue and fails when the two disagree.
 var noJSONForm = map[string]string{
-	"Page":           "a Page",
-	"View":           "a View",
-	"Entity":         "an Entity",
-	"Service":        "a Service",
-	"ExposedService": "an exposed Service",
-	"Auth":           "an Auth config",
-	"Path":           "a Path",
-	"Column":         "a Column",
-	"Constraint":     "a Constraint",
-	"Attr":           "an Attr",
-	"App.Shared":     "a shared store",
-	"Cmd":            "a Cmd",
-	"Task":           "a Task",
+	"Page":             "a Page",
+	"View":             "a View",
+	"Entity":           "an Entity",
+	"Service":          "a Service",
+	"ExposedService":   "an exposed Service",
+	"Auth":             "an Auth config",
+	"Path":             "a Path",
+	"Column":           "a Column",
+	"Constraint":       "a Constraint",
+	"Attr":             "an Attr",
+	"App.Shared":       "a shared store",
+	"Decimal.Division": "a Decimal.Division — resolve it with Decimal.rounded or Decimal.withRemainder first",
+	"Cmd":              "a Cmd",
+	"Task":             "a Task",
 }
 
 // matchJSONEncode refuses `JSON.encode x` when x is definitely one of the

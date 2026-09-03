@@ -95,6 +95,11 @@ func TestTheSentencesAUserReadsAreWrittenTheSameThreeTimes(t *testing.T) {
 	for _, c := range []struct{ what, sentence string }{
 		{"runaway recursion", "A function is calling itself without reaching a base case"},
 		{"a field the types promised", "did not come from this program's types"},
+		// The phone used to encode an unresolved division as null, silently,
+		// because its codec cannot throw. `JSON.encode { q = 1.0 / 3.0 }`
+		// shipped {"q":null} off the device and the receiver got a null where a
+		// number belonged. The other two refused with this sentence.
+		{"an unresolved division", "cannot encode a Decimal.Division"},
 	} {
 		for _, f := range []struct{ label, path string }{
 			{"server", "../runtime"},

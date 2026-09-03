@@ -2214,6 +2214,24 @@ enum MarBuiltins {
         env.define("JSON.decode", env.lookup("jsonDecode")!)
 
         env.define("jsonEncode", .fn(MarFn.native(1) { args in
+            // A Decimal.Division is a QUESTION, not a number: the inert exact
+            // quotient, waiting for Decimal.rounded or withRemainder to say how
+            // much precision the answer gets. It has no JSON form, and the
+            // other two runtimes refuse it with this sentence.
+            //
+            // This side used to encode it as null -- silently, because
+            // marToJSON cannot throw -- so `JSON.encode { q = 1.0 / 3.0 }`
+            // shipped {"q":null} off the phone and the receiver got a null
+            // where a number belonged. Nothing anywhere said so.
+            // Word for word what the other two say. Naming the field would be
+            // more helpful and is deliberately NOT done here: any runtime could
+            // name it, so one runtime saying more is a divergence rather than
+            // platform chrome. Add it to all three or to none.
+            if MarJSONCodec.holdsDivision(args[0]) {
+                throw MarRuntimeError.message(
+                    "JSON.encode: cannot encode a Decimal.Division — resolve it with "
+                        + "Decimal.rounded or Decimal.withRemainder first")
+            }
             let any = MarJSONCodec.marToJSON(args[0])
             do {
                 // `.sortedKeys` is not cosmetic. marToJSON hands back Swift
