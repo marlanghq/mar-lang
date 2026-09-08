@@ -87,6 +87,57 @@ pairOf s =
     JSON.decode s
 
 
+asDec : String -> Result String { v : Decimal }
+asDec s =
+    JSON.decode s
+
+
+sayDec : String -> String
+sayDec s =
+    case asDec s of
+        Ok r ->
+            "ok " ++ Decimal.toString r.v
+
+        Err e ->
+            "err " ++ e
+
+
+numNotation : String
+numNotation =
+    String.join "|"
+        [ sayDec "{\"v\":1e30}"
+        , sayDec "{\"v\":1000000000000000000000000000000}"
+        , sayDec "{\"v\":19.99}"
+        , sayDec "{\"v\":1.5e-3}"
+        , sayDec "{\"v\":12345678901234567890}"
+        ]
+
+
+asWholeNum : String -> Result String { v : Int }
+asWholeNum s =
+    JSON.decode s
+
+
+sayWhole : String -> String
+sayWhole s =
+    case asWholeNum s of
+        Ok r ->
+            "ok " ++ String.fromInt r.v
+
+        Err e ->
+            "err " ++ e
+
+
+numRefusals : String
+numRefusals =
+    String.join "|"
+        [ sayDec "{\"v\":1e400}"
+        , sayWhole "{\"v\":1e30}"
+        , sayWhole "{\"v\":42}"
+        , sayWhole "{\"v\":9007199254740992}"
+        ]
+
+
 note : Path { slug : String }
 note =
     "/notes/{slug:String}"
@@ -383,6 +434,8 @@ var Names = []string{
 	"missingField",
 	"notAnObject",
 	"notJSONAtAll",
+	"numNotation",
+	"numRefusals",
 	"pluralWireError",
 	"link",
 	"money",

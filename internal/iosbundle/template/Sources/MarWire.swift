@@ -341,10 +341,7 @@ enum MarWire {
             // `{"__char":"abc"}` — valid JSON — that their document was not.
             let parsed: Any
             do {
-                parsed = try JSONSerialization.jsonObject(
-                    with: Data(raw.utf8),
-                    options: [.fragmentsAllowed]
-                )
+                parsed = try MarJSONCodec.parseJSONExact(raw)
             } catch {
                 return .ctor(tag: "Err",
                              args: [.string(whyNotJSON(error))],

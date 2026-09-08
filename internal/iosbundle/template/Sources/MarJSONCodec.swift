@@ -122,14 +122,28 @@ enum MarJSONCodec {
             if d == d.rounded(.towardZero) && abs(d) < 9_007_199_254_740_992 {
                 return .int(n.intValue)
             }
-            // A fractional JSON number decodes into a Decimal via its
-            // shortest-round-trip digits (Swift renders 19.99 as
-            // "19.99"), matching the Go and JS decoders. Exponent
-            // forms / overflows fall back to .float interop.
-            if let dec = DecMath.parseDecimalString("\(d)") {
+            // A JSON number decodes into an exact Decimal, and the digits come
+            // from decimalValue rather than from doubleValue.
+            //
+            // This used to render the DOUBLE back to a string, which loses the
+            // number before Mar ever sees it. Measured on the same document:
+            //
+            //   {"v":1000000000000000000000000000000}
+            //     doubleValue    9.999999999999999e+29   <- not the number sent
+            //     decimalValue   1000000000000000000000000000000
+            //
+            // NSDecimal is base-10, so it keeps what the sender wrote, and
+            // both spellings of one value -- 1e30 and the thirty-one digits --
+            // arrive as the same Decimal. Notation is not information.
+            if let dec = DecMath.parseDecimalString("\(n.decimalValue)") {
                 return .decimal(dec)
             }
-            return .float(d)
+            // Nothing else is a number in Mar. `.float` used to catch this,
+            // and a float has no type: a checked program can never hold one,
+            // so it existed only to reach a shape check and fail there.
+            throw MarRuntimeError.message(
+                "JSON: \(n.decimalValue) is not a number Mar can hold exactly:"
+                + " an Int is at most 9007199254740991 and a Decimal at most 34 significant digits")
         }
         if let s = any as? String { return .string(s) }
         if let b = any as? Bool { return .bool(b) }
@@ -137,6 +151,11 @@ enum MarJSONCodec {
             return .list(try arr.map(jsonToMar))
         }
         if let dict = any as? [String: Any] {
+            // A number literal lifted out of the text by parseJSONExact, so
+            // the digits the sender wrote are what gets read.
+            if dict.count == 1, let lit = dict["__num"] as? String {
+                return try numberFromLiteral(lit)
+            }
             // Tagged constructor, round-trip from {__ctor: "Tag"} or
             // {__ctor: "Tag", __args: [...]}. Same convention as the
             // Go encoders and the JS jsToMar.
@@ -187,8 +206,13 @@ enum MarJSONCodec {
             // than quietly falling through to a record — the same rule
             // `__char` follows, and the same sentence in all three
             // runtimes. Pinned by the Decode block of the corpus.
-            if let n = dict["__angle"] as? NSNumber, dict.count == 1 {
-                let d = n.doubleValue
+            // rawNumberOf, not `as? NSNumber`: after parseJSONExact every
+            // number in the document is a lifted literal, so the tagged forms
+            // that carry one read it the same way. __angle is the only one --
+            // __dec, __char and __time are strings, __dict and __set arrays --
+            // and missing it turned every Angle on the wire into "got an
+            // object with __angle".
+            if let d = rawNumberOf(dict["__angle"]), dict.count == 1 {
                 guard d == d.rounded(.towardZero), let i = Int(exactly: d) else {
                     throw MarRuntimeError.message(
                         "the value should be a whole number of deci-degrees, got \(formatWireNumber(d))")
@@ -379,6 +403,135 @@ enum MarJSONCodec {
         case .fn, .view, .effect:
             return NSNull()
         }
+    }
+
+    // MARK: - Exact numbers
+
+    /// Parses a document WITHOUT letting Foundation's number parser see the
+    /// numbers.
+    ///
+    /// JSONSerialization hands back an NSNumber, and two things go wrong there.
+    /// `doubleValue` is not the number that was sent -- measured, on the same
+    /// document:
+    ///
+    ///     {"v":1000000000000000000000000000000}
+    ///       doubleValue    9.999999999999999e+29
+    ///
+    /// And a number no Double can hold makes it refuse the WHOLE DOCUMENT, so
+    /// the phone reported a valid document as invalid and could not say which
+    /// number was the problem, because it never saw one.
+    ///
+    /// So the number literals are lifted out of the text first, as
+    /// {"__num": "<the literal>"}, and read as digits. Structure, escapes and
+    /// syntax errors stay Foundation's job. Mirrors parseJSONExact in
+    /// internal/jsserve/runtime.js and the wire path in internal/runtime/json.go.
+    ///
+    /// The scan only has to know one thing to be correct: outside a string,
+    /// JSON has no digits except in numbers. `true`, `false` and `null` have
+    /// none.
+    static func liftNumberLiterals(_ text: String) -> String {
+        var out = ""
+        let chars = Array(text)
+        var i = 0
+        while i < chars.count {
+            let c = chars[i]
+            if c == "\"" {
+                var j = i + 1
+                while j < chars.count {
+                    if chars[j] == "\\" { j += 2; continue }
+                    if chars[j] == "\"" { j += 1; break }
+                    j += 1
+                }
+                out += String(chars[i..<min(j, chars.count)])
+                i = j
+                continue
+            }
+            if c == "-" || (c >= "0" && c <= "9") {
+                var j = i
+                if chars[j] == "-" { j += 1 }
+                while j < chars.count, "0123456789.eE+-".contains(chars[j]) { j += 1 }
+                let lit = String(chars[i..<j])
+                out += "{\"__num\":\"" + lit + "\"}"
+                i = j
+                continue
+            }
+            out.append(c)
+            i += 1
+        }
+        return out
+    }
+
+    /// Reads a JSON number that may have been lifted out of the text, and
+    /// answers nil for anything that is not a number at all.
+    static func rawNumberOf(_ any: Any?) -> Double? {
+        if let n = any as? NSNumber, CFGetTypeID(n) != CFBooleanGetTypeID() {
+            return n.doubleValue
+        }
+        if let d = any as? [String: Any], d.count == 1, let lit = d["__num"] as? String {
+            return Double(lit)
+        }
+        return nil
+    }
+
+    static func parseJSONExact(_ text: String) throws -> Any {
+        return try JSONSerialization.jsonObject(
+            with: Data(liftNumberLiterals(text).utf8),
+            options: [.fragmentsAllowed]
+        )
+    }
+
+    /// Turns a JSON number's own text into the Mar value it names: an Int when
+    /// it is whole and inside 53 bits, an exact Decimal when it fits 34
+    /// significant digits, and nothing otherwise.
+    ///
+    /// Nothing else is a number in Mar. `.float` used to catch the rest, and a
+    /// float has no type -- a checked program can never hold one, so it existed
+    /// only to reach a shape check and fail there.
+    static func numberFromLiteral(_ lit: String) throws -> MarValue {
+        if isPlainInteger(lit), let n = Int(lit), MarInt.inRange(n) {
+            return .int(n)
+        }
+        if let dec = DecMath.parseDecimalString(plainDigits(lit)) {
+            return .decimal(dec)
+        }
+        throw MarRuntimeError.message(
+            "JSON: \(lit) is not a number Mar can hold exactly:"
+            + " an Int is at most \(MarInt.max) and a Decimal at most 34 significant digits")
+    }
+
+    private static func isPlainInteger(_ s: String) -> Bool {
+        var body = Substring(s)
+        if body.hasPrefix("-") { body = body.dropFirst() }
+        return !body.isEmpty && body.allSatisfy { $0.isNumber }
+    }
+
+    /// Rewrites exponent notation as digits by MOVING THE POINT, never by
+    /// multiplying a Double -- which is the approximation this path exists to
+    /// avoid. 1e30 becomes a 1 and thirty zeros.
+    static func plainDigits(_ lit: String) -> String {
+        guard let e = lit.firstIndex(where: { $0 == "e" || $0 == "E" }) else { return lit }
+        let mantissa = String(lit[lit.startIndex..<e])
+        guard let exp = Int(lit[lit.index(after: e)...]) else { return lit }
+        var sign = ""
+        var body = mantissa
+        if body.hasPrefix("-") { sign = "-"; body = String(body.dropFirst()) }
+        if body.hasPrefix("+") { body = String(body.dropFirst()) }
+        let parts = body.split(separator: ".", maxSplits: 1, omittingEmptySubsequences: false)
+        let intPart = String(parts.first ?? "")
+        let frac = parts.count > 1 ? String(parts[1]) : ""
+        var digits = intPart + frac
+        var point = intPart.count + exp
+        if point <= 0 {
+            digits = String(repeating: "0", count: 1 - point) + digits
+            point = 1
+        }
+        if point >= digits.count {
+            digits += String(repeating: "0", count: point - digits.count)
+        }
+        let idx = digits.index(digits.startIndex, offsetBy: point)
+        let whole = String(digits[digits.startIndex..<idx])
+        let rest = String(digits[idx...])
+        return sign + (rest.isEmpty ? whole : whole + "." + rest)
     }
 
     // MARK: - Program decoding (program.json → typed Swift)

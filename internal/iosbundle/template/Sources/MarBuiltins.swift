@@ -2197,11 +2197,14 @@ enum MarBuiltins {
                 throw MarRuntimeError.typeMismatch(expected: "String", got: Eval.typeOf(args[0]))
             }
             do {
-                let any = try JSONSerialization.jsonObject(
-                    with: Data(raw.utf8),
-                    options: [.fragmentsAllowed]
-                )
+                let any = try MarJSONCodec.parseJSONExact(raw)
                 return .ctor(tag: "Ok", args: [try MarJSONCodec.jsonToMar(any)], origin: nil)
+            } catch let e as MarRuntimeError {
+                // Already Mar's own sentence -- a number the language cannot
+                // hold, say. whyNotJSON is for FOUNDATION's failures, and
+                // running it over this one replaced a precise message with a
+                // guess about the document's syntax.
+                return .ctor(tag: "Err", args: [.string(e.errorDescription ?? "the document is not valid JSON")], origin: nil)
             } catch {
                 // Mar's sentence, not Foundation's: see internal/runtime/json.go.
                 // `localizedDescription` made the value a program receives depend

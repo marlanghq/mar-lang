@@ -492,6 +492,126 @@
     }
   }
 
+  // parseJSONExact parses a document WITHOUT letting the engine's number
+  // parser see the numbers.
+  //
+  // JSON.parse hands back a float64, and by then the digits are gone. Measured
+  // on one document, in the browser, against what the sender wrote:
+  //
+  //   1000000000000000000000000000000  ->  String(n) === "1e+30"
+  //   12345678901234567890             ->  "12345678901234567000"
+  //   9007199254740993                 ->  "9007199254740992"
+  //
+  // The first two are values Mar CAN hold exactly -- a Decimal is 34
+  // significant digits -- and the engine had already lost them before any Mar
+  // code ran. So the number literals are lifted out of the text first, as
+  // {"__num": "<the literal>"}, and jsToMar reads the digits rather than a
+  // double. The structure, the escapes and the syntax errors stay JSON.parse's
+  // job, which is the part it is good at.
+  //
+  // The scan only has to know one thing to be correct: outside a string, JSON
+  // has no digits except in numbers. `true`, `false` and `null` have none.
+  function liftNumberLiterals(text) {
+    let out = '';
+    let i = 0;
+    while (i < text.length) {
+      const c = text[i];
+      if (c === '"') {
+        // Copy the string whole, escapes included, so a digit inside it is
+        // never mistaken for a number.
+        let j = i + 1;
+        while (j < text.length) {
+          if (text[j] === '\\') { j += 2; continue; }
+          if (text[j] === '"') { j++; break; }
+          j++;
+        }
+        out += text.slice(i, j);
+        i = j;
+        continue;
+      }
+      if (c === '-' || (c >= '0' && c <= '9')) {
+        let j = i;
+        if (text[j] === '-') j++;
+        while (j < text.length && /[0-9.eE+\-]/.test(text[j])) j++;
+        out += '{"__num":' + JSON.stringify(text.slice(i, j)) + '}';
+        i = j;
+        continue;
+      }
+      out += c;
+      i++;
+    }
+    return out;
+  }
+
+  // rawNumberOf reads a JSON number that may have been lifted out of the text,
+  // and returns undefined for anything that is not a number at all.
+  function rawNumberOf(v) {
+    if (typeof v === 'number') return v;
+    if (v && typeof v === 'object' && typeof v.__num === 'string' && Object.keys(v).length === 1) {
+      const n = Number(v.__num);
+      return Number.isFinite(n) ? n : undefined;
+    }
+    return undefined;
+  }
+
+  function parseJSONExact(text) {
+    return JSON.parse(liftNumberLiterals(text));
+  }
+
+  // numberFromLiteral turns a JSON number's own text into the Mar value it
+  // names: an Int when it is whole and inside 53 bits, an exact Decimal when
+  // it fits 34 significant digits, and nothing otherwise.
+  //
+  // Nothing else is a number in Mar. There used to be a VFloat fallback, and
+  // VFloat has no type -- TFloat does not exist, so a checked program can
+  // never hold one. It existed only to reach a shape check and fail there,
+  // reporting "should be a number, got a number".
+  // plainDigits rewrites exponent notation as digits, by MOVING THE POINT --
+  // never by multiplying a double, which is the approximation this whole path
+  // exists to avoid. 1e30 becomes a 1 and thirty zeros.
+  //
+  // The Decimal parser refuses an exponent on purpose: what a Mar literal and
+  // `Decimal.fromString` accept is the language's business. What a JSON
+  // document may carry is the boundary's, and every serializer prints a large
+  // number in exponent form -- so refusing it there meant one value decoded or
+  // did not depending on how the sender chose to spell it.
+  function plainDigits(lit) {
+    const m = /^(-?)([0-9]*)(?:\.([0-9]*))?[eE]([+-]?[0-9]+)$/.exec(lit);
+    if (!m) return lit;
+    const sign = m[1];
+    const intPart = m[2] || '';
+    const frac = m[3] || '';
+    const exp = parseInt(m[4], 10);
+    let digits = intPart + frac;
+    // Where the point sits after the shift, counted from the left.
+    let point = intPart.length + exp;
+    if (point <= 0) {
+      digits = '0'.repeat(1 - point) + digits;
+      point = 1;
+    }
+    if (point >= digits.length) {
+      digits += '0'.repeat(point - digits.length);
+    }
+    const whole = digits.slice(0, point);
+    const rest = digits.slice(point);
+    return sign + (rest ? whole + '.' + rest : whole);
+  }
+
+  function numberFromLiteral(lit) {
+    if (!/^-?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][+-]?[0-9]+)?$/.test(lit)) {
+      throw new Error('the document is not valid JSON');
+    }
+    // A plain integer short enough to be exact stays an Int.
+    if (/^-?[0-9]+$/.test(lit)) {
+      const n = Number(lit);
+      if (Number.isSafeInteger(n)) return VInt(n);
+    }
+    const d = parseDecString(plainDigits(lit));
+    if (d) return d;
+    throw new Error('JSON: ' + lit + ' is not a number Mar can hold exactly:' +
+      ' an Int is at most 9007199254740991 and a Decimal at most 34 significant digits');
+  }
+
   function jsToMar(v) {
     // null → VUnit. Previously null → VCtor('Nothing'), but that
     // collided with VUnit's wire encoding (Go encodes () as null):
@@ -502,28 +622,31 @@
     // the Go side and MarJSONCodec on iOS.
     if (v === null || v === undefined) return VUnit();
     if (typeof v === 'number') {
+      // Reached only by a caller that parsed with JSON.parse rather than
+      // parseJSONExact -- Mar's own wire format, whose numbers are already
+      // bounded by what the server encoded. A foreign document goes through
+      // numberFromLiteral and never arrives here as a double.
       if (Number.isInteger(v)) {
-        // A whole number the wire can carry but Mar cannot represent is
-        // refused rather than rounded. JSON.parse has already lost the exact
-        // digits by this point, so the value here is only good enough to tell
-        // that it was out of range, which is all the refusal needs.
         if (!Number.isSafeInteger(v)) {
           throw new Error('Int out of range: ' + v +
             ' from JSON is outside the range of Int (-9007199254740991 to 9007199254740991)');
         }
         return VInt(v);
       }
-      // A fractional JSON number decodes into a Decimal via its
-      // shortest-round-trip digits (String(19.99) === "19.99"), so
-      // clean decimals arrive exact. Exponent forms / overflows fall
-      // back to VFloat, the runtime-only interop representation.
       const d = parseDecString(String(v));
-      return d || VFloat(v);
+      if (d) return d;
+      throw new Error('JSON: ' + v + ' is not a number Mar can hold exactly:' +
+        ' an Int is at most 9007199254740991 and a Decimal at most 34 significant digits');
     }
     if (typeof v === 'string') return VString(v);
     if (typeof v === 'boolean') return VBool(v);
     if (Array.isArray(v)) return VList(v.map(jsToMar));
     if (typeof v === 'object') {
+      // A number literal lifted out of the text by parseJSONExact, so the
+      // digits the sender wrote are what gets read.
+      if (typeof v.__num === 'string' && Object.keys(v).length === 1) {
+        return numberFromLiteral(v.__num);
+      }
       // Tagged constructor, round-trip from {__ctor: "Tag"} or
       // {__ctor: "Tag", __args: [...]}. Convention shared with the
       // Go encoder (encodeValue / valueToAny). Any object missing
@@ -550,11 +673,18 @@
       // writes a fraction, so a fractional payload is refused rather than
       // truncated — the same rule `__char` follows, and the same sentence
       // in all three runtimes. Pinned by the Decode block of the corpus.
-      if (typeof v.__angle === 'number') {
-        if (!Number.isInteger(v.__angle)) {
-          throw new Error('the value should be a whole number of deci-degrees, got ' + v.__angle);
+      // rawNumberOf, not `typeof === number`: after parseJSONExact every
+      // number in the document is a lifted literal, so the tagged forms that
+      // carry one have to read it the same way. `__angle` is the only tagged
+      // form whose payload is a number -- __dec, __char and __time are
+      // strings, __dict and __set are arrays -- and missing it turned every
+      // Angle on the wire into "got an object with __angle".
+      const angleRaw = rawNumberOf(v.__angle);
+      if (angleRaw !== undefined) {
+        if (!Number.isInteger(angleRaw)) {
+          throw new Error('the value should be a whole number of deci-degrees, got ' + angleRaw);
         }
-        return VAngle(posMod(v.__angle, DECI_FULL));
+        return VAngle(posMod(angleRaw, DECI_FULL));
       }
       // Char round-trip, `{__char: "x"}` from the Go encoder, and
       // exactly one Unicode scalar or nothing.
@@ -1449,7 +1579,7 @@
     return native(1, ([raw]) => {
       let parsed;
       try {
-        parsed = JSON.parse(raw.s);
+        parsed = parseJSONExact(raw.s);
       } catch (e) {
         // Mar's sentence, not V8's: see internal/runtime/json.go. The other
         // failures below are already Mar's own and match across runtimes.
@@ -6380,7 +6510,7 @@
     // same decoder.
     def('jsonDecode', native(1, ([raw]) => {
       try {
-        const parsed = JSON.parse(raw.s);
+        const parsed = parseJSONExact(raw.s);
         return VCtor('Ok', [jsToMar(parsed)]);
       } catch (e) {
         return VCtor('Err', [VString('the document is not valid JSON')]);

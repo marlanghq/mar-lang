@@ -434,38 +434,39 @@ func convertJSON(raw any) (Value, error) {
 	case string:
 		return VString{V: x}, nil
 	case json.Number:
-		if i, err := x.Int64(); err == nil {
-			// A whole number the wire can carry but Mar cannot represent is
-			// refused rather than rounded. On the request path this reaches
-			// the caller as a 422 alongside every other malformed body (see
-			// assembleServiceInput): the sender is wrong, the program is not.
-			if !inIntRange(i) {
-				return nil, intOutOfRange("JSON", i)
-			}
+		if i, err := x.Int64(); err == nil && inIntRange(i) {
 			return VInt{V: i}, nil
 		}
-		// A fractional JSON number decodes TEXTUALLY into a Decimal:
-		// `19.99` arrives as exactly 19.99, never a float64 approximation.
-		// Exponent forms (1.5e10) and out-of-bound widths fall back to
-		// VFloat, the runtime-only interop representation.
-		if d, err := parseDecimalString(x.String()); err == nil {
+		// A whole number wider than Int is NOT refused here. It is still a
+		// number Mar can hold: a Decimal is 34 significant digits, so
+		// 9007199254740992 is exact, and refusing it at the boundary meant a
+		// field typed Decimal could not receive a value that fits it. Whether
+		// it is acceptable is the CALL SITE's question, and the shape check
+		// asks it with the type in hand.
+		// A JSON number decodes TEXTUALLY into a Decimal: `19.99` arrives as
+		// exactly 19.99, and `1e30` as ten to the thirtieth, never as the
+		// double nearest to either. Exponent notation is read here rather than
+		// refused, because notation is not information: a sender writing
+		// 1e30 and a sender writing the thirty-one digits mean one value, and
+		// they used to get different answers.
+		if d, err := decimalFromWireNumber(x.String()); err == nil {
 			return d, nil
 		}
-		f, err := x.Float64()
-		if err != nil {
-			// Go's own strconv sentence used to travel from here into a Mar
-			// program: "strconv.ParseFloat: parsing \"1e400\": value out of
-			// range". A host library's words in something a person reads, the
-			// same family as Foundation's localizedDescription on the phone.
-			//
-			// What the three runtimes do with a number none of them can hold
-			// still differs, and that is recorded as a gap in the promise
-			// census rather than papered over here: the browser makes it
-			// Infinity and fails the shape check, and Foundation refuses the
-			// whole document.
-			return nil, fmt.Errorf("JSON: %s is too large a number for Mar to hold", x.String())
-		}
-		return VFloat{V: f}, nil
+		// Nothing else is a number in Mar. There used to be a VFloat
+		// fallback here, and VFloat has NO TYPE: TFloat does not exist,
+		// so a checked program can never hold one. It existed only to
+		// travel from this boundary to a shape check and fail there,
+		// saying "should be a number, got a number" -- both sides print
+		// the same word, because both sides were a number and only one of
+		// them was one Mar can represent.
+		//
+		// Mar removed Float and added exact Decimal (ADR 0004) so
+		// arithmetic could not drift. A float64 admitted at the wire is
+		// that drift coming back through another door, which is what
+		// intrange.go says about Int in the same breath.
+		return nil, fmt.Errorf("JSON: %s is not a number Mar can hold exactly: an Int is at most %d and a Decimal at most %d significant digits",
+			x.String(), MaxSafeInt, maxDecimalDigits)
+
 	case []any:
 		out := make([]Value, len(x))
 		for i, e := range x {

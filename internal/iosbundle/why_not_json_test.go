@@ -96,8 +96,14 @@ keyless =
 	}
 
 	for _, c := range []struct{ name, value, want string }{
+		// The phone used to say "the document holds a number too large", because
+		// Foundation refused the whole document and it never saw the number.
+		// It reads the literals out of the text now, so it names the number and
+		// says the same sentence the other two runtimes say. The case stays
+		// here because what it still proves is that a VALID document is not
+		// reported as invalid JSON.
 		{"a number no runtime can hold, in a document that IS valid JSON",
-			"huge", "the document holds a number too large for Mar to hold"},
+			"huge", "JSON: 1e400 is not a number Mar can hold exactly: an Int is at most 9007199254740991 and a Decimal at most 34 significant digits"},
 		{"a page where a document was expected", "bad", "the document is not valid JSON"},
 		{"an object with no key", "keyless", "the document is not valid JSON"},
 	} {

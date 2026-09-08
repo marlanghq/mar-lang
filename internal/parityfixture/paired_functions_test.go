@@ -24,16 +24,21 @@ import (
 // test and asks what covers it, which is the moment the question is cheap to
 // answer.
 func TestEveryFunctionImplementedTwiceIsAccountedFor(t *testing.T) {
-	// Two numbers, because one is not enough. Measured: 69 names carry a second
-	// implementation, and 157 implementations exist across them.
+	// Two numbers, because one is not enough. Measured: 74 names carry a second
+	// implementation, and 167 implementations exist across them.
+	//
+	// The last five arrived together and are compared by `numNotation` and
+	// `numRefusals` in Source: liftNumberLiterals, numberFromLiteral,
+	// parseJSONExact, plainDigits and rawNumberOf -- the two clients' shared
+	// answer to reading a JSON number without letting a float64 near it.
 	//
 	// Counting names alone misses a function gaining a THIRD implementation:
 	// adding decToScale to the browser, where the phone and the server already
-	// had it, left the name count at 69 and the test silent. Measured, not
+	// had it, left the name count unmoved and the test silent. Measured, not
 	// reasoned -- the sabotage was supposed to fail and did not.
 	const (
-		pairs           = 69
-		implementations = 157
+		pairs           = 74
+		implementations = 167
 	)
 
 	js := namesIn(t, []string{"../jsserve/runtime.js"},

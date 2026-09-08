@@ -23,6 +23,7 @@ package runtime
 import (
 	"fmt"
 	"math/big"
+	"strconv"
 	"strings"
 )
 
@@ -161,6 +162,60 @@ func parseDecimalString(s string) (VDecimal, error) {
 		coef.Neg(coef)
 	}
 	return VDecimal{Coef: coef, Scale: len(fracPart)}, nil
+}
+
+// decimalFromWireNumber reads a JSON number into an exact Decimal, accepting
+// the exponent notation a JSON literal may carry.
+//
+// It is separate from parseDecimalString on purpose. That function backs
+// `Decimal.fromString` and Mar's own `{"__dec":"…"}` wire form, and what those
+// accept is the language's business; this is the boundary's business, where the
+// document was written by something else. Every JSON serializer prints a large
+// number in exponent form, so refusing it here meant the SAME NUMBER decoded or
+// did not depending on how the sender chose to spell it:
+//
+//	{"v":1000000000000000000000000000000}   decoded exactly
+//	{"v":1e30}                              refused
+//
+// Notation is not information. Both are 10^30, both fit Mar's 34 significant
+// digits, and both now arrive as the same exact Decimal.
+//
+// The exponent is applied by MOVING THE POINT, never by multiplying a float:
+// 1e30 becomes the coefficient 1 followed by thirty zeros, not the double
+// nearest to 10^30. That is the whole reason this exists -- a value Mar can
+// hold exactly used to arrive as an approximation of itself.
+func decimalFromWireNumber(s string) (VDecimal, error) {
+	mantissa, exp := s, 0
+	for i, r := range s {
+		if r == 'e' || r == 'E' {
+			n, err := strconv.Atoi(s[i+1:])
+			if err != nil {
+				return VDecimal{}, fmt.Errorf("invalid Decimal %q", s)
+			}
+			mantissa, exp = s[:i], n
+			break
+		}
+	}
+	d, err := parseDecimalString(mantissa)
+	if err != nil {
+		return VDecimal{}, err
+	}
+	if exp == 0 {
+		return d, nil
+	}
+	// scale counts digits after the point, so a positive exponent lowers it.
+	scale := d.Scale - exp
+	coef := new(big.Int).Set(d.Coef)
+	if scale < 0 {
+		// The point moved past the last digit: pad with zeros rather than
+		// carrying a negative scale, which nothing downstream expects.
+		coef.Mul(coef, new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(-scale)), nil))
+		scale = 0
+	}
+	if err := checkDecimalBound("Decimal", coef); err != nil {
+		return VDecimal{}, err
+	}
+	return VDecimal{Coef: coef, Scale: scale}, nil
 }
 
 func zeroWhenEmpty(s string) string {

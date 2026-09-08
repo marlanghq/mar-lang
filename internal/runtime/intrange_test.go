@@ -100,11 +100,30 @@ func TestWireIntegerOutOfRangeIsRefused(t *testing.T) {
 	if _, err := decodeJSON(`{"n":9007199254740991}`); err != nil {
 		t.Fatalf("the largest representable Int was refused: %v", err)
 	}
-	_, err := decodeJSON(`{"n":9007199254740993}`)
-	if err == nil {
-		t.Fatal("a wire integer beyond Int's range was accepted")
+	// A whole number WIDER than Int is no longer refused here, and that is the
+	// rule rather than a relaxation: a Decimal is 34 significant digits, so
+	// 9007199254740993 is a number Mar holds exactly. Refusing it at the
+	// boundary meant a field typed Decimal could not receive a value that fits
+	// it. Whether it is acceptable is the call site's question, and the shape
+	// check asks it with the type in hand.
+	v, err := decodeJSON(`{"n":9007199254740993}`)
+	if err != nil {
+		t.Fatalf("a whole number a Decimal can hold was refused: %v", err)
 	}
-	if !strings.Contains(err.Error(), "JSON") {
+	rec, ok := v.(VRecord)
+	if !ok {
+		t.Fatalf("got %T, want a record", v)
+	}
+	if _, isDec := rec.Fields["n"].(VDecimal); !isDec {
+		t.Errorf("9007199254740993 arrived as %T; outside Int's range it is a Decimal",
+			rec.Fields["n"])
+	}
+
+	// What IS refused is a number no representation holds: 401 digits is past
+	// Decimal's 34.
+	if _, err := decodeJSON(`{"n":1e400}`); err == nil {
+		t.Error("a number beyond Int AND Decimal was accepted")
+	} else if !strings.Contains(err.Error(), "JSON") {
 		t.Errorf("the message should say where the value came from, got: %v", err)
 	}
 }
