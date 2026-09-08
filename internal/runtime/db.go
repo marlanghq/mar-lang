@@ -166,37 +166,3 @@ func OpenSnapshotDB(path string) (*sql.DB, error) {
 	}
 	return conn, nil
 }
-
-// goValueToScalar maps a single SQL value to a runtime Value, unwrapped
-// (no Maybe). Used by Repo decoders when the column is declared NOT NULL.
-//
-//   - int64  → VInt
-//   - float64 → VFloat
-//   - string → VString
-//   - []byte → VString (assumed UTF-8)
-//   - bool   → VBool
-//   - nil    → VString "" (defensive, should be filtered by NotNull check)
-func goValueToScalar(v any) (Value, error) {
-	if v == nil {
-		return VString{V: ""}, nil
-	}
-	switch x := v.(type) {
-	case int64:
-		// SQLite's INTEGER is 64 bits and Mar's Int is 53, so a stored value
-		// can be one the language has no way to represent. Refusing beats
-		// handing back a rounded number that reads as real.
-		if !inIntRange(x) {
-			return nil, intOutOfRange("the database", x)
-		}
-		return VInt{V: x}, nil
-	case float64:
-		return VFloat{V: x}, nil
-	case bool:
-		return VBool{V: x}, nil
-	case string:
-		return VString{V: x}, nil
-	case []byte:
-		return VString{V: string(x)}, nil
-	}
-	return VString{V: fmt.Sprintf("%v", v)}, nil
-}

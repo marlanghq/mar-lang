@@ -138,9 +138,9 @@ enum MarJSONCodec {
             if let dec = DecMath.parseDecimalString("\(n.decimalValue)") {
                 return .decimal(dec)
             }
-            // Nothing else is a number in Mar. `.float` used to catch this,
-            // and a float has no type: a checked program can never hold one,
-            // so it existed only to reach a shape check and fail there.
+            // Nothing else is a number in Mar. `.float` used to catch this;
+            // the case is gone now, since with this boundary closed nothing
+            // could construct one.
             throw MarRuntimeError.message(
                 "JSON: \(n.decimalValue) is not a number Mar can hold exactly:"
                 + " an Int is at most 9007199254740991 and a Decimal at most 34 significant digits")
@@ -345,7 +345,6 @@ enum MarJSONCodec {
     static func marToJSON(_ v: MarValue) -> Any {
         switch v {
         case .int(let n): return n
-        case .float(let f): return f
         // The value rides as a STRING under the __dec marker so no
         // JSON parser on any side routes the digits through binary
         // floating point.
@@ -484,9 +483,10 @@ enum MarJSONCodec {
     /// it is whole and inside 53 bits, an exact Decimal when it fits 34
     /// significant digits, and nothing otherwise.
     ///
-    /// Nothing else is a number in Mar. `.float` used to catch the rest, and a
-    /// float has no type -- a checked program can never hold one, so it existed
-    /// only to reach a shape check and fail there.
+    /// Nothing else is a number in Mar. `.float` used to catch the rest; the
+    /// case is gone now, because with this boundary closed nothing could
+    /// construct one. It had no type either -- a checked program could never
+    /// hold one -- and existed only to reach a shape check and fail there.
     static func numberFromLiteral(_ lit: String) throws -> MarValue {
         if isPlainInteger(lit), let n = Int(lit), MarInt.inRange(n) {
             return .int(n)
@@ -622,9 +622,6 @@ enum MarJSONCodec {
         case "EDecimal":
             return .decimal(coef: stringOf(dict["coef"]),
                             scale: intOf(dict["scale"]))
-        case "EFloat":
-            if let d = dict["value"] as? Double { return .float(d) }
-            return .float(Double(intOf(dict["value"])))
         case "EString":
             return .string(stringOf(dict["value"]))
         case "EChar":

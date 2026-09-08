@@ -6,7 +6,6 @@ import Foundation
 
 indirect enum Expr {
     case int(Int)
-    case float(Double)
     /// Decimal literal. `coef` is the digit string exactly as the
     /// serializer shipped it (34 digits overflow Int, so it rides as
     /// text); scale is the number of fractional places.

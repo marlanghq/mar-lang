@@ -255,7 +255,7 @@ struct MarCanvasView: View {
         if a.count == 4, case .int(let pct) = a[3] { alpha = min(100, max(0, Double(pct))) / 100 }
         return Color(red: c(0), green: c(1), blue: c(2), opacity: alpha)
     }
-    private static func d(_ v: MarValue) -> Double { if case .int(let n) = v { return Double(n) }; if case .float(let x) = v { return x }; return 0 }
+    private static func d(_ v: MarValue) -> Double { if case .int(let n) = v { return Double(n) }; return 0 }
 
     /// An Angle carries deci-degrees (0..3599), so whole degrees are a tenth of it.
     private static func deg(_ v: MarValue) -> Double { if case .angle(let deci) = v { return Double(deci) / 10 }; return 0 }

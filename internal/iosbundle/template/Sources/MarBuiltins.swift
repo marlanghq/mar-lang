@@ -3411,7 +3411,6 @@ enum MarBuiltins {
     static func asInt(_ v: MarValue) -> Int {
         switch v {
         case .int(let n): return n
-        case .float(let f): return Int(f)
         default: return 0
         }
     }

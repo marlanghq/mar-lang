@@ -756,8 +756,6 @@ func describeValueKind(v Value) string {
 		return fmt.Sprintf("the text %q", x.V)
 	case VBool:
 		return fmt.Sprintf("%t", x.V)
-	case VFloat:
-		return fmt.Sprintf("the number %v", x.V)
 	case VTime:
 		return "a Time"
 	case VDecimal:

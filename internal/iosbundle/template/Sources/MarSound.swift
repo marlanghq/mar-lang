@@ -1136,7 +1136,7 @@ final class MarSound: @unchecked Sendable {
         guard case .record(let f, _) = v else { return nil }
         func s(_ k: String) -> String { if case .string(let x)? = f[k] { return x }; return "" }
         func d(_ k: String) -> Double {
-            switch f[k] { case .int(let x)?: return Double(x); case .float(let x)?: return x; default: return 0 }
+            switch f[k] { case .int(let x)?: return Double(x); default: return 0 }
         }
         var arp: [Double] = []
         if case .list(let xs)? = f["arp"] { arp = xs.compactMap { if case .int(let n) = $0 { return Double(n) }; return nil } }

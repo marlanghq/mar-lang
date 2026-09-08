@@ -451,7 +451,6 @@ enum MarWire {
     private static func describe(_ v: MarValue) -> String {
         switch v {
         case .int: return "a whole number"
-        case .float: return "a number"
         case .decimal: return "a number"
         case .string: return "a string"
         case .bool: return "true or false"

@@ -32,7 +32,6 @@ import Foundation
 // on the stack with no allocation and no ARC traffic.
 enum MarValue: @unchecked Sendable {
     case int(Int)
-    case float(Double)
     case string(String)
     case bool(Bool)
     case unit
@@ -232,9 +231,6 @@ extension MarValue {
     func equalsMar(_ other: MarValue) -> Bool {
         switch (self, other) {
         case (.int(let a),    .int(let b)):    return a == b
-        case (.float(let a),  .float(let b)):  return a == b
-        case (.int(let a),    .float(let b)):  return Double(a) == b
-        case (.float(let a),  .int(let b)):    return a == Double(b)
         // Numeric equality: 1.50 == 1.5 (scale is display metadata).
         case (.decimal(let a), .decimal(let b)): return DecMath.decCompare(a, b) == 0
         case (.string(let a), .string(let b)): return a == b
@@ -304,14 +300,6 @@ extension MarValue {
     func compareMar(_ other: MarValue) -> Int {
         switch (self, other) {
         case (.int(let a), .int(let b)):       return a < b ? -1 : (a > b ? 1 : 0)
-        case (.float(let a), .float(let b)):
-            if a < b { return -1 }; if a > b { return 1 }; return 0
-        case (.int(let a), .float(let b)):
-            let da = Double(a)
-            if da < b { return -1 }; if da > b { return 1 }; return 0
-        case (.float(let a), .int(let b)):
-            let db = Double(b)
-            if a < db { return -1 }; if a > db { return 1 }; return 0
         case (.decimal(let a), .decimal(let b)):
             return DecMath.decCompare(a, b)
         case (.string(let a), .string(let b)):

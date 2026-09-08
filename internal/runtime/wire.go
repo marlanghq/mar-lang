@@ -371,8 +371,6 @@ func wireDescribe(v Value) string {
 		return "nothing"
 	case VInt:
 		return "a whole number"
-	case VFloat:
-		return "a number"
 	case VDecimal:
 		return "a number"
 	case VString:

@@ -873,8 +873,6 @@ func valueToAny(v Value) any {
 	switch x := v.(type) {
 	case VInt:
 		return x.V
-	case VFloat:
-		return x.V
 	case VString:
 		return x.V
 	case VBool:

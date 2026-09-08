@@ -52,7 +52,6 @@ func jsonBuiltins() map[string]Value {
 //
 // Encoding rules:
 //   - VInt -> number
-//   - VFloat -> number
 //   - VString -> string
 //   - VBool -> true/false
 //   - VUnit -> null  (only () encodes as bare null; the decoder side
@@ -100,8 +99,6 @@ func marKindOf(v Value) string {
 	// with Go's name for a type the program's author never wrote.
 	case VInt:
 		return "a whole number"
-	case VFloat:
-		return "a number"
 	case VDecimal:
 		return "a decimal"
 	case VString:
@@ -134,8 +131,6 @@ func encodeValue(v Value) (string, error) {
 	switch x := v.(type) {
 	case VInt:
 		return strconv.FormatInt(x.V, 10), nil
-	case VFloat:
-		return strconv.FormatFloat(x.V, 'g', -1, 64), nil
 	case VString:
 		b, _ := json.Marshal(x.V)
 		return string(b), nil
@@ -399,7 +394,8 @@ func wholeNumber(raw any) (int64, error) {
 const isoMillis = "2006-01-02T15:04:05.000Z07:00"
 
 // decodeJSON parses a JSON string into a generic Value.
-// Numbers become VInt (if integer) or VFloat. Objects become VRecord.
+// Numbers become VInt (whole and inside 53 bits) or an exact VDecimal.
+// Objects become VRecord.
 // Arrays become VList. null becomes VUnit. Booleans become VBool.
 //
 // Note: this is "untyped" decoding. It does not coerce into custom types.
@@ -453,12 +449,12 @@ func convertJSON(raw any) (Value, error) {
 			return d, nil
 		}
 		// Nothing else is a number in Mar. There used to be a VFloat
-		// fallback here, and VFloat has NO TYPE: TFloat does not exist,
-		// so a checked program can never hold one. It existed only to
-		// travel from this boundary to a shape check and fail there,
-		// saying "should be a number, got a number" -- both sides print
-		// the same word, because both sides were a number and only one of
-		// them was one Mar can represent.
+		// fallback here; the type is gone now, because with this boundary
+		// closed nothing could construct one. It had NO TYPE either --
+		// TFloat does not exist, so a checked program could never hold one
+		// -- and existed only to travel from here to a shape check and fail
+		// there, saying "should be a number, got a number", both sides
+		// printing the same word.
 		//
 		// Mar removed Float and added exact Decimal (ADR 0004) so
 		// arithmetic could not drift. A float64 admitted at the wire is

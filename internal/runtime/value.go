@@ -50,12 +50,6 @@ type VDivision struct {
 func (VDivision) isValue()          {}
 func (v VDivision) Display() string { return "<division>" }
 
-// VFloat is a floating-point value.
-type VFloat struct{ V float64 }
-
-func (VFloat) isValue()          {}
-func (v VFloat) Display() string { return fmt.Sprintf("%g", v.V) }
-
 // VString is a string value.
 type VString struct{ V string }
 

@@ -101,7 +101,6 @@ func cell(_ field: String, _ v: MarValue?) -> String {
     guard let v = v else { return "0" }
     switch v {
     case .int(let n): return String(n)
-    case .float(let d): return d == d.rounded() ? String(Int(d)) : String(d)
     case .string(let s): return s
     case .bool(let b): return b ? "True" : "False"
     case .ctor(let tag, _, _): return tag

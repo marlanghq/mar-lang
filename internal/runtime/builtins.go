@@ -809,9 +809,6 @@ func equalValues(a, b Value) bool {
 	case VInt:
 		bv, ok := b.(VInt)
 		return ok && av.V == bv.V
-	case VFloat:
-		bv, ok := b.(VFloat)
-		return ok && av.V == bv.V
 	case VDecimal:
 		bv, ok := b.(VDecimal)
 		// Numeric equality: 1.50 == 1.5 (scale is display metadata).
@@ -939,18 +936,6 @@ func compareValues(a, b Value) (int, error) {
 	switch av := a.(type) {
 	case VInt:
 		bv, ok := b.(VInt)
-		if !ok {
-			return 0, fmt.Errorf("comparison: type mismatch")
-		}
-		switch {
-		case av.V < bv.V:
-			return -1, nil
-		case av.V > bv.V:
-			return 1, nil
-		}
-		return 0, nil
-	case VFloat:
-		bv, ok := b.(VFloat)
 		if !ok {
 			return 0, fmt.Errorf("comparison: type mismatch")
 		}

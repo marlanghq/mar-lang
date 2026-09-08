@@ -75,7 +75,6 @@ enum Eval {
     static func eval(_ expr: Expr, _ env: Env) throws -> MarValue {
         switch expr {
         case .int(let n):       return .int(n)
-        case .float(let n):     return .float(n)
         case .decimal(let coef, let scale):
             var digits: [UInt8] = []
             digits.reserveCapacity(coef.count)
@@ -475,7 +474,6 @@ enum Eval {
     static func typeOf(_ v: MarValue) -> String {
         switch v {
         case .int: return "Int"
-        case .float: return "Float"
         case .decimal: return "Decimal"
         case .division: return "Decimal.Division"
         case .string: return "String"

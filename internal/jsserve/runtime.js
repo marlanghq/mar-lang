@@ -24,7 +24,6 @@
   // ---------- Value constructors ----------
 
   const VInt    = (n)        => ({ k: 'I', n });
-  const VFloat  = (n)        => ({ k: 'F', n });
   // VDuration: time interval normalized to seconds. Constructed
   // only via Time.seconds / .minutes / .hours / .days / .weeks so
   // unit confusion is impossible at the call site.
@@ -562,10 +561,11 @@
   // names: an Int when it is whole and inside 53 bits, an exact Decimal when
   // it fits 34 significant digits, and nothing otherwise.
   //
-  // Nothing else is a number in Mar. There used to be a VFloat fallback, and
-  // VFloat has no type -- TFloat does not exist, so a checked program can
-  // never hold one. It existed only to reach a shape check and fail there,
-  // reporting "should be a number, got a number".
+  // Nothing else is a number in Mar. There used to be a VFloat fallback; the
+  // representation is gone now, because with this boundary closed nothing
+  // could construct one. It had no type either -- TFloat does not exist, so a
+  // checked program could never hold one -- and existed only to reach a shape
+  // check and fail there, reporting "should be a number, got a number".
   // plainDigits rewrites exponent notation as digits, by MOVING THE POINT --
   // never by multiplying a double, which is the approximation this whole path
   // exists to avoid. 1e30 becomes a 1 and thirty zeros.
@@ -845,7 +845,6 @@
       case 'E':   return 'a Cmd or Task';
       case 'SND': return 'a Sound';
       case 'SUB': return 'a Sub';
-      case 'F':   return 'a number';
       default:    return 'this value';
     }
   }
@@ -1237,7 +1236,6 @@
     if (v == null) return 'null';
     switch (v.k) {
       case 'I': return 'Int ' + v.n;
-      case 'F': return 'Float ' + v.n;
       case 'De': return 'Decimal ' + decStr(v);
       case 'Dv': return 'Decimal.Division';
       case 'S': return 'String ' + JSON.stringify(v.s);
@@ -1327,7 +1325,6 @@
     if (v === undefined || v === null) return 'nothing';
     switch (v.k) {
       case 'I': return 'a whole number';
-      case 'F': return 'a number';
       case 'De': return 'a number';
       case 'S': return 'a string';
       case 'B': return 'true or false';
@@ -1907,7 +1904,7 @@
   function eqValues(a, b) {
     if (a.k !== b.k) return false;
     switch (a.k) {
-      case 'I': case 'F': return a.n === b.n;
+      case 'I': return a.n === b.n;
       // Numeric equality: 1.50 == 1.5 (scale is display metadata).
       case 'De': return decCmpV(a, b) === 0;
       case 'S': return a.s === b.s;
@@ -1986,7 +1983,7 @@
   function cmpValues(a, b) {
     if (a.k !== b.k) throw new Error('comparison: type mismatch');
     switch (a.k) {
-      case 'I': case 'F': return a.n < b.n ? -1 : a.n > b.n ? 1 : 0;
+      case 'I': return a.n < b.n ? -1 : a.n > b.n ? 1 : 0;
       case 'De': return decCmpV(a, b);
       case 'S': return a.s < b.s ? -1 : a.s > b.s ? 1 : 0;
       case 'Ch': return a.c < b.c ? -1 : a.c > b.c ? 1 : 0;
@@ -11396,7 +11393,7 @@
     for (const s of shapes) drawShape(ctx, s);
   }
 
-  function canvasNum(v) { return v && (v.k === 'I' || v.k === 'F') ? v.n : 0; }
+  function canvasNum(v) { return v && v.k === 'I' ? v.n : 0; }
   // An Angle carries deci-degrees (0..3599). Radians are what the 2D
   // context wants, so the conversion divides by 1800 instead of 180.
   function canvasRadians(v) { return v && v.k === 'A' ? v.deci * Math.PI / 1800 : 0; }
@@ -15087,7 +15084,6 @@
     if (v === null || v === undefined) return String(v);
     switch (v.k) {
       case 'I': return String(v.n);
-      case 'F': return String(v.n);
       case 'De': return decStr(v);
       case 'Dv': return '<division>';
       case 'S': return JSON.stringify(v.s);
