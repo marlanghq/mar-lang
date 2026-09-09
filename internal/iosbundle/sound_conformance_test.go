@@ -76,6 +76,8 @@ process.stdout.write(out.join('\n'));
 // would compare a decoding instead.
 const soundDriverSwift = `import Foundation
 
+MainActor.assumeIsolated {
+
 let data = try! Data(contentsOf: URL(fileURLWithPath: CommandLine.arguments[1]))
 let program = try! MarJSONCodec.decodeProgram(data)
 let env = MarBuiltins.makeEnv()
@@ -130,6 +132,7 @@ for name in names {
     }
 }
 FileHandle.standardOutput.write(out.joined(separator: "\n").data(using: .utf8)!)
+}
 `
 
 func TestSoundVoicesMatchAcrossRuntimes(t *testing.T) {

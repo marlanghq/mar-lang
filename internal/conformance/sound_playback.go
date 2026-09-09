@@ -472,6 +472,10 @@ process.stdout.write(out.join('\n'));
 // PlaybackDriverSwift is the iOS half. Argv: program.json names samples
 const PlaybackDriverSwift = `import Foundation
 
+// The interpreter is @MainActor and a Swift top level is not; this driver is
+// single-threaded by construction, so assumeIsolated states that.
+MainActor.assumeIsolated {
+
 // It asks MarSound for the curves and prints them. It does not compute them:
 // see MarSound.conformanceCurves for why that distinction is the whole value of
 // this test.
@@ -568,6 +572,7 @@ for name in names {
     }
 }
 FileHandle.standardOutput.write(out.joined(separator: "\n").data(using: .utf8)!)
+}
 `
 
 // KnownWaveLevelGaps records divergences in raw wave LEVEL that are real,

@@ -16,16 +16,21 @@ import Foundation
 /// A class rather than a struct only because `elem` makes the shape
 /// recursive, and a Swift value type cannot store itself. Nothing mutates one
 /// after it is decoded.
-final class MarWireShape {
+/// Built once, by `decode`, and read for the life of the program. That was
+/// true and unstated; the `private(set)`s make the compiler keep it, and the
+/// unchecked conformance rests on it rather than on a promise. Without this
+/// the shape was a mutable class crossing into a main-actor continuation,
+/// which Swift 6 reports as "sending ... risks causing data races".
+final class MarWireShape: @unchecked Sendable {
     let kind: String
-    var fields: [(name: String, shape: MarWireShape)] = []
-    var elem: MarWireShape? = nil
-    var members: [MarWireShape] = []
-    var tags: [String] = []
-    var args: [[MarWireShape]] = []
+    private(set) var fields: [(name: String, shape: MarWireShape)] = []
+    private(set) var elem: MarWireShape? = nil
+    private(set) var members: [MarWireShape] = []
+    private(set) var tags: [String] = []
+    private(set) var args: [[MarWireShape]] = []
     /// The canonical type name a Ctor shape came from, and the one a Ref
     /// points back at.
-    var name: String = ""
+    private(set) var name: String = ""
 
     init(kind: String) {
         self.kind = kind
@@ -326,6 +331,11 @@ enum MarWire {
     /// `JSON.decode` at a call site whose result type the checker knew. Same
     /// decoder, one more question asked afterwards, and the answer goes where
     /// a decode failure already went: `Err`.
+    /// @MainActor: this returns a Mar function, and a Mar function runs on
+    /// the main actor. Without it the shape was captured across an isolation
+    /// boundary and Swift 6 called it what it was -- sending a value that is
+    /// not Sendable.
+    @MainActor
     static func decoder(_ shape: MarWireShape) -> MarValue {
         .fn(MarFn.native(1) { args in
             guard case .string(let raw) = args[0] else {
@@ -371,6 +381,11 @@ enum MarWire {
     /// knew. Same call, one more question asked of what comes back — and the
     /// only place the phone can ask it, since neither the service value nor
     /// the built program carries the type.
+    /// @MainActor: this returns a Mar function, and a Mar function runs on
+    /// the main actor. Without it the shape was captured across an isolation
+    /// boundary and Swift 6 called it what it was -- sending a value that is
+    /// not Sendable.
+    @MainActor
     static func serviceCaller(_ shape: MarWireShape) -> MarValue {
         .fn(MarFn.native(3) { args in
             let svc = args[0]
@@ -391,6 +406,11 @@ enum MarWire {
     }
 
     /// `Auth.verifyCode` at a call site whose USER type the checker knew.
+    /// @MainActor: this returns a Mar function, and a Mar function runs on
+    /// the main actor. Without it the shape was captured across an isolation
+    /// boundary and Swift 6 called it what it was -- sending a value that is
+    /// not Sendable.
+    @MainActor
     static func authVerifier(_ shape: MarWireShape) -> MarValue {
         .fn(MarFn.native(2) { args in
             let req = args[0]
@@ -409,6 +429,11 @@ enum MarWire {
     }
 
     /// `Auth.me` at a call site whose user type the checker knew.
+    /// @MainActor: this returns a Mar function, and a Mar function runs on
+    /// the main actor. Without it the shape was captured across an isolation
+    /// boundary and Swift 6 called it what it was -- sending a value that is
+    /// not Sendable.
+    @MainActor
     static func authMe(_ shape: MarWireShape) -> MarValue {
         .fn(MarFn.native(1) { args in
             let toMsg = args[0]

@@ -42,6 +42,7 @@ enum MarHTTP {
     /// as absolute; the caller is responsible for concatenation. `body` is
     /// sent as-is (already JSON-encoded by caller); when nil the request
     /// goes out without a body.
+    @MainActor
     static func fire(method: String, url: String, body: String?, toMsg: MarValue) {
         guard let u = URL(string: url) else {
             dispatchErr(toMsg, message: "invalid URL: \(url)")
@@ -69,6 +70,12 @@ enum MarHTTP {
         }
     }
 
+    /// @MainActor: the wire shape is a mutable class built at load, so it is
+    /// not Sendable, and this hands it to a main-actor continuation. Saying
+    /// the function is main-actor is the truth -- it is called from a builtin
+    /// -- and it is the alternative to claiming the shape is Sendable, which
+    /// it is not.
+    @MainActor
     private static func send(method: String, url: URL, body: String?, toMsg: MarValue) {
         var req = URLRequest(url: url)
         req.httpMethod = method
@@ -243,6 +250,12 @@ enum MarHTTP {
     /// GET /_auth/me. Body is either a JSON user record or `null`.
     /// Resolves to `Ok (Just user)` or `Ok Nothing`. Network errors
     /// resolve to `Err message`.
+    /// @MainActor: the wire shape is a mutable class built at load, so it is
+    /// not Sendable, and this hands it to a main-actor continuation. Saying
+    /// the function is main-actor is the truth -- it is called from a builtin
+    /// -- and it is the alternative to claiming the shape is Sendable, which
+    /// it is not.
+    @MainActor
     static func fireAuthMe(toMsg: MarValue, userShape: MarWireShape? = nil) {
         Task { @MainActor in
             guard let url = MarDispatcher.shared.resolve(path: "/_auth/me") else {

@@ -575,6 +575,12 @@ private struct MarNavigationStack: View {
 /// removed. Mar's `(from, to)` and `List.move` semantics use the
 /// post-removal target. When destination > source we subtract 1
 /// so the same (from, to) means the same thing on JS and iOS.
+/// @MainActor on the whole view: its reorder and delete handlers evaluate Mar
+/// (Eval.apply), and SwiftUI hands them to .onMove/.onDelete as plain
+/// closures. Isolating the methods alone left the compiler unable to phrase
+/// the mismatch at all -- it answered "failed to produce diagnostic for
+/// expression", which is the type checker giving up rather than a hint.
+@MainActor
 private struct MarUISection: View {
     let view: MarView
     let dispatch: (MarValue) -> Void
@@ -617,7 +623,13 @@ private struct MarUISection: View {
             ForEach(identifiedRows) { row in
                 MarRenderer(view: row.child, dispatch: dispatch)
             }
-            .onMove(perform: editing ? performMove : nil)
+            // A closure rather than a method reference: `performMove` is
+            // main-actor (it evaluates Mar) and .onMove takes a plain
+            // function, so passing the method by name is an isolation
+            // mismatch the type checker could not even phrase -- it answered
+            // "failed to produce diagnostic". SwiftUI calls this on the main
+            // thread, and the closure says so where the conversion happens.
+            .onMove(perform: editing ? { src, dst in performMove(from: src, to: dst) } : nil)
             // `.onDelete` is always attached when the attr is
             // present: SwiftUI uses the SAME modifier for both
             // swipe-to-delete (normal mode) and the edit-mode
@@ -625,7 +637,7 @@ private struct MarUISection: View {
             // informational: iOS surfaces both at all times. (Web
             // doesn't have swipe so it uses editing to switch
             // between hover-reveal and permanent-LEFT layouts.)
-            .onDelete(perform: onDeleteAttr != nil ? performDelete : nil)
+            .onDelete(perform: onDeleteAttr != nil ? { idx in performDelete(at: idx) } : nil)
         }
     }
 
@@ -1059,6 +1071,7 @@ private func pickerOptions(_ view: MarView) -> [MarValue] {
 
 /// Applies the picker's `toLabel` function to one option value,
 /// returning the display string ("" if it isn't a function/string).
+@MainActor
 private func pickerLabel(_ view: MarView, _ value: MarValue) -> String {
     guard let fn = attrValue(view, "toLabel"),
           let r = try? Eval.apply(fn, value),

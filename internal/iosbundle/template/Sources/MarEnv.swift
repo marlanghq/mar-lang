@@ -86,7 +86,7 @@ final class Env {
     /// the standard two-key convention. Convenience used by the
     /// web-first subsystems (Sound / Canvas / Gamepad / Keyboard / Device).
     func defineFn(_ bare: String, _ dotted: String, _ arity: Int,
-                  _ fn: @escaping ([MarValue]) throws -> MarValue) {
+                  _ fn: @escaping @MainActor ([MarValue]) throws -> MarValue) {
         let v = MarValue.fn(MarFn.native(arity, fn))
         define(bare, v)
         define(dotted, v)

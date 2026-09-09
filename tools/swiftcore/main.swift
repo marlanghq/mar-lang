@@ -48,10 +48,16 @@ if args.count >= 4, args[1] == "--auth-verify" {
     let response = HTTPURLResponse(url: URL(string: "https://example.invalid/_auth/verify-code")!,
                                    statusCode: status, httpVersion: nil, headerFields: nil)
     // { id : Int, email : String }: the shape the probe program declares.
-    let shape = MarWireShape(kind: "Record")
-    let idShape = MarWireShape(kind: "Int")
-    let emailShape = MarWireShape(kind: "String")
-    shape.fields = [(name: "id", shape: idShape), (name: "email", shape: emailShape)]
+    // Built through decode rather than by hand, which is both the real path
+    // and the only one now that a shape's fields are private(set) -- built
+    // once, then read, and the compiler keeps it that way.
+    let shape = MarWireShape.decode([
+        "kind": "Record",
+        "fields": [
+            ["name": "id", "shape": ["kind": "Int"]],
+            ["name": "email", "shape": ["kind": "String"]],
+        ],
+    ])!
     let v = MarHTTP.makeAuthOutcomeResult(
         data: data, response: response, error: nil,
         okOutcome: { user in .ctor(tag: "SignedIn", args: [user], origin: nil) },
@@ -87,6 +93,10 @@ guard args.count >= 3 else {
     FileHandle.standardError.write("usage: driver <program.json> <Module.value>\n".data(using: .utf8)!)
     exit(2)
 }
+// The interpreter is @MainActor now, and top-level code is not. This driver
+// is single-threaded by construction, so assumeIsolated states that rather
+// than hopping through an await the rest of the file would have to follow.
+MainActor.assumeIsolated {
 do {
     let data = try Data(contentsOf: URL(fileURLWithPath: args[1]))
     let program = try MarJSONCodec.decodeProgram(data)
@@ -107,4 +117,5 @@ do {
 } catch {
     FileHandle.standardError.write("error: \(error)\n".data(using: .utf8)!)
     exit(1)
+}
 }

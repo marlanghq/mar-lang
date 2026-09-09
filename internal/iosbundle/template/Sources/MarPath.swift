@@ -42,6 +42,11 @@ enum MarPathError: Error, LocalizedError {
     }
 }
 
+/// @MainActor for the same reason as MarSharedRegistry: the cache and the enum
+/// table are global mutable state, they are only ever touched while a page is
+/// being built or a link resolved, and Swift 6 turns "only ever" from a claim
+/// into a rule.
+@MainActor
 enum MarPath {
     /// Cache parsed patterns by source string. Bounded only by the
     /// number of distinct Path values in the app: typically dozens.

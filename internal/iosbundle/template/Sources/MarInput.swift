@@ -49,11 +49,21 @@ final class GamepadHub {
 
     private func fire() { for cb in listeners.values { cb() } }
 
+    @MainActor
     private func wire() {
         guard !wired else { return }
         wired = true
         NotificationCenter.default.addObserver(forName: .GCControllerDidConnect, object: nil, queue: .main) { [weak self] note in
-            MainActor.assumeIsolated { self?.attach(note.object as? GCController); self?.refreshConnected() }
+            // Re-read the current controllers rather than carrying the
+            // notification's object across the boundary. Neither Notification
+            // nor GCController is Sendable, and the notification only has to
+            // say that SOMETHING connected -- the same walk `init` does. It
+            // also covers a notification arriving with no object.
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                for c in GCController.controllers() { self.attach(c) }
+                self.refreshConnected()
+            }
         }
         NotificationCenter.default.addObserver(forName: .GCControllerDidDisconnect, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.refreshConnected() }
@@ -143,7 +153,9 @@ final class KeyboardHub {
         guard !wired else { return }
         wired = true
         NotificationCenter.default.addObserver(forName: .GCKeyboardDidConnect, object: nil, queue: .main) { [weak self] note in
-            MainActor.assumeIsolated { self?.attach(note.object as? GCKeyboard) }
+            // Same reason as the controller observer above: read the
+            // coalesced keyboard here instead of sending the notification's.
+            MainActor.assumeIsolated { self?.attach(GCKeyboard.coalesced) }
         }
         attach(GCKeyboard.coalesced)
         #if canImport(UIKit)

@@ -355,6 +355,7 @@ extension Array where Element == DecodedPage {
     /// to decide which of the mounted pages is the presented one. A harness
     /// answering that question its own way could report a pass while the
     /// renderer did something else.
+    @MainActor
     func isSheetRoute(_ url: String) -> Bool {
         for pg in self where !pg.isDynamic {
             if pg.path == url { return pg.isSheet }
@@ -401,6 +402,9 @@ struct DecodedPage: Identifiable {
     /// Type-mismatch on a typed segment (e.g. `/notes/abc` against
     /// `{id:Int}`) returns nil so the router can fall through to
     /// the next page.
+    // Reads MarPath's cache, which is main-actor state. This already ran
+    // there; the annotation is what makes that checkable.
+    @MainActor
     func matchURL(_ urlPath: String) -> MarValue? {
         if !isDynamic {
             return urlPath == path ? MarValue.record(fields: [:], order: []) : nil
@@ -416,6 +420,7 @@ struct DecodedPage: Identifiable {
     /// typed exactly the way a real URL's params would be. Returns nil when
     /// the pattern uses something this cannot fill: the caller says so
     /// rather than counting the page as checked.
+    @MainActor
     func sampleParams() -> MarValue? { sampleVisit()?.params }
 
     /// The concrete URL this page was rendered at, alongside its params.
@@ -425,6 +430,7 @@ struct DecodedPage: Identifiable {
     /// made it render `/verify/{email:String}` literally, so the two platforms
     /// were asked different questions and every dynamic route looked like a
     /// difference.
+    @MainActor
     func sampleVisit() -> (url: String, params: MarValue)? {
         var url = ""
         for segment in path.split(separator: "/", omittingEmptySubsequences: false) {

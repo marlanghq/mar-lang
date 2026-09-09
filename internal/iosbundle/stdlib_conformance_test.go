@@ -36,8 +36,12 @@ enum MarCanvas { static func register(_ env: Env) {} }
 enum MarInput { static func register(_ env: Env) {} }
 `
 
+// The interpreter is @MainActor, and a Swift top level is not. Every driver
+// here is single-threaded by construction, so assumeIsolated states that
+// rather than turning the whole file async.
 const swiftDriver = `import Foundation
 
+MainActor.assumeIsolated {
 let data = try! Data(contentsOf: URL(fileURLWithPath: CommandLine.arguments[1]))
 let program = try! MarJSONCodec.decodeProgram(data)
 let env = MarBuiltins.makeEnv()
@@ -58,6 +62,7 @@ guard case .string(let s) = v else {
     exit(1)
 }
 FileHandle.standardOutput.write(s.data(using: .utf8)!)
+}
 `
 
 func TestStdlibSwiftConformance(t *testing.T) {

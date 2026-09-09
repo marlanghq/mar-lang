@@ -8,6 +8,13 @@
 
 import Foundation
 
+/// @MainActor: evaluating Mar is a main-actor operation in this runtime, and
+/// always was. Evaluation is entered from view bodies and from dispatch, the
+/// only dispatch in this template is DispatchQueue.main.async, and a builtin
+/// reaches MarSharedRegistry and MarPath, which hold global state. Swift 6
+/// turns that from a property of how the code happens to be called into a
+/// rule the compiler keeps.
+@MainActor
 enum Eval {
 
     // MARK: - Recursion guard
@@ -42,7 +49,11 @@ enum Eval {
     /// higher-order builtin (`List.foldl (\_ _ -> loop n) 0 [1]`): the counter
     /// does not care whether the next call came from the evaluator or from
     /// Swift code inside a builtin.
-    nonisolated(unsafe) static var callDepth = 0
+    /// Plain state now, not `nonisolated(unsafe)`. That spelling was already
+    /// here, and it is the escape hatch: it tells Swift 6 to stop asking
+    /// rather than answering. With Eval on the main actor the counter is
+    /// isolated for real, which is what the annotation was pretending.
+    static var callDepth = 0
 
     /// Enters one call frame. `body` is the closure body evaluation; the depth
     /// is restored however it returns, error included.
@@ -63,7 +74,7 @@ enum Eval {
     // Mirrors the JS runtime's message word for word, so the same mistake
     // reads the same on both platforms. `order` is the declaration order,
     // which makes the list stable rather than hash-shuffled.
-    static func missingField(_ name: String, _ fields: [String: MarValue], _ order: [String]) -> MarRuntimeError {
+    nonisolated static func missingField(_ name: String, _ fields: [String: MarValue], _ order: [String]) -> MarRuntimeError {
         let had = (order.isEmpty ? Array(fields.keys).sorted() : order).joined(separator: ", ")
         return MarRuntimeError.message(
             "record has no field `\(name)`\n\n"
@@ -471,7 +482,12 @@ enum Eval {
 
     // MARK: - Helpers
 
-    static func typeOf(_ v: MarValue) -> String {
+    /// nonisolated: naming a value's type is a pure switch over the value,
+    /// and it is reached from pure code -- Dict's ordering, compareMar's
+    /// mismatch message. Isolating it would have pushed @MainActor into data
+    /// structures that touch no state at all, which is isolation spreading
+    /// rather than isolation describing. The state is what needs the actor.
+    nonisolated static func typeOf(_ v: MarValue) -> String {
         switch v {
         case .int: return "Int"
         case .decimal: return "Decimal"

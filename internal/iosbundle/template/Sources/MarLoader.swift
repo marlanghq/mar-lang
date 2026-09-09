@@ -13,6 +13,10 @@ enum MarLoader {
     /// Run a module's declarations into the given environment. The
     /// env is mutated in place: typical use is the global env
     /// returned by `MarBuiltins.makeEnv()`.
+    /// @MainActor: loading registers Path enum types into MarPath's table,
+    /// which is main-actor state. A program is loaded at startup and on a dev
+    /// reload, both on main.
+    @MainActor
     static func load(module: Module, into env: Env) throws {
         let ownName = module.name.joined(separator: ".")
 

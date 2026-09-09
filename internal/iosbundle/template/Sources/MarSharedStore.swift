@@ -14,7 +14,12 @@ import Observation
 ///
 /// The three builtins are deliberately thin: all of the behaviour is here, so
 /// there is one place to read when the two runtimes are compared.
+/// @MainActor because a store holds the model a live page renders from, and
+/// the only dispatch in this template is DispatchQueue.main.async. Under Swift
+/// 6 its registry was five errors' worth of unprotected global state; the
+/// isolation answers them by stating the rule that already held.
 @Observable
+@MainActor
 final class MarSharedStore {
     /// The store's own model, updated only through `dispatch`.
     private(set) var model: MarValue = .unit
@@ -71,6 +76,13 @@ final class MarSharedStore {
 /// Every store in the app, by key. A global because the stores outlive every
 /// page and the app has exactly one of each: the same reason the web keeps a
 /// module-level Map.
+/// @MainActor because that is where this already ran, and now the compiler
+/// knows it. Under Swift 6 an unprotected global was five errors here -- and
+/// "it is safe because everything happens to be on one thread" is the kind of
+/// claim this repository converts into a checked one rather than repeats. The
+/// isolation is the check: a caller reaching this from anywhere else stops
+/// compiling instead of racing.
+@MainActor
 enum MarSharedRegistry {
     private static var stores: [String: MarSharedStore] = [:]
     private static var nextIndex = 0

@@ -107,14 +107,14 @@ final class MarFn {
     let params: [String]?              // nil for natives
     let body: Expr?                    // nil for natives
     let env: Env?                      // nil for natives
-    let native: (([MarValue]) throws -> MarValue)?
+    let native: (@MainActor ([MarValue]) throws -> MarValue)?
 
     init(arity: Int,
          applied: [MarValue],
          params: [String]?,
          body: Expr?,
          env: Env?,
-         native: (([MarValue]) throws -> MarValue)?) {
+         native: (@MainActor ([MarValue]) throws -> MarValue)?) {
         self.arity = arity
         self.applied = applied
         self.params = params
@@ -125,8 +125,16 @@ final class MarFn {
 
     /// Native function constructor: used by Builtins to register
     /// arithmetic, view ctors, effect helpers, etc.
+    /// A builtin runs on the main actor. That is not a new constraint, it is
+    /// the one that already held: the only dispatch anywhere in this template
+    /// is DispatchQueue.main.async, and evaluation is entered from view bodies
+    /// and from dispatch, both of which are main. Saying it here rather than
+    /// at each of the ten call sites is the difference between a rule and ten
+    /// reminders -- and it is what lets MarSharedRegistry and MarPath hold
+    /// global state without a lock and without `nonisolated(unsafe)`, which
+    /// would silence Swift 6 rather than answer it.
     static func native(_ arity: Int,
-                       _ fn: @escaping ([MarValue]) throws -> MarValue) -> MarFn {
+                       _ fn: @escaping @MainActor ([MarValue]) throws -> MarValue) -> MarFn {
         MarFn(arity: arity, applied: [], params: nil, body: nil, env: nil, native: fn)
     }
 

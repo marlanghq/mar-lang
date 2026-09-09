@@ -15,6 +15,13 @@ enum MarBuiltins {
     // dispatch table for the language; splitting it would scatter
     // related entries.
     // swiftlint:disable:next function_body_length
+    /// @MainActor: building the environment builds Mar functions, and a Mar
+    /// function runs on the main actor. Without it every value this function
+    /// hands to a builtin closure -- a Calendar, a comparison, a fold -- was
+    /// captured across an isolation boundary, which Swift 6 reports as
+    /// "sending ... risks causing data races". Installing happens once, at
+    /// load, on main.
+    @MainActor
     static func makeEnv() -> Env {
         let env = Env(parent: nil)
 
@@ -1832,7 +1839,8 @@ enum MarBuiltins {
             var rng = SystemRandomNumberGenerator()
             return makeSeed(rng.next())
         }
-        func runGen(_ g: MarValue, _ seed: MarValue) throws -> (MarValue, MarValue) {
+        @MainActor
+    func runGen(_ g: MarValue, _ seed: MarValue) throws -> (MarValue, MarValue) {
             let r = try Eval.apply(g, seed)
             guard case .tuple(let xs) = r, xs.count == 2 else {
                 throw MarRuntimeError.typeMismatch(expected: "(value, seed)", got: Eval.typeOf(r))
@@ -3275,6 +3283,7 @@ enum MarBuiltins {
         let body: String?
     }
 
+    @MainActor
     static func buildServiceRequest(verb: String, pattern: String, req: MarValue) -> ServiceRequest {
         // Working copy of the record's fields (empty for a `()` request).
         var fields: [String: MarValue] = [:]
@@ -3377,6 +3386,7 @@ enum MarBuiltins {
     /// list, they all share a type, so the first one settles it, which keeps
     /// this right even where a call site was never elaborated. `empty` is the
     /// answer no value can supply, so the typechecker supplies it.
+    @MainActor
     static func numericFold(
         _ dec: @escaping (MarDec, MarDec) throws -> MarDec,
         _ ints: @escaping (Int, Int) -> Int,

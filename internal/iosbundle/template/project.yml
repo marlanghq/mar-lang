@@ -26,7 +26,7 @@ settings:
     # Sendable cascade through every value type without adding real
     # safety. We opt into upcoming Swift 6 features incrementally and
     # surface concurrency issues as warnings.
-    SWIFT_VERSION: 5.10
+    SWIFT_VERSION: 6.0
     SWIFT_STRICT_CONCURRENCY: targeted
     IPHONEOS_DEPLOYMENT_TARGET: 18.0
     DEVELOPMENT_TEAM: ""
