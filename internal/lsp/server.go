@@ -212,6 +212,10 @@ func (s *Server) handle(msg *message) {
 		s.handleCodeAction(msg)
 	case "textDocument/formatting":
 		s.handleFormatting(msg)
+	// Not an LSP method: an extension of the protocol, for a caller that has a
+	// NAME and no cursor. See describe.go.
+	case "mar/describe":
+		s.handleDescribe(msg)
 	case "shutdown":
 		s.respond(msg.ID, nil)
 	case "exit":

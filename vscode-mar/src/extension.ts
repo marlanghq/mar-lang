@@ -6,6 +6,7 @@ import {
   workspace,
   window,
 } from "vscode";
+import { registerTools } from "./tools";
 import {
   LanguageClient,
   LanguageClientOptions,
@@ -35,6 +36,11 @@ export function activate(context: ExtensionContext) {
   };
 
   client = new LanguageClient("mar", "mar", serverOptions, clientOptions);
+
+  // The reference, reachable by name, for a language model writing Mar here.
+  // Registered before start so the tool exists even while the server is coming
+  // up; it reports that rather than answering as if the name did not exist.
+  registerTools(context, client);
 
   client.start().catch((err: Error) => {
     window.showErrorMessage(

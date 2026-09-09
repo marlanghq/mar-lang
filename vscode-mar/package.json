@@ -10,7 +10,7 @@
     "url": "https://github.com/marlanghq/mar-lang"
   },
   "engines": {
-    "vscode": "^1.91.0"
+    "vscode": "^1.95.0"
   },
   "categories": [
     "Programming Languages"
@@ -55,7 +55,33 @@
           "description": "Path to the mar binary used to launch the language server. Override if `mar` isn't on your $PATH."
         }
       }
-    }
+    },
+    "languageModelTools": [
+      {
+        "name": "mar_reference",
+        "toolReferenceName": "marReference",
+        "displayName": "Mar reference",
+        "modelDescription": "Look up a name in the Mar language reference: its exact type signature, what it does, and worked examples that a test evaluates and requires to be True. Mar is a small language that is not in your training data, so guessing a signature from another language will be wrong. Call this before writing any Mar stdlib call. Accepts a qualified name (List.map, Decimal.toCents), a module-less one (not, always, linkTo), or a prefix (Decimal.to) to see what exists.",
+        "userDescription": "Look up a name in the Mar reference",
+        "canBeReferencedInPrompt": true,
+        "icon": "$(book)",
+        "tags": [
+          "mar"
+        ],
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string",
+              "description": "The Mar name to look up, or a prefix of one."
+            }
+          },
+          "required": [
+            "name"
+          ]
+        }
+      }
+    ]
   },
   "scripts": {
     "typecheck": "tsc -p ./ --noEmit",
@@ -70,7 +96,7 @@
   },
   "devDependencies": {
     "@types/node": "^20.19.43",
-    "@types/vscode": "1.91.0",
+    "@types/vscode": "1.95.0",
     "@vscode/vsce": "^3.9.2",
     "esbuild": "^0.28.2",
     "typescript": "^7.0.2"
