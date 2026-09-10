@@ -2,8 +2,9 @@ package project
 
 import (
 	"go/ast"
-	"go/parser"
 	"go/token"
+
+	"mar/internal/gosrc"
 	"sort"
 	"strings"
 	"testing"
@@ -33,15 +34,15 @@ func TestEveryLoadPathRunsTheSamePasses(t *testing.T) {
 	}
 
 	fset := token.NewFileSet()
-	pkg, err := parser.ParseDir(fset, ".", nil, 0)
+	files, err := gosrc.ParseDir(fset, ".", true)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
 
 	// What each loader calls, by walking its body for `typecheck.X(...)`.
 	calls := map[string]map[string]bool{}
-	for _, p := range pkg {
-		for _, file := range p.Files {
+	{
+		for _, file := range files {
 			for _, d := range file.Decls {
 				fn, ok := d.(*ast.FuncDecl)
 				if !ok || fn.Recv != nil {

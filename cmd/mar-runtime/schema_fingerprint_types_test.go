@@ -53,8 +53,14 @@ func TestTheFingerprintSeesADeclaredTypeTheSQLHides(t *testing.T) {
 func TestTheFingerprintIsStableForTheSameDeclaration(t *testing.T) {
 	// The other half: a fingerprint that changed on its own would refuse
 	// every restore.
-	if fingerprintOfDecimalScale(t, 2) != fingerprintOfDecimalScale(t, 2) {
-		t.Fatal("the same declaration must fingerprint the same, twice")
+	// Named rather than compared inline: two identical calls either side of a
+	// `!=` is the shape of a real bug, so a reader (and staticcheck's SA4000)
+	// cannot tell this deliberate determinism check from one. The names say
+	// which is which, and a failure can print both.
+	first := fingerprintOfDecimalScale(t, 2)
+	second := fingerprintOfDecimalScale(t, 2)
+	if first != second {
+		t.Fatalf("the same declaration must fingerprint the same, twice: %v then %v", first, second)
 	}
 }
 

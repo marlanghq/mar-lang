@@ -4,6 +4,8 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+
+	"mar/internal/gosrc"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -123,12 +125,12 @@ func astNodeNames(t *testing.T) (exprs, pats []string) {
 	t.Helper()
 	dir := filepath.Join("..", "ast")
 	fset := token.NewFileSet()
-	pkgs, err := parser.ParseDir(fset, dir, nil, 0)
+	files, err := gosrc.ParseDir(fset, dir, true)
 	if err != nil {
 		t.Fatalf("parse %s: %v", dir, err)
 	}
-	for _, pkg := range pkgs {
-		for _, file := range pkg.Files {
+	{
+		for _, file := range files {
 			for _, decl := range file.Decls {
 				fn, ok := decl.(*ast.FuncDecl)
 				if !ok || fn.Recv == nil || len(fn.Recv.List) != 1 {

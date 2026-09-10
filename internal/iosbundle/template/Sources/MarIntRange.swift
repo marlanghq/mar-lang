@@ -20,9 +20,11 @@ enum MarInt {
         .message("Int overflow: \(a) \(op) \(b) is outside the range of Int (\(min) to \(max))")
     }
 
-    static func outOfRange(_ source: String, _ v: Int) -> MarRuntimeError {
-        .message("Int out of range: \(v) from \(source) is outside the range of Int (\(min) to \(max))")
-    }
+    // `outOfRange`, the twin of Go's intOutOfRange, lived here and nothing
+    // called it: on the server that sentence is raised at ONE boundary, the
+    // database, and a phone has none. Removed rather than kept for symmetry --
+    // a message no code can produce is a claim about behaviour that does not
+    // exist.
 
     /// A Duration's seconds converted to an Int, or a refusal.
     ///

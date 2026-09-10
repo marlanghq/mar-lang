@@ -56,30 +56,6 @@ actor APIClient {
         return FetchedProgram(data: data, runtime: (runtime?.isEmpty ?? true) ? nil : runtime)
     }
 
-    /// POST a raw JSON body to `path`, return the raw response body.
-    /// The caller parses or echoes it as a string: services have
-    /// arbitrary response shapes so we don't impose a decoder here.
-    func postJSON(path: String, body: String) async throws -> String {
-        guard let url = URL(string: path, relativeTo: baseURL) else {
-            throw APIError.invalidURL
-        }
-        var req = URLRequest(url: url)
-        req.httpMethod = "POST"
-        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        req.httpBody = body.data(using: .utf8)
-        do {
-            let (data, resp) = try await URLSession.shared.data(for: req)
-            let bodyText = String(data: data, encoding: .utf8) ?? ""
-            if let http = resp as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
-                throw APIError.http(http.statusCode, bodyText)
-            }
-            return bodyText
-        } catch let err as APIError {
-            throw err
-        } catch {
-            throw APIError.network(error)
-        }
-    }
 
     private func getWithResponse(path: String) async throws -> (Data, HTTPURLResponse?) {
         guard let url = URL(string: path, relativeTo: baseURL) else {

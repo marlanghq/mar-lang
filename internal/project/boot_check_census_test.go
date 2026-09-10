@@ -2,8 +2,9 @@ package project
 
 import (
 	"go/ast"
-	"go/parser"
 	"go/token"
+
+	"mar/internal/gosrc"
 	"os"
 	"sort"
 	"strings"
@@ -53,15 +54,15 @@ func TestEveryCheckRunsAtTheEarliestStageItCan(t *testing.T) {
 	}
 	var found []pass
 	for _, dir := range pkgs {
-		parsed, err := parser.ParseDir(fset, dir, nil, 0)
+		files, err := gosrc.ParseDir(fset, dir, true)
 		if err != nil {
 			t.Fatalf("parse %s: %v", dir, err)
 		}
-		for _, p := range parsed {
-			if strings.HasSuffix(p.Name, "_test") {
+		for _, f := range files {
+			if strings.HasSuffix(f.Name.Name, "_test") {
 				continue
 			}
-			for _, f := range p.Files {
+			{
 				for _, d := range f.Decls {
 					fn, ok := d.(*ast.FuncDecl)
 					if !ok || fn.Recv != nil || fn.Type.Params == nil {

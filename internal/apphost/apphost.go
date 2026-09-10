@@ -404,9 +404,6 @@ func sameCtorList(a, b []string) bool {
 	return true
 }
 
-// CheckedProgram is what a registered fullstack program amounts to once every
-// boot check has passed: the routes to mount, the contracts behind them, and
-// the modules the pages reach.
 // CheckFrontendProgram is the whole boot check for `App.frontend`, in one
 // place both the dev server and `mar build` call.
 //
@@ -447,6 +444,9 @@ func CheckBackendProgram(rec runtime.VRecord) ([]runtime.Value, error) {
 	return routes, nil
 }
 
+// CheckedProgram is what a registered fullstack program amounts to once every
+// boot check has passed: the routes to mount, the contracts behind them, and
+// the modules the pages reach.
 type CheckedProgram struct {
 	Routes    []runtime.Value
 	Exposed   []runtime.VExposedService

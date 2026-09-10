@@ -420,8 +420,6 @@ struct DecodedPage: Identifiable {
     /// typed exactly the way a real URL's params would be. Returns nil when
     /// the pattern uses something this cannot fill: the caller says so
     /// rather than counting the page as checked.
-    @MainActor
-    func sampleParams() -> MarValue? { sampleVisit()?.params }
 
     /// The concrete URL this page was rendered at, alongside its params.
     ///

@@ -196,16 +196,6 @@ func BaseEnv() *TypeEnv {
 	return env
 }
 
-// BaseQualifiedSymbols returns the qualified stdlib bindings
-// (Module.name → Type) as a flat map. Consumed by the LSP to power
-// completion / hover / workspace-symbol over the framework's
-// built-ins. Bare-name aliases (e.g. `listMap` for `List.map`) are
-// excluded: only the user-facing qualified form is reported, since
-// the bare names are an internal-runtime convention.
-func BaseQualifiedSymbols() map[string]Type {
-	return qualifiedAliases(baseBindings())
-}
-
 // AllQualifiedSymbols returns EVERY user-facing name that carries a module
 // qualifier: the aliases BaseQualifiedSymbols reports, plus the names that are
 // already written qualified in the binding table and which the alias mapping

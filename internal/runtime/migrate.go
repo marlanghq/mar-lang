@@ -514,14 +514,6 @@ func (m *Migrator) ensureMigrationMetaTable() error {
 	return err
 }
 
-func (m *Migrator) recordMigration(step MigrationStep) error {
-	_, err := m.db.Exec(
-		`INSERT INTO _mar_schema_migrations (table_name, migration_kind, sql_text, applied_at) VALUES (?, ?, ?, ?)`,
-		step.Table, step.migrationKind(), step.recordedSQL(), time.Now().UnixMilli(),
-	)
-	return err
-}
-
 // recordMigrationTx is the same row, written inside the transaction that
 // carries the step's own statements. See applyStep.
 func (m *Migrator) recordMigrationTx(tx *sql.Tx, step MigrationStep) error {

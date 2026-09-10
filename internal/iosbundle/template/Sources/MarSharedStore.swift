@@ -153,13 +153,12 @@ enum MarSharedRegistry {
         return made
     }
 
-    static func lookup(_ key: String) -> MarSharedStore? { stores[key] }
-
-    static func all() -> [MarSharedStore] { Array(stores.values) }
-
     static func preserve(key: String, model: MarValue) {
         preservedModels[key] = model
     }
+
+    static func lookup(_ key: String) -> MarSharedStore? { stores[key] }
+
 
     // MARK: - Observers
 

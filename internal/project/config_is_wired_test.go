@@ -2,9 +2,10 @@ package project
 
 import (
 	"go/ast"
-	"go/parser"
 	"go/token"
 	"os"
+
+	"mar/internal/gosrc"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -29,17 +30,15 @@ import (
 // zero and is wrong.
 func TestEveryConfigFieldIsRead(t *testing.T) {
 	fset := token.NewFileSet()
-	pkg, err := parser.ParseDir(fset, ".", func(fi os.FileInfo) bool {
-		return !strings.HasSuffix(fi.Name(), "_test.go")
-	}, 0)
+	files, err := gosrc.ParseDir(fset, ".", false)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
 
 	// The config structs: those whose fields carry json tags.
 	fields := map[string]string{} // field name -> struct it belongs to
-	for _, p := range pkg {
-		for _, file := range p.Files {
+	{
+		for _, file := range files {
 			ast.Inspect(file, func(n ast.Node) bool {
 				ts, ok := n.(*ast.TypeSpec)
 				if !ok {
@@ -100,16 +99,15 @@ func TestEveryConfigFieldIsRead(t *testing.T) {
 // it.
 func TestEveryConfigAccessorHasACaller(t *testing.T) {
 	fset := token.NewFileSet()
-	pkg, err := parser.ParseDir(fset, ".", func(fi os.FileInfo) bool {
-		return !strings.HasSuffix(fi.Name(), "_test.go")
-	}, 0)
+	files, err := gosrc.ParseDir(fset, ".", false)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
 
 	accessors := map[string]string{} // name -> file it is declared in
-	for _, p := range pkg {
-		for path, file := range p.Files {
+	{
+		for _, file := range files {
+			path := fset.Position(file.Pos()).Filename
 			for _, d := range file.Decls {
 				fn, ok := d.(*ast.FuncDecl)
 				if !ok || !fn.Name.IsExported() {

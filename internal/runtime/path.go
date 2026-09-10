@@ -75,6 +75,12 @@ type VPath struct {
 }
 
 func (VPath) isValue() {}
+
+// Display satisfies Value and is never called: `deadcode` reports it, and it is
+// right that no path reaches it. A Path exists only between the checker and
+// linkTo, so nothing ever prints one. The method stays because the interface
+// requires it -- a conformance the compiler checks, which a reachability tool
+// cannot see.
 func (p VPath) Display() string {
 	return fmt.Sprintf("<path:%s>", p.Source)
 }
