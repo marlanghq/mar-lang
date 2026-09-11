@@ -55,6 +55,13 @@ type Server struct {
 	mu   sync.Mutex
 	docs map[string]string    // uri -> latest contents
 	idx  map[string]*DocIndex // uri -> last successful analysis (symbols, types)
+	// evalMu serializes anything that LOADS the project, which is not the same
+	// thing s.mu guards. Loading resets global runtime state -- the entity
+	// registry, the Path enum table -- so two loads at once would fight over
+	// it. Until mar/check there was only ever one, because the message loop is
+	// single-threaded; a check answering from a goroutine is what makes this
+	// necessary rather than theoretical.
+	evalMu sync.Mutex
 }
 
 // --- JSON-RPC framing ---
@@ -216,6 +223,10 @@ func (s *Server) handle(msg *message) {
 	// NAME and no cursor. See describe.go.
 	case "mar/describe":
 		s.handleDescribe(msg)
+	// Whole-project check, the one question a per-document analysis cannot
+	// answer. See check.go.
+	case "mar/check":
+		s.handleCheck(msg)
 	case "shutdown":
 		s.respond(msg.ID, nil)
 	case "exit":
@@ -1419,7 +1430,11 @@ func (s *Server) projectAnalyze(path, content string) ([]lspDiagnostic, bool) {
 	if err != nil {
 		return nil, false
 	}
+	// The same lock mar/check takes: both load the project, and loading resets
+	// global runtime state.
+	s.evalMu.Lock()
 	_, _, _, err = project.LoadForServeTypedWithOverrides(mainFile, map[string]string{abs: content})
+	s.evalMu.Unlock()
 	if err != nil {
 		if d, ok := errorToDiagnostic(err, path, content); ok {
 			return []lspDiagnostic{d}, true

@@ -20,6 +20,7 @@ import {
   LanguageModelToolInvocationOptions,
   LanguageModelToolResult,
   lm,
+  workspace,
 } from "vscode";
 import { LanguageClient } from "vscode-languageclient/node";
 
@@ -105,8 +106,85 @@ class MarReferenceTool implements LanguageModelTool<{ name: string }> {
   }
 }
 
+interface CheckError {
+  file?: string;
+  line?: number;
+  column?: number;
+  message: string;
+  stage: string;
+}
+
+interface CheckResult {
+  ok: boolean;
+  root?: string;
+  modules?: number;
+  errors?: CheckError[];
+}
+
+class MarCheckTool implements LanguageModelTool<{ path?: string }> {
+  constructor(private readonly client: LanguageClient) {}
+
+  async invoke(
+    options: LanguageModelToolInvocationOptions<{ path?: string }>,
+    token: CancellationToken,
+  ): Promise<LanguageModelToolResult> {
+    // Whatever the caller names, or the workspace. A model has a project in
+    // mind and not necessarily a path to its root; the server resolves either
+    // to the project it belongs to.
+    const root =
+      options.input?.path?.trim() ||
+      workspace.workspaceFolders?.[0]?.uri.fsPath ||
+      "";
+    if (!root) {
+      return new LanguageModelToolResult([
+        new LanguageModelTextPart("No Mar project is open, and no path was given."),
+      ]);
+    }
+
+    let res: CheckResult;
+    try {
+      res = await this.client.sendRequest<CheckResult>("mar/check", { root }, token);
+    } catch (err) {
+      return new LanguageModelToolResult([
+        new LanguageModelTextPart(
+          `The Mar language server did not answer (${String(err)}). ` +
+            `Nothing is known about this project rather than assumed to compile.`,
+        ),
+      ]);
+    }
+
+    if (res.ok) {
+      const n = res.modules ?? 0;
+      return new LanguageModelToolResult([
+        new LanguageModelTextPart(
+          `The project checks clean: ${n} module${n === 1 ? "" : "s"}, no errors. ` +
+            `This is the same check \`mar check\` runs, including the boot checks that ` +
+            `need the program evaluated.`,
+        ),
+      ]);
+    }
+
+    const lines = (res.errors ?? []).map((e) => {
+      const at = e.file ? `${e.file}${e.line ? `:${e.line}:${e.column ?? 0}` : ""}` : "";
+      // The stage is on the line because what to do next depends on it: a
+      // typecheck error is in one file, a boot error is about how the program
+      // is assembled, and a manifest error is in mar.json.
+      return `[${e.stage}] ${at ? at + " " : ""}${e.message}`;
+    });
+    if (!lines.length) {
+      lines.push("The check failed without saying why, which is a bug in Mar rather than in your code.");
+    }
+    return new LanguageModelToolResult([new LanguageModelTextPart(lines.join("\n"))]);
+  }
+
+  prepareInvocation() {
+    return { invocationMessage: "Checking the Mar project" };
+  }
+}
+
 export function registerTools(context: ExtensionContext, client: LanguageClient) {
   context.subscriptions.push(
     lm.registerTool("mar_reference", new MarReferenceTool(client)),
+    lm.registerTool("mar_check", new MarCheckTool(client)),
   );
 }

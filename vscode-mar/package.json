@@ -80,6 +80,27 @@
             "name"
           ]
         }
+      },
+      {
+        "name": "mar_check",
+        "toolReferenceName": "marCheck",
+        "displayName": "Check the Mar project",
+        "modelDescription": "Check whether the whole Mar project compiles, and return the errors. This is the same check `mar check` runs: every module type-checked together, mar.json validated, then the boot checks, which need the program evaluated. It finds what a single file cannot show -- a name a sibling module does not export, two pages declared on one path, a service called but never mounted. Call it after writing or editing Mar code, before telling the user it is done.",
+        "userDescription": "Check the Mar project for errors",
+        "canBeReferencedInPrompt": true,
+        "icon": "$(check-all)",
+        "tags": [
+          "mar"
+        ],
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string",
+              "description": "A path inside the project. Defaults to the open workspace."
+            }
+          }
+        }
       }
     ]
   },
