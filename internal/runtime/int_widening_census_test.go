@@ -35,7 +35,7 @@ func TestNoIntIsNarrowedByGoInsteadOfByMarsBound(t *testing.T) {
 		"int64(len(s.Items))":                        "a set's size is bounded by memory",
 		"int64(len([]rune(s.V)))":                    "a string's length is bounded by memory",
 		"int64(i)":                                   "an index into a list already in memory",
-		"int64(start + i)":                           "List.range checks its own bounds before building",
+		"int64(runesBefore)":                         "a count of code points in a string already in memory",
 		"int64(c.V)":                                 "a Char is a code point, at most 0x10FFFF",
 		"int64(status)":                              "an HTTP status code",
 		"int64(ttlMinutes)":                          "a configured TTL in minutes, from the app's own source",

@@ -6,6 +6,10 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"unicode/utf8"
+
+	"golang.org/x/text/cases"
+	"golang.org/x/text/language"
 )
 
 // maxBuiltinExpansion bounds how many elements (or output bytes) a single
@@ -657,19 +661,32 @@ func stdlib() map[string]Value {
 			}
 			return VString{V: fmt.Sprintf("%d", i.V)}, nil
 		}),
+		// Case mapping is FULL, not one code point at a time. Unicode lets
+		// the case of a letter change the LENGTH of a string: the uppercase
+		// of the sharp s is two letters, of the fi ligature is two letters,
+		// and lowercasing a Greek capital sigma depends on whether it ends a
+		// word. strings.ToUpper answers one rune per rune and cannot say any
+		// of that, so the server returned STRAsharpE where the browser and
+		// the phone both returned STRASSE, for as long as the corpus fed
+		// these functions nothing but ASCII.
+		//
+		// A Caser carries state and must not be shared between goroutines,
+		// so each call builds its own. Measured at roughly twice the cost of
+		// strings.ToUpper on a short string, which is hundreds of
+		// nanoseconds, and buys agreement with the other two runtimes.
 		"stringToUpper": nativeFn(1, func(args []Value) (Value, error) {
 			s, ok := args[0].(VString)
 			if !ok {
 				return nil, fmt.Errorf("stringToUpper: not a String")
 			}
-			return VString{V: strings.ToUpper(s.V)}, nil
+			return VString{V: cases.Upper(language.Und).String(s.V)}, nil
 		}),
 		"stringToLower": nativeFn(1, func(args []Value) (Value, error) {
 			s, ok := args[0].(VString)
 			if !ok {
 				return nil, fmt.Errorf("stringToLower: not a String")
 			}
-			return VString{V: strings.ToLower(s.V)}, nil
+			return VString{V: cases.Lower(language.Und).String(s.V)}, nil
 		}),
 
 		// Maybe helpers
@@ -1140,6 +1157,15 @@ func stdlib() map[string]Value {
 			if !ok1 || !ok2 || !ok3 {
 				return nil, fmt.Errorf("stringReplace: expected String args")
 			}
+			// String.replace is join after . split before, which is how Elm
+			// defines it and what decides the empty-needle case: the answer
+			// has to be whatever this runtime's own String.split "" gives,
+			// joined. strings.ReplaceAll answers something else there
+			// (it also brackets both ends), so the empty needle is spelled
+			// out rather than delegated.
+			if needle.V == "" {
+				return VString{V: strings.Join(strings.Split(s.V, ""), rep.V)}, nil
+			}
 			return VString{V: strings.ReplaceAll(s.V, needle.V, rep.V)}, nil
 		}),
 		// stringRepeat : Int -> String -> String
@@ -1182,8 +1208,13 @@ func stdlib() map[string]Value {
 			return VString{V: padString(s.V, int(w.V), string(pad.V), false)}, nil
 		}),
 		// stringIndexes : String needle -> String s -> List Int
-		// Byte offsets of every occurrence (overlap NOT respected:
-		// Elm's behavior too; KMP scan advances past each hit).
+		// Code point offsets of every occurrence (overlap NOT respected:
+		// Elm's behavior too; the scan advances past each hit).
+		//
+		// It reported BYTE offsets until 2026-09-16. Nothing else in the
+		// language speaks bytes, so the number it handed back could not be
+		// used with anything, and it only ever matched the other two
+		// runtimes because every string in the corpus was ASCII.
 		"stringIndexes": nativeFn(2, func(args []Value) (Value, error) {
 			needle, ok1 := args[0].(VString)
 			s, ok2 := args[1].(VString)
@@ -1194,13 +1225,16 @@ func stdlib() map[string]Value {
 				return VList{}, nil
 			}
 			var out []Value
-			start := 0
+			start := 0       // byte offset the next scan starts at
+			runesBefore := 0 // code points to the left of start
 			for {
 				i := strings.Index(s.V[start:], needle.V)
 				if i < 0 {
 					break
 				}
-				out = append(out, VInt{V: int64(start + i)})
+				runesBefore += utf8.RuneCountInString(s.V[start : start+i])
+				out = append(out, VInt{V: int64(runesBefore)})
+				runesBefore += utf8.RuneCountInString(needle.V)
 				start += i + len(needle.V)
 			}
 			return VList{Elements: out}, nil
@@ -1212,14 +1246,23 @@ func stdlib() map[string]Value {
 // is at least width characters. When s is already >= width, returns
 // s unchanged. When pad is empty (corner case), returns s unchanged
 // so a typo doesn't silently produce an infinite loop.
+// padString fills s out to width, measuring in the unit String.length reports:
+// code points. It measured BYTES until 2026-09-16, which made it wrong in a way
+// no candidate answer to "what is a Character" would have accepted. A word
+// already wide in bytes got no padding at all, so String.padLeft 4 '.' on a
+// two-ideograph string came back untouched on the server and padded in the
+// browser and on the phone, and the corpus could not see it because every
+// string it had ever been fed was ASCII.
 func padString(s string, width int, pad string, left bool) string {
-	if len(s) >= width || pad == "" {
+	have := utf8.RuneCountInString(s)
+	padLen := utf8.RuneCountInString(pad)
+	if have >= width || padLen == 0 {
 		return s
 	}
-	need := width - len(s)
-	filler := strings.Repeat(pad, (need+len(pad)-1)/len(pad))
-	if len(filler) > need {
-		filler = filler[:need]
+	need := width - have
+	filler := strings.Repeat(pad, (need+padLen-1)/padLen)
+	if utf8.RuneCountInString(filler) > need {
+		filler = string([]rune(filler)[:need])
 	}
 	if left {
 		return filler + s
