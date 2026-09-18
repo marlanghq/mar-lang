@@ -214,3 +214,96 @@ func TestNoFunctionExemptionOutlivesItsFunction(t *testing.T) {
 			len(stale), strings.Join(stale, "\n  "))
 	}
 }
+
+// The gate that keeps the Text block from quietly becoming ASCII again.
+//
+// Every function below answers a question about text whose answer depends on
+// how the runtime represents a String: it measures, indexes, compares, or maps
+// character by character. ASCII cannot tell three representations apart, so a
+// case built from ASCII exercises the name and proves nothing about the
+// answer. That is how String.length came to have three answers with the whole
+// corpus green.
+//
+// Spelled out rather than derived, for the same reason the operator gate is:
+// nothing in a function's type says whether its answer depends on encoding.
+// `String.fromInt` takes no text and cannot; `String.padLeft` measures, and
+// measured in bytes on the server for as long as nobody fed it an accent.
+func TestTextBlockFeedsEveryEncodingSensitiveFunction(t *testing.T) {
+	block := textBlock(t)
+	if !strings.ContainsFunc(block, func(r rune) bool { return r > 127 }) {
+		t.Fatal("the Text block contains no character outside ASCII, which is the one thing it exists to do")
+	}
+
+	sensitive := []string{
+		// Measure, so they inherit "what is a Character".
+		"String.length", "String.padLeft", "String.padRight", "String.foldl",
+		// Yield or take Chars, so they say what a Character IS.
+		"String.toList", "String.fromList", "String.cons",
+		"String.map", "String.filter", "String.any",
+		// Report a position, which is a measurement with an offset.
+		"String.indexes",
+		// Compare, so they inherit "when are two Strings the same".
+		"String.contains", "String.startsWith", "String.endsWith",
+		"String.split", "String.replace",
+		// Map case, which Unicode allows to change the LENGTH of a string.
+		"String.toUpper", "String.toLower", "Char.toUpper", "Char.toLower",
+		// Classify a Char, and the classes are Unicode's, not ASCII's.
+		"Char.isAlpha", "Char.isUpper", "Char.isLower", "Char.isDigit",
+		// Cross the Char/Int boundary, where anything above the BMP is at risk.
+		"Char.toCode", "Char.fromCode",
+		// Order and identity: what Dict and Set are built out of.
+		"List.sort", "Dict.get", "Dict.size", "Set.size",
+	}
+	var missing []string
+	for _, name := range sensitive {
+		if !strings.Contains(block, name) {
+			missing = append(missing, name)
+		}
+	}
+	if len(missing) > 0 {
+		sort.Strings(missing)
+		t.Errorf("%d encoding-sensitive function(s) are exercised only over ASCII:\n  %s\n\n"+
+			"Add a case to textCases that feeds each one text that is not ASCII, or take it off\n"+
+			"this list with a reason. Its runtimes are free to disagree until then.",
+			len(missing), strings.Join(missing, "\n  "))
+	}
+}
+
+// Two sources of truth for one case is how a pinned divergence outlives its
+// fix: the expectation goes green and the pin nobody deleted keeps claiming
+// the runtimes disagree.
+func TestNoCaseIsBothExpectedAndPinned(t *testing.T) {
+	want, err := Expectations()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var both []string
+	for name := range KnownTextGaps {
+		if w, ok := want[name]; ok {
+			both = append(both, name+" (expected "+w+")")
+		}
+	}
+	if len(both) > 0 {
+		sort.Strings(both)
+		t.Errorf("%d case(s) carry a hand-written expectation AND a KnownTextGaps pin:\n  %s\n\n"+
+			"Keep one. If the runtimes now agree, delete the pin; if they still differ, delete\n"+
+			"the expectation.", len(both), strings.Join(both, "\n  "))
+	}
+}
+
+// textBlock returns the source of textCases, so the gate above asks about the
+// block that is supposed to be non-ASCII rather than about a Source that
+// contains an accented comment somewhere else.
+func textBlock(t *testing.T) string {
+	t.Helper()
+	const start, end = "textCases =", "\nlistCases : String"
+	i := strings.Index(Source, start)
+	if i < 0 {
+		t.Fatal("the corpus has no textCases block; it was renamed or removed")
+	}
+	j := strings.Index(Source[i:], end)
+	if j < 0 {
+		t.Fatal("textCases is no longer followed by listCases; this slice needs a new end marker")
+	}
+	return Source[i : i+j]
+}

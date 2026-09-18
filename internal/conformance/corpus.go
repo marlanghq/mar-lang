@@ -135,6 +135,153 @@ stringCases =
         ]
 
 
+-- Text that is not ASCII.
+--
+-- Until this block existed the corpus exercised all 23 String functions and
+-- fed none of them a character outside ASCII. The whole Source carried four
+-- non-ASCII characters, three of them in comments, and the only one ever
+-- computed with was a c-cedilla inside a linkTo case about URL encoding. So
+-- the coverage gate was satisfied, every runtime was green, and String.length
+-- had three different answers depending on which one you asked.
+--
+-- The three measure a String in three different units. Go counts code points
+-- (len of a rune slice), the browser counts UTF-16 units (s.length), the phone
+-- counts grapheme clusters (s.count). ASCII cannot tell them apart, which
+-- is why an ASCII-only corpus proved nothing about any of it.
+--
+-- None of the strings below is exotica. They are what a Brazilian address book
+-- holds in its first row: an accented letter, the same letter spelled with a
+-- combining accent, a CJK pair, an emoji, and a flag.
+--
+-- All of that is closed. On 2026-09-17 a Mar String became a sequence of
+-- Unicode SCALAR VALUES in all three runtimes: every length, width, position,
+-- equality and ordering counts scalars, which is what Char already was
+-- everywhere. Go needed no change, the browser needed three sites, the phone
+-- eleven. The thirteen entries that used to be pinned here are ordinary
+-- expectations below.
+--
+-- KnownTextGaps is now empty: every case below answers the same in all three.
+-- The two stragglers that were not about encoding went with it. Swift's
+-- lowercase skipped Unicode's conditional rules, so a word-final Greek sigma
+-- came back medial; and String.replace with an empty needle answered three
+-- ways, one of which tore a surrogate pair in half. Both are fixed, and
+-- String.replace is now join after . split before everywhere, which is what
+-- decides that case.
+-- The two keys are not a typo and not a duplicate: they render identically and
+-- are different strings. The first spells the accent as one code point, the
+-- second as a plain e followed by a combining acute. Two runtimes read that as
+-- two keys and one reads it as one, so this literal is a two-entry dictionary
+-- on the server and in the browser and a one-entry dictionary on the phone.
+accentKeys : Dict String Int
+accentKeys =
+    Dict.fromList [ ( "café", 1 ), ( "café", 2 ) ]
+
+
+textCases : String
+textCases =
+    String.join ";"
+        -- How long is a String. The unit question, stated five ways.
+        [ "lenAcute=" ++ String.fromInt (String.length "café")
+        , "lenCombining=" ++ String.fromInt (String.length "café")
+        , "lenCJK=" ++ String.fromInt (String.length "日本")
+        , "lenGrin=" ++ String.fromInt (String.length "😀")
+        , "lenFlag=" ++ String.fromInt (String.length "🇧🇷")
+
+        -- What String.toList yields, which is the same question about Char.
+        , "toListAcute=" ++ String.fromInt (List.length (String.toList "café"))
+        , "toListCombining=" ++ String.fromInt (List.length (String.toList "café"))
+        , "toListGrin=" ++ String.fromInt (List.length (String.toList "😀"))
+        , "toListFlag=" ++ String.fromInt (List.length (String.toList "🇧🇷"))
+
+        -- The law a reader would assume without being told: a String is as
+        -- long as the list of its Chars. It holds in one runtime of three.
+        , "lawLenCombining=" ++ yn (String.length "café" == List.length (String.toList "café"))
+        , "lawLenFlag=" ++ yn (String.length "🇧🇷" == List.length (String.toList "🇧🇷"))
+
+        -- A Char above the BMP has to survive the round trip and the classifiers.
+        , "codeAcute=" ++ String.fromInt (Char.toCode 'é')
+        , "codeGrin=" ++ String.fromInt (Char.toCode '😀')
+        , "fromCodeHigh=" ++ String.fromList [ Char.fromCode 128512 ]
+        , "fromCodeSurrogate=" ++ String.fromInt (Char.toCode (Char.fromCode 55296))
+        , "fromCodePastMax=" ++ String.fromInt (Char.toCode (Char.fromCode 1114112))
+        , "fromCodeMax=" ++ String.fromInt (Char.toCode (Char.fromCode 1114111))
+        , "fromCodeNegative=" ++ String.fromInt (Char.toCode (Char.fromCode (0 - 1)))
+        , "charUpperSharpS=" ++ String.fromList [ Char.toUpper 'ß' ]
+        , "charLowerDotted=" ++ String.fromList [ Char.toLower 'İ' ]
+        , "charUpperAcute=" ++ String.fromList [ Char.toUpper 'é' ]
+        , "isAlphaAcute=" ++ yn (Char.isAlpha 'é')
+        , "isUpperAcute=" ++ yn (Char.isUpper 'É')
+
+        -- Padding has to MEASURE before it can fill, so it inherits the unit
+        -- question and adds one of its own: a runtime that measures in bytes
+        -- stops padding at all once the text is wide enough in bytes.
+        , "padAcute=" ++ String.padLeft 6 '.' "café"
+        , "padCJK=" ++ String.padLeft 4 '.' "日本"
+        , "padGrin=" ++ String.padLeft 3 '.' "😀"
+        , "padRightAcute=" ++ String.padRight 6 '.' "café"
+
+        -- Case mapping that changes LENGTH. Unicode says the uppercase of the
+        -- sharp s is two letters; a runtime mapping one code point at a time
+        -- cannot say that.
+        , "upperAcute=" ++ String.toUpper "café"
+        , "lowerAcute=" ++ String.toLower "CAFÉ"
+        , "upperSharpS=" ++ String.toUpper "straße"
+        , "upperLigature=" ++ String.toUpper "ﬁle"
+        , "lowerDotted=" ++ String.toLower "İstanbul"
+        , "lowerFinalSigma=" ++ String.toLower "ΣΟΦΟΣ"
+
+        -- Where a substring is. The answer is an index, so it is the unit
+        -- question again, and the ASCII case could not tell bytes from
+        -- anything else.
+        , "indexesAcute=" ++ is (String.indexes "é" "café")
+        , "indexesAfterAcute=" ++ is (String.indexes "x" "éx")
+        , "indexesAfterGrin=" ++ is (String.indexes "x" "😀x")
+
+        -- Whether two spellings of the same word are the same String. This one
+        -- is not cosmetic: Dict and Set decide key identity with it, so the
+        -- answer decides what a dictionary CONTAINS.
+        , "eqNormal=" ++ yn ("café" == "café")
+        , "ltNormal=" ++ yn ("café" < "café")
+        , "containsAcute=" ++ yn (String.contains "é" "café")
+        , "containsCombining=" ++ yn (String.contains "é" "café")
+        , "dictAccentSize=" ++ String.fromInt (Dict.size accentKeys)
+        , "dictAccentGet=" ++ mi (Dict.get "café" accentKeys)
+        , "setAccentSize=" ++ String.fromInt (Set.size (Set.fromList [ "café", "café" ]))
+
+        -- Order above the BMP. A runtime comparing UTF-16 units sorts every
+        -- astral character below the replacement character, because a leading
+        -- surrogate is numerically smaller than it.
+        , "sortAstral=" ++ String.join "|" (List.sort [ "😀", "�", "z" ])
+
+        -- The per-Char functions, over a letter that is not ASCII.
+        , "mapAcute=" ++ String.map Char.toUpper "café"
+        , "filterAcute=" ++ String.filter Char.isAlpha "café!"
+        , "foldlAcute=" ++ String.fromInt (String.foldl (\_ n -> n + 1) 0 "café")
+        , "consAcute=" ++ String.cons 'é' "x"
+        , "anyAcuteAlpha=" ++ yn (String.any Char.isAlpha "é")
+        , "endsAcute=" ++ yn (String.endsWith "é" "café")
+        , "trimAcute=" ++ String.trim "  café  "
+        , "splitAcute=" ++ String.join "|" (String.split "é" "café")
+        , "replaceAcute=" ++ String.replace "é" "e" "café"
+        , "replaceEmpty=" ++ String.replace "" "-" "ab"
+        , "splitEmpty=" ++ String.join "|" (String.split "" "aé")
+        , "splitEmptyAstral=" ++ String.join "|" (String.split "" "a😀")
+        , "replaceEmptyAstral=" ++ String.replace "" "-" "a😀"
+        , "fromListMixed=" ++ String.fromList [ 'é', '😀' ]
+        , "repeatAcute=" ++ String.repeat 2 "é"
+        , "joinAcute=" ++ String.join "é" [ "a", "b" ]
+        , "startsCombining=" ++ yn (String.startsWith "café" "cafés")
+        , "charLowerAcute=" ++ String.fromList [ Char.toLower 'É' ]
+        , "isLowerAcute=" ++ yn (Char.isLower 'é')
+
+        -- A digit that is not an ASCII digit. Input validation is built out of
+        -- this one, and the three runtimes ask three different questions: a
+        -- Unicode category, a regular expression, or a property of a scalar.
+        , "isDigitArabic=" ++ yn (Char.isDigit '٣')
+        , "isAlphaCJK=" ++ yn (Char.isAlpha '日')
+        ]
+
+
 listCases : String
 listCases =
     String.join ";"
@@ -1088,7 +1235,7 @@ equalityCases =
 
 
 results =
-    String.join "\n" [ basicsCases, stringCases, listCases, maybeCases, resultCases, tupleCases, charCases, dictCases, setCases, jsonCases, mathCases, shortCircuitCases, orderingCases, decodeCases, decimalCases, timeCases, randomCases, linkCases, equalityCases ]
+    String.join "\n" [ basicsCases, stringCases, textCases, listCases, maybeCases, resultCases, tupleCases, charCases, dictCases, setCases, jsonCases, mathCases, shortCircuitCases, orderingCases, decodeCases, decimalCases, timeCases, randomCases, linkCases, equalityCases ]
 `
 
 // Entry is the value each runtime is asked to evaluate.
@@ -1098,7 +1245,7 @@ const Entry = "Conform.results"
 // across modules, `map`, `foldl`, `filter`, `toList`, so a case is named for
 // the block it landed in: `Dict.map`, not `map`.
 var Blocks = []string{
-	"Basics", "String", "List", "Maybe", "Result", "Tuple", "Char", "Dict", "Set", "JSON", "Math",
+	"Basics", "String", "Text", "List", "Maybe", "Result", "Tuple", "Char", "Dict", "Set", "JSON", "Math",
 	"ShortCircuit",
 	// Ordering is the one block that is about OPERATORS rather than named
 	// functions, which is why it had to be written by hand: the coverage
@@ -1223,6 +1370,51 @@ var OutOfScope = map[string]string{
 	"Task": "describes server work",
 	"Http": "performs network requests",
 }
+
+// TextGap is one case in the Text block where the three runtimes answer
+// differently, pinned at what each of them answered when the block was
+// written (2026-09-16).
+//
+// A conformance test that fails for a known reason gets ignored, and a known
+// reason that is not written down gets forgotten. The sound corpus learned
+// that first, and KnownWaveLevelGaps in sound_playback.go is the same bargain
+// as this one: a case listed here does not fail for DISAGREEING, and does fail
+// the moment any runtime's answer MOVES, in either direction. The fix for a
+// fixed one is to delete its entry, which the coverage gate then requires an
+// expectation for.
+//
+// Nothing here is settled, and the entries are not all the same kind of thing.
+// Some are defects with an answer the other two runtimes already agree on.
+// The rest are one question the language has never answered - what a Character
+// is - showing up in six places. They want different work, so each Why says
+// which it is.
+type TextGap struct {
+	Go, JS, Swift string
+	Why           string
+}
+
+func (g TextGap) answerFor(who string) (string, bool) {
+	switch who {
+	case "Go":
+		return g.Go, true
+	case "JS":
+		return g.JS, true
+	case "Swift":
+		return g.Swift, true
+	}
+	return "", false
+}
+
+// Empty, and that is the point: as of 2026-09-17 the three runtimes answer
+// every case in the Text block identically. It was nineteen entries when this
+// table was written two days earlier.
+//
+// Keep the mechanism. The next divergence someone measures and cannot settle
+// in the same sitting belongs here rather than in a document: an entry does
+// not fail for DISAGREEING, and does fail the moment any runtime's answer
+// MOVES, in either direction, which is what stops a known problem from
+// quietly becoming a different one.
+var KnownTextGaps = map[string]TextGap{}
 
 // expectations are worked out from the expressions in Source rather than
 // recorded from a run. That is the whole point: a value copied out of a runtime
@@ -1350,6 +1542,72 @@ String.toList=3
 String.toLower=abc
 String.toUpper=ABC
 String.trim=hi
+
+Text.lenAcute=4
+Text.lenCJK=2
+Text.toListAcute=4
+Text.toListCombining=5
+Text.toListGrin=1
+Text.toListFlag=2
+Text.codeAcute=233
+Text.codeGrin=128512
+Text.fromCodeHigh=😀
+Text.fromCodeSurrogate=65533
+Text.fromCodePastMax=65533
+Text.fromCodeMax=1114111
+Text.fromCodeNegative=65533
+Text.charUpperSharpS=ß
+Text.charLowerDotted=i
+Text.charUpperAcute=É
+Text.isAlphaAcute=T
+Text.isUpperAcute=T
+Text.upperAcute=CAFÉ
+Text.lowerAcute=café
+Text.indexesAcute=3
+Text.ltNormal=F
+Text.containsAcute=T
+Text.mapAcute=CAFÉ
+Text.filterAcute=café
+Text.foldlAcute=4
+Text.consAcute=éx
+Text.anyAcuteAlpha=T
+Text.endsAcute=T
+Text.trimAcute=café
+Text.splitAcute=caf|
+Text.replaceAcute=cafe
+Text.lenCombining=5
+Text.lenGrin=1
+Text.lenFlag=2
+Text.lawLenCombining=T
+Text.lawLenFlag=T
+Text.indexesAfterGrin=1
+Text.padGrin=..😀
+Text.eqNormal=F
+Text.containsCombining=F
+Text.startsCombining=F
+Text.dictAccentSize=2
+Text.dictAccentGet=1
+Text.setAccentSize=2
+Text.splitEmpty=a|é
+Text.splitEmptyAstral=a|😀
+Text.replaceEmpty=a-b
+Text.replaceEmptyAstral=a-😀
+Text.lowerFinalSigma=σοφος
+Text.padAcute=..café
+Text.padCJK=..日本
+Text.padRightAcute=café..
+Text.indexesAfterAcute=1
+Text.upperSharpS=STRASSE
+Text.sortAstral=z|�|😀
+Text.upperLigature=FILE
+Text.lowerDotted=i̇stanbul
+Text.fromListMixed=é😀
+Text.repeatAcute=éé
+Text.joinAcute=aéb
+Text.charLowerAcute=é
+Text.isLowerAcute=T
+Text.isDigitArabic=T
+Text.isAlphaCJK=T
 
 List.all=T
 List.any=T
@@ -1600,6 +1858,22 @@ func Check(who string, got map[string]string) ([]string, error) {
 		}
 	}
 	for name, g := range got {
+		// A case in KnownTextGaps is answered differently by the three
+		// runtimes on purpose, and is measured against the answer THIS
+		// runtime was pinned at rather than against a shared one. It
+		// still fails if that answer moves.
+		if gap, ok := KnownTextGaps[name]; ok {
+			pinned, isRuntime := gap.answerFor(who)
+			switch {
+			case !isRuntime:
+				problems = append(problems, fmt.Sprintf("%s: KnownTextGaps pins Go, JS and Swift, and this run calls itself %q", name, who))
+			case g != pinned:
+				problems = append(problems, fmt.Sprintf("%s: a known divergence MOVED. %s was pinned at %s and now answers %s.\n"+
+					"Either a fix landed, in which case delete the entry once all three agree and write\n"+
+					"the expectation they agree on, or something drifted.\n%s", name, who, pinned, g, gap.Why))
+			}
+			continue
+		}
 		if _, ok := want[name]; !ok {
 			problems = append(problems, fmt.Sprintf("%s: %s answers %s, but no hand-written expectation covers it", name, who, g))
 		}
@@ -1613,6 +1887,12 @@ func Check(who string, got map[string]string) ([]string, error) {
 func Difference(aName string, a map[string]string, bName string, b map[string]string) []string {
 	var out []string
 	for name, av := range a {
+		// Reported by Check instead, against each runtime's own pinned
+		// answer: these disagree knowingly, and saying so twice would
+		// bury the cases that disagree by accident.
+		if _, known := KnownTextGaps[name]; known {
+			continue
+		}
 		bv, ok := b[name]
 		if !ok {
 			out = append(out, bName+" produced no answer for "+name)
