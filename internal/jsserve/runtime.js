@@ -1980,12 +1980,43 @@
   // keys and losing entries with nothing reported anywhere. Records,
   // constructors and functions have no order, and the type checker's
   // Comparable constraint is what keeps them from arriving here.
+  // Strings compare by CODE POINT, which is not what `<` does. JavaScript
+  // orders by UTF-16 unit, and a leading surrogate (D800-DBFF) sits below
+  // E000-FFFF, so every character above the BMP sorted UNDER the replacement
+  // character here while Go and Swift put it above. It was never only about
+  // List.sort: `<` is what orders Dict iteration and Set contents, so a list
+  // of names holding one emoji came back from the browser in a different
+  // order than from the server that sent it, with nothing reporting it.
+  //
+  // One order-preserving remap fixes it. Surrogates move above the BMP
+  // (+0x2800 puts D800-DFFF at 10000-107FF), which is where the characters
+  // they encode belong; nothing else moves. Almost every comparison takes the
+  // fast path, which is two native scans and a native compare: when neither
+  // string holds a surrogate, UTF-16 order already IS code point order. That
+  // path measured 31ns against 15ns for the bare `<` it replaces, on short
+  // ASCII keys in node 26 - worth knowing because `<` is what Dict and Set
+  // binary-search with, so this is on the hot path of every keyed lookup.
+  const SURROGATE = /[\uD800-\uDFFF]/;
+  function cmpStrings(a, b) {
+    if (a === b) return 0;
+    if (!SURROGATE.test(a) && !SURROGATE.test(b)) return a < b ? -1 : 1;
+    const n = a.length < b.length ? a.length : b.length;
+    for (let i = 0; i < n; i++) {
+      let ca = a.charCodeAt(i), cb = b.charCodeAt(i);
+      if (ca === cb) continue;
+      if (ca >= 0xD800 && ca <= 0xDFFF) ca += 0x2800;
+      if (cb >= 0xD800 && cb <= 0xDFFF) cb += 0x2800;
+      return ca < cb ? -1 : 1;
+    }
+    return a.length < b.length ? -1 : a.length > b.length ? 1 : 0;
+  }
+
   function cmpValues(a, b) {
     if (a.k !== b.k) throw new Error('comparison: type mismatch');
     switch (a.k) {
       case 'I': return a.n < b.n ? -1 : a.n > b.n ? 1 : 0;
       case 'De': return decCmpV(a, b);
-      case 'S': return a.s < b.s ? -1 : a.s > b.s ? 1 : 0;
+      case 'S': return cmpStrings(a.s, b.s);
       case 'Ch': return a.c < b.c ? -1 : a.c > b.c ? 1 : 0;
       case 'T': {
         // Component-wise, left to right, first difference wins. Two tuples
@@ -3755,7 +3786,7 @@
     def('stringFromInt', native(1, ([n]) => VString(String(n.n))));
     def('String.fromInt', native(1, ([n]) => VString(String(n.n))));
     def('stringLength', native(1, ([s]) => VInt(s.s.length)));
-    def('String.length', native(1, ([s]) => VInt(s.s.length)));
+    def('String.length', native(1, ([s]) => VInt(scalarLength(s.s))));
 
     const stringContainsImpl = native(2, ([needle, hay]) => VBool(hay.s.includes(needle.s)));
     def('stringContains', stringContainsImpl);
@@ -3819,10 +3850,13 @@
     def('String.toInt', stringToIntImpl);
 
     // String.replace : String needle -> String replacement -> String s -> String
-    // Uses String.prototype.replaceAll (ES2021+). All modern browsers
-    // we target support it.
+    // String.replace is join after . split before. With an EMPTY needle
+    // that split has to be the one Mar means, by scalar: JavaScript's own
+    // split('') cuts by UTF-16 unit and tears a surrogate pair in half, so
+    // replacing nothing inside "a<emoji>" used to return a string carrying
+    // two LONE SURROGATES. Spreading iterates by code point and does not.
     const stringReplaceImpl = native(3, ([needle, rep, s]) =>
-      VString(s.s.split(needle.s).join(rep.s)));
+      VString((needle.s === '' ? [...s.s] : s.s.split(needle.s)).join(rep.s)));
     def('stringReplace', stringReplaceImpl);
     def('String.replace', stringReplaceImpl);
 
@@ -3836,13 +3870,33 @@
 
     // String.padLeft / padRight: pad with a SINGLE Char (Elm-style).
     // The seed is one code point that we repeat to fill.
+    // A Mar String is a sequence of Unicode SCALAR VALUES, so every length,
+    // width and position below counts scalars. JavaScript stores a string as
+    // UTF-16 units, which is a different number for anything above the BMP:
+    // s.length said 4 for one Brazilian flag while the server said 2 and the
+    // phone said 1, and a function in Shared answered differently depending
+    // on where it ran.
+    //
+    // The guard is what makes this affordable. When a string holds no
+    // surrogate its UTF-16 length already IS its scalar count, and the native
+    // scan settles that in ~12ns at any length; only a string that actually
+    // carries a pair pays for the loop.
+    const scalarLength = (s) => {
+      if (!SURROGATE.test(s)) return s.length;
+      let n = 0;
+      for (let i = 0; i < s.length; i++) {
+        if ((s.charCodeAt(i) & 0xFC00) !== 0xDC00) n++;
+      }
+      return n;
+    };
+
     function padString(s, width, padCh, left) {
-      const padStr = String.fromCodePoint(padCh);
-      if (s.length >= width) return s;
-      const need = width - s.length;
-      let filler = '';
-      while (filler.length < need) filler += padStr;
-      filler = filler.slice(0, need);
+      const have = scalarLength(s);
+      if (have >= width) return s;
+      // Built by repetition rather than by slicing to a UTF-16 width: the old
+      // slice could cut a surrogate pair in half when the pad character was
+      // itself above the BMP, and emit a lone surrogate.
+      const filler = String.fromCodePoint(padCh).repeat(width - have);
       return left ? filler + s : s + filler;
     }
     const stringPadLeftImpl = native(3, ([w, pad, s]) =>
@@ -3856,15 +3910,20 @@
     def('String.padRight', stringPadRightImpl);
 
     // String.indexes : String needle -> String s -> List Int, every
-    // (non-overlapping) byte offset. Matches Elm's behavior.
+    // (non-overlapping) position, counted in scalars like every other
+    // position in the language. The scan still walks UTF-16 units, because
+    // indexOf does; only what it REPORTS is converted.
     const stringIndexesImpl = native(2, ([needle, s]) => {
       if (needle.s === '') return VList([]);
       const out = [];
-      let i = 0;
+      let i = 0;             // UTF-16 offset the next scan starts at
+      let scalarsBefore = 0; // scalars to the left of i
       while (true) {
         const j = s.s.indexOf(needle.s, i);
         if (j < 0) break;
-        out.push(VInt(j));
+        scalarsBefore += scalarLength(s.s.slice(i, j));
+        out.push(VInt(scalarsBefore));
+        scalarsBefore += scalarLength(needle.s);
         i = j + needle.s.length;
       }
       return VList(out);
@@ -4670,22 +4729,44 @@
     def('charIsLower', charIsLowerImpl);
     def('Char.isLower', charIsLowerImpl);
 
-    // toUpper / toLower: JS `.toUpperCase()` / `.toLowerCase()` on a
-    // 1-char string. Take the first code point of the result to stay
-    // in Char (e.g. 'ß'.toUpperCase() = "SS" in some locales:
-    // unlikely with the default locale, but we take the first scalar
-    // defensively to keep the type).
-    const charToUpperImpl = native(1, ([c]) => {
-      const up = String.fromCodePoint(c.c).toUpperCase();
-      return VChar(up.codePointAt(0));
-    });
+    // Char.toUpper / Char.toLower are Unicode's SIMPLE case mappings, not the
+    // full ones String.toUpper uses. A Char is one scalar (ADR 0038 clause 1)
+    // and a full mapping can produce several: the full uppercase of the sharp
+    // s is two letters. This used to return the FIRST scalar of the full
+    // mapping, so 'ß' upper-cased to 'S' - not an approximation, a different
+    // letter - while the server answered 'ß', because Go's unicode.ToUpper is
+    // already the simple mapping.
+    //
+    // The rule that keeps the table small: wherever the full mapping is
+    // exactly one scalar it IS the simple mapping. That was checked over all
+    // 1.1M scalars and holds with zero exceptions, so only the scalars whose
+    // full mapping is longer need listing, and of those only the ones whose
+    // simple mapping is not the identity. That is 27 (all Greek
+    // ypogegrammeni) plus one lowercase. simple_case_test.go regenerates both
+    // tables from Go's own unicode data and fails if Unicode moves under
+    // them.
+    const SIMPLE_UPPER = {
+      0x1F80: 0x1F88, 0x1F81: 0x1F89, 0x1F82: 0x1F8A, 0x1F83: 0x1F8B, 0x1F84: 0x1F8C, 0x1F85: 0x1F8D,
+      0x1F86: 0x1F8E, 0x1F87: 0x1F8F, 0x1F90: 0x1F98, 0x1F91: 0x1F99, 0x1F92: 0x1F9A, 0x1F93: 0x1F9B,
+      0x1F94: 0x1F9C, 0x1F95: 0x1F9D, 0x1F96: 0x1F9E, 0x1F97: 0x1F9F, 0x1FA0: 0x1FA8, 0x1FA1: 0x1FA9,
+      0x1FA2: 0x1FAA, 0x1FA3: 0x1FAB, 0x1FA4: 0x1FAC, 0x1FA5: 0x1FAD, 0x1FA6: 0x1FAE, 0x1FA7: 0x1FAF,
+      0x1FB3: 0x1FBC, 0x1FC3: 0x1FCC, 0x1FF3: 0x1FFC,
+    };
+    const SIMPLE_LOWER = { 0x0130: 0x0069, };
+    const simpleCase = (code, mapped, table) => {
+      const pts = [...mapped];
+      if (pts.length === 1) return pts[0].codePointAt(0);
+      const t = table[code];
+      return t === undefined ? code : t;
+    };
+
+    const charToUpperImpl = native(1, ([c]) =>
+      VChar(simpleCase(c.c, String.fromCodePoint(c.c).toUpperCase(), SIMPLE_UPPER)));
     def('charToUpper', charToUpperImpl);
     def('Char.toUpper', charToUpperImpl);
 
-    const charToLowerImpl = native(1, ([c]) => {
-      const lo = String.fromCodePoint(c.c).toLowerCase();
-      return VChar(lo.codePointAt(0));
-    });
+    const charToLowerImpl = native(1, ([c]) =>
+      VChar(simpleCase(c.c, String.fromCodePoint(c.c).toLowerCase(), SIMPLE_LOWER)));
     def('charToLower', charToLowerImpl);
     def('Char.toLower', charToLowerImpl);
 
