@@ -24,21 +24,29 @@ import (
 // test and asks what covers it, which is the moment the question is cheap to
 // answer.
 func TestEveryFunctionImplementedTwiceIsAccountedFor(t *testing.T) {
-	// Two numbers, because one is not enough. Measured: 74 names carry a second
-	// implementation, and 167 implementations exist across them.
+	// Two numbers, because one is not enough. Measured: 75 names carry a second
+	// implementation, and 169 implementations exist across them.
 	//
 	// The last five arrived together and are compared by `numNotation` and
 	// `numRefusals` in Source: liftNumberLiterals, numberFromLiteral,
 	// parseJSONExact, plainDigits and rawNumberOf -- the two clients' shared
 	// answer to reading a JSON number without letting a float64 near it.
 	//
+	// `simpleCase` is the newest, and it is a pair rather than a trio on
+	// purpose: the server has no such function because Go's unicode package
+	// already answers with the simple mapping, so only the two clients need
+	// one (ADR 0038 clause 7). What compares them is not a value in Source but
+	// `simple_case_test.go`, which rebuilds both tables from Go's Unicode data
+	// and diffs the two source files against it, plus `Text.charUpperSharpS`
+	// and `Text.charLowerDotted` in the corpus for the behaviour.
+	//
 	// Counting names alone misses a function gaining a THIRD implementation:
 	// adding decToScale to the browser, where the phone and the server already
 	// had it, left the name count unmoved and the test silent. Measured, not
 	// reasoned -- the sabotage was supposed to fail and did not.
 	const (
-		pairs           = 74
-		implementations = 167
+		pairs           = 75
+		implementations = 169
 	)
 
 	js := namesIn(t, []string{"../jsserve/runtime.js"},

@@ -12,6 +12,23 @@
 import Foundation
 
 enum MarChar {
+    static let simpleUpper: [UInt32: UInt32] = [
+        0x1F80: 0x1F88, 0x1F81: 0x1F89, 0x1F82: 0x1F8A, 0x1F83: 0x1F8B, 0x1F84: 0x1F8C,
+        0x1F85: 0x1F8D, 0x1F86: 0x1F8E, 0x1F87: 0x1F8F, 0x1F90: 0x1F98, 0x1F91: 0x1F99,
+        0x1F92: 0x1F9A, 0x1F93: 0x1F9B, 0x1F94: 0x1F9C, 0x1F95: 0x1F9D, 0x1F96: 0x1F9E,
+        0x1F97: 0x1F9F, 0x1FA0: 0x1FA8, 0x1FA1: 0x1FA9, 0x1FA2: 0x1FAA, 0x1FA3: 0x1FAB,
+        0x1FA4: 0x1FAC, 0x1FA5: 0x1FAD, 0x1FA6: 0x1FAE, 0x1FA7: 0x1FAF, 0x1FB3: 0x1FBC,
+        0x1FC3: 0x1FCC, 0x1FF3: 0x1FFC
+    ]
+    static let simpleLower: [UInt32: UInt32] = [0x0130: 0x0069]
+
+    static func simpleCase(_ c: Unicode.Scalar, _ mapped: String, _ table: [UInt32: UInt32]) -> Unicode.Scalar {
+        let pts = Array(mapped.unicodeScalars)
+        if pts.count == 1 { return pts[0] }
+        if let t = table[c.value], let s = Unicode.Scalar(t) { return s }
+        return c
+    }
+
     static func register(_ env: Env) {
         // Char.toCode / fromCode
         let toCode = MarFn.native(1) { args in
@@ -71,18 +88,25 @@ enum MarChar {
         env.define("charIsLower",  .fn(isLower))
         env.define("Char.isLower", .fn(isLower))
 
-        // toUpper / toLower: uppercase/lowercase via String, then take
-        // the first scalar of the result. Some locales (Turkish, e.g.)
-        // can multi-scalar a single char (`İ` lowercases to `i` +
-        // combining mark); taking the first scalar keeps the type
-        // honest at the cost of being slightly approximate in those
-        // rare cases. Matches the JS runtime's behavior.
+        // Char.toUpper / Char.toLower are Unicode's SIMPLE case mappings,
+        // not the full ones String.toUpper uses. A Char is one scalar (ADR
+        // 0038 clause 1) and a full mapping can produce several: the full
+        // uppercase of the sharp s is two letters. This used to return the
+        // FIRST scalar of the full mapping, so it answered 'S' for 'ß' - not
+        // an approximation, a different letter - and the old comment here
+        // said that matched the JS runtime, which it did: both disagreed
+        // with the server, where Go's unicode.ToUpper is already simple.
+        //
+        // Wherever the full mapping is exactly one scalar it IS the simple
+        // mapping; checked over all 1.1M scalars, zero exceptions. So only
+        // the longer ones need a table, and only those whose simple mapping
+        // is not the identity: 27 Greek ypogegrammeni, plus one lowercase.
+        // simple_case_test.go regenerates both from Go's unicode data.
         let toUpper = MarFn.native(1) { args in
             guard case .char(let c) = args[0] else {
                 throw MarRuntimeError.typeMismatch(expected: "Char", got: Eval.typeOf(args[0]))
             }
-            let up = String(c).uppercased()
-            return .char(up.unicodeScalars.first ?? c)
+            return .char(simpleCase(c, String(c).uppercased(), simpleUpper))
         }
         env.define("charToUpper",  .fn(toUpper))
         env.define("Char.toUpper", .fn(toUpper))
@@ -91,8 +115,7 @@ enum MarChar {
             guard case .char(let c) = args[0] else {
                 throw MarRuntimeError.typeMismatch(expected: "Char", got: Eval.typeOf(args[0]))
             }
-            let lo = String(c).lowercased()
-            return .char(lo.unicodeScalars.first ?? c)
+            return .char(simpleCase(c, String(c).lowercased(), simpleLower))
         }
         env.define("charToLower",  .fn(toLower))
         env.define("Char.toLower", .fn(toLower))

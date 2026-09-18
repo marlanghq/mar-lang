@@ -381,10 +381,33 @@ enum MarBuiltins {
             guard case .string(let s) = args[0] else {
                 throw MarRuntimeError.typeMismatch(expected: "String", got: Eval.typeOf(args[0]))
             }
-            return .int(s.count)
+            // A Mar String is a sequence of Unicode SCALAR VALUES. Swift's
+            // own `count` is grapheme clusters, which answered 1 for a
+            // Brazilian flag while the server said 2 and the browser said 4,
+            // and which disagreed with this runtime's OWN String.toList.
+            return .int(s.unicodeScalars.count)
         }
         env.define("stringLength",  .fn(stringLength))
         env.define("String.length", .fn(stringLength))
+
+        // ---- scalar-exact search --------------------------------------
+        // Every search below matches SCALARS. Swift's own contains,
+        // hasPrefix, hasSuffix, components(separatedBy:) and
+        // replacingOccurrences all compare with Unicode canonical
+        // equivalence, so on the phone a needle spelled with a combining
+        // accent was FOUND inside a haystack spelled with a precomposed one
+        // while the server and the browser both said it was absent. A Mar
+        // String is a sequence of scalars, so these ask the same question
+        // everywhere.
+        func scalarFind(_ hay: [Unicode.Scalar], _ pin: [Unicode.Scalar], from: Int) -> Int? {
+            if pin.isEmpty { return from <= hay.count ? from : nil }
+            var i = from
+            while i + pin.count <= hay.count {
+                if hay[i ..< i + pin.count].elementsEqual(pin) { return i }
+                i += 1
+            }
+            return nil
+        }
 
         // String.contains : String -> String -> Bool
         // First arg is the needle, second is the haystack:
@@ -394,7 +417,7 @@ enum MarBuiltins {
                   case .string(let hay)    = args[1] else {
                 throw MarRuntimeError.typeMismatch(expected: "String, String", got: Eval.typeOf(args[0]))
             }
-            return .bool(hay.contains(needle))
+            return .bool(scalarFind(Array(hay.unicodeScalars), Array(needle.unicodeScalars), from: 0) != nil)
         }
         env.define("stringContains",  .fn(stringContains))
         env.define("String.contains", .fn(stringContains))
@@ -406,16 +429,24 @@ enum MarBuiltins {
                   case .string(let s)      = args[1] else {
                 throw MarRuntimeError.typeMismatch(expected: "String, String", got: Eval.typeOf(args[0]))
             }
-            return .bool(s.hasPrefix(prefix))
+            let sv = Array(s.unicodeScalars), pv = Array(prefix.unicodeScalars)
+            return .bool(pv.count <= sv.count && sv.prefix(pv.count).elementsEqual(pv))
         }
         env.define("stringStartsWith",  .fn(stringStartsWith))
         env.define("String.startsWith", .fn(stringStartsWith))
 
+        // Case mapping goes through Foundation, not through Swift's own
+        // String.uppercased()/lowercased(). The native ones skip Unicode's
+        // CONDITIONAL rules: a word-final capital sigma came back as the
+        // medial form, so a Greek word lowercased on the phone was spelled
+        // differently from the same word lowercased on the server and stopped
+        // matching its own index. NSString applies them, and agrees with the
+        // browser and with x/text on every case in the corpus.
         let stringToUpper = MarFn.native(1) { args in
             guard case .string(let s) = args[0] else {
                 throw MarRuntimeError.typeMismatch(expected: "String", got: Eval.typeOf(args[0]))
             }
-            return .string(s.uppercased())
+            return .string((s as NSString).uppercased)
         }
         env.define("stringToUpper",  .fn(stringToUpper))
         env.define("String.toUpper", .fn(stringToUpper))
@@ -424,7 +455,7 @@ enum MarBuiltins {
             guard case .string(let s) = args[0] else {
                 throw MarRuntimeError.typeMismatch(expected: "String", got: Eval.typeOf(args[0]))
             }
-            return .string(s.lowercased())
+            return .string((s as NSString).lowercased)
         }
         env.define("stringToLower",  .fn(stringToLower))
         env.define("String.toLower", .fn(stringToLower))
@@ -441,9 +472,17 @@ enum MarBuiltins {
             if sep.isEmpty {
                 // Mirror strings.Split(s, ""): emit one element per
                 // Unicode scalar so behaviour matches across runtimes.
-                parts = s.map { String($0) }
+                parts = s.unicodeScalars.map { String($0) }
             } else {
-                parts = s.components(separatedBy: sep)
+                let sv = Array(s.unicodeScalars), pv = Array(sep.unicodeScalars)
+                var acc: [String] = []
+                var at = 0
+                while let hit = scalarFind(sv, pv, from: at) {
+                    acc.append(String(String.UnicodeScalarView(sv[at ..< hit])))
+                    at = hit + pv.count
+                }
+                acc.append(String(String.UnicodeScalarView(sv[at...])))
+                parts = acc
             }
             return .list(parts.map { .string($0) })
         }
@@ -486,7 +525,8 @@ enum MarBuiltins {
             guard case .string(let suf) = args[0], case .string(let s) = args[1] else {
                 throw MarRuntimeError.typeMismatch(expected: "String, String", got: Eval.typeOf(args[0]))
             }
-            return .bool(s.hasSuffix(suf))
+            let sv = Array(s.unicodeScalars), fv = Array(suf.unicodeScalars)
+            return .bool(fv.count <= sv.count && sv.suffix(fv.count).elementsEqual(fv))
         }
         env.define("stringEndsWith",  .fn(stringEndsWith))
         env.define("String.endsWith", .fn(stringEndsWith))
@@ -516,7 +556,20 @@ enum MarBuiltins {
                   case .string(let s) = args[2] else {
                 throw MarRuntimeError.typeMismatch(expected: "String, String, String", got: Eval.typeOf(args[0]))
             }
-            return .string(s.replacingOccurrences(of: needle, with: rep))
+            // join after . split before, so the empty needle has to agree
+            // with this runtime's own String.split "".
+            if needle.isEmpty {
+                return .string(s.unicodeScalars.map { String($0) }.joined(separator: rep))
+            }
+            let sv = Array(s.unicodeScalars), nv = Array(needle.unicodeScalars)
+            var out = ""
+            var at = 0
+            while let hit = scalarFind(sv, nv, from: at) {
+                out += String(String.UnicodeScalarView(sv[at ..< hit])) + rep
+                at = hit + nv.count
+            }
+            out += String(String.UnicodeScalarView(sv[at...]))
+            return .string(out)
         }
         env.define("stringReplace",  .fn(stringReplace))
         env.define("String.replace", .fn(stringReplace))
@@ -536,8 +589,10 @@ enum MarBuiltins {
         // Stays in sync with the Go/JS sides where `pad` is a single
         // code point repeated to fill.
         func padString(_ s: String, _ width: Int, _ pad: Unicode.Scalar, _ left: Bool) -> String {
-            if s.count >= width { return s }
-            let need = width - s.count
+            // Measured in scalars, like String.length.
+            let have = s.unicodeScalars.count
+            if have >= width { return s }
+            let need = width - have
             let filler = String(repeating: String(pad), count: need)
             return left ? filler + s : s + filler
         }
@@ -565,8 +620,14 @@ enum MarBuiltins {
         env.define("String.padRight", .fn(stringPadRight))
 
         // String.indexes : needle -> s -> List Int, non-overlapping
-        // byte offsets of every occurrence. Matches Elm + the Go/JS
-        // runtimes.
+        // positions of every occurrence, counted in SCALARS like every other
+        // position in the language.
+        //
+        // It counted UTF-16 units until 2026-09-17, under a comment claiming
+        // that kept it "byte-compatible with the JS runtime" and matching
+        // "Elm + the Go/JS runtimes". It matched neither: Go was reporting
+        // byte offsets and the browser UTF-16 offsets, which are three
+        // different numbers for the same non-ASCII string.
         let stringIndexes = MarFn.native(2) { args in
             guard case .string(let needle) = args[0], case .string(let s) = args[1] else {
                 throw MarRuntimeError.typeMismatch(expected: "String, String", got: Eval.typeOf(args[0]))
@@ -576,15 +637,12 @@ enum MarBuiltins {
             // Walk a position cursor through s, jumping past each
             // match. Counts UTF-16-style code units (NSString
             // semantics) to stay byte-compatible with the JS runtime.
-            let ns = s as NSString
-            let nl = needle as NSString
-            var search = NSRange(location: 0, length: ns.length)
-            while search.length > 0 {
-                let r = ns.range(of: needle, options: [], range: search)
-                if r.location == NSNotFound { break }
-                out.append(.int(r.location))
-                let next = r.location + nl.length
-                search = NSRange(location: next, length: ns.length - next)
+            let hay = Array(s.unicodeScalars)
+            let pin = Array(needle.unicodeScalars)
+            var at = 0
+            while let hit = scalarFind(hay, pin, from: at) {
+                out.append(.int(hit))
+                at = hit + pin.count
             }
             return .list(out)
         }
