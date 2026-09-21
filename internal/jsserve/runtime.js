@@ -1982,20 +1982,18 @@
   // Comparable constraint is what keeps them from arriving here.
   // Strings compare by CODE POINT, which is not what `<` does. JavaScript
   // orders by UTF-16 unit, and a leading surrogate (D800-DBFF) sits below
-  // E000-FFFF, so every character above the BMP sorted UNDER the replacement
-  // character here while Go and Swift put it above. It was never only about
-  // List.sort: `<` is what orders Dict iteration and Set contents, so a list
-  // of names holding one emoji came back from the browser in a different
-  // order than from the server that sent it, with nothing reporting it.
+  // E000-FFFF, so `<` alone puts every character above the BMP under the
+  // replacement character. ADR 0038 clause 5. It reaches further than
+  // List.sort: `<` is what orders Dict iteration and Set contents.
   //
-  // One order-preserving remap fixes it. Surrogates move above the BMP
+  // One order-preserving remap is enough. Surrogates move above the BMP
   // (+0x2800 puts D800-DFFF at 10000-107FF), which is where the characters
   // they encode belong; nothing else moves. Almost every comparison takes the
   // fast path, which is two native scans and a native compare: when neither
   // string holds a surrogate, UTF-16 order already IS code point order. That
-  // path measured 31ns against 15ns for the bare `<` it replaces, on short
-  // ASCII keys in node 26 - worth knowing because `<` is what Dict and Set
-  // binary-search with, so this is on the hot path of every keyed lookup.
+  // path measures 31ns against 15ns for a bare `<`, on short ASCII keys in
+  // node 26 - worth knowing because Dict and Set binary-search with this, so
+  // it is on the hot path of every keyed lookup.
   const SURROGATE = /[\uD800-\uDFFF]/;
   function cmpStrings(a, b) {
     if (a === b) return 0;
@@ -3850,11 +3848,10 @@
     def('String.toInt', stringToIntImpl);
 
     // String.replace : String needle -> String replacement -> String s -> String
-    // String.replace is join after . split before. With an EMPTY needle
-    // that split has to be the one Mar means, by scalar: JavaScript's own
-    // split('') cuts by UTF-16 unit and tears a surrogate pair in half, so
-    // replacing nothing inside "a<emoji>" used to return a string carrying
-    // two LONE SURROGATES. Spreading iterates by code point and does not.
+    // String.replace is join after . split before. With an EMPTY needle that
+    // split has to be the one Mar means, by scalar: JavaScript's own split('')
+    // cuts by UTF-16 unit and would tear a surrogate pair in half, returning a
+    // string carrying two lone surrogates. Spreading iterates by code point.
     const stringReplaceImpl = native(3, ([needle, rep, s]) =>
       VString((needle.s === '' ? [...s.s] : s.s.split(needle.s)).join(rep.s)));
     def('stringReplace', stringReplaceImpl);
@@ -3871,11 +3868,9 @@
     // String.padLeft / padRight: pad with a SINGLE Char (Elm-style).
     // The seed is one code point that we repeat to fill.
     // A Mar String is a sequence of Unicode SCALAR VALUES, so every length,
-    // width and position below counts scalars. JavaScript stores a string as
-    // UTF-16 units, which is a different number for anything above the BMP:
-    // s.length said 4 for one Brazilian flag while the server said 2 and the
-    // phone said 1, and a function in Shared answered differently depending
-    // on where it ran.
+    // width and position below counts scalars (ADR 0038). JavaScript stores a
+    // string as UTF-16 units, which is a different number for anything above
+    // the BMP: s.length is 4 for one Brazilian flag, whose scalar count is 2.
     //
     // The guard is what makes this affordable. When a string holds no
     // surrogate its UTF-16 length already IS its scalar count, and the native
@@ -3893,9 +3888,9 @@
     function padString(s, width, padCh, left) {
       const have = scalarLength(s);
       if (have >= width) return s;
-      // Built by repetition rather than by slicing to a UTF-16 width: the old
-      // slice could cut a surrogate pair in half when the pad character was
-      // itself above the BMP, and emit a lone surrogate.
+      // Built by repetition rather than by slicing to a UTF-16 width, which
+      // would cut a surrogate pair in half when the pad character is itself
+      // above the BMP and emit a lone surrogate.
       const filler = String.fromCodePoint(padCh).repeat(width - have);
       return left ? filler + s : s + filler;
     }
@@ -4732,19 +4727,15 @@
     // Char.toUpper / Char.toLower are Unicode's SIMPLE case mappings, not the
     // full ones String.toUpper uses. A Char is one scalar (ADR 0038 clause 1)
     // and a full mapping can produce several: the full uppercase of the sharp
-    // s is two letters. This used to return the FIRST scalar of the full
-    // mapping, so 'ß' upper-cased to 'S' - not an approximation, a different
-    // letter - while the server answered 'ß', because Go's unicode.ToUpper is
-    // already the simple mapping.
+    // s is two letters, which a Char has nowhere to put.
     //
     // The rule that keeps the table small: wherever the full mapping is
-    // exactly one scalar it IS the simple mapping. That was checked over all
-    // 1.1M scalars and holds with zero exceptions, so only the scalars whose
-    // full mapping is longer need listing, and of those only the ones whose
-    // simple mapping is not the identity. That is 27 (all Greek
-    // ypogegrammeni) plus one lowercase. simple_case_test.go regenerates both
-    // tables from Go's own unicode data and fails if Unicode moves under
-    // them.
+    // exactly one scalar it IS the simple mapping. That holds across all 1.1M
+    // scalars, so only the scalars whose full mapping is longer need listing,
+    // and of those only the ones whose simple mapping is not the identity.
+    // That is 27 (all Greek ypogegrammeni) plus one lowercase.
+    // simple_case_test.go regenerates both tables from Go's own unicode data
+    // and fails if Unicode moves under them.
     const SIMPLE_UPPER = {
       0x1F80: 0x1F88, 0x1F81: 0x1F89, 0x1F82: 0x1F8A, 0x1F83: 0x1F8B, 0x1F84: 0x1F8C, 0x1F85: 0x1F8D,
       0x1F86: 0x1F8E, 0x1F87: 0x1F8F, 0x1F90: 0x1F98, 0x1F91: 0x1F99, 0x1F92: 0x1F9A, 0x1F93: 0x1F9B,

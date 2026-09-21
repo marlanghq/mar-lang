@@ -221,13 +221,12 @@ func TestNoFunctionExemptionOutlivesItsFunction(t *testing.T) {
 // how the runtime represents a String: it measures, indexes, compares, or maps
 // character by character. ASCII cannot tell three representations apart, so a
 // case built from ASCII exercises the name and proves nothing about the
-// answer. That is how String.length came to have three answers with the whole
-// corpus green.
+// answer.
 //
 // Spelled out rather than derived, for the same reason the operator gate is:
 // nothing in a function's type says whether its answer depends on encoding.
-// `String.fromInt` takes no text and cannot; `String.padLeft` measures, and
-// measured in bytes on the server for as long as nobody fed it an accent.
+// `String.fromInt` takes no text and cannot say; `String.padLeft` measures,
+// and a measurement is where a representation shows through.
 func TestTextBlockFeedsEveryEncodingSensitiveFunction(t *testing.T) {
 	block := textBlock(t)
 	if !strings.ContainsFunc(block, func(r rune) bool { return r > 127 }) {

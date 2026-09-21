@@ -137,41 +137,21 @@ stringCases =
 
 -- Text that is not ASCII.
 --
--- Until this block existed the corpus exercised all 23 String functions and
--- fed none of them a character outside ASCII. The whole Source carried four
--- non-ASCII characters, three of them in comments, and the only one ever
--- computed with was a c-cedilla inside a linkTo case about URL encoding. So
--- the coverage gate was satisfied, every runtime was green, and String.length
--- had three different answers depending on which one you asked.
+-- A Mar String is a sequence of Unicode SCALAR VALUES (ADR 0038): every
+-- length, width, position, equality and ordering counts scalars, which is what
+-- a Char already is. The three runtimes store a String differently -- Go in
+-- UTF-8, the browser in UTF-16, the phone in whatever Swift chose -- so each
+-- has a natural unit of its own that is not this one, and each has to be held
+-- to the shared answer.
 --
--- The three measure a String in three different units. Go counts code points
--- (len of a rune slice), the browser counts UTF-16 units (s.length), the phone
--- counts grapheme clusters (s.count). ASCII cannot tell them apart, which
--- is why an ASCII-only corpus proved nothing about any of it.
+-- ASCII cannot tell those units apart. That is what makes this block the one
+-- that earns its keep: every case below is chosen so the storage shows
+-- through, and every one of them has a single right answer.
 --
--- None of the strings below is exotica. They are what a Brazilian address book
--- holds in its first row: an accented letter, the same letter spelled with a
+-- None of the strings is exotica. They are what a Brazilian address book holds
+-- in its first row: an accented letter, the same letter spelled with a
 -- combining accent, a CJK pair, an emoji, and a flag.
 --
--- All of that is closed. On 2026-09-17 a Mar String became a sequence of
--- Unicode SCALAR VALUES in all three runtimes: every length, width, position,
--- equality and ordering counts scalars, which is what Char already was
--- everywhere. Go needed no change, the browser needed three sites, the phone
--- eleven. The thirteen entries that used to be pinned here are ordinary
--- expectations below.
---
--- KnownTextGaps is now empty: every case below answers the same in all three.
--- The two stragglers that were not about encoding went with it. Swift's
--- lowercase skipped Unicode's conditional rules, so a word-final Greek sigma
--- came back medial; and String.replace with an empty needle answered three
--- ways, one of which tore a surrogate pair in half. Both are fixed, and
--- String.replace is now join after . split before everywhere, which is what
--- decides that case.
--- The two keys are not a typo and not a duplicate: they render identically and
--- are different strings. The first spells the accent as one code point, the
--- second as a plain e followed by a combining acute. Two runtimes read that as
--- two keys and one reads it as one, so this literal is a two-entry dictionary
--- on the server and in the browser and a one-entry dictionary on the phone.
 accentKeys : Dict String Int
 accentKeys =
     Dict.fromList [ ( "café", 1 ), ( "café", 2 ) ]
@@ -1372,22 +1352,17 @@ var OutOfScope = map[string]string{
 }
 
 // TextGap is one case in the Text block where the three runtimes answer
-// differently, pinned at what each of them answered when the block was
-// written (2026-09-16).
+// differently, pinned at what each of them answers.
 //
 // A conformance test that fails for a known reason gets ignored, and a known
-// reason that is not written down gets forgotten. The sound corpus learned
-// that first, and KnownWaveLevelGaps in sound_playback.go is the same bargain
-// as this one: a case listed here does not fail for DISAGREEING, and does fail
-// the moment any runtime's answer MOVES, in either direction. The fix for a
-// fixed one is to delete its entry, which the coverage gate then requires an
-// expectation for.
+// reason that is not written down gets forgotten. KnownWaveLevelGaps in
+// sound_playback.go is the same bargain as this one: a case listed here does
+// not fail for DISAGREEING, and does fail the moment any runtime's answer
+// MOVES, in either direction. The fix for a fixed one is to delete its entry,
+// which the coverage gate then requires an expectation for.
 //
-// Nothing here is settled, and the entries are not all the same kind of thing.
-// Some are defects with an answer the other two runtimes already agree on.
-// The rest are one question the language has never answered - what a Character
-// is - showing up in six places. They want different work, so each Why says
-// which it is.
+// Each Why says whether the entry is a defect with an answer the other
+// runtimes already agree on, or a question the language has not answered.
 type TextGap struct {
 	Go, JS, Swift string
 	Why           string
@@ -1405,9 +1380,8 @@ func (g TextGap) answerFor(who string) (string, bool) {
 	return "", false
 }
 
-// Empty, and that is the point: as of 2026-09-17 the three runtimes answer
-// every case in the Text block identically. It was nineteen entries when this
-// table was written two days earlier.
+// Empty, and that is the point: the three runtimes answer every case in the
+// Text block identically.
 //
 // Keep the mechanism. The next divergence someone measures and cannot settle
 // in the same sitting belongs here rather than in a document: an entry does

@@ -91,17 +91,14 @@ enum MarChar {
         // Char.toUpper / Char.toLower are Unicode's SIMPLE case mappings,
         // not the full ones String.toUpper uses. A Char is one scalar (ADR
         // 0038 clause 1) and a full mapping can produce several: the full
-        // uppercase of the sharp s is two letters. This used to return the
-        // FIRST scalar of the full mapping, so it answered 'S' for 'ß' - not
-        // an approximation, a different letter - and the old comment here
-        // said that matched the JS runtime, which it did: both disagreed
-        // with the server, where Go's unicode.ToUpper is already simple.
+        // uppercase of the sharp s is two letters, which a Char has nowhere
+        // to put.
         //
         // Wherever the full mapping is exactly one scalar it IS the simple
-        // mapping; checked over all 1.1M scalars, zero exceptions. So only
-        // the longer ones need a table, and only those whose simple mapping
-        // is not the identity: 27 Greek ypogegrammeni, plus one lowercase.
-        // simple_case_test.go regenerates both from Go's unicode data.
+        // mapping, across all 1.1M scalars. So only the longer ones need a
+        // table, and only those whose simple mapping is not the identity: 27
+        // Greek ypogegrammeni, plus one lowercase. simple_case_test.go
+        // regenerates both from Go's unicode data.
         let toUpper = MarFn.native(1) { args in
             guard case .char(let c) = args[0] else {
                 throw MarRuntimeError.typeMismatch(expected: "Char", got: Eval.typeOf(args[0]))

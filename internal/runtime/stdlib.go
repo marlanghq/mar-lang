@@ -661,19 +661,17 @@ func stdlib() map[string]Value {
 			}
 			return VString{V: fmt.Sprintf("%d", i.V)}, nil
 		}),
-		// Case mapping is FULL, not one code point at a time. Unicode lets
-		// the case of a letter change the LENGTH of a string: the uppercase
-		// of the sharp s is two letters, of the fi ligature is two letters,
-		// and lowercasing a Greek capital sigma depends on whether it ends a
-		// word. strings.ToUpper answers one rune per rune and cannot say any
-		// of that, so the server returned STRAsharpE where the browser and
-		// the phone both returned STRASSE, for as long as the corpus fed
-		// these functions nothing but ASCII.
+		// Case mapping is FULL, which is why this does not use
+		// strings.ToUpper: that maps one rune per rune, and Unicode lets the
+		// case of a letter change the LENGTH of a string. The uppercase of
+		// the sharp s is two letters, of the fi ligature two letters, and
+		// lowercasing a Greek capital sigma depends on whether it ends a
+		// word. ADR 0038 clause 6.
 		//
 		// A Caser carries state and must not be shared between goroutines,
-		// so each call builds its own. Measured at roughly twice the cost of
+		// so each call builds its own. Roughly twice the cost of
 		// strings.ToUpper on a short string, which is hundreds of
-		// nanoseconds, and buys agreement with the other two runtimes.
+		// nanoseconds.
 		"stringToUpper": nativeFn(1, func(args []Value) (Value, error) {
 			s, ok := args[0].(VString)
 			if !ok {
@@ -1158,11 +1156,10 @@ func stdlib() map[string]Value {
 				return nil, fmt.Errorf("stringReplace: expected String args")
 			}
 			// String.replace is join after . split before, which is how Elm
-			// defines it and what decides the empty-needle case: the answer
-			// has to be whatever this runtime's own String.split "" gives,
-			// joined. strings.ReplaceAll answers something else there
-			// (it also brackets both ends), so the empty needle is spelled
-			// out rather than delegated.
+			// defines it and what decides the empty needle: the answer has to
+			// be whatever this runtime's own String.split "" gives, joined.
+			// strings.ReplaceAll brackets both ends instead, so that case is
+			// spelled out rather than delegated.
 			if needle.V == "" {
 				return VString{V: strings.Join(strings.Split(s.V, ""), rep.V)}, nil
 			}
@@ -1209,12 +1206,9 @@ func stdlib() map[string]Value {
 		}),
 		// stringIndexes : String needle -> String s -> List Int
 		// Code point offsets of every occurrence (overlap NOT respected:
-		// Elm's behavior too; the scan advances past each hit).
-		//
-		// It reported BYTE offsets until 2026-09-16. Nothing else in the
-		// language speaks bytes, so the number it handed back could not be
-		// used with anything, and it only ever matched the other two
-		// runtimes because every string in the corpus was ASCII.
+		// Elm's behavior too; the scan advances past each hit). Positions are
+		// counted in the same unit String.length reports, which is what makes
+		// the number usable with the rest of the language. ADR 0038 clause 3.
 		"stringIndexes": nativeFn(2, func(args []Value) (Value, error) {
 			needle, ok1 := args[0].(VString)
 			s, ok2 := args[1].(VString)
@@ -1247,12 +1241,9 @@ func stdlib() map[string]Value {
 // s unchanged. When pad is empty (corner case), returns s unchanged
 // so a typo doesn't silently produce an infinite loop.
 // padString fills s out to width, measuring in the unit String.length reports:
-// code points. It measured BYTES until 2026-09-16, which made it wrong in a way
-// no candidate answer to "what is a Character" would have accepted. A word
-// already wide in bytes got no padding at all, so String.padLeft 4 '.' on a
-// two-ideograph string came back untouched on the server and padded in the
-// browser and on the phone, and the corpus could not see it because every
-// string it had ever been fed was ASCII.
+// code points. Measuring in bytes would leave a word already wide in bytes
+// unpadded, and bytes are not a unit anything else in the language speaks.
+// ADR 0038 clause 3.
 func padString(s string, width int, pad string, left bool) string {
 	have := utf8.RuneCountInString(s)
 	padLen := utf8.RuneCountInString(pad)

@@ -381,24 +381,22 @@ enum MarBuiltins {
             guard case .string(let s) = args[0] else {
                 throw MarRuntimeError.typeMismatch(expected: "String", got: Eval.typeOf(args[0]))
             }
-            // A Mar String is a sequence of Unicode SCALAR VALUES. Swift's
-            // own `count` is grapheme clusters, which answered 1 for a
-            // Brazilian flag while the server said 2 and the browser said 4,
-            // and which disagreed with this runtime's OWN String.toList.
+            // A Mar String is a sequence of Unicode SCALAR VALUES (ADR
+            // 0038). Not Swift's own `count`, which is grapheme clusters and
+            // answers 1 for a Brazilian flag whose scalar count is 2.
             return .int(s.unicodeScalars.count)
         }
         env.define("stringLength",  .fn(stringLength))
         env.define("String.length", .fn(stringLength))
 
         // ---- scalar-exact search --------------------------------------
-        // Every search below matches SCALARS. Swift's own contains,
-        // hasPrefix, hasSuffix, components(separatedBy:) and
-        // replacingOccurrences all compare with Unicode canonical
-        // equivalence, so on the phone a needle spelled with a combining
-        // accent was FOUND inside a haystack spelled with a precomposed one
-        // while the server and the browser both said it was absent. A Mar
-        // String is a sequence of scalars, so these ask the same question
-        // everywhere.
+        // Every search below matches SCALARS, which is why none of them uses
+        // Swift's own contains, hasPrefix, hasSuffix,
+        // components(separatedBy:) or replacingOccurrences: those compare
+        // with Unicode canonical equivalence, so a needle spelled with a
+        // combining accent would be found inside a haystack spelled with a
+        // precomposed one. A Mar String is a sequence of scalars and two
+        // spellings are two strings. ADR 0038 clause 4.
         func scalarFind(_ hay: [Unicode.Scalar], _ pin: [Unicode.Scalar], from: Int) -> Int? {
             if pin.isEmpty { return from <= hay.count ? from : nil }
             var i = from
@@ -436,12 +434,9 @@ enum MarBuiltins {
         env.define("String.startsWith", .fn(stringStartsWith))
 
         // Case mapping goes through Foundation, not through Swift's own
-        // String.uppercased()/lowercased(). The native ones skip Unicode's
-        // CONDITIONAL rules: a word-final capital sigma came back as the
-        // medial form, so a Greek word lowercased on the phone was spelled
-        // differently from the same word lowercased on the server and stopped
-        // matching its own index. NSString applies them, and agrees with the
-        // browser and with x/text on every case in the corpus.
+        // String.uppercased()/lowercased(): the native ones skip Unicode's
+        // CONDITIONAL rules, and would return a word-final capital sigma as
+        // the medial form. NSString applies them. ADR 0038 clause 6.
         let stringToUpper = MarFn.native(1) { args in
             guard case .string(let s) = args[0] else {
                 throw MarRuntimeError.typeMismatch(expected: "String", got: Eval.typeOf(args[0]))
@@ -621,13 +616,7 @@ enum MarBuiltins {
 
         // String.indexes : needle -> s -> List Int, non-overlapping
         // positions of every occurrence, counted in SCALARS like every other
-        // position in the language.
-        //
-        // It counted UTF-16 units until 2026-09-17, under a comment claiming
-        // that kept it "byte-compatible with the JS runtime" and matching
-        // "Elm + the Go/JS runtimes". It matched neither: Go was reporting
-        // byte offsets and the browser UTF-16 offsets, which are three
-        // different numbers for the same non-ASCII string.
+        // position in the language. ADR 0038 clause 3.
         let stringIndexes = MarFn.native(2) { args in
             guard case .string(let needle) = args[0], case .string(let s) = args[1] else {
                 throw MarRuntimeError.typeMismatch(expected: "String, String", got: Eval.typeOf(args[0]))

@@ -23,11 +23,10 @@ import (
 // reason it publishes both.
 //
 // Go gets the simple mapping from its own unicode package. The browser and the
-// phone have no simple-mapping API at all, only a full one, and both used to
-// take the FIRST scalar of it: 'ß' upper-cased to 'S' on two runtimes out of
-// three. They now carry a small table, and a hand-written table is a table
-// that rots, so this test is the thing that keeps it honest. It derives the
-// truth from Go's unicode data and reads the two source files back.
+// phone have no simple-mapping API at all, only a full one, so they carry a
+// small table instead. A hand-written table is a table that rots, and this
+// test is what keeps it honest: it derives the truth from Go's unicode data
+// and reads the two source files back.
 //
 // The table stays small because of a property worth stating: wherever the full
 // mapping is exactly one scalar it IS the simple mapping. That is asserted

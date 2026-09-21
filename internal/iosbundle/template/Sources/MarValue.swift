@@ -242,12 +242,11 @@ extension MarValue {
         // Numeric equality: 1.50 == 1.5 (scale is display metadata).
         case (.decimal(let a), .decimal(let b)): return DecMath.decCompare(a, b) == 0
         // Scalar-sequence equality, NOT Swift's ==, which is Unicode
-        // canonical equivalence: it called the precomposed and combining
-        // spellings of one word the same String while Go and the browser
-        // called them two, and MarDict/MarSet key off this, so it decided
-        // what a dictionary CONTAINED on the phone and nowhere else.
-        // UTF-8 encoding is a bijection on scalar sequences, so comparing
-        // the bytes IS comparing the scalars, and it is faster.
+        // canonical equivalence and would call the precomposed and combining
+        // spellings of one word the same String. MarDict and MarSet key off
+        // this, so it decides what a dictionary CONTAINS. UTF-8 encoding is a
+        // bijection on scalar sequences, so comparing the bytes IS comparing
+        // the scalars, and it is faster. ADR 0038 clause 4.
         case (.string(let a), .string(let b)): return a.utf8.elementsEqual(b.utf8)
         case (.char(let a),   .char(let b)):   return a == b
         // Every constructor wraps into 0..3599, so equality on the
@@ -319,9 +318,8 @@ extension MarValue {
             return DecMath.decCompare(a, b)
         case (.string(let a), .string(let b)):
             // Lexicographic by scalar. UTF-8 byte order and scalar order are
-            // the same order, which is why the Go runtime gets this right
-            // without trying; Swift's own < is canonical and would call two
-            // spellings equal.
+            // the same order. Swift's own < is canonical and would call two
+            // spellings equal. ADR 0038 clause 5.
             if a.utf8.elementsEqual(b.utf8) { return 0 }
             return a.utf8.lexicographicallyPrecedes(b.utf8) ? -1 : 1
         case (.char(let a), .char(let b)):
