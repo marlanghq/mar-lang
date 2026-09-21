@@ -266,7 +266,22 @@ split = Decimal.withRemainder 2 (100.00 / 3)
 
 Rounding modes: `Decimal.HalfEven` (banker's), `HalfUp`, `Down`, `Up`, `Floor`, `Ceiling`. The rest of the module: `Decimal.zero`, `fromInt`, `fromCents` / `toCents`, `fromString` / `toString`, `toScale`, `round` / `floor` / `ceiling` / `truncate` (to `Int`), `toIntWith`, `abs`, `negate`, `compare`. On the wire (services, JSON) a Decimal travels as a string under a marker, so no JSON parser ever routes the digits through binary floats; `Json.decode` also reads plain fractional JSON numbers textually into Decimals.
 
-### 3.3 Angles and trigonometry (`Math`)
+### 3.3 Text
+
+A `String` is a sequence of Unicode **scalar values**, and a `Char` is one of them. Every length, width, position, equality and ordering counts scalars, so the answer is the same on the server, in the browser and on the phone (ADR 0038).
+
+- **`String.length`** counts characters, not bytes and not what a keyboard calls a keystroke: `"café"` is 4, `"日本"` is 2, `"😀"` is 1, and a flag is 2, because a flag is written as two regional indicators.
+- **`String.indexes`, `String.padLeft`, `String.padRight`** count in the same unit, so a position you get back is a position you can reason about: `String.indexes "a" "café a"` is `[1, 5]`.
+- **`==` and `<`** compare the scalars. Two spellings of one word are two strings: `"café"` written with a precomposed accent is not `"cafe"` followed by a combining one. This is what `Dict` and `Set` key on, so it decides what a dictionary contains.
+- **`String.toList`** is the same sequence as a list, so `String.length s == List.length (String.toList s)` for every `s`.
+
+Case mapping is Unicode's **full** mapping and may change the length of a string: `String.toUpper "straße"` is `"STRASSE"`, and a Greek capital sigma lowercases to its final form at the end of a word. A `Char` holds one scalar and has nowhere to put a longer answer, so `Char.toUpper` and `Char.toLower` use the **simple** mapping instead and return the character unchanged when the full one would be longer — `Char.toUpper 'ß'` is `'ß'`, while `String.toUpper "ß"` is `"SS"`.
+
+The character predicates are Unicode's, not ASCII's: `Char.isDigit` is true for a decimal digit in any script, and `Char.isAlpha` for a letter in any script.
+
+Normalisation is not implicit anywhere. If an app needs two spellings to compare equal, that is a transformation it applies on purpose, not a rule one runtime applies on its behalf.
+
+### 3.4 Angles and trigonometry (`Math`)
 
 An angle is not an `Int`. It is an `Angle`, and the constructor names the unit — the same rule `Duration` and `Width`/`Height` already follow (ADR 0029):
 
@@ -298,7 +313,7 @@ Two things follow from the type. The first is that a unit mix-up is a compile er
 
 The internal resolution is a tenth of a degree: a program can tell 45.0° from 45.1° and nothing finer. That number is not observable: no function hands it back.
 
-### 3.4 Nominal IDs
+### 3.5 Nominal IDs
 
 Every entity ID is a nominal wrap of a primitive:
 
@@ -310,7 +325,7 @@ type SlugId = SlugId String
 
 This prevents mixing IDs of different entities at compile time. Mar's auto-derived codecs encode them transparently (the wrapper disappears on the wire).
 
-### 3.5 Task a and Cmd msg
+### 3.6 Task a and Cmd msg
 
 Side effects are values of two distinct types, one per side of the app.
 
@@ -343,7 +358,7 @@ The two types stay separate on purpose. They used to be one `Effect a` that carr
 
 Neither type carries an error index. On the backend a `Task` aborts with `Task.fail`, whose String becomes the `Err` the frontend receives; reserve it for genuine failures and keep matchable domain errors in the service's response value (a typed union) instead. On the frontend a failure travels inside the value: a `Service.call` delivers `Result Service.Error resp`, where `Service.Error` is a union (`Offline` / `Unauthorized` / `ServerError String`) the frontend cases on.
 
-### 3.6 Task chaining: `let <-`
+### 3.7 Task chaining: `let <-`
 
 Sugar for `Task.andThen`, on the backend. Each `<-` binds the result of one `Task` before the next runs:
 
@@ -359,7 +374,7 @@ toggle id =
 
 Equivalent to `Repo.findById tasks id |> Task.andThen (\found -> ...)`.
 
-### 3.7 Error handling
+### 3.8 Error handling
 
 Three kinds of failure, three homes. The rule of thumb: transport is a
 shared union, domain is a per-endpoint outcome in the response value, and
@@ -569,7 +584,7 @@ services =
     ]
 ```
 
-On the frontend, `Service.call` turns a contract into a `Cmd` that dispatches a `Msg`. The `Result` carries `Service.Error` in its `Err` (transport failure) and the declared `resp` in `Ok` (which holds the domain outcome). See section 3.5 for the full error model.
+On the frontend, `Service.call` turns a contract into a `Cmd` that dispatches a `Msg`. The `Result` carries `Service.Error` in its `Err` (transport failure) and the declared `resp` in `Ok` (which holds the domain outcome). See section 3.6 for the full error model.
 
 ```elm
 update msg model =
@@ -620,11 +635,11 @@ auth =
         }
 ```
 
-Protect a service with `Auth.protect` (section 4.4) and a page with `Page.protected` (section 5). The sign-in flow runs through `Auth.requestCode` and `Auth.verifyCode`, which deliver the per-call outcomes `Auth.RequestOutcome` and `Auth.VerifyOutcome user` (section 3.5). The full flow, every config field, and the SMTP and dev-code setup live in [auth.md](auth.md).
+Protect a service with `Auth.protect` (section 4.4) and a page with `Page.protected` (section 5). The sign-in flow runs through `Auth.requestCode` and `Auth.verifyCode`, which deliver the per-call outcomes `Auth.RequestOutcome` and `Auth.VerifyOutcome user` (section 3.6). The full flow, every config field, and the SMTP and dev-code setup live in [auth.md](auth.md).
 
 ### 4.7 Errors
 
-Backend handlers return `Task resp`; there is no error type parameter. The three kinds of failure, and where each one lives, are covered in full in section 3.5. In short:
+Backend handlers return `Task resp`; there is no error type parameter. The three kinds of failure, and where each one lives, are covered in full in section 3.6. In short:
 
 - A handler returns its declared response. Domain outcomes are constructors of that response type, matched by the frontend.
 - `Task.fail "message"` aborts the handler; the message reaches the client as `Service.ServerError` and is display-only.
@@ -848,7 +863,7 @@ update msg model =
         Added (Err why)                -> -- Service.errorToString why
 ```
 
-The `Result` the page receives carries `Service.Error` in its `Err` (transport failure) and the declared response in `Ok`, which holds any domain outcome. See section 3.5 for the full error model.
+The `Result` the page receives carries `Service.Error` in its `Err` (transport failure) and the declared response in `Ok`, which holds any domain outcome. See section 3.6 for the full error model.
 
 ### 6.1 Noticing a deploy from an open tab
 
