@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/grandcat/zeroconf"
+	"github.com/libp2p/zeroconf/v2"
 )
 
 // Bonjour service type. Native iOS clients (and any other LAN-aware
