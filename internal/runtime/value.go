@@ -56,7 +56,7 @@ type VString struct{ V string }
 func (VString) isValue()          {}
 func (v VString) Display() string { return fmt.Sprintf("%q", v.V) }
 
-// VChar is a single Unicode code point (rune in Go terms). Distinct
+// VChar is a single Unicode scalar value (a rune in Go terms). Distinct
 // from VString so that `'a' == "a"` is a type error rather than a
 // silently-true equality, and so List Char / String round-trip
 // (via String.toList / fromList) stays meaningful.

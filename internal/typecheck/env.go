@@ -1552,7 +1552,7 @@ func stdlibBindings() map[string]Type {
 			To:   TArrow{From: TString, To: TBool},
 		},
 
-		// Char module: monomorphic. Unicode code point semantics.
+		// Char module: monomorphic. Unicode scalar-value semantics.
 		"charToCode":   TArrow{From: TChar, To: TInt},
 		"charFromCode": TArrow{From: TInt, To: TChar},
 		"charIsDigit":  TArrow{From: TChar, To: TBool},

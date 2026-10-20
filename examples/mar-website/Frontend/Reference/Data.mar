@@ -260,7 +260,7 @@ sectionsFor m =
         "Char" ->
             [ { category = "Convert"
               , entries =
-                    [ { moduleName = "Char", name = "toCode", signature = "Char -> Int", side = "both", description = "The Unicode code point of a character.", examples = [ [ "Char.toCode 'A'    -- 65" ] ] }
+                    [ { moduleName = "Char", name = "toCode", signature = "Char -> Int", side = "both", description = "The Unicode scalar value of a character.", examples = [ [ "Char.toCode 'A'    -- 65" ] ] }
                     , { moduleName = "Char", name = "fromCode", signature = "Int -> Char", side = "both", description = "The character at a Unicode code point. A number that is not a scalar value, such as a surrogate or anything above 10FFFF, gives the replacement character.", examples = [ [ "Char.fromCode 65    -- 'A'" ] ] }
                     , { moduleName = "Char", name = "toUpper", signature = "Char -> Char", side = "both", description = "The upper-case form of a character, or the character itself when it has none. A Char holds one character, so where the upper case would be longer than one, the character comes back unchanged: use String.toUpper for those.", examples = [ [ "Char.toUpper 'a'    -- 'A'" ], [ "Char.toUpper 'ß'    -- 'ß'" ] ] }
                     , { moduleName = "Char", name = "toLower", signature = "Char -> Char", side = "both", description = "The lower-case form of a character, or the character itself when it has none. A Char holds one character, so where the lower case would be longer than one, the character comes back unchanged: use String.toLower for those.", examples = [ [ "Char.toLower 'A'    -- 'a'" ] ] }

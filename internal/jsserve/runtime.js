@@ -87,10 +87,10 @@
       'means the page is still holding the model it loaded with, from before ' +
       'the Model changed. Reload the page.');
   }
-  // VChar: Unicode code point, distinct from a 1-char VString. Same
+  // VChar: Unicode scalar value, distinct from a 1-char VString. Same
   // model as Go's rune / Swift's Unicode.Scalar. JSON wire format is
   // {"__char": "x"} (see jsToMar / marToJs below). `c` is the integer
-  // code point.
+  // scalar value.
   const VChar = (c) => ({ k: 'Ch', c });
   // VDec, exact base-10 number: BigInt coefficient (bounded to 34
   // significant digits) + scale. 1.50 is {coef: 150n, scale: 2};
@@ -689,7 +689,7 @@
       // Char round-trip, `{__char: "x"}` from the Go encoder, and
       // exactly one Unicode scalar or nothing.
       //
-      // This used to take the FIRST code point and degrade an empty
+      // This used to take the FIRST scalar and degrade an empty
       // payload to U+FFFD. The input is EXTERNAL — a Mar encoder cannot
       // write more than one scalar — so `{"__char":"abc"}` answered 'a'
       // silently, and an empty payload answered U+FFFD here and on the
@@ -3866,7 +3866,7 @@
     def('String.repeat', stringRepeatImpl);
 
     // String.padLeft / padRight: pad with a SINGLE Char (Elm-style).
-    // The seed is one code point that we repeat to fill.
+    // The seed is one scalar that we repeat to fill.
     // A Mar String is a sequence of Unicode SCALAR VALUES, so every length,
     // width and position below counts scalars (ADR 0038). JavaScript stores a
     // string as UTF-16 units, which is a different number for anything above
@@ -4674,9 +4674,9 @@
 
     // ---------- Char ----------
     //
-    // Char in Mar is a Unicode code point: same model as Go's rune,
-    // Swift's Unicode.Scalar, Elm's Char. `c` is the integer code
-    // point on VChar.
+    // Char in Mar is a Unicode scalar value: same model as Go's rune,
+    // Swift's Unicode.Scalar, Elm's Char. `c` is the integer scalar
+    // value on VChar.
     //
     // sanitizeCodePoint mirrors the Go side: out-of-range or surrogate
     // inputs collapse to U+FFFD ("replacement character"), keeping the
@@ -4696,7 +4696,7 @@
     def('Char.fromCode', charFromCodeImpl);
 
     // Char predicates: operate on the Unicode properties of the
-    // code point. We use JS regex with the `u` flag so things like
+    // scalar. We use JS regex with the `u` flag so things like
     // `Char.isAlpha 'é'` work (and stay aligned with Go's unicode
     // package, which is also Unicode-aware not ASCII-only).
     const isDigitRe = /\p{Nd}/u;
@@ -4762,7 +4762,7 @@
     def('Char.toLower', charToLowerImpl);
 
     // String <-> [Char] bridges. Iterating a JS string with for..of
-    // (or spread) walks Unicode code points correctly (joins
+    // (or spread) walks Unicode scalar values correctly (joins
     // surrogate pairs into one scalar). Same semantics as Go's
     // `for _, r := range s`.
     const stringToListImpl = native(1, ([s]) => {
@@ -4787,7 +4787,7 @@
     def('String.cons', stringConsImpl);
 
     // String higher-order ops over Char. Iterating with `for..of`
-    // walks code points correctly (joins surrogate pairs into one
+    // walks scalar values correctly (joins surrogate pairs into one
     // scalar). Matches the Go side's `for _, r := range s`.
     const stringMapImpl = native(2, ([fn, s]) => {
       let out = '';

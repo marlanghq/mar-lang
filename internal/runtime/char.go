@@ -11,7 +11,7 @@ import (
 // JS runtime and Swift's MarChar.swift; the drift tests catch any
 // divergence at the env.define level.
 //
-// Char in Mar is a Unicode code point (rune), the same model used by
+// Char in Mar is a Unicode scalar value (a rune in Go), the same model used by
 // Elm / Go / Rust / JS / Swift's `Unicode.Scalar`. NOT a grapheme
 // cluster: `String.toList "🇧🇷"` yields TWO Chars (the two regional
 // indicator scalars), matching Elm semantics.
@@ -123,7 +123,7 @@ func charBuiltins() map[string]Value {
 		}),
 		// String.map : (Char -> Char) -> String -> String
 		// Apply fn to every Char, build a new String. Iterating with
-		// `range` over a Go string yields runes (Unicode code points)
+		// `range` over a Go string yields runes (Unicode scalar values)
 		//: same model as the JS for..of and Swift's
 		// .unicodeScalars iteration. Multi-byte chars stay intact.
 		"stringMap": nativeFn(2, func(args []Value) (Value, error) {

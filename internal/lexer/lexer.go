@@ -21,10 +21,10 @@ const (
 	KindInt    Kind = "int"
 	KindFloat  Kind = "float"
 	KindString Kind = "string"
-	// KindChar: single-quoted Unicode code point literal, e.g. 'a',
+	// KindChar: single-quoted Unicode scalar literal, e.g. 'a',
 	// '\n', '\u{1F600}'. The Value field carries the decoded
 	// single-character string (UTF-8 of the rune), so a parser can do
-	// utf8.DecodeRuneInString(tok.Value) to get the int code point.
+	// utf8.DecodeRuneInString(tok.Value) to get the int scalar value.
 	KindChar Kind = "char"
 
 	// Identifiers
@@ -384,8 +384,8 @@ func (l *lexer) readString() error {
 
 // readChar: single-quoted character literal, 'a', '\n', '\u{1F600}'.
 //
-// One Unicode code point per literal (rune in Go, Unicode.Scalar in
-// Swift, code point in JS). The contents are exactly ONE character:
+// One Unicode scalar value per literal (a rune in Go, a Unicode.Scalar
+// in Swift, a one-scalar string in JS). The contents are exactly ONE character:
 // `'ab'` is a lex error, not a two-char "string". Use a String for
 // that.
 //

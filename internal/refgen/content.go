@@ -189,7 +189,7 @@ var descriptions = map[string]string{
 	"Tuple.mapBoth":      "Applies one function to each side of the pair. The two sides can end up different types.",
 
 	// --- Char ---
-	"Char.toCode":   "The Unicode code point of a character.",
+	"Char.toCode":   "The Unicode scalar value of a character.",
 	"Char.fromCode": "The character at a Unicode code point. A number that is not a scalar value, such as a surrogate or anything above 10FFFF, gives the replacement character.",
 	"Char.toUpper":  "The upper-case form of a character, or the character itself when it has none. A Char holds one character, so where the upper case would be longer than one, the character comes back unchanged: use String.toUpper for those.",
 	"Char.toLower":  "The lower-case form of a character, or the character itself when it has none. A Char holds one character, so where the lower case would be longer than one, the character comes back unchanged: use String.toLower for those.",

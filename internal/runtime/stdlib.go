@@ -1220,7 +1220,7 @@ func stdlib() map[string]Value {
 			}
 			var out []Value
 			start := 0       // byte offset the next scan starts at
-			runesBefore := 0 // code points to the left of start
+			runesBefore := 0 // scalars to the left of start
 			for {
 				i := strings.Index(s.V[start:], needle.V)
 				if i < 0 {
@@ -1241,7 +1241,7 @@ func stdlib() map[string]Value {
 // s unchanged. When pad is empty (corner case), returns s unchanged
 // so a typo doesn't silently produce an infinite loop.
 // padString fills s out to width, measuring in the unit String.length reports:
-// code points. Measuring in bytes would leave a word already wide in bytes
+// scalar values. Measuring in bytes would leave a word already wide in bytes
 // unpadded, and bytes are not a unit anything else in the language speaks.
 // ADR 0038 clause 3.
 func padString(s string, width int, pad string, left bool) string {

@@ -165,7 +165,7 @@ func serializeExpr(e ast.Expr) any {
 	case *ast.EString:
 		return map[string]any{"kind": "EString", "value": n.Value}
 	case *ast.EChar:
-		// Ship the integer code point: the JS runtime reconstructs a
+		// Ship the integer scalar value: the JS runtime reconstructs a
 		// VChar via VChar(value). Sending an int avoids any UTF-16
 		// surrogate weirdness on the way through JSON.
 		return map[string]any{"kind": "EChar", "value": int(n.Value)}
