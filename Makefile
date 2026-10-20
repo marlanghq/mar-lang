@@ -156,8 +156,44 @@ release-macos: release
 	done
 	@echo "Notarized macOS installers ready in $(RELEASE_DIR)/"
 
+# -timeout is not decoration. internal/iosbundle compiles the Swift template
+# and drives a simulator, which takes four to seven minutes idle and was
+# measured at 722s with an xcodebuild competing for the machine. Go's default
+# is 600s per package, so `make test` was a coin flip under load, and it lost:
+# the panic reads "test timed out", which looks like a hung test rather than a
+# busy laptop.
 test: ios-template
-	@go test ./...
+	@go test ./... -timeout 30m
+
+# The analysers, and the check that makes a clean run mean something.
+#
+# staticcheck and deadcode read Go source with the go/types loader they were
+# BUILT with. Point one built against 1.26 at a module that declares 1.27 and
+# it analyses nothing: it prints "package requires newer Go version" and
+# stops. A reader skimming for findings sees an empty list and calls it clean.
+# That is what happened here. A sweep landed reporting staticcheck clean while
+# 52 findings sat in the tree, eight of them doc comments attached to the
+# declaration above the one they described.
+#
+# So the version check runs first and is fatal, and a missing tool is fatal
+# too. A tool too old to read the code is not a tool that passed.
+lint:
+	@want=$$(awk "/^go /{print \$$2; exit}" go.mod); \
+	for t in staticcheck deadcode golangci-lint; do \
+		bin=$$(command -v $$t) || { echo "  $$t: not installed (go install, then re-run)"; exit 1; }; \
+		got=$$(go version -m "$$bin" | sed -n "s/.*[[:space:]]go1\./1./p" | head -1); \
+		[ -n "$$got" ] || { echo "  $$t: cannot read its Go version"; exit 1; }; \
+		oldest=$$(printf "%s\\n%s\\n" "$$want" "$$got" | sort -V | head -1); \
+		[ "$$oldest" = "$$want" ] || { echo "  $$t: built with Go $$got, this module needs $$want"; exit 1; }; \
+		echo "  $$t: Go $$got"; \
+	done
+	@echo "go vet"      && go vet ./...
+	@echo "staticcheck" && staticcheck ./...
+	@echo "golangci"    && golangci-lint run ./...
+	@echo "deadcode"    && deadcode -test ./...
+	@echo "swiftlint"   && cd internal/iosbundle/template && swiftlint lint --quiet
+	@echo "(every list above empty, except deadcode VPath.Display, which says why)"
+
 
 # A guard nobody exercises is a guard free to rot, and it rots quietly: the
 # check still compiles, still gets called, and stops meaning anything. This is
