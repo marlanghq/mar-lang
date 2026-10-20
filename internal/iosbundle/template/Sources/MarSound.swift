@@ -197,11 +197,17 @@ private final class BedVoice {
 
 // MARK: - Engine
 
+// The engine holds one voice-rendering path per wave shape plus the builtin
+// table for Sound.*, so its length is the size of the audio surface.
+// swiftlint:disable:next type_body_length
 final class MarSound: @unchecked Sendable {
     static let shared = MarSound()
 
     private let sr: Double = 44_100
     private let engine = AVAudioEngine()
+    // periphery:ignore - holding it IS the use: the engine keeps no strong
+    // reference of its own, so dropping this deallocates the render node and
+    // the app goes silent.
     private var source: AVAudioSourceNode?
     private var started = false
 
@@ -594,7 +600,7 @@ final class MarSound: @unchecked Sendable {
         if lv.v.lowCut > 0 {
             let k = 1 - exp(-2 * Double.pi * min(lv.v.lowCut, sr / 2) / sr)
             lv.hpState += (out - lv.hpState) * k
-            out = out - lv.hpState        // high-pass = signal minus its low-passed self
+            out -= lv.hpState             // high-pass = signal minus its low-passed self
         }
         return out
     }
@@ -709,7 +715,7 @@ final class MarSound: @unchecked Sendable {
         if b.lowCut > 0 {
             let k = 1 - exp(-2 * Double.pi * min(b.lowCut, sr / 2) / sr)
             b.hpState += (out - b.hpState) * k
-            out = out - b.hpState
+            out -= b.hpState
         }
         return out
     }
@@ -757,6 +763,9 @@ final class MarSound: @unchecked Sendable {
         max(0.05, spanMs(snd) / 1000)
     }
 
+    // periphery:ignore - called by the Swift that internal/conformance
+    // generates to compare playback against the browser. The app target has
+    // no call site, which is the point: the harness is the caller.
     /// PLAYBACK CONFORMANCE: the cycle Sound.loop would use, or nil when it
     /// would book nothing at all. Mirrors startLoop's own two decisions - the
     /// period, and the guard that a loop of pure silence is not a loop.
@@ -971,6 +980,9 @@ final class MarSound: @unchecked Sendable {
         return b
     }
 
+    // periphery:ignore - called by the Swift that internal/conformance
+    // generates to compare playback against the browser. The app target has
+    // no call site, which is the point: the harness is the caller.
     /// PLAYBACK CONFORMANCE: what a HELD source (Sound.voice, Sound.glide,
     /// Sound.ambient) settles at, and whether anything is still moving once it
     /// has.
@@ -1048,7 +1060,9 @@ final class MarSound: @unchecked Sendable {
 
     // MARK: value <-> voice bridging
 
-    /// Decode a `__Snd` Sound value into Swift voices.
+    // periphery:ignore - called by the Swift that internal/conformance
+    // generates to compare playback against the browser. The app target has
+    // no call site, which is the point: the harness is the caller.
     /// PLAYBACK CONFORMANCE: how loud the raw WAVE of each voice is, before any
     /// envelope, as (rms, dc) over one cycle at the voice's own pitch.
     ///
@@ -1082,6 +1096,9 @@ final class MarSound: @unchecked Sendable {
         }
     }
 
+    // periphery:ignore - called by the Swift that internal/conformance
+    // generates to compare playback against the browser. The app target has
+    // no call site, which is the point: the harness is the caller.
     /// PLAYBACK CONFORMANCE: the control curves this Sound would be played
     /// through, sampled at note-local times.
     ///
@@ -1126,8 +1143,9 @@ final class MarSound: @unchecked Sendable {
         }
     }
 
+    /// Decode a `__Snd` Sound value into Swift voices.
     private static func voicesOf(_ snd: MarValue) -> [Voice] {
-        guard case .ctor(let tag, let args, _) = snd, tag == "__Snd", let first = args.first,
+        guard case .ctor(let tag, let args) = snd, tag == "__Snd", let first = args.first,
               case .list(let recs) = first else { return [] }
         return recs.compactMap { voiceOf($0) }
     }
@@ -1136,7 +1154,10 @@ final class MarSound: @unchecked Sendable {
         guard case .record(let f, _) = v else { return nil }
         func s(_ k: String) -> String { if case .string(let x)? = f[k] { return x }; return "" }
         func d(_ k: String) -> Double {
-            switch f[k] { case .int(let x)?: return Double(x); default: return 0 }
+            switch f[k] {
+            case .int(let x)?: return Double(x)
+            default: return 0
+            }
         }
         var arp: [Double] = []
         if case .list(let xs)? = f["arp"] { arp = xs.compactMap { if case .int(let n) = $0 { return Double(n) }; return nil } }
@@ -1168,12 +1189,15 @@ final class MarSound: @unchecked Sendable {
                 "vibRate": .int(0), "tremDepth": .int(0), "tremRate": .int(0), "arp": .unit,
                 "lowCut": .int(0), "highCut": .int(0),
                 "decay": .int(0), "sustain": .int(100), "detune": .int(0),
-                "pan": .int(0),
-            ], order: ["wave", "freq", "ms", "endFreq", "holdMs", "volume", "delayMs", "duty", "vibDepth", "vibRate", "tremDepth", "tremRate", "arp", "lowCut", "highCut", "decay", "sustain", "detune", "pan"])
+                "pan": .int(0)
+            ], order: [
+                "wave", "freq", "ms", "endFreq", "holdMs", "volume", "delayMs", "duty",
+                "vibDepth", "vibRate", "tremDepth", "tremRate", "arp", "lowCut", "highCut",
+                "decay", "sustain", "detune", "pan"])
         }
-        func mkSound(_ voices: [MarValue]) -> MarValue { .ctor(tag: "__Snd", args: [.list(voices)], origin: nil) }
+        func mkSound(_ voices: [MarValue]) -> MarValue { .ctor(tag: "__Snd", args: [.list(voices)]) }
         func voicesOfVal(_ snd: MarValue) -> [MarValue] {
-            if case .ctor(let t, let a, _) = snd, t == "__Snd", let f = a.first, case .list(let xs) = f { return xs }
+            if case .ctor(let t, let a) = snd, t == "__Snd", let f = a.first, case .list(let xs) = f { return xs }
             return []
         }
         func setField(_ rec: MarValue, _ key: String, _ val: MarValue) -> MarValue {
@@ -1204,10 +1228,12 @@ final class MarSound: @unchecked Sendable {
         }
 
         env.defineFn("soundTone", "Sound.tone", 3) { a in
-            let wave: String = { if case .ctor(let t, _, _) = a[0] { return t }; return "Square" }()
+            let wave: String = { if case .ctor(let t, _) = a[0] { return t }; return "Square" }()
             return mkSound([mkVoice(wave: wave, freq: intArg(a[1]), ms: intArg(a[2]))])
         }
-        env.defineFn("soundVolume", "Sound.volume", 2) { a in patchAll(a[1]) { setField($0, "volume", .int(max(0, min(100, intArg(a[0]))))) } }
+        env.defineFn("soundVolume", "Sound.volume", 2) { a in
+            patchAll(a[1]) { setField($0, "volume", .int(max(0, min(100, intArg(a[0]))))) }
+        }
         env.defineFn("soundSweep", "Sound.sweep", 2) { a in patchAll(a[1]) { setField($0, "endFreq", .int(intArg(a[0]))) } }
         env.defineFn("soundLowCut", "Sound.lowCut", 2) { a in patchAll(a[1]) { setField($0, "lowCut", .int(max(0, intArg(a[0])))) } }
         env.defineFn("soundHighCut", "Sound.highCut", 2) { a in patchAll(a[1]) { setField($0, "highCut", .int(max(0, intArg(a[0])))) } }
@@ -1238,13 +1264,24 @@ final class MarSound: @unchecked Sendable {
         //
         // Clamped to two octaves: past that it has stopped being a detune and
         // become a transpose, which Sound.transpose says better.
-        env.defineFn("soundDetune", "Sound.detune", 2) { a in patchAll(a[1]) { setField($0, "detune", .int(max(-2400, min(2400, intArg(a[0]))))) } }
-        env.defineFn("soundVibrato", "Sound.vibrato", 3) { a in patchAll(a[2]) { setField(setField($0, "vibDepth", .int(max(0, intArg(a[0])))), "vibRate", .int(max(1, intArg(a[1])))) } }
+        env.defineFn("soundDetune", "Sound.detune", 2) { a in
+            patchAll(a[1]) { setField($0, "detune", .int(max(-2400, min(2400, intArg(a[0]))))) }
+        }
+        env.defineFn("soundVibrato", "Sound.vibrato", 3) { a in
+            patchAll(a[2]) {
+                setField(setField($0, "vibDepth", .int(max(0, intArg(a[0])))), "vibRate", .int(max(1, intArg(a[1]))))
+            }
+        }
         // tremolo : the wobble in LOUDNESS, as vibrato is the wobble in pitch.
         // Depth is a percentage of the voice's own level rather than cents,
         // because that is the unit amplitude has; rate is Hz, as there. Clamped
         // at 100, past which there is nothing left to take away.
-        env.defineFn("soundTremolo", "Sound.tremolo", 3) { a in patchAll(a[2]) { setField(setField($0, "tremDepth", .int(max(0, min(100, intArg(a[0]))))), "tremRate", .int(max(1, intArg(a[1])))) } }
+        env.defineFn("soundTremolo", "Sound.tremolo", 3) { a in
+            patchAll(a[2]) {
+                setField(setField($0, "tremDepth", .int(max(0, min(100, intArg(a[0]))))),
+                         "tremRate", .int(max(1, intArg(a[1]))))
+            }
+        }
         // arp : SEMITONE OFFSETS from the voice's own pitch, cycled fast on one
         // oscillator -- the chiptune trick for a chord from a single channel. They
         // used to be absolute Hz while the reference said semitones; relative is
@@ -1342,7 +1379,7 @@ final class MarSound: @unchecked Sendable {
             return .effect(MarEffect(tag: "soundPlay") { MarSound.shared.playOnce(snd); return .unit })
         }
         func soundSub(_ mode: String, _ snd: MarValue) -> MarValue {
-            .ctor(tag: "__Sub", args: [.ctor(tag: "__SubSound", args: [.string(mode), snd], origin: nil)], origin: nil)
+            .ctor(tag: "__Sub", args: [.ctor(tag: "__SubSound", args: [.string(mode), snd])])
         }
         env.defineFn("soundLoop", "Sound.loop", 1) { a in soundSub("loop", a[0]) }
         env.defineFn("soundVoice", "Sound.voice", 1) { a in soundSub("voice", a[0]) }

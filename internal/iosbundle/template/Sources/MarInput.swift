@@ -53,7 +53,7 @@ final class GamepadHub {
     private func wire() {
         guard !wired else { return }
         wired = true
-        NotificationCenter.default.addObserver(forName: .GCControllerDidConnect, object: nil, queue: .main) { [weak self] note in
+        NotificationCenter.default.addObserver(forName: .GCControllerDidConnect, object: nil, queue: .main) { [weak self] _ in
             // Re-read the current controllers rather than carrying the
             // notification's object across the boundary. Neither Notification
             // nor GCController is Sendable, and the notification only has to
@@ -117,12 +117,12 @@ final class GamepadHub {
 
     /// The whole-pad record: { connected, leftX, leftY, rightX, rightY, down }.
     func currentRecord() -> MarValue {
-        let downList = pressed.map { MarValue.ctor(tag: $0, args: [], origin: nil) }  // matches Gamepad.<name>
+        let downList = pressed.map { MarValue.ctor(tag: $0, args: []) }  // matches Gamepad.<name>
         return .record(fields: [
             "connected": .bool(connected),
             "leftX": .int(lx), "leftY": .int(ly),
             "rightX": .int(rx), "rightY": .int(ry),
-            "down": .list(downList),
+            "down": .list(downList)
         ], order: ["connected", "leftX", "leftY", "rightX", "rightY", "down"])
     }
 }
@@ -152,7 +152,7 @@ final class KeyboardHub {
     private func wire() {
         guard !wired else { return }
         wired = true
-        NotificationCenter.default.addObserver(forName: .GCKeyboardDidConnect, object: nil, queue: .main) { [weak self] note in
+        NotificationCenter.default.addObserver(forName: .GCKeyboardDidConnect, object: nil, queue: .main) { [weak self] _ in
             // Same reason as the controller observer above: read the
             // coalesced keyboard here instead of sending the notification's.
             MainActor.assumeIsolated { self?.attach(GCKeyboard.coalesced) }
@@ -161,7 +161,9 @@ final class KeyboardHub {
         #if canImport(UIKit)
         // App backgrounded / resigned: the OS stops delivering key-up, so clear
         // the held set (the iOS analog of the web's window-blur clear).
-        NotificationCenter.default.addObserver(forName: UIApplication.willResignActiveNotification, object: nil, queue: .main) { [weak self] _ in
+        NotificationCenter.default.addObserver(
+            forName: UIApplication.willResignActiveNotification, object: nil, queue: .main
+        ) { [weak self] _ in
             MainActor.assumeIsolated { self?.clearHeld() }
         }
         #endif
@@ -187,7 +189,7 @@ final class KeyboardHub {
 
     /// The held-key record: { down : List Key }.
     func currentRecord() -> MarValue {
-        let downList = held.map { MarValue.ctor(tag: $0, args: [], origin: nil) }  // matches Keyboard.<code>
+        let downList = held.map { MarValue.ctor(tag: $0, args: []) }  // matches Keyboard.<code>
         return .record(fields: ["down": .list(downList)], order: ["down"])
     }
 
@@ -201,7 +203,7 @@ final class KeyboardHub {
             .keyF: "KeyF", .keyG: "KeyG", .keyH: "KeyH", .keyI: "KeyI", .keyJ: "KeyJ",
             .keyK: "KeyK", .keyL: "KeyL", .keyM: "KeyM", .keyN: "KeyN", .keyO: "KeyO",
             .keyP: "KeyP", .keyQ: "KeyQ", .keyR: "KeyR", .keyS: "KeyS", .keyT: "KeyT",
-            .keyU: "KeyU", .keyV: "KeyV", .keyW: "KeyW", .keyX: "KeyX", .keyY: "KeyY", .keyZ: "KeyZ",
+            .keyU: "KeyU", .keyV: "KeyV", .keyW: "KeyW", .keyX: "KeyX", .keyY: "KeyY", .keyZ: "KeyZ"
         ]
         if let s = letters[k] { return s }
         let others: [GCKeyCode: String] = [
@@ -214,7 +216,7 @@ final class KeyboardHub {
             .leftAlt: "AltLeft", .rightAlt: "AltRight", .leftGUI: "MetaLeft", .rightGUI: "MetaRight",
             .hyphen: "Minus", .equalSign: "Equal", .comma: "Comma", .period: "Period", .slash: "Slash",
             .semicolon: "Semicolon", .quote: "Quote", .openBracket: "BracketLeft", .closeBracket: "BracketRight",
-            .backslash: "Backslash", .graveAccentAndTilde: "Backquote",
+            .backslash: "Backslash", .graveAccentAndTilde: "Backquote"
         ]
         return others[k]
     }
@@ -246,7 +248,7 @@ final class DeviceHub {
             UIAccessibility.reduceMotionStatusDidChangeNotification,
             UIDevice.orientationDidChangeNotification,
             UIApplication.didBecomeActiveNotification,
-            .GCMouseDidConnect, .GCMouseDidDisconnect,
+            .GCMouseDidConnect, .GCMouseDidDisconnect
         ]
         for n in names {
             NotificationCenter.default.addObserver(forName: n, object: nil, queue: .main) { [weak self] _ in
@@ -273,13 +275,13 @@ final class DeviceHub {
         let anyFine = !GCMouse.mice().isEmpty
         let reduce = UIAccessibility.isReduceMotionEnabled
         return .record(fields: [
-            "pointer": .ctor(tag: "Coarse", args: [], origin: nil),
+            "pointer": .ctor(tag: "Coarse", args: []),
             "anyFine": .bool(anyFine),
             "supportsHover": .bool(false),
             "width": .int(w),
             "height": .int(h),
             "prefersDark": .bool(dark),
-            "prefersReducedMotion": .bool(reduce),
+            "prefersReducedMotion": .bool(reduce)
         ], order: ["pointer", "anyFine", "supportsHover", "width", "height", "prefersDark", "prefersReducedMotion"])
     }
 }
@@ -296,7 +298,7 @@ enum MarInput {
         // Pointer's Coarse / Fine are registered in MarBuiltins; see there.
 
         func sub(_ tag: String, _ tagger: MarValue) -> MarValue {
-            .ctor(tag: "__Sub", args: [.ctor(tag: tag, args: [tagger], origin: nil)], origin: nil)
+            .ctor(tag: "__Sub", args: [.ctor(tag: tag, args: [tagger])])
         }
         env.defineFn("keyboardWatch", "Keyboard.watch", 1) { a in sub("__SubKeyboard", a[0]) }
         env.defineFn("gamepadWatch",  "Gamepad.watch",  1) { a in sub("__SubGamepad", a[0]) }

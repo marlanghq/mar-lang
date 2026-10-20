@@ -143,7 +143,10 @@ func SwiftFile() string {
 	b.WriteString("enum MarMathTable {\n")
 	b.WriteString("    " + strings.ReplaceAll(strings.TrimSuffix(tableBlurb, "\n"), "\n", "\n    ") + "\n")
 	b.WriteString("    static let sinQuarter: [Int] = [\n")
-	b.WriteString(rows(SinQuarter(), "        ", 12, ","))
+	// No trailing comma on the last entry: Go REQUIRES one before a closing
+	// brace on its own line and Swift's trailing_comma rule forbids one, so
+	// the separator the other two emitters keep has to come off here.
+	b.WriteString(strings.TrimSuffix(rows(SinQuarter(), "        ", 12, ","), ","))
 	b.WriteString("\n    ]\n")
 	b.WriteString("}\n")
 	return b.String()

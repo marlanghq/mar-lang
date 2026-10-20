@@ -6,6 +6,9 @@
 import SwiftUI
 
 @main
+// __MAR_APP_NAME__ is substituted for the real app name when the project is
+// generated, so the placeholder is what the linter sees, never what compiles.
+// swiftlint:disable:next type_name
 struct __MAR_APP_NAME__App: App {
     @State private var viewModel = AppViewModel()
 

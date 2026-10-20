@@ -11,7 +11,7 @@ indirect enum Expr {
     /// text); scale is the number of fractional places.
     case decimal(coef: String, scale: Int)
     case string(String)
-    /// Single Unicode code point. Wire format from Go side: EChar
+    /// Single Unicode scalar value. Wire format from Go side: EChar
     /// payload carries the int code point; we wrap it in Unicode.Scalar.
     case char(Unicode.Scalar)
     case unit

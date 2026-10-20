@@ -226,8 +226,7 @@ enum DecMath {
         var t = s.trimmingCharacters(in: .whitespacesAndNewlines)
         if t.isEmpty { return nil }
         var neg = false
-        if t.hasPrefix("-") { neg = true; t.removeFirst() }
-        else if t.hasPrefix("+") { t.removeFirst() }
+        if t.hasPrefix("-") { neg = true; t.removeFirst() } else if t.hasPrefix("+") { t.removeFirst() }
         let parts = t.split(separator: ".", omittingEmptySubsequences: false)
         if parts.count > 2 { return nil }
         let intPart = parts.isEmpty ? "" : String(parts[0])
@@ -245,7 +244,7 @@ enum DecMath {
 
     /// Rounding-mode tag from a Decimal.Rounding ctor value.
     static func roundingTag(_ v: MarValue) throws -> String {
-        if case .ctor(let tag, _, _) = v,
+        if case .ctor(let tag, _) = v,
            ["HalfEven", "HalfUp", "Down", "Up", "Floor", "Ceiling"].contains(tag) {
             return tag
         }
@@ -259,8 +258,7 @@ enum DecMath {
         let shift = scale + den.scale - num.scale
         var n = trim(num.digits)
         var d = trim(den.digits)
-        if shift > 0 { n = shift10(n, shift) }
-        else if shift < 0 { d = shift10(d, -shift) }
+        if shift > 0 { n = shift10(n, shift) } else if shift < 0 { d = shift10(d, -shift) }
         let negative = (num.negative && n != [0]) != (den.negative && d != [0])
         var (q, r) = quoRemAbs(n, d)
         var roundUp = false
@@ -273,8 +271,7 @@ enum DecMath {
             case "HalfUp", "HalfEven":
                 let twice = mulAbs(r, [2])
                 let c = cmpAbs(twice, d)
-                if c > 0 { roundUp = true }
-                else if c == 0 {
+                if c > 0 { roundUp = true } else if c == 0 {
                     // banker's: to the even neighbour
                     roundUp = mode == "HalfUp" ? true : (q.last ?? 0) % 2 == 1
                 }

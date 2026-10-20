@@ -28,8 +28,8 @@ if args.count >= 4, args[1] == "--service-result" {
     let v = MarHTTP.makeServiceResult(data: data, response: response, error: nil, responseShape: nil)
     // Print the Err's message, or "Ok <value>", so both clients are compared
     // on the sentence a program actually receives.
-    if case .ctor(let tag, let cargs, _) = v {
-        if tag == "Err", let inner = cargs.first, case .ctor(let etag, let eargs, _) = inner {
+    if case .ctor(let tag, let cargs) = v {
+        if tag == "Err", let inner = cargs.first, case .ctor(let etag, let eargs) = inner {
             if let m = eargs.first, case .string(let s) = m { print(s) } else { print(etag) }
         } else if let ok = cargs.first {
             print("Ok " + String(describing: ok))
@@ -60,17 +60,17 @@ if args.count >= 4, args[1] == "--auth-verify" {
     ])!
     let v = MarHTTP.makeAuthOutcomeResult(
         data: data, response: response, error: nil,
-        okOutcome: { user in .ctor(tag: "SignedIn", args: [user], origin: nil) },
+        okOutcome: { user in .ctor(tag: "SignedIn", args: [user]) },
         mapCode: MarHTTP.verifyCodeOutcome,
         userShape: shape)
-    if case .ctor(let tag, let cargs, _) = v {
-        if tag == "Err", let inner = cargs.first, case .ctor(let etag, let eargs, _) = inner {
+    if case .ctor(let tag, let cargs) = v {
+        if tag == "Err", let inner = cargs.first, case .ctor(let etag, let eargs) = inner {
             if let m = eargs.first, case .string(let s) = m { print(s) } else { print(etag) }
         } else if let ok = cargs.first {
             // An Ok carries either the SignedIn user or a domain outcome; the
             // outcome's TAG is what a program cases on, so print that alone
             // when it has no argument.
-            if case .ctor(let otag, let oargs, _) = ok, oargs.isEmpty {
+            if case .ctor(let otag, let oargs) = ok, oargs.isEmpty {
                 print("Ok " + otag)
             } else {
                 print("Ok " + String(describing: ok))

@@ -112,9 +112,9 @@ func SwiftFile() string {
 	b.WriteString("    static func register(_ env: Env) {\n")
 	for _, e := range Entries() {
 		if e.Arity == 0 {
-			fmt.Fprintf(&b, "        env.define(\"%s\", .ctor(tag: \"%s\", args: [], origin: nil))\n", e.Qualified, e.Tag)
+			fmt.Fprintf(&b, "        env.define(\"%s\", .ctor(tag: \"%s\", args: []))\n", e.Qualified, e.Tag)
 		} else {
-			fmt.Fprintf(&b, "        env.define(\"%s\", .fn(MarFn.native(%d) { .ctor(tag: \"%s\", args: $0, origin: nil) }))\n", e.Qualified, e.Arity, e.Tag)
+			fmt.Fprintf(&b, "        env.define(\"%s\", .fn(MarFn.native(%d) { .ctor(tag: \"%s\", args: $0) }))\n", e.Qualified, e.Arity, e.Tag)
 		}
 	}
 	b.WriteString("    }\n")

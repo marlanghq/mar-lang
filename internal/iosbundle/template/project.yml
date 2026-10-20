@@ -19,13 +19,15 @@ settings:
   base:
     # iOS 18 deployment target lets us use the Observation framework
     # (@Observable, @Bindable) and the modern SwiftUI environment
-    # injection pattern. Swift language mode stays at 5.10 for now:
-    # the runtime interpreter holds user-defined closures as values
-    # and disciplines them to the main actor through MarDispatcher,
-    # but expressing that to Swift 6 strict concurrency would force a
-    # Sendable cascade through every value type without adding real
-    # safety. We opt into upcoming Swift 6 features incrementally and
-    # surface concurrency issues as warnings.
+    # injection pattern.
+    #
+    # Swift language mode 6: unprotected shared mutable state is a
+    # compile error, which is this repository's thesis applied to the
+    # runtime that had escaped it. Strict concurrency stays `targeted`
+    # rather than `complete` because the interpreter holds user-defined
+    # closures as values and disciplines them to the main actor through
+    # MarDispatcher; demanding Sendable of every value type would
+    # cascade without adding real safety.
     SWIFT_VERSION: 6.0
     SWIFT_STRICT_CONCURRENCY: targeted
     IPHONEOS_DEPLOYMENT_TARGET: 18.0

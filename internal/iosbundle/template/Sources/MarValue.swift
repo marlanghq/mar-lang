@@ -48,10 +48,10 @@ enum MarValue: @unchecked Sendable {
     /// normative, it fixes the resolution, but not observable, since no
     /// builtin hands it back. Wire format: `{"__angle": 450}`.
     case angle(Int)
-    /// A single Unicode code point: Elm-style Char, NOT a grapheme
+    /// A single Unicode scalar value: Elm-style Char, NOT a grapheme
     /// cluster. We use `Unicode.Scalar` (not Swift's default
     /// `Character`) so semantics line up exactly with Go's `rune` and
-    /// JS code points: `String.toList "🇧🇷"` yields two Chars, not
+    /// what JS yields when it spreads a string: `String.toList "🇧🇷"` gives two Chars, not
     /// one. Wire format: `{"__char": "x"}`.
     case char(Unicode.Scalar)
     /// Exact base-10 number (see MarDecimal.swift). Wire format:
@@ -76,22 +76,16 @@ enum MarValue: @unchecked Sendable {
     /// `{"__set": [k, ...]}`.
     case set([MarValue])
 
-    /// Tagged union constructor. `origin` is a vestigial provenance slot
-    /// kept on the value shape so the many `.ctor(..., origin: nil)` call
-    /// sites stay uniform; it is always nil now that Service contracts
-    /// carry their own verb + path directly.
-    case ctor(tag: String, args: [MarValue], origin: ServiceOrigin?)
+    /// Tagged union constructor. The tag and the args are the whole identity,
+    /// the same as Go's `VCtor{Tag, Args}` and the browser's
+    /// `(tag, args) => ({k:'C', tag, args})`.
+    case ctor(tag: String, args: [MarValue])
 
     case fn(MarFn)
     /// The one case that embeds a MarValue by value (via MarView.msg :
     /// MarValue?), so it alone carries `indirect` to keep the enum finite.
     indirect case view(MarView)
     case effect(MarEffect)
-}
-
-struct ServiceOrigin: Hashable {
-    let module: String
-    let name: String
 }
 
 // MARK: - Functions (with native + interpreted variants)
@@ -269,7 +263,7 @@ extension MarValue {
             guard a.count == b.count else { return false }
             for (x, y) in zip(a, b) where !x.equalsMar(y) { return false }
             return true
-        case (.ctor(let ta, let aa, _), .ctor(let tb, let ab, _)):
+        case (.ctor(let ta, let aa), .ctor(let tb, let ab)):
             guard ta == tb, aa.count == ab.count else { return false }
             for (x, y) in zip(aa, ab) where !x.equalsMar(y) { return false }
             return true

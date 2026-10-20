@@ -76,12 +76,12 @@ enum MarLoader {
             for c in ctors {
                 let val: MarValue
                 if c.argCount == 0 {
-                    val = .ctor(tag: c.name, args: [], origin: nil)
+                    val = .ctor(tag: c.name, args: [])
                 } else {
                     let ctorName = c.name
                     let arity = c.argCount
                     val = .fn(MarFn.native(arity) { args in
-                        .ctor(tag: ctorName, args: args, origin: nil)
+                        .ctor(tag: ctorName, args: args)
                     })
                     allZeroArg = false
                 }

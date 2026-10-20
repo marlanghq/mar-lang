@@ -166,7 +166,7 @@ private struct StackShell: View {
         // mounts normally: the same graceful fallback the web gives a
         // cold load of a sheet route.
         let presented: String? = {
-            var route: String? = nil
+            var route: String?
             if ctx.navPath.count > 1, let top = ctx.navPath.last, isSheetRoute(top) {
                 route = top
             }
@@ -344,7 +344,11 @@ private struct ProtectedRoute: View {
                 ContentUnavailableView(
                     "Sign-in page not configured",
                     systemImage: "lock.slash",
-                    description: Text("This app uses Page.protected but no `signInPage` is declared in Auth.config. Add `signInPage = Frontend.SignIn.page` (or similar) so unauthed users have somewhere to land.")
+                    description: Text("""
+                        This app uses Page.protected but no `signInPage` is declared in \
+                        Auth.config. Add `signInPage = Frontend.SignIn.page` (or similar) \
+                        so unauthed users have somewhere to land.
+                        """)
                 )
             }
         }
@@ -355,13 +359,13 @@ private struct ProtectedRoute: View {
             guard ctx.currentUser == nil else { return }
             ctx.authPending = true
             let result = await MarHTTP.fetchAuthMe()
-            ctx.currentUser = result ?? .ctor(tag: "Nothing", args: [], origin: nil)
+            ctx.currentUser = result ?? .ctor(tag: "Nothing", args: [])
             ctx.authPending = false
         }
     }
 
     private func unwrapJustUser(_ v: MarValue?) -> MarValue? {
-        guard let v, case .ctor(let tag, let args, _) = v else { return nil }
+        guard let v, case .ctor(let tag, let args) = v else { return nil }
         if tag == "Just", let first = args.first { return first }
         return nil
     }
@@ -381,7 +385,10 @@ private struct BackendOnlyPlaceholder: View {
         ContentUnavailableView(
             "No pages to render",
             systemImage: "rectangle.stack.badge.minus",
-            description: Text("This mar app exposes a backend but no `Page` values. Add at least one `Page.create` to `App.fullstack { pages = ... }`.")
+            description: Text("""
+                This mar app exposes a backend but no `Page` values. Add at least one \
+                `Page.create` to `App.fullstack { pages = ... }`.
+                """)
         )
     }
 }

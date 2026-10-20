@@ -409,7 +409,7 @@ private struct MarFillSizing: ViewModifier {
 
 private struct InputAttrs {
     var keyboardType: UIKeyboardType = .default
-    var textContentType: UITextContentType? = nil
+    var textContentType: UITextContentType?
     var isSecure: Bool = false
 }
 
@@ -465,7 +465,7 @@ private func attributedFromSpan(_ span: MarView) -> AttributedString {
     var isItalic = false
     var isCode = false
     var isStrike = false
-    var linkURL: URL? = nil
+    var linkURL: URL?
     for a in span.attrs {
         switch a.name {
         case "inlineBold":          isBold = true
@@ -513,7 +513,7 @@ private struct MarNavigationStack: View {
 
     var body: some View {
         // Group (rather than VStack) so child layout-impacting views
-        //, Form, List, render at their natural height. VStack
+        // , Form, List, render at their natural height. VStack
         // collapses Form to zero height because Form measures itself
         // against its container's height which VStack doesn't provide.
         Group {
@@ -683,16 +683,16 @@ private struct MarUISection: View {
     }
 
     private struct OnDeleteAttr {
-        let editing: Bool
         let handler: MarValue?
     }
 
+    // No `editing` here, unlike OnMoveAttr: the list-level anySectionEditing
+    // reads fields["editing"] off the onDelete record itself, so a copy on this
+    // struct would be a second source for one fact and nothing read it.
     private func readOnDeleteAttr() -> OnDeleteAttr? {
         for a in view.attrs where a.name == "onDelete" {
             if case .record(let fields, _) = a.value {
-                var editing = false
-                if case .bool(let b) = fields["editing"] ?? .unit { editing = b }
-                return OnDeleteAttr(editing: editing, handler: fields["handler"])
+                return OnDeleteAttr(handler: fields["handler"])
             }
         }
         return nil
@@ -810,7 +810,7 @@ private struct MarUISheet: View {
 /// The binding's getter returns true while we're mounted; its setter
 /// fires onCancel when SwiftUI flips it false (user tapped outside,
 /// swiped down, or hit a Cancel button that SwiftUI added on its own
-///, though we provide our own explicit Cancel button via .cancel role).
+/// , though we provide our own explicit Cancel button via .cancel role).
 private struct MarUIConfirmDialog: View {
     let view: MarView
     let dispatch: (MarValue) -> Void

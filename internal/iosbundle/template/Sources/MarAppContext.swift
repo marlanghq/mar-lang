@@ -240,8 +240,8 @@ final class AppContext {
             // CURRENT model to read the route, and keep the builder so the
             // runtime can re-resolve the four functions as the model moves.
             var v = v
-            var binding: DecodedPage.SharedBinding? = nil
-            if case .ctor("__SharedPage", let wargs, _) = v, wargs.count >= 2,
+            var binding: DecodedPage.SharedBinding?
+            if case .ctor("__SharedPage", let wargs) = v, wargs.count >= 2,
                case .string(let key) = wargs[0] {
                 // Say so when this fails. A dropped page does not crash and
                 // does not draw anything: it simply is not in the app, and
@@ -262,7 +262,7 @@ final class AppContext {
                 binding = DecodedPage.SharedBinding(key: key, builder: wargs[1])
                 v = inner
             }
-            guard case .ctor(let tag, let args, _) = v else { return nil }
+            guard case .ctor(let tag, let args) = v else { return nil }
             let isSheet = args.count >= 7 && boolOf(args[6]) == true
             switch tag {
             case "__Page":
@@ -377,7 +377,7 @@ struct DecodedPage: Identifiable {
         let builder: MarValue
     }
 
-    var shared: SharedBinding? = nil
+    var shared: SharedBinding?
     let path: String
     let title: String
     let initFn: MarValue
@@ -390,20 +390,15 @@ struct DecodedPage: Identifiable {
 
     var id: String { path }
 
-    /// Display title for the tab bar / navigation bar. Falls back to
-    /// the path when the user didn't pass `title` to Page.create.
-    var displayTitle: String {
-        title.isEmpty ? path : title
-    }
-
     /// Match a candidate URL against this page's path pattern.
     /// Returns the captured params record (typed per `{name:Type}`)
     /// on success, nil on miss. Static pages match by exact equality.
     /// Type-mismatch on a typed segment (e.g. `/notes/abc` against
     /// `{id:Int}`) returns nil so the router can fall through to
     /// the next page.
-    // Reads MarPath's cache, which is main-actor state. This already ran
-    // there; the annotation is what makes that checkable.
+    ///
+    /// Reads MarPath's cache, which is main-actor state. This already ran
+    /// there; the annotation is what makes that checkable.
     @MainActor
     func matchURL(_ urlPath: String) -> MarValue? {
         if !isDynamic {

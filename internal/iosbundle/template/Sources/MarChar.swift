@@ -1,7 +1,7 @@
 // Char module + String <-> [Char] bridges: Swift port of the Go
 // internal/runtime/char.go and the JS builtins in runtime.js.
 //
-// Char in Mar is a Unicode code point (here: Unicode.Scalar). NOT a
+// Char in Mar is a Unicode scalar value (here: Unicode.Scalar). NOT a
 // grapheme cluster. `String.toList "🇧🇷"` yields TWO chars, matching
 // Elm semantics: the regional indicators are two separate scalars.
 //
@@ -118,7 +118,7 @@ enum MarChar {
         env.define("Char.toLower", .fn(toLower))
 
         // String <-> [Char] bridges. Iterating `.unicodeScalars`
-        // walks code points (not grapheme clusters), matching the Go
+        // walks scalar values (not grapheme clusters), matching the Go
         // and JS sides exactly.
         let stringToList = MarFn.native(1) { args in
             guard case .string(let s) = args[0] else {
@@ -158,7 +158,7 @@ enum MarChar {
         env.define("String.cons", .fn(stringCons))
 
         // String higher-order ops over Char. We iterate
-        // `.unicodeScalars` (code points), matching the Go and JS
+        // `.unicodeScalars`, matching the Go and JS
         // sides: `String.toList "🇧🇷"` yields two scalars, so
         // `String.map` walks both of them.
         let stringMap = MarFn.native(2) { args in

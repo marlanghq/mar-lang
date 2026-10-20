@@ -27,10 +27,6 @@ enum MarJSONCodec {
     /// (null maps to unit, NOT to Nothing: Nothing tags uniformly
     /// via {"__ctor":"Nothing"} so it doesn\'t collide with VUnit\'s
     /// null encoding.)
-    /// formatWireNumber prints a rejected payload the way the other two
-    /// runtimes do, so the corpus compares one sentence rather than three.
-    /// quoteWire prints a rejected payload the way the other two runtimes
-    /// do, so the corpus compares one sentence rather than three.
     /// parseISO reads an ISO 8601 instant with OR without fractional
     /// seconds. `.withFractionalSeconds` REQUIRES them, so asking for it
     /// alone would refuse every value written before the wire form carried
@@ -93,16 +89,8 @@ enum MarJSONCodec {
         return "null"
     }
 
-    static func quoteWire(_ any: Any?) -> String {
-        if let s = any as? String {
-            let escaped = s.replacingOccurrences(of: "\\", with: "\\\\")
-                .replacingOccurrences(of: "\"", with: "\\\"")
-            return "\"" + escaped + "\""
-        }
-        if let n = any as? NSNumber { return formatWireNumber(n.doubleValue) }
-        return "null"
-    }
-
+    /// formatWireNumber prints a rejected payload the way the other two
+    /// runtimes do, so the corpus compares one sentence rather than three.
     static func formatWireNumber(_ d: Double) -> String {
         if d == d.rounded(.towardZero) && abs(d) < 1e15 {
             return String(Int(d))
@@ -166,7 +154,7 @@ enum MarJSONCodec {
                 } else {
                     args = []
                 }
-                return .ctor(tag: tag, args: args, origin: nil)
+                return .ctor(tag: tag, args: args)
             }
             // Char round-trip, `{__char: "x"}`, and exactly one Unicode
             // scalar or nothing. Same convention as Go's convertJSON and
@@ -311,7 +299,7 @@ enum MarJSONCodec {
                 if let bad = unencodable(f) { return bad }
             }
             return nil
-        case .ctor(_, let args, _):
+        case .ctor(_, let args):
             for a in args {
                 if let bad = unencodable(a) { return bad }
             }
@@ -369,7 +357,7 @@ enum MarJSONCodec {
                 dict[k] = marToJSON(fs[k] ?? .unit)
             }
             return dict
-        case .ctor(let tag, let args, _):
+        case .ctor(let tag, let args):
             // Every ctor, Nothing and Just included, uses the
             // {"__ctor": ...} marker so generic decoders can
             // round-trip them without collisions (transparent

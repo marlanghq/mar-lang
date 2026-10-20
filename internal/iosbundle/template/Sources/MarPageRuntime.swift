@@ -117,7 +117,7 @@ final class PageRuntime {
         guard let shared,
               let store = MarSharedRegistry.lookup(shared.key),
               let page = try? Eval.apply(shared.builder, store.model),
-              case .ctor(_, let args, _) = page, args.count >= 4
+              case .ctor(_, let args) = page, args.count >= 4
         else { return nil }
         return args
     }
@@ -455,19 +455,19 @@ final class PageRuntime {
         }
 
         // A shared store subscribes too, and its messages belong to ITS update
-        //, not to whichever page happened to mount the source. The reconciler
+        // , not to whichever page happened to mount the source. The reconciler
         // groups by key across owners, so the destination has to travel with
         // each TAGGER rather than sit on the registration. The web hit exactly
         // this and solved it the same way (deliverSub in runtime.js).
         var sharedTaggers: [String: String] = [:]   // tagger identity -> store key
         var allItems: [MarValue] = []
-        if let subVal, case .ctor("__Sub", let items, _) = subVal {
+        if let subVal, case .ctor("__Sub", let items) = subVal {
             allItems.append(contentsOf: items)
         }
         if let shared, let store = MarSharedRegistry.lookup(shared.key),
-           case .ctor("__Sub", let items, _) = store.subscriptions() {
+           case .ctor("__Sub", let items) = store.subscriptions() {
             for item in items {
-                if case .ctor(_, let a, _) = item, let tagger = a.last {
+                if case .ctor(_, let a) = item, let tagger = a.last {
                     sharedTaggers[Self.taggerIdentity(tagger)] = shared.key
                 }
             }
@@ -478,7 +478,7 @@ final class PageRuntime {
         if !allItems.isEmpty {
             let items = allItems
             for item in items {
-                guard case .ctor(let itag, let a, _) = item else { continue }
+                guard case .ctor(let itag, let a) = item else { continue }
                 switch itag {
                 case "__SubEvery":
                     guard a.count == 2, case .duration(let seconds) = a[0] else { continue }

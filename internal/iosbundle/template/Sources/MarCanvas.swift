@@ -38,19 +38,19 @@ enum MarCanvas {
 
         // Color: rgb r g b -> Color (opaque __Color ctor); rgba adds an
         // opacity percent int (0-100), since Mar has no floats.
-        env.defineFn("rgb", "Canvas.rgb", 3) { a in .ctor(tag: "__Color", args: [a[0], a[1], a[2]], origin: nil) }
-        env.defineFn("rgba", "Canvas.rgba", 4) { a in .ctor(tag: "__Color", args: [a[0], a[1], a[2], a[3]], origin: nil) }
+        env.defineFn("rgb", "Canvas.rgb", 3) { a in .ctor(tag: "__Color", args: [a[0], a[1], a[2]]) }
+        env.defineFn("rgba", "Canvas.rgba", 4) { a in .ctor(tag: "__Color", args: [a[0], a[1], a[2], a[3]]) }
 
         // Shapes.
-        env.defineFn("rect", "Canvas.rect", 5) { a in .ctor(tag: "rect", args: a, origin: nil) }
-        env.defineFn("circle", "Canvas.circle", 4) { a in .ctor(tag: "circle", args: a, origin: nil) }
+        env.defineFn("rect", "Canvas.rect", 5) { a in .ctor(tag: "rect", args: a) }
+        env.defineFn("circle", "Canvas.circle", 4) { a in .ctor(tag: "circle", args: a) }
         // triangle : x1 y1 x2 y2 x3 y3 color -> Shape  (a filled triangle)
-        env.defineFn("triangle", "Canvas.triangle", 7) { a in .ctor(tag: "triangle", args: a, origin: nil) }
+        env.defineFn("triangle", "Canvas.triangle", 7) { a in .ctor(tag: "triangle", args: a) }
         // Canvas.text : x y size align color str  (bare key `canvasText` keeps
         // the bare name `text` free for the module that exposes it).
-        env.defineFn("canvasText", "Canvas.text", 6) { a in .ctor(tag: "canvasText", args: a, origin: nil) }
+        env.defineFn("canvasText", "Canvas.text", 6) { a in .ctor(tag: "canvasText", args: a) }
         // group : List Transform -> List Shape -> Shape
-        env.defineFn("group", "Canvas.group", 2) { a in .ctor(tag: "group", args: [a[0], a[1]], origin: nil) }
+        env.defineFn("group", "Canvas.group", 2) { a in .ctor(tag: "group", args: [a[0], a[1]]) }
 
         // Transform / Align / Blend constructors (Canvas.Translate, ...) come
         // from the generated registry: see MarBuiltinCtors.swift.
@@ -177,18 +177,18 @@ struct MarCanvasView: View {
 
     /// Fire the watchPointers handler with the whole pointer list (one record
     /// { id, x, y } per active finger), the pointer-mirror snapshot.
-    private func firePointers(_ pts: [(Int, Int, Int)]) {
+    private func firePointers(_ pts: [(id: Int, x: Int, y: Int)]) {
         guard let h = handler("watchPointers") else { return }
         let list = MarValue.list(pts.map { t in
-            MarValue.record(fields: ["id": .int(t.0), "x": .int(t.1), "y": .int(t.2)], order: ["id", "x", "y"])
+            MarValue.record(fields: ["id": .int(t.id), "x": .int(t.x), "y": .int(t.y)], order: ["id", "x", "y"])
         })
         if let msg = try? Eval.apply(h, list) { dispatch(msg) }
     }
 
     var body: some View {
         GeometryReader { geo in
-            Canvas { ctx, size in
-                MarCanvasView.draw(shapes, into: ctx, size: size)
+            Canvas { ctx, _ in
+                MarCanvasView.draw(shapes, into: ctx)
             }
             .contentShape(Rectangle())
             #if canImport(UIKit)
@@ -243,13 +243,13 @@ struct MarCanvasView: View {
 
     // MARK: draw-list replay
 
-    static func draw(_ shapes: [MarValue], into ctx: GraphicsContext, size: CGSize) {
+    static func draw(_ shapes: [MarValue], into ctx: GraphicsContext) {
         for s in shapes { drawShape(s, into: ctx) }
     }
 
     /// rgb carries 3 channels; rgba carries a 4th, an opacity percent int.
     private static func color(_ v: MarValue?) -> Color {
-        guard case .ctor(let t, let a, _)? = v, t == "__Color", a.count >= 3 else { return .black }
+        guard case .ctor(let t, let a)? = v, t == "__Color", a.count >= 3 else { return .black }
         func c(_ i: Int) -> Double { if case .int(let n) = a[i] { return Double(n) / 255 }; return 0 }
         var alpha = 1.0
         if a.count == 4, case .int(let pct) = a[3] { alpha = min(100, max(0, Double(pct))) / 100 }
@@ -261,7 +261,7 @@ struct MarCanvasView: View {
     private static func deg(_ v: MarValue) -> Double { if case .angle(let deci) = v { return Double(deci) / 10 }; return 0 }
 
     private static func drawShape(_ s: MarValue, into ctx: GraphicsContext) {
-        guard case .ctor(let tag, let a, _) = s else { return }
+        guard case .ctor(let tag, let a) = s else { return }
         switch tag {
         case "rect" where a.count == 5:
             let rect = CGRect(x: d(a[0]), y: d(a[1]), width: d(a[2]), height: d(a[3]))
@@ -280,7 +280,7 @@ struct MarCanvasView: View {
         case "canvasText" where a.count == 6:
             var str = ""; if case .string(let x) = a[5] { str = x }
             let sizePt = d(a[2])
-            let align: String = { if case .ctor(let t, _, _) = a[3] { return t }; return "Left" }()
+            let align: String = { if case .ctor(let t, _) = a[3] { return t }; return "Left" }()
             let anchor: UnitPoint = align == "Center" ? .center : (align == "Right" ? .trailing : .leading)
             let text = Text(str).font(.system(size: sizePt, weight: .semibold, design: .monospaced)).foregroundColor(color(a[4]))
             ctx.draw(text, at: CGPoint(x: d(a[0]), y: d(a[1])), anchor: anchor)
@@ -332,7 +332,7 @@ struct MarCanvasView: View {
     /// and Rotate takes an Angle, whose unit is named at construction.
     /// Alpha is not a matrix op: groupAlpha pulls it out before this runs.
     private static func apply(_ t: MarValue, to ctx: inout GraphicsContext) {
-        guard case .ctor(let tag, let a, _) = t else { return }
+        guard case .ctor(let tag, let a) = t else { return }
         switch tag {
         case "Translate" where a.count == 2:
             ctx.translateBy(x: d(a[0]), y: d(a[1]))
@@ -348,9 +348,9 @@ struct MarCanvasView: View {
     /// Canvas.Alpha on a group as a 0...1 fraction, or nil when absent.
     /// Repeats multiply, matching the web renderer and nested alpha groups.
     private static func groupAlpha(_ transforms: [MarValue]) -> Double? {
-        var out: Double? = nil
+        var out: Double?
         for t in transforms {
-            guard case .ctor(let tag, let a, _) = t, tag == "Alpha", a.count == 1 else { continue }
+            guard case .ctor(let tag, let a) = t, tag == "Alpha", a.count == 1 else { continue }
             let pct = min(100, max(0, d(a[0])))
             out = (out ?? 1) * (pct / 100)
         }
@@ -362,10 +362,10 @@ struct MarCanvasView: View {
     /// combine: opacities compose, modes don't, so the last one wins. The
     /// mapping mirrors the web's globalCompositeOperation names exactly.
     private static func groupBlend(_ transforms: [MarValue]) -> GraphicsContext.BlendMode? {
-        var out: GraphicsContext.BlendMode? = nil
+        var out: GraphicsContext.BlendMode?
         for t in transforms {
-            guard case .ctor(let tag, let a, _) = t, tag == "Blend", a.count == 1,
-                  case .ctor(let mode, _, _) = a[0] else { continue }
+            guard case .ctor(let tag, let a) = t, tag == "Blend", a.count == 1,
+                  case .ctor(let mode, _) = a[0] else { continue }
             switch mode {
             case "Normal":   out = .normal
             case "Add":      out = .plusLighter
@@ -390,7 +390,7 @@ struct MarPointerCapture: UIViewRepresentable {
     let onTap: (Int, Int) -> Void
     let onDrag: (Int, Int) -> Void
     let onRelease: (Int, Int) -> Void
-    let onPointers: ([(Int, Int, Int)]) -> Void
+    let onPointers: ([(id: Int, x: Int, y: Int)]) -> Void
 
     func makeUIView(context: Context) -> MarTouchView {
         let v = MarTouchView()
@@ -411,7 +411,7 @@ final class MarTouchView: UIView {
     private var onTap: ((Int, Int) -> Void)?
     private var onDrag: ((Int, Int) -> Void)?
     private var onRelease: ((Int, Int) -> Void)?
-    private var onPointers: (([(Int, Int, Int)]) -> Void)?
+    private var onPointers: (([(id: Int, x: Int, y: Int)]) -> Void)?
 
     private var ids: [ObjectIdentifier: Int] = [:]
     private var pos: [ObjectIdentifier: CGPoint] = [:]
@@ -421,7 +421,7 @@ final class MarTouchView: UIView {
     private func commonInit() { isMultipleTouchEnabled = true; backgroundColor = .clear }
 
     func bind(onTap: @escaping (Int, Int) -> Void, onDrag: @escaping (Int, Int) -> Void,
-              onRelease: @escaping (Int, Int) -> Void, onPointers: @escaping ([(Int, Int, Int)]) -> Void) {
+              onRelease: @escaping (Int, Int) -> Void, onPointers: @escaping ([(id: Int, x: Int, y: Int)]) -> Void) {
         self.onTap = onTap; self.onDrag = onDrag; self.onRelease = onRelease; self.onPointers = onPointers
     }
 
@@ -432,7 +432,7 @@ final class MarTouchView: UIView {
         let items = ids.keys
             .compactMap { k -> (Int, CGPoint)? in guard let id = ids[k], let p = pos[k] else { return nil }; return (id, p) }
             .sorted { $0.0 < $1.0 }
-            .map { (id, p) in (id, Int(p.x), Int(p.y)) }
+            .map { (id, p) in (id: id, x: Int(p.x), y: Int(p.y)) }
         onPointers?(items)
     }
 

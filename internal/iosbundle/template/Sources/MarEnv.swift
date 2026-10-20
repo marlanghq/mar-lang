@@ -38,12 +38,6 @@ final class Env {
         self.parent = parent
     }
 
-    func bind(_ name: String, _ value: MarValue) -> Env {
-        let child = Env(parent: self)
-        child.appendBinding(name, value)
-        return child
-    }
-
     /// Define with replace-on-same-name semantics (module load, builtin
     /// registration). Same-frame redefinition overwrites, matching the
     /// Dictionary behavior the runtime always had.

@@ -24,7 +24,7 @@ import Foundation
 final class MarWireShape: @unchecked Sendable {
     let kind: String
     private(set) var fields: [(name: String, shape: MarWireShape)] = []
-    private(set) var elem: MarWireShape? = nil
+    private(set) var elem: MarWireShape?
     private(set) var members: [MarWireShape] = []
     private(set) var tags: [String] = []
     private(set) var args: [[MarWireShape]] = []
@@ -105,7 +105,6 @@ enum MarWire {
     /// host's is localized and would make the answer depend on the device.
     static let notReadable = "the document could not be read"
 
-
     /// Answers nil when the value fits the shape, or the sentence that says
     /// how it does not. The wording is the Go runtime's, to the character.
     /// `seen` carries the named shapes met on the way down, so a Ref can point
@@ -117,6 +116,9 @@ enum MarWire {
         check(v, s, path, [:])
     }
 
+    // One branch per wire shape, and each one has to name what it wanted in a
+    // sentence a user reads. The branch count is the shape vocabulary's size.
+    // swiftlint:disable:next cyclomatic_complexity
     static func check(_ v: MarValue, _ s: MarWireShape, _ path: String, _ seen: [String: MarWireShape]) -> String? {
         let where_ = path.isEmpty ? "the value" : "`\(path)`"
         func bad(_ want: String) -> String {
@@ -163,7 +165,7 @@ enum MarWire {
 
         case "Maybe":
             if isAbsent(v) { return nil }
-            guard case .ctor(let tag, let args, _) = v else {
+            guard case .ctor(let tag, let args) = v else {
                 return bad("a Maybe (leave the field out for Nothing)")
             }
             if tag == "Nothing" { return nil }
@@ -184,7 +186,7 @@ enum MarWire {
             // Remembered under its type name so a Ref below can find it.
             var seen = seen
             if !s.name.isEmpty { seen[s.name] = s }
-            guard case .ctor(let tag, let carried, _) = v else {
+            guard case .ctor(let tag, let carried) = v else {
                 return bad("one of \(quoteEach(s.tags))")
             }
             guard let i = s.tags.firstIndex(of: tag) else {
@@ -284,10 +286,10 @@ enum MarWire {
             return v
 
         case "Maybe":
-            if isAbsent(v) { return .ctor(tag: "Nothing", args: [], origin: nil) }
-            if case .ctor(let tag, let args, let origin) = v,
+            if isAbsent(v) { return .ctor(tag: "Nothing", args: []) }
+            if case .ctor(let tag, let args) = v,
                tag == "Just", args.count == 1, let elem = s.elem {
-                return .ctor(tag: "Just", args: [coerce(args[0], elem)], origin: origin)
+                return .ctor(tag: "Just", args: [coerce(args[0], elem)])
             }
             return v
 
@@ -301,20 +303,19 @@ enum MarWire {
             return .tuple(xs.enumerated().map { coerce($1, s.members[$0]) })
 
         case "Ctor":
-            guard case .ctor(let tag, let carried, let origin) = v,
+            guard case .ctor(let tag, let carried) = v,
                   let i = s.tags.firstIndex(of: tag),
                   i < s.args.count,
                   carried.count == s.args[i].count else { return v }
             return .ctor(tag: tag,
-                         args: carried.enumerated().map { coerce($1, s.args[i][$0]) },
-                         origin: origin)
+                         args: carried.enumerated().map { coerce($1, s.args[i][$0]) })
 
         case "Record":
             guard case .record(var fields, var order) = v else { return v }
             for f in s.fields {
                 guard let sub = fields[f.name] else {
                     if f.shape.kind == "Maybe" {
-                        fields[f.name] = .ctor(tag: "Nothing", args: [], origin: nil)
+                        fields[f.name] = .ctor(tag: "Nothing", args: [])
                         order.append(f.name)
                     }
                     continue
@@ -354,25 +355,23 @@ enum MarWire {
                 parsed = try MarJSONCodec.parseJSONExact(raw)
             } catch {
                 return .ctor(tag: "Err",
-                             args: [.string(whyNotJSON(error))],
-                             origin: nil)
+                             args: [.string(whyNotJSON(error))])
             }
             do {
                 let v = try MarJSONCodec.jsonToMar(parsed)
                 if let err = check(v, shape) {
-                    return .ctor(tag: "Err", args: [.string(err)], origin: nil)
+                    return .ctor(tag: "Err", args: [.string(err)])
                 }
-                return .ctor(tag: "Ok", args: [coerce(v, shape)], origin: nil)
+                return .ctor(tag: "Ok", args: [coerce(v, shape)])
             } catch let e as MarRuntimeError {
                 // MarRuntimeError's errorDescription is MAR's sentence, so
                 // this one is safe to pass through. Catching it by type rather
                 // than relying on "only Mar errors get here" is what makes
                 // that a guarantee instead of a comment.
                 return .ctor(tag: "Err",
-                             args: [.string(e.errorDescription ?? notReadable)],
-                             origin: nil)
+                             args: [.string(e.errorDescription ?? notReadable)])
             } catch {
-                return .ctor(tag: "Err", args: [.string(notReadable)], origin: nil)
+                return .ctor(tag: "Err", args: [.string(notReadable)])
             }
         })
     }
@@ -391,7 +390,7 @@ enum MarWire {
             let svc = args[0]
             let toMsg = args[2]
             return .effect(MarEffect(tag: "serviceCall") {
-                guard case .ctor("__Service", let svcArgs, _) = svc,
+                guard case .ctor("__Service", let svcArgs) = svc,
                       svcArgs.count == 2,
                       case .string(let verb) = svcArgs[0],
                       case .string(let pattern) = svcArgs[1] else {
@@ -419,7 +418,7 @@ enum MarWire {
                 MarHTTP.fireAuthOutcome(
                     path: "/_auth/verify-code",
                     body: req,
-                    okOutcome: { user in .ctor(tag: "SignedIn", args: [user], origin: nil) },
+                    okOutcome: { user in .ctor(tag: "SignedIn", args: [user]) },
                     mapCode: MarHTTP.verifyCodeOutcome,
                     toMsg: toMsg,
                     userShape: shape)
@@ -483,7 +482,7 @@ enum MarWire {
         case .list: return "a list"
         case .unit: return "nothing"
         case .time: return "a time"
-        case .ctor(let tag, _, _): return "`\(tag)`"
+        case .ctor(let tag, _): return "`\(tag)`"
         case .record(_, let order):
             return order.isEmpty ? "an empty object" : "an object with \(order.joined(separator: ", "))"
         default: return "something else"

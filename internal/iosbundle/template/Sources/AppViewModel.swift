@@ -157,7 +157,7 @@ final class AppViewModel {
             // comparison is sent to whatever these lines name and has to
             // land on the same page with the same values.
             var url = page.path
-            var params: MarValue? = nil
+            var params: MarValue?
             if page.isDynamic {
                 guard let visit = page.sampleVisit() else {
                     print("[mar] ROUTE \(page.path) -> SKIPPED (no sample params)")
@@ -273,7 +273,7 @@ final class AppViewModel {
             // Deci-degrees, matching webdriver.go: the resolution is
             // normative, so an angle off by a tenth reads as a difference.
             return "\(deci)ddeg"
-        case .ctor(let tag, let args, _):
+        case .ctor(let tag, let args):
             let name = canonicalTag(tag)
             if args.isEmpty { return name }
             return name + "(" + args.map(dumpValue).joined(separator: ",") + ")"
@@ -596,6 +596,8 @@ final class AppViewModel {
         return "http://localhost:3000"
     }
 
+    // periphery:ignore - read from the `#if !DEBUG` branch below, which a
+    // DEBUG index does not compile, so a scan cannot see the use.
     /// The baked Info.plist `MarHasBackend`. False only for an
     /// App.frontend project that set no `ios.serverUrl`: a game, with
     /// nothing on the other end of the network. Missing key means an

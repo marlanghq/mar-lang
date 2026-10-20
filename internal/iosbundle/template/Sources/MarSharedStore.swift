@@ -51,7 +51,7 @@ final class MarSharedStore {
             return
         }
         // update : msg -> model -> (model, Cmd)
-        var effect: MarValue? = nil
+        var effect: MarValue?
         if case .tuple(let parts) = out, parts.count >= 1 {
             model = parts[0]
             if parts.count >= 2 { effect = parts[1] }
@@ -134,7 +134,7 @@ enum MarSharedRegistry {
         // `init` is a VALUE of `(model, Cmd)`, not a function: the same shape
         // Page.create uses, so the unwrap is the same too.
         var initial: MarValue = initFn
-        var initEffect: MarValue? = nil
+        var initEffect: MarValue?
         if case .tuple(let parts) = initFn, parts.count >= 1 {
             initial = parts[0]
             if parts.count >= 2 { initEffect = parts[1] }
@@ -158,7 +158,6 @@ enum MarSharedRegistry {
     }
 
     static func lookup(_ key: String) -> MarSharedStore? { stores[key] }
-
 
     // MARK: - Observers
 

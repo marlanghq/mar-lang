@@ -42,17 +42,17 @@ enum MarKeychain {
     static func save(_ value: String, forKey key: String) {
         guard let data = value.data(using: .utf8) else { return }
         let query: [String: Any] = [
-            kSecClass as String:       kSecClassGenericPassword,
+            kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service(),
-            kSecAttrAccount as String: key,
+            kSecAttrAccount as String: key
         ]
         // Replace-by-upsert pattern: try update first; if no entry,
         // add. The straight "delete then add" path also works but
         // SecItemUpdate is atomic in the keep-attributes-stable case
         // and surfaces fewer error variants.
         let attrsToUpdate: [String: Any] = [
-            kSecValueData as String:       data,
-            kSecAttrAccessible as String:  kSecAttrAccessibleAfterFirstUnlock,
+            kSecValueData as String: data,
+            kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlock
         ]
         let status = SecItemUpdate(query as CFDictionary, attrsToUpdate as CFDictionary)
         if status == errSecItemNotFound {
@@ -78,11 +78,11 @@ enum MarKeychain {
     /// caller treats them uniformly as "not signed in".
     static func load(forKey key: String) -> String? {
         let query: [String: Any] = [
-            kSecClass as String:       kSecClassGenericPassword,
+            kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service(),
             kSecAttrAccount as String: key,
-            kSecReturnData as String:  true,
-            kSecMatchLimit as String:  kSecMatchLimitOne,
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne
         ]
         var item: CFTypeRef?
         let status = SecItemCopyMatching(query as CFDictionary, &item)
@@ -97,9 +97,9 @@ enum MarKeychain {
     /// Remove the entry under `key`. No-op if absent.
     static func delete(forKey key: String) {
         let query: [String: Any] = [
-            kSecClass as String:       kSecClassGenericPassword,
+            kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service(),
-            kSecAttrAccount as String: key,
+            kSecAttrAccount as String: key
         ]
         SecItemDelete(query as CFDictionary)
     }

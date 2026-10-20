@@ -56,7 +56,6 @@ actor APIClient {
         return FetchedProgram(data: data, runtime: (runtime?.isEmpty ?? true) ? nil : runtime)
     }
 
-
     private func getWithResponse(path: String) async throws -> (Data, HTTPURLResponse?) {
         guard let url = URL(string: path, relativeTo: baseURL) else {
             throw APIError.invalidURL

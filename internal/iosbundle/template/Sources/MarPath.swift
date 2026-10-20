@@ -190,7 +190,7 @@ enum MarPath {
             if let ctors = enumTypes[type] {
                 let want = decoded.lowercased()
                 for c in ctors where c.lowercased() == want {
-                    return .ctor(tag: c, args: [], origin: nil)
+                    return .ctor(tag: c, args: [])
                 }
             }
             return nil
@@ -236,7 +236,7 @@ enum MarPath {
             return String(n)
         default:
             if let ctors = enumTypes[type] {
-                guard case .ctor(let tag, _, _) = v else {
+                guard case .ctor(let tag, _) = v else {
                     throw MarRuntimeError.message("linkTo \(pathSource): param \"\(paramName)\": expected \(type)")
                 }
                 // Defensive: confirm the ctor is a member of this

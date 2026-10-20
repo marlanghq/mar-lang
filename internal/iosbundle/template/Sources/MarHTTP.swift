@@ -132,90 +132,6 @@ enum MarHTTP {
         }.resume()
     }
 
-    /// Result decoder for the auth endpoints. ackUnit = "200 OK means
-    /// success, ignore body" (used by request-code, logout). userJSON =
-    /// "decode the body as a Mar value" (used by verify-code where the
-    /// body is the User record).
-    enum AuthDecode {
-        case ackUnit
-        case userJSON
-    }
-
-    /// Fires a POST to /_auth/<endpoint> with the runtime-encoded body.
-    /// On 200, dispatches Ok (with the decoded value or unit). On
-    /// non-2xx, dispatches Err with the server's error message.
-    ///
-    /// Sessions are credentialed via `Authorization: Bearer …` from
-    /// the Keychain-backed token. URLSession.shared also still
-    /// persists a Set-Cookie if the server happens to issue one, but
-    /// the Bearer is the authoritative credential: server-side
-    /// `extractSessionToken` returns the header value first, the
-    /// cookie only as a fallback. That keeps the model uniform with
-    /// future Android/Windows runtimes where cookie storage is
-    /// unreliable or absent.
-    static func fireAuth(path: String, body: MarValue?, decode: AuthDecode, toMsg: MarValue) {
-        Task { @MainActor in
-            guard let url = MarDispatcher.shared.resolve(path: path) else {
-                dispatchErr(toMsg, message: "invalid auth path: \(path)")
-                return
-            }
-            var req = URLRequest(url: url)
-            req.httpMethod = "POST"
-            if let body {
-                let bodyAny = MarJSONCodec.marToJSON(body)
-                let bodyData = try? JSONSerialization.data(
-                    withJSONObject: bodyAny,
-                    options: [.fragmentsAllowed]
-                )
-                req.httpBody = bodyData
-                req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            }
-            attachBearer(&req)
-            URLSession.shared.dataTask(with: req) { data, response, error in
-                // Capture the token from /_auth/verify-code's
-                // response before decoding. The server sets
-                // `X-Mar-Auth-Token` on success; we copy it to
-                // Keychain so subsequent requests carry the Bearer.
-                // The header is absent on other auth endpoints
-                // (request-code, logout): `headerToken` is nil
-                // there and we skip the save.
-                if let http = response as? HTTPURLResponse,
-                   (200..<300).contains(http.statusCode),
-                   let headerToken = http.value(forHTTPHeaderField: bearerTokenHeader),
-                   !headerToken.isEmpty {
-                    MarKeychain.save(headerToken, forKey: MarKeychain.sessionTokenKey)
-                }
-                let outcome = decodeAuthResponse(
-                    data: data, response: response, error: error, decode: decode
-                )
-                Task { @MainActor in
-                    // For user-returning auth endpoints (verify-code,
-                    // and any future signUp/refresh that yields a User),
-                    // park the freshly-authed user in AppContext BEFORE
-                    // dispatching the Msg. Two reasons:
-                    //
-                    //   1. The mar update typically returns a
-                    //      `Auth.completeSignIn` effect that lands on a
-                    //      Page.protected. The protectedView gate
-                    //      reads `currentUser` to decide whether to
-                    //      render or bounce back to sign-in. Without
-                    //      this capture, currentUser is nil → bounce
-                    //      → user "loops" back to the email screen.
-                    //
-                    //   2. Avoids an immediate redundant Auth.me round
-                    //      trip after sign-in, which is also racy
-                    //      against the just-set session cookie.
-                    if case .userJSON = decode,
-                       case .okJSON(let userVal) = outcome {
-                        AppContext.shared.currentUser =
-                            .ctor(tag: "Just", args: [userVal], origin: nil)
-                    }
-                    deliverMsg(result: outcome, toMsg: toMsg)
-                }
-            }.resume()
-        }
-    }
-
     /// GET /_auth/me as an async function (no dispatcher dependency).
     /// Used by the gating layer (LoadedShell) to bootstrap auth before
     /// any page is mounted. Returns:
@@ -239,9 +155,9 @@ enum MarHTTP {
             // A body that will not decode is "no user", which is the
             // failure this function already has a shape for.
             if let any, !(any is NSNull), let user = try? MarJSONCodec.jsonToMar(any) {
-                return .ctor(tag: "Just", args: [user], origin: nil)
+                return .ctor(tag: "Just", args: [user])
             }
-            return .ctor(tag: "Nothing", args: [], origin: nil)
+            return .ctor(tag: "Nothing", args: [])
         } catch {
             return nil
         }
@@ -285,13 +201,13 @@ enum MarHTTP {
                     if any == nil {
                         outcome = .err(notJSONMessage)
                     } else if any is NSNull {
-                        outcome = .okJSON(.ctor(tag: "Nothing", args: [], origin: nil))
+                        outcome = .okJSON(.ctor(tag: "Nothing", args: []))
                     } else if let user = try? MarJSONCodec.jsonToMar(any!) {
                         if let shape = userShape, let err = MarWire.check(user, shape) {
                             outcome = .err(wireMismatchMessage(err))
                         } else {
                             let checked = userShape.map { MarWire.coerce(user, $0) } ?? user
-                            outcome = .okJSON(.ctor(tag: "Just", args: [checked], origin: nil))
+                            outcome = .okJSON(.ctor(tag: "Just", args: [checked]))
                         }
                     } else {
                         outcome = .err(notJSONMessage)
@@ -301,28 +217,6 @@ enum MarHTTP {
                     deliverMsg(result: outcome, toMsg: toMsg)
                 }
             }.resume()
-        }
-    }
-
-    private static func decodeAuthResponse(
-        data: Data?, response: URLResponse?, error: Error?, decode: AuthDecode
-    ) -> FetchOutcome {
-        if let error { return .err(transportMessage(error)) }
-        let raw = data ?? Data()
-        let body = String(data: raw, encoding: .utf8) ?? ""
-        if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
-            return .err(decodeServerError(body: raw, fallbackBody: body, status: http.statusCode))
-        }
-        switch decode {
-        case .ackUnit:
-            return .okJSON(.unit)
-        case .userJSON:
-            do {
-                let any = try JSONSerialization.jsonObject(with: raw, options: [.fragmentsAllowed])
-                return .okJSON(try MarJSONCodec.jsonToMar(any))
-            } catch {
-                return .err(notJSONMessage)
-            }
         }
     }
 
@@ -338,9 +232,10 @@ enum MarHTTP {
     /// a 429 from the gateway limiter would surface in a Result.Err
     /// as the literal JSON string `{"error":"rate_limited",...}`,
     /// defeating the point of having stable codes server-side.
-    // Not private: internal/iosbundle/swift_core_test.go calls this directly.
-    // The wording a failed call surfaces is the only thing a user sees when a
-    // service is down, and it used to be compared on no runtime at all.
+    ///
+    /// Not private: internal/iosbundle/swift_core_test.go calls this directly.
+    /// The wording a failed call surfaces is the only thing a user sees when a
+    /// service is down, and it used to be compared on no runtime at all.
     static func decodeServerError(body data: Data, fallbackBody: String, status: Int) -> String {
         var decoded = fallbackBody
         if let any = try? JSONSerialization.jsonObject(with: data, options: []) as? [String: Any],
@@ -373,31 +268,16 @@ enum MarHTTP {
         return .ok(body)
     }
 
-    private static func makeJSONResult(data: Data?, response: URLResponse?, error: Error?) -> FetchOutcome {
-        if let error { return .err(transportMessage(error)) }
-        let bodyData = data ?? Data()
-        let bodyString = String(data: bodyData, encoding: .utf8) ?? ""
-        if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
-            return .err(decodeServerError(body: bodyData, fallbackBody: bodyString, status: http.statusCode))
-        }
-        do {
-            let any = try JSONSerialization.jsonObject(with: bodyData, options: [.fragmentsAllowed])
-            return .okJSON(try MarJSONCodec.jsonToMar(any))
-        } catch {
-            return .err(notJSONMessage)
-        }
-    }
-
     @MainActor
     private static func deliverMsg(result: FetchOutcome, toMsg: MarValue) {
         let resultValue: MarValue
         switch result {
         case .ok(let s):
-            resultValue = .ctor(tag: "Ok", args: [.string(s)], origin: nil)
+            resultValue = .ctor(tag: "Ok", args: [.string(s)])
         case .okJSON(let v):
-            resultValue = .ctor(tag: "Ok", args: [v], origin: nil)
+            resultValue = .ctor(tag: "Ok", args: [v])
         case .err(let m):
-            resultValue = .ctor(tag: "Err", args: [.string(m)], origin: nil)
+            resultValue = .ctor(tag: "Err", args: [.string(m)])
         }
         do {
             let msg = try Eval.apply(toMsg, resultValue)
@@ -474,17 +354,17 @@ enum MarHTTP {
         userShape: MarWireShape? = nil
     ) -> MarValue {
         if error != nil {
-            return .ctor(tag: "Err", args: [serviceErrorOffline()], origin: nil)
+            return .ctor(tag: "Err", args: [serviceErrorOffline()])
         }
         let bodyData = data ?? Data()
         let bodyString = String(data: bodyData, encoding: .utf8) ?? ""
         if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
             let code = decodeServerError(body: bodyData, fallbackBody: bodyString, status: http.statusCode)
             if let domain = mapCode(code) {
-                return .ctor(tag: "Ok", args: [domain], origin: nil)
+                return .ctor(tag: "Ok", args: [domain])
             }
             let se = serviceErrorFromResponse(status: http.statusCode, body: bodyData, fallbackBody: bodyString)
-            return .ctor(tag: "Err", args: [se], origin: nil)
+            return .ctor(tag: "Err", args: [se])
         }
         // What the endpoint answered is supposed to be the app's own user.
         // Before the auth port had a shape, a body that would not parse became
@@ -493,17 +373,15 @@ enum MarHTTP {
         guard let any = (try? JSONSerialization.jsonObject(with: bodyData, options: [.fragmentsAllowed])),
               let decoded = try? MarJSONCodec.jsonToMar(any) else {
             return .ctor(tag: "Err",
-                         args: [.ctor(tag: "ServerError", args: [.string(notJSONMessage)], origin: nil)],
-                         origin: nil)
+                         args: [.ctor(tag: "ServerError", args: [.string(notJSONMessage)])])
         }
         if let shape = userShape, let err = MarWire.check(decoded, shape) {
             return .ctor(tag: "Err",
                          args: [.ctor(tag: "ServerError",
-                                      args: [.string(wireMismatchMessage(err))], origin: nil)],
-                         origin: nil)
+                                      args: [.string(wireMismatchMessage(err))])])
         }
         let checked = userShape.map { MarWire.coerce(decoded, $0) } ?? decoded
-        return .ctor(tag: "Ok", args: [okOutcome(checked)], origin: nil)
+        return .ctor(tag: "Ok", args: [okOutcome(checked)])
     }
 
     // MARK: Service.call result (Service.Error union)
@@ -515,19 +393,16 @@ enum MarHTTP {
     // Go serviceErrorString.
 
     static func serviceErrorOffline() -> MarValue {
-        .ctor(tag: "Offline", args: [], origin: nil)
+        .ctor(tag: "Offline", args: [])
     }
 
     static func serviceErrorFromResponse(status: Int, body: Data, fallbackBody: String) -> MarValue {
-        if status == 401 { return .ctor(tag: "Unauthorized", args: [], origin: nil) }
-        if status == 429 { return .ctor(tag: "RateLimited", args: [], origin: nil) }
+        if status == 401 { return .ctor(tag: "Unauthorized", args: []) }
+        if status == 429 { return .ctor(tag: "RateLimited", args: []) }
         let msg = decodeServerError(body: body, fallbackBody: fallbackBody, status: status)
-        return .ctor(tag: "ServerError", args: [.string(msg)], origin: nil)
+        return .ctor(tag: "ServerError", args: [.string(msg)])
     }
 
-    /// Builds the Result a Service.call delivers: Ok decoded-value, or Err
-    /// carrying a Service.Error. The String variant (makeJSONResult) stays
-    /// for Http.get/post and auth, whose Err is still a bare String.
     /// What a 401 from a Service.call decides, as a function of three facts.
     ///
     /// The decision used to live inside MarAppContext, reading instance fields
@@ -576,8 +451,8 @@ enum MarHTTP {
     /// authVerifyCode's mapCode in internal/jsserve/runtime.js.
     static func verifyCodeOutcome(_ code: String) -> MarValue? {
         switch code {
-        case "invalid_code":      return .ctor(tag: "WrongCode", args: [], origin: nil)
-        case "too_many_attempts": return .ctor(tag: "TooManyAttempts", args: [], origin: nil)
+        case "invalid_code":      return .ctor(tag: "WrongCode", args: [])
+        case "too_many_attempts": return .ctor(tag: "TooManyAttempts", args: [])
         default:                  return nil
         }
     }
@@ -585,8 +460,8 @@ enum MarHTTP {
     /// The codes /_auth/request-code is known to emit.
     static func requestCodeOutcome(_ code: String) -> MarValue? {
         switch code {
-        case "rate_limited":  return .ctor(tag: "RateLimited", args: [], origin: nil)
-        case "invalid_email": return .ctor(tag: "InvalidEmail", args: [], origin: nil)
+        case "rate_limited":  return .ctor(tag: "RateLimited", args: [])
+        case "invalid_email": return .ctor(tag: "InvalidEmail", args: [])
         default:              return nil
         }
     }
@@ -621,15 +496,18 @@ enum MarHTTP {
     // Not private: this is the phone's WIRE PORT — where bytes off the network
     // become a Mar value — and internal/iosbundle drives it directly so the
     // port is compared with the browser's without needing a real request.
+    /// Builds the Result a Service.call delivers: Ok decoded-value, or Err
+    /// carrying a Service.Error. The String variant (makeStringResult) stays
+    /// for Http.get/post, whose Err is still a bare String.
     static func makeServiceResult(data: Data?, response: URLResponse?, error: Error?, responseShape: MarWireShape?) -> MarValue {
         if error != nil {
-            return .ctor(tag: "Err", args: [serviceErrorOffline()], origin: nil)
+            return .ctor(tag: "Err", args: [serviceErrorOffline()])
         }
         let bodyData = data ?? Data()
         let bodyString = String(data: bodyData, encoding: .utf8) ?? ""
         if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
             let se = serviceErrorFromResponse(status: http.statusCode, body: bodyData, fallbackBody: bodyString)
-            return .ctor(tag: "Err", args: [se], origin: nil)
+            return .ctor(tag: "Err", args: [se])
         }
         // Two failures live here and they are not the same failure. A body
         // that is not JSON is Mar's own sentence, identical on every runtime;
@@ -642,8 +520,8 @@ enum MarHTTP {
             any = try JSONSerialization.jsonObject(with: bodyData, options: [.fragmentsAllowed])
         } catch {
             let se: MarValue = .ctor(tag: "ServerError",
-                args: [.string(notJSONMessage)], origin: nil)
-            return .ctor(tag: "Err", args: [se], origin: nil)
+                args: [.string(notJSONMessage)])
+            return .ctor(tag: "Err", args: [se])
         }
         do {
             let decoded = try MarJSONCodec.jsonToMar(any)
@@ -655,16 +533,15 @@ enum MarHTTP {
             if let shape = responseShape {
                 if let err = MarWire.check(decoded, shape) {
                     let se: MarValue = .ctor(tag: "ServerError",
-                        args: [.string("the response does not match what this app expects: \(err)")],
-                        origin: nil)
-                    return .ctor(tag: "Err", args: [se], origin: nil)
+                        args: [.string("the response does not match what this app expects: \(err)")])
+                    return .ctor(tag: "Err", args: [se])
                 }
-                return .ctor(tag: "Ok", args: [MarWire.coerce(decoded, shape)], origin: nil)
+                return .ctor(tag: "Ok", args: [MarWire.coerce(decoded, shape)])
             }
-            return .ctor(tag: "Ok", args: [decoded], origin: nil)
+            return .ctor(tag: "Ok", args: [decoded])
         } catch {
-            let se: MarValue = .ctor(tag: "ServerError", args: [.string(notJSONMessage)], origin: nil)
-            return .ctor(tag: "Err", args: [se], origin: nil)
+            let se: MarValue = .ctor(tag: "ServerError", args: [.string(notJSONMessage)])
+            return .ctor(tag: "Err", args: [se])
         }
     }
 
@@ -683,9 +560,9 @@ enum MarHTTP {
     /// Result Service.Error type user code expects.
     private static func dispatchServiceErr(_ toMsg: MarValue, message: String) {
         Task { @MainActor in
-            let se: MarValue = .ctor(tag: "ServerError", args: [.string(message)], origin: nil)
+            let se: MarValue = .ctor(tag: "ServerError", args: [.string(message)])
             do {
-                let msg = try Eval.apply(toMsg, .ctor(tag: "Err", args: [se], origin: nil))
+                let msg = try Eval.apply(toMsg, .ctor(tag: "Err", args: [se]))
                 MarDispatcher.shared.dispatch(msg)
             } catch {
                 print("[mar] error dispatch failed: \(error.localizedDescription)")
@@ -696,7 +573,7 @@ enum MarHTTP {
     private static func dispatchErr(_ toMsg: MarValue, message: String) {
         Task { @MainActor in
             do {
-                let msg = try Eval.apply(toMsg, .ctor(tag: "Err", args: [.string(message)], origin: nil))
+                let msg = try Eval.apply(toMsg, .ctor(tag: "Err", args: [.string(message)]))
                 MarDispatcher.shared.dispatch(msg)
             } catch {
                 print("[mar] error dispatch failed: \(error.localizedDescription)")

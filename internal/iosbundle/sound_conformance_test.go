@@ -105,7 +105,7 @@ func cell(_ field: String, _ v: MarValue?) -> String {
     case .int(let n): return String(n)
     case .string(let s): return s
     case .bool(let b): return b ? "True" : "False"
-    case .ctor(let tag, _, _): return tag
+    case .ctor(let tag, _): return tag
     case .unit: return "0"
     case .list(let xs): return xs.isEmpty ? "-" : xs.map { cell("", $0) }.joined(separator: "/")
     default: return "?" + String(describing: v).prefix(40)
@@ -119,7 +119,7 @@ for name in names {
         exit(1)
     }
     var voices: [MarValue] = []
-    if case .ctor(let tag, let args, _) = v, tag == "__Snd",
+    if case .ctor(let tag, let args) = v, tag == "__Snd",
        let first = args.first, case .list(let recs) = first {
         voices = recs
     }

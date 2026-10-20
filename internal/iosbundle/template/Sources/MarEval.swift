@@ -83,6 +83,9 @@ enum Eval {
             + "did not come from this program's types.")
     }
 
+    // One branch per Expr node. The count is the size of the language's
+    // grammar, and collapsing arms to lower it would hide which nodes exist.
+    // swiftlint:disable:next cyclomatic_complexity
     static func eval(_ expr: Expr, _ env: Env) throws -> MarValue {
         switch expr {
         case .int(let n):       return .int(n)
@@ -442,7 +445,7 @@ enum Eval {
             if case .unit = v { return true }
             return false
         case .ctor(let name, let args):
-            guard case .ctor(let tag, let vargs, _) = v,
+            guard case .ctor(let tag, let vargs) = v,
                   tag == name,
                   vargs.count == args.count else { return false }
             for (sp, sv) in zip(args, vargs) where !matchInto(sp, sv, &bag) {
@@ -501,7 +504,7 @@ enum Eval {
         case .list: return "List"
         case .tuple: return "Tuple"
         case .record: return "Record"
-        case .ctor(let tag, _, _): return "Ctor(\(tag))"
+        case .ctor(let tag, _): return "Ctor(\(tag))"
         case .char: return "Char"
         case .dict: return "Dict"
         case .set: return "Set"

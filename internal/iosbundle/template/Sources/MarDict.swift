@@ -85,6 +85,9 @@ enum MarDict {
 
     // MARK: - Builtins
 
+    // One entry per Dict and Set builtin: a table, so length and branch count
+    // measure the API surface rather than a function that grew.
+    // swiftlint:disable:next function_body_length cyclomatic_complexity
     static func register(_ env: Env) {
         // ---------- Dict ----------
         env.define("dictEmpty",  .dict([]))
@@ -112,10 +115,10 @@ enum MarDict {
             }
             let (idx, found) = MarDict.search(args[2], args[0])
             let current: MarValue = found
-                ? .ctor(tag: "Just", args: [pairs[idx].1], origin: nil)
-                : .ctor(tag: "Nothing", args: [], origin: nil)
+                ? .ctor(tag: "Just", args: [pairs[idx].1])
+                : .ctor(tag: "Nothing", args: [])
             let next = try Eval.apply(args[1], current)
-            guard case .ctor(let tag, let nArgs, _) = next else {
+            guard case .ctor(let tag, let nArgs) = next else {
                 throw MarRuntimeError.message("Dict.update: function did not return a Maybe")
             }
             switch tag {
@@ -168,8 +171,8 @@ enum MarDict {
                 throw MarRuntimeError.typeMismatch(expected: "Dict", got: Eval.typeOf(args[1]))
             }
             let (idx, found) = MarDict.search(args[1], args[0])
-            if !found { return .ctor(tag: "Nothing", args: [], origin: nil) }
-            return .ctor(tag: "Just", args: [pairs[idx].1], origin: nil)
+            if !found { return .ctor(tag: "Nothing", args: []) }
+            return .ctor(tag: "Just", args: [pairs[idx].1])
         }
         env.define("dictGet",  .fn(dictGet))
         env.define("Dict.get", .fn(dictGet))
@@ -296,7 +299,7 @@ enum MarDict {
                 throw MarRuntimeError.typeMismatch(expected: "Dict", got: Eval.typeOf(args[1]))
             }
             var yes: [(MarValue, MarValue)] = []
-            var no:  [(MarValue, MarValue)] = []
+            var no: [(MarValue, MarValue)] = []
             for p in pairs {
                 let p1 = try Eval.apply(args[0], p.0)
                 let res = try Eval.apply(p1, p.1)
@@ -320,9 +323,7 @@ enum MarDict {
             var i = 0, j = 0
             while i < a.count && j < b.count {
                 let c = a[i].0.compareMar(b[j].0)
-                if c < 0 { out.append(a[i]); i += 1 }
-                else if c > 0 { out.append(b[j]); j += 1 }
-                else { out.append(a[i]); i += 1; j += 1 }
+                if c < 0 { out.append(a[i]); i += 1 } else if c > 0 { out.append(b[j]); j += 1 } else { out.append(a[i]); i += 1; j += 1 }
             }
             while i < a.count { out.append(a[i]); i += 1 }
             while j < b.count { out.append(b[j]); j += 1 }
@@ -340,9 +341,7 @@ enum MarDict {
             var i = 0, j = 0
             while i < a.count && j < b.count {
                 let c = a[i].0.compareMar(b[j].0)
-                if c < 0 { i += 1 }
-                else if c > 0 { j += 1 }
-                else { out.append(a[i]); i += 1; j += 1 }
+                if c < 0 { i += 1 } else if c > 0 { j += 1 } else { out.append(a[i]); i += 1; j += 1 }
             }
             return .dict(out)
         }
@@ -362,9 +361,7 @@ enum MarDict {
                     break
                 }
                 let c = a[i].0.compareMar(b[j].0)
-                if c < 0 { out.append(a[i]); i += 1 }
-                else if c > 0 { j += 1 }
-                else { i += 1; j += 1 }
+                if c < 0 { out.append(a[i]); i += 1 } else if c > 0 { j += 1 } else { i += 1; j += 1 }
             }
             return .dict(out)
         }
@@ -513,7 +510,7 @@ enum MarDict {
                 throw MarRuntimeError.typeMismatch(expected: "Set", got: Eval.typeOf(args[1]))
             }
             var yes: [MarValue] = []
-            var no:  [MarValue] = []
+            var no: [MarValue] = []
             for it in items {
                 let v = try Eval.apply(args[0], it)
                 guard case .bool(let keep) = v else {
@@ -535,9 +532,7 @@ enum MarDict {
             var i = 0, j = 0
             while i < a.count && j < b.count {
                 let c = a[i].compareMar(b[j])
-                if c < 0 { out.append(a[i]); i += 1 }
-                else if c > 0 { out.append(b[j]); j += 1 }
-                else { out.append(a[i]); i += 1; j += 1 }
+                if c < 0 { out.append(a[i]); i += 1 } else if c > 0 { out.append(b[j]); j += 1 } else { out.append(a[i]); i += 1; j += 1 }
             }
             while i < a.count { out.append(a[i]); i += 1 }
             while j < b.count { out.append(b[j]); j += 1 }
@@ -555,9 +550,7 @@ enum MarDict {
             var i = 0, j = 0
             while i < a.count && j < b.count {
                 let c = a[i].compareMar(b[j])
-                if c < 0 { i += 1 }
-                else if c > 0 { j += 1 }
-                else { out.append(a[i]); i += 1; j += 1 }
+                if c < 0 { i += 1 } else if c > 0 { j += 1 } else { out.append(a[i]); i += 1; j += 1 }
             }
             return .set(out)
         }
@@ -577,9 +570,7 @@ enum MarDict {
                     break
                 }
                 let c = a[i].compareMar(b[j])
-                if c < 0 { out.append(a[i]); i += 1 }
-                else if c > 0 { j += 1 }
-                else { i += 1; j += 1 }
+                if c < 0 { out.append(a[i]); i += 1 } else if c > 0 { j += 1 } else { i += 1; j += 1 }
             }
             return .set(out)
         }

@@ -12,6 +12,10 @@
 import SwiftUI
 
 enum MarFailure {
+    // periphery:ignore - read from MarFailureView's release branch, the
+    // `#else` of its `#if DEBUG`. A DEBUG index never compiles that branch,
+    // so every piece of the user-facing copy reads as unused. The wording is
+    // pinned against the JS runtime by internal/iosbundle/failure_copy_test.go.
     static let title = "This app has a critical bug."
 
     /// Which of the three cases applies, which is only a question of whether
@@ -27,6 +31,10 @@ enum MarFailure {
         case stuck
     }
 
+    // periphery:ignore - read from MarFailureView's release branch, the
+    // `#else` of its `#if DEBUG`. A DEBUG index never compiles that branch,
+    // so every piece of the user-facing copy reads as unused. The wording is
+    // pinned against the JS runtime by internal/iosbundle/failure_copy_test.go.
     static func body(_ kind: Kind) -> [String] {
         switch kind {
         case .dispatch:
@@ -46,6 +54,10 @@ enum MarFailure {
 /// A `view` that throws throws again every frame, so any motion here would
 /// become a strobe.
 struct MarFailureView: View {
+    // periphery:ignore - read from MarFailureView's release branch, the
+    // `#else` of its `#if DEBUG`. A DEBUG index never compiles that branch,
+    // so every piece of the user-facing copy reads as unused. The wording is
+    // pinned against the JS runtime by internal/iosbundle/failure_copy_test.go.
     let kind: MarFailure.Kind
     /// The raw "site failed: message" text, shown only in development.
     let detail: String
@@ -78,6 +90,10 @@ struct MarFailureView: View {
     }
 }
 
+    // periphery:ignore - read from MarFailureView's release branch, the
+    // `#else` of its `#if DEBUG`. A DEBUG index never compiles that branch,
+    // so every piece of the user-facing copy reads as unused. The wording is
+    // pinned against the JS runtime by internal/iosbundle/failure_copy_test.go.
 private struct MarFailureBackButton: View {
     @Environment(\.dismiss) private var dismiss
 

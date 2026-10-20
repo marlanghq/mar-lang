@@ -8,13 +8,19 @@
 
 import Foundation
 
+// This file is the iOS runtime's dispatch table: one entry per Mar builtin,
+// grouped by MARK sections. Its length and branch count are the size of the
+// standard library, not a function that grew, so the length and complexity
+// rules are off for the file rather than silenced per declaration.
+// swiftlint:disable file_length
+// swiftlint:disable type_body_length function_body_length cyclomatic_complexity
 enum MarBuiltins {
 
-    // makeEnv defines every runtime builtin in one place, organized
-    // by section markers. The length is intentional: this is the
-    // dispatch table for the language; splitting it would scatter
-    // related entries.
-    // swiftlint:disable:next function_body_length
+    /// makeEnv defines every runtime builtin in one place, organized
+    /// by section markers. The length is intentional: this is the
+    /// dispatch table for the language; splitting it would scatter
+    /// related entries.
+    ///
     /// @MainActor: building the environment builds Mar functions, and a Mar
     /// function runs on the main actor. Without it every value this function
     /// hands to a builtin closure -- a Calendar, a comparison, a fold -- was
@@ -33,23 +39,23 @@ enum MarBuiltins {
         // reads as "compareName a b -> LT" instead of "-> -1".
         env.define("True",  .bool(true))
         env.define("False", .bool(false))
-        env.define("Nothing", .ctor(tag: "Nothing", args: [], origin: nil))
-        env.define("Just",  .fn(MarFn.native(1) { .ctor(tag: "Just", args: $0, origin: nil) }))
-        env.define("Ok",    .fn(MarFn.native(1) { .ctor(tag: "Ok",   args: $0, origin: nil) }))
-        env.define("Err",   .fn(MarFn.native(1) { .ctor(tag: "Err",  args: $0, origin: nil) }))
-        env.define("LT",    .ctor(tag: "LT", args: [], origin: nil))
-        env.define("EQ",    .ctor(tag: "EQ", args: [], origin: nil))
-        env.define("GT",    .ctor(tag: "GT", args: [], origin: nil))
+        env.define("Nothing", .ctor(tag: "Nothing", args: []))
+        env.define("Just",  .fn(MarFn.native(1) { .ctor(tag: "Just", args: $0) }))
+        env.define("Ok",    .fn(MarFn.native(1) { .ctor(tag: "Ok",   args: $0) }))
+        env.define("Err",   .fn(MarFn.native(1) { .ctor(tag: "Err",  args: $0) }))
+        env.define("LT",    .ctor(tag: "LT", args: []))
+        env.define("EQ",    .ctor(tag: "EQ", args: []))
+        env.define("GT",    .ctor(tag: "GT", args: []))
 
         // HTTP Method constructors: the verbs passed to Service.declare.
         // Bare nullary ctors like LT/EQ/GT; Service.declare reads the tag
         // off the chosen one to record the contract's verb. Mirrors the
         // Go runtime (Method ctors) and JS (`def('GET', VCtor('GET'))`).
-        env.define("GET",    .ctor(tag: "GET",    args: [], origin: nil))
-        env.define("POST",   .ctor(tag: "POST",   args: [], origin: nil))
-        env.define("PUT",    .ctor(tag: "PUT",    args: [], origin: nil))
-        env.define("PATCH",  .ctor(tag: "PATCH",  args: [], origin: nil))
-        env.define("DELETE", .ctor(tag: "DELETE", args: [], origin: nil))
+        env.define("GET",    .ctor(tag: "GET",    args: []))
+        env.define("POST",   .ctor(tag: "POST",   args: []))
+        env.define("PUT",    .ctor(tag: "PUT",    args: []))
+        env.define("PATCH",  .ctor(tag: "PATCH",  args: []))
+        env.define("DELETE", .ctor(tag: "DELETE", args: []))
 
         // Service.Error constructors: the transport failure a Service.call
         // delivers in its Err. MarHTTP builds these directly. The
@@ -57,7 +63,7 @@ enum MarBuiltins {
         // the generated registry (MarBuiltinCtors.swift). Keep the
         // errorToString messages identical to Go and JS.
         let serviceErrorToString = MarFn.native(1) { args -> MarValue in
-            guard case let .ctor(tag, cargs, _) = args[0] else { return .string("") }
+            guard case let .ctor(tag, cargs) = args[0] else { return .string("") }
             switch tag {
             case "Offline": return .string("Can't reach the server. Check your connection and try again.")
             case "Unauthorized": return .string("Your session has expired. Please sign in again.")
@@ -135,10 +141,10 @@ enum MarBuiltins {
         // of reach of everything that runs without a screen: the offline core
         // answered `unbound name: Coarse` for a program that only asks whether
         // a Device is touch-only, which is a pure function of a record.
-        env.define("Coarse",    .ctor(tag: "Coarse", args: [], origin: nil))
-        env.define("Fine",      .ctor(tag: "Fine", args: [], origin: nil))
-        env.define("Pixelated", .ctor(tag: "Pixelated", args: [], origin: nil))
-        env.define("Crisp",     .ctor(tag: "Crisp", args: [], origin: nil))
+        env.define("Coarse",    .ctor(tag: "Coarse", args: []))
+        env.define("Fine",      .ctor(tag: "Fine", args: []))
+        env.define("Pixelated", .ctor(tag: "Pixelated", args: []))
+        env.define("Crisp",     .ctor(tag: "Crisp", args: []))
 
         // Device.touchOnly / canHover: pure readings off a Device record, and
         // here for the same reason. Only the SOURCE of the record is the
@@ -151,7 +157,7 @@ enum MarBuiltins {
         }
         env.defineFn("deviceTouchOnly", "Device.touchOnly", 1) { a in
             let coarse: Bool = {
-                if case .record(let f, _) = a[0], case .ctor(let t, _, _)? = f["pointer"] {
+                if case .record(let f, _) = a[0], case .ctor(let t, _)? = f["pointer"] {
                     return t == "Coarse"
                 }
                 return false
@@ -316,16 +322,16 @@ enum MarBuiltins {
 
         let decimalCompare = MarFn.native(2) { args in
             let c = DecMath.decCompare(try asDec(args[0], "Decimal.compare"), try asDec(args[1], "Decimal.compare"))
-            return .ctor(tag: c < 0 ? "LT" : (c > 0 ? "GT" : "EQ"), args: [], origin: nil)
+            return .ctor(tag: c < 0 ? "LT" : (c > 0 ? "GT" : "EQ"), args: [])
         }
         env.define("decimalCompare", .fn(decimalCompare))
         env.define("Decimal.compare", .fn(decimalCompare))
 
         let decimalFromString = MarFn.native(1) { args in
             guard let d = DecMath.parseDecimalString(asString(args[0])) else {
-                return .ctor(tag: "Nothing", args: [], origin: nil)
+                return .ctor(tag: "Nothing", args: [])
             }
-            return .ctor(tag: "Just", args: [.decimal(d)], origin: nil)
+            return .ctor(tag: "Just", args: [.decimal(d)])
         }
         env.define("decimalFromString", .fn(decimalFromString))
         env.define("Decimal.fromString", .fn(decimalFromString))
@@ -537,9 +543,9 @@ enum MarBuiltins {
             // number. Missing this check is what the conformance corpus caught
             //: the arithmetic was bounded and this was not.
             if let n = Int(s.trimmingCharacters(in: .whitespacesAndNewlines)), MarInt.inRange(n) {
-                return .ctor(tag: "Just", args: [.int(n)], origin: nil)
+                return .ctor(tag: "Just", args: [.int(n)])
             }
-            return .ctor(tag: "Nothing", args: [], origin: nil)
+            return .ctor(tag: "Nothing", args: [])
         }
         env.define("stringToInt",  .fn(stringToInt))
         env.define("String.toInt", .fn(stringToInt))
@@ -582,7 +588,7 @@ enum MarBuiltins {
 
         // String.padLeft / padRight: pad with a Char (Elm-style).
         // Stays in sync with the Go/JS sides where `pad` is a single
-        // code point repeated to fill.
+        // scalar repeated to fill.
         func padString(_ s: String, _ width: Int, _ pad: Unicode.Scalar, _ left: Bool) -> String {
             // Measured in scalars, like String.length.
             let have = s.unicodeScalars.count
@@ -737,9 +743,9 @@ enum MarBuiltins {
                 throw MarRuntimeError.typeMismatch(expected: "List", got: Eval.typeOf(args[0]))
             }
             if let first = xs.first {
-                return .ctor(tag: "Just", args: [first], origin: nil)
+                return .ctor(tag: "Just", args: [first])
             }
-            return .ctor(tag: "Nothing", args: [], origin: nil)
+            return .ctor(tag: "Nothing", args: [])
         }
         env.define("listHead",  .fn(listHead))
         env.define("List.head", .fn(listHead))
@@ -751,9 +757,9 @@ enum MarBuiltins {
                 throw MarRuntimeError.typeMismatch(expected: "List", got: Eval.typeOf(args[0]))
             }
             if xs.isEmpty {
-                return .ctor(tag: "Nothing", args: [], origin: nil)
+                return .ctor(tag: "Nothing", args: [])
             }
-            return .ctor(tag: "Just", args: [.list(Array(xs.dropFirst()))], origin: nil)
+            return .ctor(tag: "Just", args: [.list(Array(xs.dropFirst()))])
         }
         env.define("listTail",  .fn(listTail))
         env.define("List.tail", .fn(listTail))
@@ -965,7 +971,7 @@ enum MarBuiltins {
             var out: [MarValue] = []
             for x in xs {
                 let r = try Eval.apply(args[0], x)
-                if case .ctor(let tag, let cargs, _) = r, tag == "Just", cargs.count == 1 {
+                if case .ctor(let tag, let cargs) = r, tag == "Just", cargs.count == 1 {
                     out.append(cargs[0])
                 }
             }
@@ -985,9 +991,9 @@ enum MarBuiltins {
             guard case .list(let xs) = args[0] else {
                 throw MarRuntimeError.typeMismatch(expected: "List", got: Eval.typeOf(args[0]))
             }
-            guard var best = xs.first else { return .ctor(tag: "Nothing", args: [], origin: nil) }
+            guard var best = xs.first else { return .ctor(tag: "Nothing", args: []) }
             for x in xs.dropFirst() where best.compareMar(x) < 0 { best = x }
-            return .ctor(tag: "Just", args: [best], origin: nil)
+            return .ctor(tag: "Just", args: [best])
         }
         env.define("listMaximum",  .fn(listMaximum))
         env.define("List.maximum", .fn(listMaximum))
@@ -996,9 +1002,9 @@ enum MarBuiltins {
             guard case .list(let xs) = args[0] else {
                 throw MarRuntimeError.typeMismatch(expected: "List", got: Eval.typeOf(args[0]))
             }
-            guard var best = xs.first else { return .ctor(tag: "Nothing", args: [], origin: nil) }
+            guard var best = xs.first else { return .ctor(tag: "Nothing", args: []) }
             for x in xs.dropFirst() where best.compareMar(x) > 0 { best = x }
-            return .ctor(tag: "Just", args: [best], origin: nil)
+            return .ctor(tag: "Just", args: [best])
         }
         env.define("listMinimum",  .fn(listMinimum))
         env.define("List.minimum", .fn(listMinimum))
@@ -1052,7 +1058,7 @@ enum MarBuiltins {
                 do {
                     let partial = try Eval.apply(args[0], a)
                     let v = try Eval.apply(partial, b)
-                    if case .ctor(let tag, _, _) = v {
+                    if case .ctor(let tag, _) = v {
                         switch tag {
                         case "LT": return true
                         case "EQ", "GT": return false
@@ -1077,7 +1083,7 @@ enum MarBuiltins {
 
         // MARK: Maybe.withDefault
         let maybeWithDefault = MarFn.native(2) { args in
-            if case .ctor(let tag, let cargs, _) = args[1], tag == "Just" {
+            if case .ctor(let tag, let cargs) = args[1], tag == "Just" {
                 return cargs[0]
             }
             return args[0]
@@ -1088,12 +1094,12 @@ enum MarBuiltins {
         // Maybe.map : (a -> b) -> Maybe a -> Maybe b
         let maybeMap = MarFn.native(2) { args in
             let fn = args[0]
-            guard case .ctor(let tag, let cargs, _) = args[1] else {
+            guard case .ctor(let tag, let cargs) = args[1] else {
                 throw MarRuntimeError.typeMismatch(expected: "Maybe", got: Eval.typeOf(args[1]))
             }
             if tag == "Just", let inner = cargs.first {
                 let v = try Eval.apply(fn, inner)
-                return .ctor(tag: "Just", args: [v], origin: nil)
+                return .ctor(tag: "Just", args: [v])
             }
             return args[1]
         }
@@ -1103,7 +1109,7 @@ enum MarBuiltins {
         // Maybe.andThen : (a -> Maybe b) -> Maybe a -> Maybe b
         let maybeAndThen = MarFn.native(2) { args in
             let fn = args[0]
-            guard case .ctor(let tag, let cargs, _) = args[1] else {
+            guard case .ctor(let tag, let cargs) = args[1] else {
                 throw MarRuntimeError.typeMismatch(expected: "Maybe", got: Eval.typeOf(args[1]))
             }
             if tag == "Just", let inner = cargs.first {
@@ -1117,12 +1123,12 @@ enum MarBuiltins {
         // Result.map : (a -> b) -> Result e a -> Result e b
         let resultMap = MarFn.native(2) { args in
             let fn = args[0]
-            guard case .ctor(let tag, let cargs, _) = args[1] else {
+            guard case .ctor(let tag, let cargs) = args[1] else {
                 throw MarRuntimeError.typeMismatch(expected: "Result", got: Eval.typeOf(args[1]))
             }
             if tag == "Ok", let inner = cargs.first {
                 let v = try Eval.apply(fn, inner)
-                return .ctor(tag: "Ok", args: [v], origin: nil)
+                return .ctor(tag: "Ok", args: [v])
             }
             return args[1]
         }
@@ -1132,7 +1138,7 @@ enum MarBuiltins {
         // Result.andThen : (a -> Result e b) -> Result e a -> Result e b
         let resultAndThen = MarFn.native(2) { args in
             let fn = args[0]
-            guard case .ctor(let tag, let cargs, _) = args[1] else {
+            guard case .ctor(let tag, let cargs) = args[1] else {
                 throw MarRuntimeError.typeMismatch(expected: "Result", got: Eval.typeOf(args[1]))
             }
             if tag == "Ok", let inner = cargs.first {
@@ -1146,12 +1152,12 @@ enum MarBuiltins {
         // Result.mapError : (e1 -> e2) -> Result e1 a -> Result e2 a
         let resultMapError = MarFn.native(2) { args in
             let fn = args[0]
-            guard case .ctor(let tag, let cargs, _) = args[1] else {
+            guard case .ctor(let tag, let cargs) = args[1] else {
                 throw MarRuntimeError.typeMismatch(expected: "Result", got: Eval.typeOf(args[1]))
             }
             if tag == "Err", let inner = cargs.first {
                 let v = try Eval.apply(fn, inner)
-                return .ctor(tag: "Err", args: [v], origin: nil)
+                return .ctor(tag: "Err", args: [v])
             }
             return args[1]
         }
@@ -1160,7 +1166,7 @@ enum MarBuiltins {
 
         // MARK: Result.withDefault / fromMaybe / toMaybe
         let resultWithDefault = MarFn.native(2) { args in
-            if case .ctor(let tag, let cargs, _) = args[1], tag == "Ok", cargs.count == 1 {
+            if case .ctor(let tag, let cargs) = args[1], tag == "Ok", cargs.count == 1 {
                 return cargs[0]
             }
             return args[0]
@@ -1169,74 +1175,74 @@ enum MarBuiltins {
         env.define("Result.withDefault", .fn(resultWithDefault))
 
         let resultFromMaybe = MarFn.native(2) { args in
-            if case .ctor(let tag, let cargs, _) = args[1], tag == "Just", cargs.count == 1 {
-                return .ctor(tag: "Ok", args: [cargs[0]], origin: nil)
+            if case .ctor(let tag, let cargs) = args[1], tag == "Just", cargs.count == 1 {
+                return .ctor(tag: "Ok", args: [cargs[0]])
             }
-            return .ctor(tag: "Err", args: [args[0]], origin: nil)
+            return .ctor(tag: "Err", args: [args[0]])
         }
         env.define("resultFromMaybe",  .fn(resultFromMaybe))
         env.define("Result.fromMaybe", .fn(resultFromMaybe))
 
         let resultToMaybe = MarFn.native(1) { args in
-            if case .ctor(let tag, let cargs, _) = args[0], tag == "Ok", cargs.count == 1 {
-                return .ctor(tag: "Just", args: [cargs[0]], origin: nil)
+            if case .ctor(let tag, let cargs) = args[0], tag == "Ok", cargs.count == 1 {
+                return .ctor(tag: "Just", args: [cargs[0]])
             }
-            return .ctor(tag: "Nothing", args: [], origin: nil)
+            return .ctor(tag: "Nothing", args: [])
         }
         env.define("resultToMaybe",  .fn(resultToMaybe))
         env.define("Result.toMaybe", .fn(resultToMaybe))
 
         // MARK: Maybe.map2 / map3 / andMap / filter
         let maybeMap2 = MarFn.native(3) { args in
-            guard case .ctor(let ta, let aa, _) = args[1],
-                  case .ctor(let tb, let ab, _) = args[2],
+            guard case .ctor(let ta, let aa) = args[1],
+                  case .ctor(let tb, let ab) = args[2],
                   ta == "Just", tb == "Just", aa.count == 1, ab.count == 1 else {
-                return .ctor(tag: "Nothing", args: [], origin: nil)
+                return .ctor(tag: "Nothing", args: [])
             }
             let partial = try Eval.apply(args[0], aa[0])
             let v = try Eval.apply(partial, ab[0])
-            return .ctor(tag: "Just", args: [v], origin: nil)
+            return .ctor(tag: "Just", args: [v])
         }
         env.define("maybeMap2",  .fn(maybeMap2))
         env.define("Maybe.map2", .fn(maybeMap2))
 
         let maybeMap3 = MarFn.native(4) { args in
-            guard case .ctor(let ta, let aa, _) = args[1],
-                  case .ctor(let tb, let ab, _) = args[2],
-                  case .ctor(let tc, let ac, _) = args[3],
+            guard case .ctor(let ta, let aa) = args[1],
+                  case .ctor(let tb, let ab) = args[2],
+                  case .ctor(let tc, let ac) = args[3],
                   ta == "Just", tb == "Just", tc == "Just",
                   aa.count == 1, ab.count == 1, ac.count == 1 else {
-                return .ctor(tag: "Nothing", args: [], origin: nil)
+                return .ctor(tag: "Nothing", args: [])
             }
             let p1 = try Eval.apply(args[0], aa[0])
             let p2 = try Eval.apply(p1, ab[0])
             let v  = try Eval.apply(p2, ac[0])
-            return .ctor(tag: "Just", args: [v], origin: nil)
+            return .ctor(tag: "Just", args: [v])
         }
         env.define("maybeMap3",  .fn(maybeMap3))
         env.define("Maybe.map3", .fn(maybeMap3))
 
         let maybeAndMap = MarFn.native(2) { args in
-            guard case .ctor(let tv, let va, _) = args[0],
-                  case .ctor(let tf, let fa, _) = args[1],
+            guard case .ctor(let tv, let va) = args[0],
+                  case .ctor(let tf, let fa) = args[1],
                   tv == "Just", tf == "Just", va.count == 1, fa.count == 1 else {
-                return .ctor(tag: "Nothing", args: [], origin: nil)
+                return .ctor(tag: "Nothing", args: [])
             }
             let v = try Eval.apply(fa[0], va[0])
-            return .ctor(tag: "Just", args: [v], origin: nil)
+            return .ctor(tag: "Just", args: [v])
         }
         env.define("maybeAndMap",  .fn(maybeAndMap))
         env.define("Maybe.andMap", .fn(maybeAndMap))
 
         let maybeFilter = MarFn.native(2) { args in
-            guard case .ctor(let tag, let cargs, _) = args[1],
+            guard case .ctor(let tag, let cargs) = args[1],
                   tag == "Just", cargs.count == 1 else {
-                return .ctor(tag: "Nothing", args: [], origin: nil)
+                return .ctor(tag: "Nothing", args: [])
             }
             if case .bool(true) = try Eval.apply(args[0], cargs[0]) {
                 return args[1]
             }
-            return .ctor(tag: "Nothing", args: [], origin: nil)
+            return .ctor(tag: "Nothing", args: [])
         }
         env.define("maybeFilter",  .fn(maybeFilter))
         env.define("Maybe.filter", .fn(maybeFilter))
@@ -1330,8 +1336,7 @@ enum MarBuiltins {
             let titleV = fs["title"] ?? .string("")
             let subsV = fs["subscriptions"] ?? .unit
             return .ctor(tag: "__Page",
-                         args: [pathV, initV, updateV, viewV, titleV, subsV],
-                         origin: nil)
+                         args: [pathV, initV, updateV, viewV, titleV, subsV])
         }
         env.define("pageCreate",  .fn(pageCreate))
 
@@ -1354,7 +1359,7 @@ enum MarBuiltins {
                 initFn: fs["init"] ?? .unit,
                 updateFn: fs["update"] ?? .unit,
                 subscriptionsFn: fs["subscriptions"] ?? .unit)
-            return .ctor(tag: "__Shared", args: [.string(key)], origin: nil)
+            return .ctor(tag: "__Shared", args: [.string(key)])
         }
         env.define("appShared", .fn(appShared))
         env.define("App.shared", .fn(appShared))
@@ -1375,11 +1380,11 @@ enum MarBuiltins {
         // model, so the wrapper carries the builder unapplied. decodedPages()
         // resolves it, and MarPageRuntime re-resolves it on every read.
         let pageWithShared = MarFn.native(2) { args in
-            guard case .ctor(let tag, let sargs, _) = args[0], tag == "__Shared",
+            guard case .ctor(let tag, let sargs) = args[0], tag == "__Shared",
                   case .string(let key) = sargs.first ?? .unit else {
                 throw MarRuntimeError.typeMismatch(expected: "App.Shared", got: Eval.typeOf(args[0]))
             }
-            return .ctor(tag: "__SharedPage", args: [.string(key), args[1]], origin: nil)
+            return .ctor(tag: "__SharedPage", args: [.string(key), args[1]])
         }
         env.define("pageWithShared", .fn(pageWithShared))
         env.define("Page.withShared", .fn(pageWithShared))
@@ -1388,7 +1393,7 @@ enum MarBuiltins {
         // rather than the page's. It returns unit: a shared message has no
         // reply, which is what keeps the two update loops from interleaving.
         let cmdToShared = MarFn.native(2) { args in
-            guard case .ctor(let tag, let sargs, _) = args[0], tag == "__Shared",
+            guard case .ctor(let tag, let sargs) = args[0], tag == "__Shared",
                   case .string(let key) = sargs.first ?? .unit else {
                 throw MarRuntimeError.typeMismatch(expected: "App.Shared", got: Eval.typeOf(args[0]))
             }
@@ -1422,8 +1427,7 @@ enum MarBuiltins {
             let titleV = fs["title"] ?? .string("")
             let subsV = fs["subscriptions"] ?? .unit
             return .ctor(tag: "__ProtectedPage",
-                         args: [pathV, initV, updateV, viewV, titleV, subsV],
-                         origin: nil)
+                         args: [pathV, initV, updateV, viewV, titleV, subsV])
         }
         env.define("pageProtected",  .fn(pageProtected))
         env.define("Page.protected", .fn(pageProtected))
@@ -1458,7 +1462,7 @@ enum MarBuiltins {
         // defensively (`args.count >= n`), so appending is invisible to
         // the four existing shapes.
         let pageSheet = MarFn.native(1) { args in
-            guard case .ctor(let tag, let ctorArgs, let origin) = args[0] else {
+            guard case .ctor(let tag, let ctorArgs) = args[0] else {
                 throw MarRuntimeError.typeMismatch(expected: "Page", got: Eval.typeOf(args[0]))
             }
             var withPresentation = ctorArgs
@@ -1468,7 +1472,7 @@ enum MarBuiltins {
             } else {
                 withPresentation[6] = .bool(true)
             }
-            return .ctor(tag: tag, args: withPresentation, origin: origin)
+            return .ctor(tag: tag, args: withPresentation)
         }
         env.define("pageSheet",  .fn(pageSheet))
         env.define("Page.sheet", .fn(pageSheet))
@@ -1517,8 +1521,7 @@ enum MarBuiltins {
             let titleV = fs["title"] ?? .string("")
             let subsV = fs["subscriptions"] ?? .unit
             return .ctor(tag: "__DynamicPage",
-                         args: [pathV, initV, updateV, viewV, titleV, subsV],
-                         origin: nil)
+                         args: [pathV, initV, updateV, viewV, titleV, subsV])
         }
         env.define("pageDynamic",  .fn(pageDynamic))
         env.define("Page.dynamic", .fn(pageDynamic))
@@ -1539,8 +1542,7 @@ enum MarBuiltins {
             let titleV = fs["title"] ?? .string("")
             let subsV = fs["subscriptions"] ?? .unit
             return .ctor(tag: "__DynamicProtectedPage",
-                         args: [pathV, initV, updateV, viewV, titleV, subsV],
-                         origin: nil)
+                         args: [pathV, initV, updateV, viewV, titleV, subsV])
         }
         env.define("pageDynamicProtected",  .fn(pageDynamicProtected))
         env.define("Page.dynamicProtected", .fn(pageDynamicProtected))
@@ -1838,19 +1840,19 @@ enum MarBuiltins {
         // Sub.none / Sub.batch: the frontend subscription monoid. A Sub is a
         // declarative value (a "__Sub" ctor carrying its items); the page
         // runtime's reconcileSubs reads it (see MarPageRuntime).
-        env.define("subNone",  .ctor(tag: "__Sub", args: [], origin: nil))
-        env.define("Sub.none", .ctor(tag: "__Sub", args: [], origin: nil))
+        env.define("subNone",  .ctor(tag: "__Sub", args: []))
+        env.define("Sub.none", .ctor(tag: "__Sub", args: []))
         let subBatch = MarFn.native(1) { args in
             guard case .list(let subs) = args[0] else {
                 throw MarRuntimeError.typeMismatch(expected: "List", got: Eval.typeOf(args[0]))
             }
             var items: [MarValue] = []
             for sub in subs {
-                if case .ctor(let tag, let xs, _) = sub, tag == "__Sub" {
+                if case .ctor(let tag, let xs) = sub, tag == "__Sub" {
                     items.append(contentsOf: xs)
                 }
             }
-            return .ctor(tag: "__Sub", args: items, origin: nil)
+            return .ctor(tag: "__Sub", args: items)
         }
         env.define("subBatch",  .fn(subBatch))
         env.define("Sub.batch", .fn(subBatch))
@@ -2090,8 +2092,8 @@ enum MarBuiltins {
             guard case .duration = args[0] else {
                 throw MarRuntimeError.typeMismatch(expected: "Duration", got: Eval.typeOf(args[0]))
             }
-            let item = MarValue.ctor(tag: "__SubEvery", args: [args[0], args[1]], origin: nil)
-            return .ctor(tag: "__Sub", args: [item], origin: nil)
+            let item = MarValue.ctor(tag: "__SubEvery", args: [args[0], args[1]])
+            return .ctor(tag: "__Sub", args: [item])
         }
         env.define("timeEvery",  .fn(timeEvery))
         env.define("Time.every", .fn(timeEvery))
@@ -2165,10 +2167,9 @@ enum MarBuiltins {
             }
             if let d = MarJSONCodec.parseISO(s) {
                 return .ctor(tag: "Just",
-                             args: [.time(Int(d.timeIntervalSince1970 * 1000))],
-                             origin: nil)
+                             args: [.time(Int(d.timeIntervalSince1970 * 1000))])
             }
-            return .ctor(tag: "Nothing", args: [], origin: nil)
+            return .ctor(tag: "Nothing", args: [])
         }
         env.define("timeFromIso",  .fn(timeFromIso))
         env.define("Time.fromIso", .fn(timeFromIso))
@@ -2253,20 +2254,19 @@ enum MarBuiltins {
             }
             do {
                 let any = try MarJSONCodec.parseJSONExact(raw)
-                return .ctor(tag: "Ok", args: [try MarJSONCodec.jsonToMar(any)], origin: nil)
+                return .ctor(tag: "Ok", args: [try MarJSONCodec.jsonToMar(any)])
             } catch let e as MarRuntimeError {
                 // Already Mar's own sentence -- a number the language cannot
                 // hold, say. whyNotJSON is for FOUNDATION's failures, and
                 // running it over this one replaced a precise message with a
                 // guess about the document's syntax.
-                return .ctor(tag: "Err", args: [.string(e.errorDescription ?? "the document is not valid JSON")], origin: nil)
+                return .ctor(tag: "Err", args: [.string(e.errorDescription ?? "the document is not valid JSON")])
             } catch {
                 // Mar's sentence, not Foundation's: see internal/runtime/json.go.
                 // `localizedDescription` made the value a program receives depend
                 // on the PHONE'S LANGUAGE.
                 return .ctor(tag: "Err",
-                             args: [.string(MarWire.whyNotJSON(error))],
-                             origin: nil)
+                             args: [.string(MarWire.whyNotJSON(error))])
             }
         }))
         env.define("JSON.decode", env.lookup("jsonDecode")!)
@@ -2319,29 +2319,29 @@ enum MarBuiltins {
         // These exist server-side; the client never invokes them, but
         // shared modules may still mention them at top level. We give
         // each a value that survives evaluation without errors.
-        let entityStub = MarFn.native(2) { _ in .ctor(tag: "__Entity", args: [], origin: nil) }
+        let entityStub = MarFn.native(2) { _ in .ctor(tag: "__Entity", args: []) }
         env.define("entityDefine",  .fn(entityStub))
         env.define("Entity.define", .fn(entityStub))
 
-        let colSerial = MarValue.ctor(tag: "__Column", args: [.string("serial")], origin: nil)
+        let colSerial = MarValue.ctor(tag: "__Column", args: [.string("serial")])
         env.define("entitySerial",  colSerial)
         env.define("Entity.serial", colSerial)
 
-        let colCtor = MarFn.native(1) { _ in .ctor(tag: "__Column", args: [.string("?")], origin: nil) }
+        let colCtor = MarFn.native(1) { _ in .ctor(tag: "__Column", args: [.string("?")]) }
         env.define("entityInt",       .fn(colCtor)); env.define("Entity.int",       .fn(colCtor))
         env.define("entityText",      .fn(colCtor)); env.define("Entity.text",      .fn(colCtor))
         env.define("entityBool",      .fn(colCtor)); env.define("Entity.bool",      .fn(colCtor))
         env.define("entityTimestamp", .fn(colCtor)); env.define("Entity.timestamp", .fn(colCtor))
-        let decimalColCtor = MarFn.native(2) { _ in .ctor(tag: "__Column", args: [.string("?")], origin: nil) }
+        let decimalColCtor = MarFn.native(2) { _ in .ctor(tag: "__Column", args: [.string("?")]) }
         env.define("entityDecimal", .fn(decimalColCtor)); env.define("Entity.decimal", .fn(decimalColCtor))
         // enum takes the allowed constructors plus the constraint. Missing here
         // (and on the web) until 2026-07-20: a shared module declaring an enum
         // column typechecked and then died on the client, because the schema is
         // server-only but the module that DECLARES it still has to evaluate.
-        let enumColCtor = MarFn.native(2) { _ in .ctor(tag: "__Column", args: [.string("?")], origin: nil) }
+        let enumColCtor = MarFn.native(2) { _ in .ctor(tag: "__Column", args: [.string("?")]) }
         env.define("entityEnum", .fn(enumColCtor)); env.define("Entity.enum", .fn(enumColCtor))
 
-        let constraintStub = MarValue.ctor(tag: "__Constraint", args: [], origin: nil)
+        let constraintStub = MarValue.ctor(tag: "__Constraint", args: [])
         env.define("entityNotNull",  constraintStub)
         env.define("Entity.notNull", constraintStub)
 
@@ -2373,11 +2373,11 @@ enum MarBuiltins {
         // Mirrors the JS runtime's `serviceDeclare` (verb + path on the
         // __Service ctor) and the Go VService{Verb, Path}.
         let serviceDeclare = MarFn.native(2) { args in
-            guard case .ctor(let verb, _, _) = args[0] else {
+            guard case .ctor(let verb, _) = args[0] else {
                 throw MarRuntimeError.typeMismatch(expected: "HTTP method", got: Eval.typeOf(args[0]))
             }
             let path = asString(args[1])
-            return .ctor(tag: "__Service", args: [.string(verb), .string(path)], origin: nil)
+            return .ctor(tag: "__Service", args: [.string(verb), .string(path)])
         }
         env.define("serviceDeclare",  .fn(serviceDeclare))
         env.define("Service.declare", .fn(serviceDeclare))
@@ -2403,7 +2403,7 @@ enum MarBuiltins {
             let req = args[1]
             let toMsg = args[2]
             return .effect(MarEffect(tag: "serviceCall") {
-                guard case .ctor("__Service", let svcArgs, _) = svc,
+                guard case .ctor("__Service", let svcArgs) = svc,
                       svcArgs.count == 2,
                       case .string(let verb) = svcArgs[0],
                       case .string(let pattern) = svcArgs[1] else {
@@ -2451,14 +2451,14 @@ enum MarBuiltins {
         let authConfig = MarFn.native(1) { args in
             if case .record(let fs, _) = args[0],
                let pageVal = fs["signInPage"],
-               case .ctor(_, let pageArgs, _) = pageVal,
+               case .ctor(_, let pageArgs) = pageVal,
                let firstArg = pageArgs.first,
                case .string(let path) = firstArg {
                 MainActor.assumeIsolated {
                     AppContext.shared.signInPath = path
                 }
             }
-            return .ctor(tag: "__Auth", args: [args[0]], origin: nil)
+            return .ctor(tag: "__Auth", args: [args[0]])
         }
         env.define("authConfig",  .fn(authConfig))
         env.define("Auth.config", .fn(authConfig))
@@ -2496,7 +2496,7 @@ enum MarBuiltins {
             return .effect(MarEffect(tag: "Auth.requestCode") {
                 MarHTTP.fireAuthOutcome(path: "/_auth/request-code",
                                         body: req,
-                                        okOutcome: { _ in .ctor(tag: "CodeSent", args: [], origin: nil) },
+                                        okOutcome: { _ in .ctor(tag: "CodeSent", args: []) },
                                         mapCode: MarHTTP.requestCodeOutcome,
                                         toMsg: toMsg)
                 return .unit
@@ -2512,7 +2512,7 @@ enum MarBuiltins {
             return .effect(MarEffect(tag: "Auth.verifyCode") {
                 MarHTTP.fireAuthOutcome(path: "/_auth/verify-code",
                                         body: req,
-                                        okOutcome: { user in .ctor(tag: "SignedIn", args: [user], origin: nil) },
+                                        okOutcome: { user in .ctor(tag: "SignedIn", args: [user]) },
                                         mapCode: MarHTTP.verifyCodeOutcome,
                                         toMsg: toMsg)
                 return .unit
@@ -2531,9 +2531,9 @@ enum MarBuiltins {
         // any UI update. Production apps (Gmail / Slack / Twitter)
         // all logout-then-navigate before the server responds.
         //
-        // We post directly via URLSession rather than going through
-        // MarHTTP.fireAuth: that helper couples the request to the
-        // dispatch, which is exactly the coupling we want to break.
+        // We post directly via URLSession rather than through a helper that
+        // couples the request to the dispatch, which is exactly the coupling
+        // we want to break here.
         let authLogout = MarFn.native(1) { args in
             let toMsg = args[0]
             return .effect(MarEffect(tag: "Auth.logout") {
@@ -2567,10 +2567,10 @@ enum MarBuiltins {
                     // Clear the cached user IMMEDIATELY so any
                     // Page.protected gate re-evaluating right after
                     // sees "no user" and bounces to sign-in.
-                    AppContext.shared.currentUser = .ctor(tag: "Nothing", args: [], origin: nil)
+                    AppContext.shared.currentUser = .ctor(tag: "Nothing", args: [])
                     // Dispatch Ok(()) so the mar update fires its
                     // post-logout action (typically Auth.completeSignIn).
-                    let msg = (try? Eval.apply(toMsg, .ctor(tag: "Ok", args: [.unit], origin: nil))) ?? .unit
+                    let msg = (try? Eval.apply(toMsg, .ctor(tag: "Ok", args: [.unit]))) ?? .unit
                     MarDispatcher.shared.dispatch(msg)
                 }
                 return .unit
@@ -3221,7 +3221,7 @@ enum MarBuiltins {
             }
             let attrs: [MarView.Attr] = [
                 MarView.Attr(name: "open",   value: fs["open"] ?? .bool(false)),
-                MarView.Attr(name: "outlet", value: fs["outlet"] ?? .string("")),
+                MarView.Attr(name: "outlet", value: fs["outlet"] ?? .string(""))
             ]
             return .view(MarView(
                 tag: "sheet",
@@ -3259,7 +3259,7 @@ enum MarBuiltins {
                 MarView.Attr(name: "confirmLabel", value: fs["confirmLabel"] ?? .string("")),
                 MarView.Attr(name: "destructive",  value: fs["destructive"]  ?? .bool(false)),
                 MarView.Attr(name: "onConfirm",    value: fs["onConfirm"]    ?? .unit),
-                MarView.Attr(name: "onCancel",     value: fs["onCancel"]     ?? .unit),
+                MarView.Attr(name: "onCancel",     value: fs["onCancel"]     ?? .unit)
             ]
             return .view(MarView(
                 tag: "confirmDialog",
@@ -3387,7 +3387,7 @@ enum MarBuiltins {
         case .string(let s): return s
         case .int(let n):    return String(n)
         case .bool(let b):   return b ? "true" : "false"
-        case .ctor(let tag, _, _): return tag.lowercased()
+        case .ctor(let tag, _): return tag.lowercased()
         default:             return ""
         }
     }
@@ -3480,4 +3480,4 @@ enum MarBuiltins {
         return ""
     }
 }
-
+// swiftlint:enable type_body_length function_body_length cyclomatic_complexity
