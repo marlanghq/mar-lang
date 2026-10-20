@@ -52,6 +52,15 @@ linters:
         linters:
           - errcheck
 
+# Report every finding, not a sample of them. golangci-lint defaults to
+# max-same-issues: 3 and max-issues-per-linter: 50, and the default hid
+# half of a real result: a sweep reported 3 QF1012 in one file when
+# there were 6. A capped count reads as a complete one, which is the
+# failure mode this whole file exists to avoid.
+issues:
+  max-same-issues: 0
+  max-issues-per-linter: 0
+
 formatters:
   enable:
     - gofmt

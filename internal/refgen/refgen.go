@@ -290,7 +290,7 @@ func MarModule() string {
 		for j, m := range g.Modules {
 			quotedMods[j] = fmt.Sprintf("%q", m)
 		}
-		b.WriteString(fmt.Sprintf("%s{ title = %q, modules = [ %s ] }\n", lead, g.Title, strings.Join(quotedMods, ", ")))
+		fmt.Fprintf(&b, "%s{ title = %q, modules = [ %s ] }\n", lead, g.Title, strings.Join(quotedMods, ", "))
 	}
 	b.WriteString("    ]\n\n\n")
 
@@ -298,7 +298,7 @@ func MarModule() string {
 	b.WriteString("sectionsFor m =\n")
 	b.WriteString("    case m of\n")
 	for _, mod := range Modules {
-		b.WriteString(fmt.Sprintf("        %q ->\n", mod))
+		fmt.Fprintf(&b, "        %q ->\n", mod)
 		secs := SectionsOf(mod)
 		if len(secs) == 0 {
 			b.WriteString("            []\n\n")
@@ -309,15 +309,15 @@ func MarModule() string {
 			if si == 0 {
 				secLead = "            [ "
 			}
-			b.WriteString(fmt.Sprintf("%s{ category = %q\n", secLead, s.Category))
+			fmt.Fprintf(&b, "%s{ category = %q\n", secLead, s.Category)
 			b.WriteString("              , entries =\n")
 			for ei, e := range s.Entries {
 				entLead := "                    , "
 				if ei == 0 {
 					entLead = "                    [ "
 				}
-				b.WriteString(fmt.Sprintf("%s{ moduleName = %q, name = %q, signature = %q, side = %q, description = %q, examples = %s }\n",
-					entLead, e.Module, e.Name, e.Signature, e.Side, e.Desc, marNestedStringList(displayExamples(e.Examples))))
+				fmt.Fprintf(&b, "%s{ moduleName = %q, name = %q, signature = %q, side = %q, description = %q, examples = %s }\n",
+					entLead, e.Module, e.Name, e.Signature, e.Side, e.Desc, marNestedStringList(displayExamples(e.Examples)))
 			}
 			b.WriteString("                    ]\n")
 			b.WriteString("              }\n")
@@ -331,7 +331,7 @@ func MarModule() string {
 	b.WriteString("blurbFor m =\n")
 	b.WriteString("    case m of\n")
 	for _, mod := range Modules {
-		b.WriteString(fmt.Sprintf("        %q ->\n            %q\n\n", mod, blurbs[mod]))
+		fmt.Fprintf(&b, "        %q ->\n            %q\n\n", mod, blurbs[mod])
 	}
 	b.WriteString("        _ ->\n")
 	b.WriteString("            \"\"\n\n\n")
@@ -340,7 +340,7 @@ func MarModule() string {
 	b.WriteString("sideFor m =\n")
 	b.WriteString("    case m of\n")
 	for _, mod := range Modules {
-		b.WriteString(fmt.Sprintf("        %q ->\n            %q\n\n", mod, ModuleSideLabel(mod)))
+		fmt.Fprintf(&b, "        %q ->\n            %q\n\n", mod, ModuleSideLabel(mod))
 	}
 	b.WriteString("        _ ->\n")
 	b.WriteString("            \"\"\n\n\n")
