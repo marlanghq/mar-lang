@@ -80,12 +80,12 @@ view _ =
                     "native on iOS, polished CSS on the web. Native Android coming soon."
                 , featureRow "🔒" "Type-safe end-to-end"
                     "paths, services, routes, schemas, checked at compile time."
-                -- Not a featureRow, and not inside the list above, on purpose:
-                -- the header says "What you get", so anything sitting under it
-                -- is a promise. This one is still being built, and a caveat
-                -- tucked into a list item is the first thing to disappear when
-                -- someone quotes or screenshots the page.
-                , subtitle "Being explored: 📡  over-the-air updates, shipping from the server with no app-store waits. Early, and not ready yet."
+                -- This row reads like the four above it, so the caveat has to
+                -- live in the copy: "Early, and not ready yet." is the only
+                -- thing keeping it from being read as a shipped feature under
+                -- a header that says "What you get". Do not trim it.
+                , featureRow "📡" "Over-the-air updates"
+                    "shipping from the server with no app-store waits. Early, and not ready yet."
                 ]
             , section [ header "Read more" ]
                 [ navRow Frontend.Routes.why
