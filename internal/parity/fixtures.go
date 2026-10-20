@@ -12,7 +12,7 @@
 // internal/iosbundle drives it through the Swift runtime on a simulator.
 package parity
 
-// Source is a three-page app: a counter you can bump, a second page to
+// NavSource is a three-page app: a counter you can bump, a second page to
 // navigate to, and a third that is the same page declared with Page.sheet.
 //
 // The label in each view makes a screen self-identifying, so a wrong-page

@@ -2,7 +2,7 @@ package typecheck
 
 import "strings"
 
-// Which side of a Mar app a builtin runs on.
+// Side is which side of a Mar app a builtin runs on.
 //
 // The side cannot be read off the type: `Time.now` and `Repo.all` both produce
 // a `Task`, and they sit on different sides. It cannot be read off the module

@@ -88,7 +88,7 @@ func StripForall(t Type) Type {
 	return t
 }
 
-// wireShapeOf walks a checked type into a shape.
+// WireShapeOf walks a checked type into a shape.
 //
 // It used to stop at six levels, and the comment here explained that anything
 // deeper was "not something to be asserting about anyway". That was a

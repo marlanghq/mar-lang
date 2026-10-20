@@ -150,6 +150,12 @@ func hasDotSegment(cleanPath string) bool {
 //go:embed runtime.js
 var runtimeJS string
 
+// RuntimeJS is the runtime source as the browser gets it, before the
+// production transform. The cross-runtime parity checks need exactly this:
+// the point of those tests is that the two runtimes are given identical input,
+// and a transformed copy would not be what ships to a dev browser.
+func RuntimeJS() string { return runtimeJS }
+
 // RuntimeJSProduction returns the runtime processed for static builds:
 //   - Flips the build-time flag to `__MAR_DEV__ = false`, so esbuild's
 //     constant folding + DCE drops the time-travel panel, dev dock,
@@ -158,12 +164,6 @@ var runtimeJS string
 //   - Minifies whitespace, identifiers, and syntax.
 //
 // Used by `mar build` when writing runtime.js into a static dist/.
-// RuntimeJS is the runtime source as the browser gets it, before the
-// production transform. The cross-runtime parity checks need exactly this:
-// the point of those tests is that the two runtimes are given identical input,
-// and a transformed copy would not be what ships to a dev browser.
-func RuntimeJS() string { return runtimeJS }
-
 func RuntimeJSProduction() (string, error) {
 	src := strings.Replace(
 		runtimeJS,

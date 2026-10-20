@@ -509,7 +509,7 @@ var HTTPErrorCases = []HTTPErrorCase{
 		"JSON that stops halfway"},
 }
 
-// AuthPortCases is the body the sign-in endpoint answered with and the one
+// AuthPortCase is one body the sign-in endpoint answered with and the one
 // sentence both clients must turn it into.
 //
 // The auth port was the wire port that asserted NOTHING. Whatever
@@ -542,6 +542,8 @@ type AuthPortCase struct {
 	Why     string
 }
 
+// AuthPortCases is every body the sign-in endpoint can answer with, paired
+// with the sentence both clients have to turn it into.
 var AuthPortCases = []AuthPortCase{
 	{200, `{"id":1,"email":"a@b.c"}`, "", "",
 		"the user the endpoint is supposed to answer with"},

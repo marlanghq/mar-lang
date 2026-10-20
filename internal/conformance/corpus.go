@@ -201,7 +201,7 @@ textCases =
         , "padRightAcute=" ++ String.padRight 6 '.' "café"
 
         -- Case mapping that changes LENGTH. Unicode says the uppercase of the
-        -- sharp s is two letters; a runtime mapping one code point at a time
+        -- sharp s is two letters; a runtime mapping one scalar at a time
         -- cannot say that.
         , "upperAcute=" ++ String.toUpper "café"
         , "lowerAcute=" ++ String.toLower "CAFÉ"
@@ -1291,10 +1291,6 @@ var Scope = map[string]bool{
 // numeric kit had never been compared across runtimes at all.
 var OutOfScopeBare = map[string]string{}
 
-// OutOfScope is every other stdlib module, with the reason it is not compared
-// here. Together the two maps have to cover the whole stdlib: a module in
-// neither fails the build, so a new one cannot slip in untested by being
-// unnoticed.
 // OutOfScopeFunc excuses a SINGLE function, which the module-level map cannot
 // do. It exists because three modules came into Scope carrying a handful of
 // effects: the rest of Decimal, Time and Random is pure and comparable, and
@@ -1311,6 +1307,10 @@ var OutOfScopeFunc = map[string]string{
 	"Random.generate": "a Cmd; Random.step is the same algorithm with the seed in hand",
 }
 
+// OutOfScope is every other stdlib module, with the reason it is not compared
+// here. Together the two maps have to cover the whole stdlib: a module in
+// neither fails the build, so a new one cannot slip in untested by being
+// unnoticed.
 var OutOfScope = map[string]string{
 	// Render rather than compute: the answer is a screen, and the three
 	// renderers are compared by the drift and parity tests instead.
@@ -1380,8 +1380,8 @@ func (g TextGap) answerFor(who string) (string, bool) {
 	return "", false
 }
 
-// Empty, and that is the point: the three runtimes answer every case in the
-// Text block identically.
+// KnownTextGaps is empty, and that is the point: the three runtimes answer
+// every case in the Text block identically.
 //
 // Keep the mechanism. The next divergence someone measures and cannot settle
 // in the same sitting belongs here rather than in a document: an entry does

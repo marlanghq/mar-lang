@@ -575,6 +575,14 @@ FileHandle.standardOutput.write(out.joined(separator: "\n").data(using: .utf8)!)
 }
 `
 
+// WaveLevelGap is one measured divergence in raw wave level: what each
+// runtime answered, and why it is not settled yet.
+type WaveLevelGap struct {
+	WebRMS, IOSRMS float64
+	WebDC, IOSDC   float64
+	Why            string
+}
+
 // KnownWaveLevelGaps records divergences in raw wave LEVEL that are real,
 // measured, and not yet decided.
 //
@@ -582,12 +590,6 @@ FileHandle.standardOutput.write(out.joined(separator: "\n").data(using: .utf8)!)
 // reason that is not written down gets forgotten. So each entry pins the
 // measurement at the value it was taken at: the test still fails if it MOVES,
 // in either direction, and the fix for a fixed one is to delete its line.
-type WaveLevelGap struct {
-	WebRMS, IOSRMS float64
-	WebDC, IOSDC   float64
-	Why            string
-}
-
 var KnownWaveLevelGaps = map[string]WaveLevelGap{
 	"pulsed": {
 		WebRMS: 0.2663, IOSRMS: 0.9962,

@@ -200,9 +200,6 @@ func (p *PWAConfig) ResolvedBackgroundColor() string {
 	return p.BackgroundColor
 }
 
-// ResolvePWA flattens the manifest's PWA settings (with defaults) into
-// a pwa.Config ready for the manifest + icon generators. Resolves the
-// icon path against projectDir. Safe on a nil manifest / nil PWA block.
 // ResolveLocale returns the app's language tag for the HTML shell.
 // `locale` is required in mar.json, so the fallback only covers the
 // no-manifest case (a bare `mar dev` in a directory without one) and
@@ -215,6 +212,9 @@ func (m *Manifest) ResolveLocale() string {
 	return m.Locale
 }
 
+// ResolvePWA flattens the manifest's PWA settings (with defaults) into
+// a pwa.Config ready for the manifest + icon generators. Resolves the
+// icon path against projectDir. Safe on a nil manifest / nil PWA block.
 func (m *Manifest) ResolvePWA(projectDir string) pwa.Config {
 	var p *PWAConfig
 	name := ""

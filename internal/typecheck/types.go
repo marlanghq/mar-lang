@@ -487,9 +487,6 @@ func TGamepadStateRecord() TRecord {
 	}
 }
 
-// TCanvasPointerRecord is "{ id : Int, x : Int, y : Int }", one active pointer
-// (finger / pressed mouse) in canvas CSS-pixel coordinates. Canvas.watchPointers
-// delivers a List of these: the full set of pointers currently down.
 // TCanvasBoxRecord returns the record Canvas.watchSize mirrors:
 // { w, h, top, right, bottom, left }, all in CSS pixels.
 //
@@ -514,6 +511,9 @@ func TCanvasBoxRecord() TRecord {
 	}
 }
 
+// TCanvasPointerRecord is "{ id : Int, x : Int, y : Int }", one active pointer
+// (finger / pressed mouse) in canvas CSS-pixel coordinates. Canvas.watchPointers
+// delivers a List of these: the full set of pointers currently down.
 func TCanvasPointerRecord() TRecord {
 	return TRecord{
 		Fields: map[string]Type{"id": TInt, "x": TInt, "y": TInt},
@@ -734,7 +734,7 @@ func TInline(msg Type) TCon {
 	return TCon{Name: "Inline", Args: []Type{msg}}
 }
 
-// TSize, the opaque sizing-value type, phantom-parameterized by axis:
+// TSize is the opaque sizing-value type, phantom-parameterized by axis:
 // `chars : Int -> Size Width`, `lines : Int -> Size Height`, and
 // `fill : Size axis` (polymorphic, fits either). The phantom keeps
 // `width (lines 5)` / `height (chars 5)` compile errors while letting
@@ -751,7 +751,7 @@ func THeightAxis() TCon { return TCon{Name: "Height"} }
 func TWidth() TCon  { return TSize(TWidthAxis()) }
 func THeight() TCon { return TSize(THeightAxis()) }
 
-// TAlignment, cross-axis alignment for stack children. Values:
+// TAlignment is cross-axis alignment for stack children. Values:
 // leading / center / trailing (vstack's horizontal cross axis) and
 // top / center / bottom (hstack's vertical cross axis). One type for
 // both axes: `center` is shared, and renderers ignore a wrong-axis
@@ -762,7 +762,7 @@ func THeight() TCon { return TSize(THeightAxis()) }
 // the child.
 func TAlignment() TCon { return TCon{Name: "Alignment"} }
 
-// TPixels, opaque pixel sizing unit for media. `px : Int -> Pixels`.
+// TPixels is the opaque pixel sizing unit for media. `px : Int -> Pixels`.
 // Deliberately distinct from Width / Height (the char/line units for
 // inputs) so pixel sizing stays scoped to images: `width (px 8)` on a
 // text field and `size (chars 8) ...` on an image are both rejected at
