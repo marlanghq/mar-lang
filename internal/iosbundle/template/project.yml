@@ -2,10 +2,10 @@ name: __MAR_APP_NAME__
 options:
   minimumXcodeGenVersion: 2.38.0
 attributes:
-  # Marks the .pbxproj as "last validated against Xcode 26". Without
+  # Marks the .pbxproj as "last validated against Xcode 27". Without
   # this, Xcode shows the yellow "Update to recommended settings"
   # warning every time the project opens. The value is a 4-digit
-  # encoding: 1600 = Xcode 16.0, 1620 = 16.2, 2600 = 26.0. Keep it at
+  # encoding: 1600 = Xcode 16.0, 1620 = 16.2, 2700 = 27.0. Keep it at
   # the Xcode major that generated projects are actually opened with;
   # when a new Xcode ships, vet its recommended-settings list and bump
   # this in the same change. Xcode 26's new recommendations (the
@@ -13,8 +13,11 @@ attributes:
   # features) were reviewed and deliberately NOT adopted: the runtime
   # holds interpreter closures under `targeted` strict concurrency and
   # opting into new isolation inference wholesale would change
-  # semantics we rely on without a device-verified win.
-  LastUpgradeCheck: "2600"
+  # semantics we rely on without a device-verified win. Xcode 27 adds
+  # none of its own: checked on 27.2, a project generated with the
+  # Xcode 26 stamp opened with an empty Issue navigator, so the bump
+  # to 2700 changes no setting.
+  LastUpgradeCheck: "2700"
 settings:
   base:
     # iOS 18 deployment target lets us use the Observation framework
