@@ -64,8 +64,14 @@ func runFlyDeploy(path string, noOpen bool) int {
 
 	// === 2. Topology detection (runs main as side effect; surfaces
 	// compile errors / missing config BEFORE any Fly interaction) ===
-	topo, err := scaffold.Topology(projectDir)
-	if err != nil {
+	var topo string
+	if err := progressStepErr("Loading project", func() error {
+		return withStdoutSilenced(func() error {
+			var terr error
+			topo, terr = scaffold.Topology(projectDir)
+			return terr
+		})
+	}); err != nil {
 		printError("mar deploy", err)
 		return 1
 	}

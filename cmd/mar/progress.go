@@ -19,18 +19,65 @@
 // piped output): no animation, just a "label…" line up-front and a
 // "✓ label" / "✗ label" line on completion. Verbose but readable
 // in scrollback.
+//
+// printWorking is the third, plainer kind: one line before a
+// command's own slow work (see its doc).
 
 package main
 
 import (
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"golang.org/x/term"
 
 	"mar/internal/clio"
+	"mar/internal/project"
 )
+
+// printWorking writes the one line `mar dev`, `mar check` and
+// `mar build` show before the work that can take a while: loading a
+// project type-checks it and evaluates every top-level value Main
+// reaches, and a game whose Proof plays itself through takes most of
+// a minute there. Before this line nothing at all was printed until
+// the banner, and the command looked frozen.
+//
+// The verb is the command's own, never "compiling": Mar is
+// interpreted, and the time goes to evaluation, so "compiling" would
+// send the reader looking for a compiler. `mar dev` says "Loading".
+//
+// A plain line rather than progressStep's spinner: what runs here is
+// the user's program, which may print (or warn on stderr) while it
+// evaluates, and a spinner redrawing over that output garbles both.
+// On stderr, so `mar check`'s report on stdout stays parseable.
+//
+// TTY: "Loading notes…" in the dim status color (cli-style §3).
+// Non-TTY: "[mar dev] loading notes…", the shape of the other
+// "[mar dev]" lines a log already holds.
+func printWorking(cmd, verb, name string) {
+	defer clio.ClearTrailingBlank()
+	if term.IsTerminal(int(os.Stderr.Fd())) {
+		fmt.Fprintln(os.Stderr, colorDim(verb+" "+name+"…"))
+		return
+	}
+	fmt.Fprintf(os.Stderr, "[%s] %s %s…\n", cmd, strings.ToLower(verb), name)
+}
+
+// projectLabel names a project for printWorking: mar.json's "name",
+// or the directory's when there is none or mar.json cannot be read
+// (the command reports that problem itself a moment later).
+func projectLabel(dir string) string {
+	if m, err := project.LoadManifestStructure(dir); err == nil && m != nil && m.Name != "" {
+		return m.Name
+	}
+	if abs, err := filepath.Abs(dir); err == nil {
+		return filepath.Base(abs)
+	}
+	return filepath.Base(dir)
+}
 
 // spinnerFrames is the Braille rotation used by both helpers.
 // 10 frames at spinnerInterval == full cycle in 0.8s, which reads

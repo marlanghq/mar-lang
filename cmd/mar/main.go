@@ -160,7 +160,7 @@ func runBuild(args []string) int {
 	// from doing it here: `"entry"` in mar.json is honoured by the build,
 	// and a directory with no project in it fails with the same sentence
 	// and the same hint every other command gives.
-	entryFile, _, entryErr := resolveProjectEntry(entry)
+	entryFile, buildDir, entryErr := resolveProjectEntry(entry)
 	if entryErr != nil {
 		printError("mar build", entryErr)
 		return 1
@@ -197,6 +197,7 @@ func runBuild(args []string) int {
 		printIOSBuildSummary(result)
 		return 0
 	}
+	printWorking("mar build", "Building", projectLabel(buildDir))
 	if err := scaffold.Build(entry, outDir, target); err != nil {
 		// Different error categories get different formatting:
 		//   - manifest syntax errors → typed printer with snippet +
@@ -975,6 +976,7 @@ func runCheck(path string) int {
 		return 1
 	}
 	if info.IsDir() {
+		printWorking("mar check", "Checking", projectLabel(path))
 		proj, err := project.Load(path)
 		if err != nil {
 			printError("", err)
@@ -1144,6 +1146,10 @@ func runDev(path string, noOpen bool) int {
 	// /_mar/admin). We learn the topology by evaluating `main` once up
 	// front: see topologyNeedsDB for why an UNKNOWN topology (main not
 	// compiling yet) also provisions nothing.
+	//
+	// This evaluation and the first compile below are the slow part of
+	// starting, so the programmer is told before them, not after.
+	printWorking("mar dev", "Loading", projectLabel(projectDir))
 	provisionDB := topologyNeedsDB(scaffold.Topology(projectDir))
 
 	// Wire the SQLite path into the runtime: Repo.* lazy-opens this on
@@ -1616,7 +1622,7 @@ func watchAndReload(root string, compile func() error, hub *jsserve.ReloadHub, l
 			continue
 		}
 		prev = cur
-		fmt.Println("[mar dev] file change detected, recompiling…")
+		fmt.Println("[mar dev] file change detected, reloading…")
 		if err := compile(); err != nil {
 			pretty := printError("", err)
 			lp.SetError(pretty)

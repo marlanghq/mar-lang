@@ -70,7 +70,11 @@ func runCloudflarePagesDeploy(path string, noOpen bool) int {
 	// Topology check. CF Pages only serves static files; refusing
 	// on fullstack is friendlier than producing a deployment that
 	// can't talk to its own backend.
-	if err := requireFrontendTopology(target.ProjectDir); err != nil {
+	if err := progressStepErr("Loading project", func() error {
+		return withStdoutSilenced(func() error {
+			return requireFrontendTopology(target.ProjectDir)
+		})
+	}); err != nil {
 		if tme, ok := err.(*topologyMismatchError); ok {
 			printTopologyMismatch(tme)
 		} else {
