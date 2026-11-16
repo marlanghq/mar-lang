@@ -491,6 +491,45 @@ func coerceWireIn(v Value, s WireShape, seen map[string]WireShape) Value {
 		}
 		return v
 
+	case WireSet:
+		// A Set or a Dict holds values of its own types, so they are
+		// coerced too: a tuple item or key arrives as the List the decoder
+		// made, and a container's operations compare its items by kind. The
+		// items change kind, and their order is the comparison's, so the
+		// container is built again, as Set.fromList builds it. runtime.js
+		// coerceWire and MarWire.swift coerce do the same.
+		set, ok := v.(VSet)
+		if !ok || s.Elem == nil {
+			return v
+		}
+		items := make([]Value, len(set.Items))
+		for i, item := range set.Items {
+			items[i] = coerceWireIn(item, *s.Elem, seen)
+		}
+		rebuilt, err := buildSetSorted(items)
+		if err != nil {
+			return v // CheckWire passed, so the items share one comparable type
+		}
+		return rebuilt
+
+	case WireDict:
+		d, ok := v.(VDict)
+		if !ok || len(s.Members) != 2 {
+			return v
+		}
+		pairs := make([]VDictPair, len(d.Pairs))
+		for i, p := range d.Pairs {
+			pairs[i] = VDictPair{
+				Key:   coerceWireIn(p.Key, s.Members[0], seen),
+				Value: coerceWireIn(p.Value, s.Members[1], seen),
+			}
+		}
+		rebuilt, err := buildDictSorted(pairs)
+		if err != nil {
+			return v
+		}
+		return rebuilt
+
 	case WireRecord:
 		rec, ok := v.(VRecord)
 		if !ok {

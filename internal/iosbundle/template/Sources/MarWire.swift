@@ -277,7 +277,11 @@ enum MarWire {
     /// `3` for a Decimal field is legal and has to arrive as a Decimal, and a
     /// declared optional field nobody sent still has to BE there, because the
     /// code reads it whether or not it was written.
-    static func coerce(_ v: MarValue, _ s: MarWireShape) -> MarValue {
+    /// `seen` remembers each named type on the way down, so a Ref (a
+    /// recursive type re-entering itself) coerces like the type it names, as
+    /// `check` does: in `Link ( 1, 2 ) (Link ( 3, 4 ) End)` both pairs are
+    /// tuples. coerceWireIn in internal/runtime/wire.go is the same function.
+    static func coerce(_ v: MarValue, _ s: MarWireShape, _ seen: [String: MarWireShape] = [:]) -> MarValue {
         switch s.kind {
         case "Decimal":
             if case .int(let i) = v {
@@ -285,30 +289,51 @@ enum MarWire {
             }
             return v
 
+        case "Ref":
+            guard let target = seen[s.name] else { return v }
+            return coerce(v, target, seen)
+
+        // A Set or a Dict holds values of its own types, so they are coerced
+        // too: a tuple key arrives as the list the decoder made, and a
+        // container's operations compare its items by kind. The items change
+        // kind, and their order is the comparison's, so the container is
+        // built again.
+        case "Set":
+            guard case .set(let items) = v, let elem = s.elem else { return v }
+            return MarDict.setFromItems(items.map { coerce($0, elem, seen) })
+
+        case "Dict":
+            guard case .dict(let pairs) = v, s.members.count == 2 else { return v }
+            return MarDict.dictFromPairs(pairs.map {
+                MarPair(key: coerce($0.key, s.members[0], seen), value: coerce($0.value, s.members[1], seen))
+            })
+
         case "Maybe":
             if isAbsent(v) { return .ctor(tag: "Nothing", args: []) }
             if case .ctor(let tag, let args) = v,
                tag == "Just", args.count == 1, let elem = s.elem {
-                return .ctor(tag: "Just", args: [coerce(args[0], elem)])
+                return .ctor(tag: "Just", args: [coerce(args[0], elem, seen)])
             }
             return v
 
         case "List":
             guard case .list(let xs) = v, let elem = s.elem else { return v }
-            return .list(xs.map { coerce($0, elem) })
+            return .list(xs.map { coerce($0, elem, seen) })
 
         case "Tuple":
             // Accepting the array means producing the tuple.
             guard let xs = tupleMembers(v), xs.count == s.members.count else { return v }
-            return .tuple(xs.enumerated().map { coerce($1, s.members[$0]) })
+            return .tuple(xs.enumerated().map { coerce($1, s.members[$0], seen) })
 
         case "Ctor":
+            var seen = seen
+            if !s.name.isEmpty { seen[s.name] = s }
             guard case .ctor(let tag, let carried) = v,
                   let i = s.tags.firstIndex(of: tag),
                   i < s.args.count,
                   carried.count == s.args[i].count else { return v }
             return .ctor(tag: tag,
-                         args: carried.enumerated().map { coerce($1, s.args[i][$0]) })
+                         args: carried.enumerated().map { coerce($1, s.args[i][$0], seen) })
 
         case "Record":
             guard case .record(var fields, var order) = v else { return v }
@@ -320,7 +345,7 @@ enum MarWire {
                     }
                     continue
                 }
-                fields[f.name] = coerce(sub, f.shape)
+                fields[f.name] = coerce(sub, f.shape, seen)
             }
             return .record(fields: fields, order: order)
 

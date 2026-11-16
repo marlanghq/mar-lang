@@ -83,6 +83,44 @@ enum MarDict {
         return .set(out)
     }
 
+    /// A Set of `items`, built once: sorted by compareMar, keeping the first
+    /// of two equal items, as setInsert does. For values that are known to
+    /// share one comparable type (a checked program's, or a decoded value
+    /// that passed its shape check). Set.fromList and MarWire.coerce build
+    /// with it; runtime.js setFromItems and Go's setFromItems are the same
+    /// rule, and the corpus's Set.fromList cases compare the three.
+    static func setFromItems(_ items: [MarValue]) -> MarValue {
+        let sorted = items.enumerated().sorted { a, b in
+            let c = a.element.compareMar(b.element)
+            return c != 0 ? c < 0 : a.offset < b.offset
+        }.map(\.element)
+        var out: [MarValue] = []
+        out.reserveCapacity(sorted.count)
+        for item in sorted where out.last.map({ $0.compareMar(item) != 0 }) ?? true {
+            out.append(item)
+        }
+        return .set(out)
+    }
+
+    /// A Dict of `pairs`, built once: sorted by key, keeping the last pair for
+    /// a key, as insert does. On the same terms as setFromItems.
+    static func dictFromPairs(_ pairs: [MarPair]) -> MarValue {
+        let sorted = pairs.enumerated().sorted { a, b in
+            let c = a.element.key.compareMar(b.element.key)
+            return c != 0 ? c < 0 : a.offset < b.offset
+        }.map(\.element)
+        var out: [MarPair] = []
+        out.reserveCapacity(sorted.count)
+        for pair in sorted {
+            if let last = out.last, last.key.compareMar(pair.key) == 0 {
+                out[out.count - 1] = pair
+            } else {
+                out.append(pair)
+            }
+        }
+        return .dict(out)
+    }
+
     // MARK: - Builtins
 
     // One entry per Dict and Set builtin: a table, so length and branch count
@@ -217,14 +255,15 @@ enum MarDict {
             guard case .list(let xs) = args[0] else {
                 throw MarRuntimeError.typeMismatch(expected: "List", got: Eval.typeOf(args[0]))
             }
-            var d: MarValue = .dict([])
+            var pairs: [MarPair] = []
+            pairs.reserveCapacity(xs.count)
             for e in xs {
                 guard case .tuple(let m) = e, m.count == 2 else {
                     throw MarRuntimeError.message("Dict.fromList: element not a 2-tuple")
                 }
-                d = MarDict.insert(d, m[0], m[1])
+                pairs.append(MarPair(key: m[0], value: m[1]))
             }
-            return d
+            return MarDict.dictFromPairs(pairs)
         }
         env.define("dictFromList",  .fn(dictFromList))
         env.define("Dict.fromList", .fn(dictFromList))
@@ -437,9 +476,7 @@ enum MarDict {
             guard case .list(let xs) = args[0] else {
                 throw MarRuntimeError.typeMismatch(expected: "List", got: Eval.typeOf(args[0]))
             }
-            var s: MarValue = .set([])
-            for it in xs { s = MarDict.setInsert(s, it) }
-            return s
+            return MarDict.setFromItems(xs)
         }
         env.define("setFromList",  .fn(setFromList))
         env.define("Set.fromList", .fn(setFromList))

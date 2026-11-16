@@ -25,7 +25,14 @@ import (
 // answer.
 func TestEveryFunctionImplementedTwiceIsAccountedFor(t *testing.T) {
 	// Two numbers, because one is not enough. Measured: 83 names carry a second
-	// implementation, and 187 implementations exist across them.
+	// implementation, and 189 implementations exist across them.
+	//
+	// `dictFromPairs` and `setFromItems` are trios. The phone rebuilds a
+	// Dict or a Set with them where the wire shape converts its keys (a tuple
+	// key arrives as a JSON array), and its Dict.fromList and Set.fromList
+	// build with them, so the conformance corpus, duplicate keys included,
+	// compares all three. The wire round trip (parityfixture.WireCases)
+	// compares them on the way in.
 	//
 	// The newest six are a Decimal's two bounds (ADR 0039), written once per
 	// runtime: errDecimalOverflow, errDecimalPlaces and errScaleArgument (the
@@ -76,7 +83,7 @@ func TestEveryFunctionImplementedTwiceIsAccountedFor(t *testing.T) {
 	// reasoned -- the sabotage was supposed to fail and did not.
 	const (
 		pairs           = 83
-		implementations = 187
+		implementations = 189
 	)
 
 	js := namesIn(t, []string{"../jsserve/runtime.js"},

@@ -109,6 +109,130 @@ if args.count >= 5, args[1] == "--auth-expiry" {
     exit(0)
 }
 
+// Sixth mode: the REQUEST a Service.call sends, built by the phone's own
+// buildServiceRequest from a value in a program. The server's guard is what
+// has to accept these bytes, so the test hands them to the server.
+if args.count >= 6, args[1] == "--service-request" {
+    MainActor.assumeIsolated {
+        do {
+            let data = try Data(contentsOf: URL(fileURLWithPath: args[2]))
+            let program = try MarJSONCodec.decodeProgram(data)
+            let env = MarBuiltins.makeEnv()
+            for module in program.modules {
+                try MarLoader.load(module: module, into: env)
+            }
+            guard let v = env.lookup(args[5]) else {
+                FileHandle.standardError.write("value not found: \(args[5])\n".data(using: .utf8)!)
+                exit(1)
+            }
+            let built = MarBuiltins.buildServiceRequest(verb: args[3], pattern: args[4], req: v)
+            print(built.url)
+            print(built.body ?? "")
+        } catch {
+            FileHandle.standardError.write("error: \(error)\n".data(using: .utf8)!)
+            exit(1)
+        }
+    }
+    exit(0)
+}
+
+// Seventh mode: the wire round trip (parityfixture.WireCases). One process for
+// the whole table, because it is a few hundred probes:
+//
+//   values     each named value, rendered by wireDump
+//   requests   the URL and body the phone's Service.call writes for a
+//              contract and a request value: buildServiceRequest, the function
+//              both Service.call builtins call before handing the bytes to
+//              URLSession unchanged
+//   responses  a body the SERVER wrote, through makeServiceResult with the
+//              shape the call site's Service.call carries, rendered by wireDump
+//
+// wireDump has to render exactly what wireparity.Dump renders in Go and `dump`
+// renders in the browser test: it is the one thing the three sides share.
+func wireDump(_ v: MarValue) -> String {
+    func all(_ xs: [MarValue]) -> String { "[" + xs.map(wireDump).joined(separator: ",") + "]" }
+    switch v {
+    case .int(let n): return "I\(n)"
+    case .decimal(let d): return "D" + DecMath.decString(d)
+    case .string(let s): return "S[" + s.unicodeScalars.map { String($0.value) }.joined(separator: ",") + "]"
+    case .bool(let b): return b ? "B1" : "B0"
+    case .unit: return "U"
+    case .char(let c): return "Ch\(c.value)"
+    case .time(let ms): return "Tm\(ms)"
+    case .angle(let d): return "A\(d)"
+    case .duration(let s): return "Du\(Int((s * 1000).rounded()))"
+    case .list(let xs): return "L" + all(xs)
+    case .tuple(let xs): return "Tu" + all(xs)
+    case .record(let fs, _):
+        return "R{" + fs.keys.sorted().map { "\($0)=" + wireDump(fs[$0]!) }.joined(separator: ",") + "}"
+    case .ctor(let tag, let cargs): return "K" + tag + all(cargs)
+    case .dict(let pairs):
+        return "Di[" + pairs.map { "(" + wireDump($0.key) + ">" + wireDump($0.value) + ")" }.joined(separator: ",") + "]"
+    case .set(let items): return "Se" + all(items)
+    default: return "?"
+    }
+}
+
+if args.count >= 4, args[1] == "--wire-batch" {
+    MainActor.assumeIsolated {
+        do {
+            let program = try MarJSONCodec.decodeProgram(try Data(contentsOf: URL(fileURLWithPath: args[2])))
+            let env = MarBuiltins.makeEnv()
+            for module in program.modules { try MarLoader.load(module: module, into: env) }
+            let plan = try JSONSerialization.jsonObject(with: try Data(contentsOf: URL(fileURLWithPath: args[3]))) as! [String: Any]
+            func lookup(_ n: String) throws -> MarValue {
+                guard let v = env.lookup("Main." + n) else {
+                    throw MarRuntimeError.message("value not found: Main.\(n)")
+                }
+                return v
+            }
+            var values: [String: String] = [:]
+            for n in plan["values"] as? [String] ?? [] {
+                do { values[n] = wireDump(try lookup(n)) } catch { values[n] = "THREW \(error)" }
+            }
+            var requests: [String: Any] = [:]
+            for r in plan["requests"] as? [[String: Any]] ?? [] {
+                let name = r["name"] as! String
+                do {
+                    guard case .ctor("__Service", let sargs) = try lookup(r["service"] as! String),
+                          sargs.count == 2, case .string(let verb) = sargs[0], case .string(let pattern) = sargs[1] else {
+                        throw MarRuntimeError.message("not a service contract")
+                    }
+                    // The value Service.call is handed: the case's value,
+                    // whole or as the `v` field of the request record.
+                    let v = try lookup(r["value"] as! String)
+                    let req: MarValue = (r["whole"] as? Bool ?? false) ? v : .record(fields: ["v": v], order: ["v"])
+                    let built = MarBuiltins.buildServiceRequest(verb: verb, pattern: pattern, req: req)
+                    requests[name] = ["url": built.url, "method": verb, "body": built.body as Any? ?? NSNull()]
+                } catch {
+                    requests[name] = ["threw": "\(error)"]
+                }
+            }
+            var responses: [String: String] = [:]
+            for r in plan["responses"] as? [[String: Any]] ?? [] {
+                let name = r["name"] as! String
+                let shape = MarWireShape.decode(r["shape"])
+                if shape == nil {
+                    responses[name] = "NO SHAPE"
+                    continue
+                }
+                let response = HTTPURLResponse(url: URL(string: "https://example.invalid/w")!,
+                                               statusCode: 200, httpVersion: nil, headerFields: nil)
+                let result = MarHTTP.makeServiceResult(data: Data((r["body"] as! String).utf8),
+                                                       response: response, error: nil, responseShape: shape)
+                responses[name] = wireDump(result)
+            }
+            let out = try JSONSerialization.data(withJSONObject: ["values": values, "requests": requests, "responses": responses],
+                                                 options: [.sortedKeys])
+            FileHandle.standardOutput.write(out)
+            exit(0)
+        } catch {
+            FileHandle.standardError.write(Data("error: \(error)\n".utf8))
+            exit(1)
+        }
+    }
+}
+
 guard args.count >= 3 else {
     FileHandle.standardError.write("usage: driver <program.json> <Module.value>\n".data(using: .utf8)!)
     exit(2)

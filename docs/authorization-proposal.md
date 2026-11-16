@@ -592,11 +592,15 @@ Custom-type constructors round-trip through JSON using a marker:
 | `Ok x`        | the same marker          | `{"__args": [1], "__ctor": "Ok"}` |
 | `Err msg`     | the same marker          | `{"__args": ["boom"], "__ctor": "Err"}` |
 
-Every constructor uses the marker on the server, `Maybe` and `Result`
-included. The Go encoder (`encodeValue` in `internal/runtime/json.go`, which
-Service responses and the `/_auth/verify-code` and `/_auth/whoami` answers
-both go through) and both client decoders (JS `jsToMar`, iOS
-`MarJSONCodec`) follow this convention. Both client ENCODERS (JS `marToJs`,
-iOS `marToJSON`) still write `Ok x` as `x` and `Err e` as `{"error": e}`,
-which the server does not read back as a `Result`; that drift is open
-(docs/compiler-runtime-audit-2026-08-21.md).
+Every constructor uses the marker on all three runtimes, `Maybe` and
+`Result` included: the Go encoder (`encodeValue` in
+`internal/runtime/json.go`, which Service responses and the
+`/_auth/verify-code` and `/_auth/whoami` answers go through), both client
+encoders (JS `marToJs`, iOS `MarJSONCodec.marToJSON`, which Service requests
+and `JSON.encode` go through) and the three decoders. The corpus's JSON
+block pins the tagged form on all three.
+
+`{"error": "code"}` is a different thing: the body the server answers a
+failed request with (non-2xx). The clients read it with a plain JSON parse
+into `Service.Error`, never through the value decoder, so it cannot be
+mistaken for an encoded `Err`.

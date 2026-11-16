@@ -486,7 +486,42 @@ jsonCases =
                              Ok r -> String.fromInt r.a
                              Err _ -> "err"
                           )
+        , "encodeOk=" ++ q (JSON.encode okOne)
+        , "encodeErr=" ++ q (JSON.encode errBad)
+        , "encodeJustOk=" ++ q (JSON.encode (Just okOne))
+        , "roundTripOk=" ++ showNested (decodeNested (JSON.encode okOne))
+        , "roundTripErr=" ++ showNested (decodeNested (JSON.encode errBad))
         ]
+
+
+-- A Result is a constructor like any other on the wire: tagged, so every
+-- runtime reads its own encoding and the others' back as the same Result.
+okOne : Result String Int
+okOne =
+    Ok 1
+
+
+errBad : Result String Int
+errBad =
+    Err "bad"
+
+
+decodeNested : String -> Result String (Result String Int)
+decodeNested s =
+    JSON.decode s
+
+
+showNested : Result String (Result String Int) -> String
+showNested d =
+    case d of
+        Ok (Ok n) ->
+            "Ok " ++ String.fromInt n
+
+        Ok (Err e) ->
+            "Err " ++ e
+
+        Err _ ->
+            "err"
 
 
 mathCases : String
@@ -609,6 +644,7 @@ orderingCases =
         , "maxOfTuples=" ++ String.fromInt (Tuple.first (max ( 1, 9 ) ( 2, 0 )))
         , "sortStability=" ++ ss (List.map Tuple.second (List.sortBy Tuple.first [ ( 1, "a" ), ( 0, "b" ), ( 1, "c" ), ( 0, "d" ) ]))
         , "dictTupleKeys=" ++ String.fromInt (Dict.size (Dict.fromList [ ( ( 1, 2 ), 1 ), ( ( 3, 4 ), 2 ), ( ( 1, 2 ), 3 ) ]))
+        , "dictDupKeepsLast=" ++ mi (Dict.get ( 1, 2 ) (Dict.fromList [ ( ( 1, 2 ), 1 ), ( ( 3, 4 ), 2 ), ( ( 1, 2 ), 3 ) ]))
         , "dictTupleOrder=" ++ ss (List.map (\k -> String.fromInt (Tuple.first k) ++ "/" ++ String.fromInt (Tuple.second k)) (Dict.keys (Dict.fromList [ ( ( 2, 1 ), 0 ), ( ( 1, 9 ), 0 ), ( ( 1, 2 ), 0 ) ])))
         , "setTupleKeys=" ++ String.fromInt (Set.size (Set.fromList [ ( 1, 2 ), ( 3, 4 ), ( 1, 2 ) ]))
         , "setListItems=" ++ String.join "|" (List.map is (Set.toList (Set.fromList [ [ 2 ], [ 1 ], [ 2 ] ])))
@@ -1482,6 +1518,7 @@ Ordering.minList=1,5
 Ordering.maxOfTuples=2
 Ordering.sortStability=b,d,a,c
 Ordering.dictTupleKeys=2
+Ordering.dictDupKeepsLast=3
 Ordering.dictTupleOrder=1/2,1/9,2/1
 Ordering.setTupleKeys=2
 Ordering.setListItems=1|2
@@ -1726,6 +1763,11 @@ JSON.encodeIgnoresFieldOrder=T
 JSON.decodeInt=7
 JSON.decodeBad=err
 JSON.roundTrip=5
+JSON.encodeOk={'__args':[1],'__ctor':'Ok'}
+JSON.encodeErr={'__args':['bad'],'__ctor':'Err'}
+JSON.encodeJustOk={'__args':[{'__args':[1],'__ctor':'Ok'}],'__ctor':'Just'}
+JSON.roundTripOk=Ok 1
+JSON.roundTripErr=Err bad
 
 Math.degEqDeci=T
 Math.degWraps=T

@@ -859,15 +859,15 @@
         return out;
       }
       case 'C':
-        // Every ctor, Nothing and Just included, uses the
-        // `__ctor` marker so generic decoders (jsToMar here, Go's
-        // jsonToMar, iOS MarJSONCodec) can rebuild a VCtor without
-        // needing type info at runtime. Transparent encodings
-        // (Nothing → null, Just x → x) would collide with VUnit's
-        // null and break generic decoders for record payloads, so
-        // we tag uniformly. The Ok/Err shortcuts below stay
-        // because the server-side decode for those tags is
-        // type-directed already.
+        // Every ctor, Maybe and Result included, uses the `__ctor`
+        // marker so generic decoders (jsToMar here, Go's convertJSON,
+        // iOS MarJSONCodec) can rebuild a VCtor without needing type
+        // info at runtime. Transparent encodings (Nothing → null,
+        // Just x → x, Ok x → x, Err e → {error: e}) collide: with
+        // VUnit's null, with `Just` of the inner value, with a record
+        // that has an `error` field. The server's decode is untyped and
+        // its request guard checks the tag, so the tag is what a Service
+        // request has to carry.
         //
         // `__args` is written before `__ctor` because every object this
         // encoder emits has its keys in sorted order: see the record case.
@@ -875,8 +875,6 @@
         // be made deterministic with `.sortedKeys`, so sorted is the one order
         // all three runtimes can agree on. Decoders look keys up, so none of
         // them notices.
-        if (v.tag === 'Ok') return marToJs(v.args[0]);
-        if (v.tag === 'Err') return { error: marToJs(v.args[0]) };
         if (!v.args || v.args.length === 0) return { __ctor: v.tag };
         return { __args: v.args.map(marToJs), __ctor: v.tag };
       case 'D': return v.seconds;
@@ -1809,33 +1807,59 @@
   // 3 for a Decimal field is legal and has to arrive as a Decimal, and a
   // declared optional field nobody sent still has to BE there, because the
   // code reads it whether or not it was written.
-  function coerceWire(v, s) {
+  // seen remembers each named type on the way down, so a Ref (a recursive
+  // type re-entering itself) coerces like the type it names, as checkWireIn
+  // does: in `Link ( 1, 2 ) (Link ( 3, 4 ) End)` both pairs are tuples.
+  // coerceWireIn in internal/runtime/wire.go is the same function.
+  function coerceWire(v, s, seen) {
+    seen = seen || {};
     switch (s.kind) {
       case 'Decimal':
         return v.k === 'I' ? VDec(BigInt(v.n), 0) : v;
+      case 'Ref': {
+        const target = seen[s.name];
+        return target ? coerceWire(v, target, seen) : v;
+      }
       case 'Tuple': {
         // The decoder handed back a list; the code was checked against a
         // tuple. Accepting the array means producing the tuple.
         const members = s.members || [];
         if ((v.k !== 'T' && v.k !== 'L') || v.xs.length !== members.length) return v;
-        return VTuple(v.xs.map((x, i) => coerceWire(x, members[i])));
+        return VTuple(v.xs.map((x, i) => coerceWire(x, members[i], seen)));
       }
       case 'Ctor': {
+        if (s.name) seen = Object.assign({}, seen, { [s.name]: s });
         if (v.k !== 'C') return v;
         const i = (s.tags || []).indexOf(v.tag);
         const want = (s.args && s.args[i]) || [];
         if (i < 0 || v.args.length !== want.length) return v;
-        return VCtor(v.tag, v.args.map((a, j) => coerceWire(a, want[j])));
+        return VCtor(v.tag, v.args.map((a, j) => coerceWire(a, want[j], seen)));
       }
       case 'Maybe':
         if (wireAbsent(v)) return VCtor('Nothing', []);
         if (v.k === 'C' && v.tag === 'Just' && v.args.length === 1 && s.elem) {
-          return VCtor('Just', [coerceWire(v.args[0], s.elem)]);
+          return VCtor('Just', [coerceWire(v.args[0], s.elem, seen)]);
         }
         return v;
       case 'List':
         if (v.k !== 'L' || !s.elem) return v;
-        return VList(v.xs.map((x) => coerceWire(x, s.elem)));
+        return VList(v.xs.map((x) => coerceWire(x, s.elem, seen)));
+      // A Set or a Dict holds values of its own types, so they are coerced
+      // too: a tuple key arrives as the List the decoder made, and a
+      // container's operations compare its items by kind. The items change
+      // kind, and their order is the comparison's, so the container is built
+      // again, by the same rule Set.fromList and Dict.fromList use.
+      case 'Set':
+        if (v.k !== 'Se' || !s.elem) return v;
+        return setFromItems(v.items.map((x) => coerceWire(x, s.elem, seen)));
+      case 'Dict': {
+        const members = s.members || [];
+        if (v.k !== 'M' || members.length !== 2) return v;
+        return dictFromPairs(v.pairs.map((p) => ({
+          key: coerceWire(p.key, members[0], seen),
+          value: coerceWire(p.value, members[1], seen),
+        })));
+      }
       case 'Record': {
         if (v.k !== 'R') return v;
         const fields = Object.assign({}, v.fields);
@@ -1848,7 +1872,7 @@
             }
             continue;
           }
-          fields[f.name] = coerceWire(fields[f.name], f.shape);
+          fields[f.name] = coerceWire(fields[f.name], f.shape, seen);
         }
         return VRecord(fields, order);
       }
@@ -6953,9 +6977,8 @@
 
     // JSON.encode : α -> String, uses the IIFE-level marToJs so
     // every consumer (jsonEncode, Service.call body, authPost
-    // body) shares the same encoder. Mar's Maybe/Result get
-    // shorthand encodings; other ctors round-trip via the
-    // {__ctor, __args} marker convention.
+    // body) shares the same encoder. Every ctor, Maybe and Result
+    // included, round-trips via the {__ctor, __args} marker.
     def('jsonEncode', native(1, ([v]) => VString(JSON.stringify(marToJs(v)))));
     def('JSON.encode', envLookup(env, 'jsonEncode'));
 
@@ -15587,7 +15610,10 @@
   // installs. This borrows both — a stubbed fetch and a collector in place of
   // the page's dispatch — so a response body can be pushed through the real
   // path and the resulting Msg read back.
-  global.__marTestRunCmd = function (program, name) {
+  // `raw` hands back the dispatched Msg itself rather than its display: the
+  // wire round trip (internal/jsserve/wire_roundtrip_test.go) has to see a
+  // value's KIND, and a display string cannot tell a Duration from an Int.
+  global.__marTestRunCmd = function (program, name, raw) {
     const cmd = marEvalRaw(program, name);
     if (!cmd || cmd.k !== 'E' || typeof cmd.run !== 'function') {
       throw new Error(name + ' is not a Cmd');
@@ -15598,7 +15624,7 @@
         clearTimeout(timer);
         currentDispatch = null;
         try {
-          resolve(displayValue(msg, 0));
+          resolve(raw ? msg : displayValue(msg, 0));
         } catch (e) {
           reject(e);
         }

@@ -273,9 +273,6 @@ enum MarJSONCodec {
         return .string(String(describing: any))
     }
 
-    /// MarValue → Foundation JSON value. Mirrors `marToJs` in
-    /// runtime.js: Maybe.Just/Nothing/Result.Ok/Err unwrap; other
-    /// ctors serialize as `{tag, args}`.
     /// The first value inside this one that has no JSON form, or nil.
     ///
     /// marToJSON cannot throw, so it DEGRADED: a division, a function, a View
@@ -330,6 +327,9 @@ enum MarJSONCodec {
             + "  Encode the data it was built FROM, and build it on the side that uses it"
     }
 
+    /// MarValue → Foundation JSON value. Mirrors `marToJs` in runtime.js
+    /// and `appendValue` in internal/runtime/json.go: every constructor,
+    /// Maybe and Result included, as `{"__args": [...], "__ctor": "Tag"}`.
     static func marToJSON(_ v: MarValue) -> Any {
         switch v {
         case .int(let n): return n
@@ -358,23 +358,17 @@ enum MarJSONCodec {
             }
             return dict
         case .ctor(let tag, let args):
-            // Every ctor, Nothing and Just included, uses the
-            // {"__ctor": ...} marker so generic decoders can
-            // round-trip them without collisions (transparent
-            // Nothing → null would clash with .unit\'s null
-            // encoding; transparent Just x → x would break
-            // generic decoders on record payloads). Ok/Err keep
-            // the convenience shape because the server-side
-            // decode for those tags is type-directed already.
-            switch tag {
-            case "Ok":  return args.first.map(marToJSON) ?? NSNull()
-            case "Err": return ["error": args.first.map(marToJSON) ?? NSNull()]
-            default:
-                if args.isEmpty {
-                    return ["__ctor": tag] as [String: Any]
-                }
-                return ["__ctor": tag, "__args": args.map(marToJSON)] as [String: Any]
+            // Every ctor, Maybe and Result included, uses the
+            // {"__ctor": ...} marker, as the Go and JS encoders do, so
+            // the generic decoders on all three runtimes rebuild it
+            // without type information. A transparent form collides:
+            // Nothing → null with .unit, Just x → x with x, Ok x → x
+            // and Err e → {"error": e} with x and with a record that
+            // has an `error` field.
+            if args.isEmpty {
+                return ["__ctor": tag] as [String: Any]
             }
+            return ["__ctor": tag, "__args": args.map(marToJSON)] as [String: Any]
         case .char(let scalar):
             // `{"__char": "x"}`, wraps the scalar in a 1-char string
             // so non-Mar JSON consumers can still read it as text.
