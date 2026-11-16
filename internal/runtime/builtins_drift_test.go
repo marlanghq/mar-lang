@@ -60,7 +60,8 @@ func TestRuntimeQualifiedAliasesMatchTypecheck(t *testing.T) {
 	sort.Strings(missing)
 	t.Fatalf("the runtime cannot resolve %d qualified name(s) that typecheck advertises:\n  %s\n\n"+
 		"A program using one loads and then dies with `unbound qualified name`.\n"+
-		"Fix: add a function to qualifiedAliasMapping() in internal/runtime/builtins.go,\n"+
+		"Fix: add the alias to internal/stdnames/aliases.go and its function to\n"+
+		"builtins() in internal/runtime/builtins.go,\n"+
 		"or, for a constructor, to the table internal/ctorgen generates from.",
 		len(missing), strings.Join(missing, "\n  "))
 }
