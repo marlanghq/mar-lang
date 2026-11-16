@@ -27,11 +27,14 @@ type WireShape struct {
 	Tags    []string      // Ctor: the constructor names the type declares
 	Args    [][]WireShape // Ctor: the argument shapes of each tag, same order as Tags
 
-	// Name is the canonical type name a Ctor shape came from, and the one a
-	// Ref points back at. A shape is a TREE and a recursive type is not, so
-	// the point where a type re-enters itself used to become WireAny —
-	// checking nothing from there down. Naming the cycle instead lets a
-	// checker follow it against the DATA, which is finite.
+	// Name is the instantiation a Ctor shape came from (the canonical type
+	// name with its arguments, `Main.Box Int`; just the name for a type
+	// without parameters), and the one a Ref points back at. A shape is a
+	// TREE and a recursive type is not, so the point where a type re-enters
+	// itself names the cycle, and a checker follows it against the DATA,
+	// which is finite. The arguments are part of the name because a union
+	// inside another instantiation of itself (a Result of a Result) is a
+	// different type, not a cycle.
 	Name string
 }
 
@@ -68,12 +71,10 @@ const (
 	// Elem carries the element shape for Set; for Dict, Members carries the
 	// key shape then the value shape.
 	// WireRef is the point where a type re-enters itself: `Name` is the
-	// type already being checked, higher up. Measured before it existed, on
-	// `type Comment = Comment String (List Comment)` in a request: a wrong
-	// type at the FIRST level answered 422 naming the position, and the same
-	// mistake one level DEEPER was waved through — reaching the handler, and
-	// stopping only at the write guard, as a 500. Safe, and blamed on the
-	// server for a malformed request.
+	// instantiation already being checked, higher up, spelled as that
+	// Ctor's Name. In `type Comment = Comment String (List Comment)`, a
+	// wrong value one level DEEPER is a 422 naming the position, exactly
+	// like the same mistake at the first level.
 	WireRef WireKind = "Ref"
 
 	WireSet   WireKind = "Set"
@@ -96,15 +97,13 @@ const (
 	// it is the last place that should have been unchecked.
 	WireCtor WireKind = "Ctor"
 
-	// WireAny is the escape hatch. It has to exist — a type variable has
-	// no shape to assert, and neither does a function — but it had grown
-	// to cover things that DO have one: tuples, unions with a payload,
-	// and anything nested past an arbitrary depth. Each of those was a
-	// place the guard announced itself and then checked nothing.
-	//
-	// What is left behind it is what genuinely cannot be checked: an
-	// unresolved type variable, a function, and a RECURSIVE type at the
-	// point where it closes its own cycle.
+	// WireAny is the escape hatch, for what genuinely cannot be checked:
+	// an unresolved type variable, a function, and a union whose recursion
+	// changes its own arguments, which no finite shape describes
+	// (maxSameUnion in internal/typecheck/wireshape.go). A recursive type
+	// that closes its cycle is a WireRef. Everything with a shape has a
+	// kind of its own, because a position behind WireAny is one the guard
+	// waves through.
 	WireAny WireKind = "Any"
 )
 

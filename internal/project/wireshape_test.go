@@ -425,3 +425,62 @@ post = Service.declare POST "/api/post"
 		t.Fatal("the cycle is followed, not unrolled once")
 	}
 }
+
+// A union inside another instantiation of ITSELF is not a cycle: the inner
+// Result of `Result String (Result String Int)` is checked against its own
+// arms, so `Ok (Ok 5)` passes and `Ok (Ok "x")` does not. Checked against
+// the outer's arms instead, `5` would have to be an `Ok` or an `Err`; and in
+// `Result Decimal (Result Int String)`, coercion would turn the Int of
+// `Ok (Err 3)` into the outer's Decimal.
+func TestAUnionInsideItselfIsNotACycle(t *testing.T) {
+	dir := t.TempDir()
+	entry := filepath.Join(dir, "Main.mar")
+	src := `module Main exposing (nested, args)
+
+
+nested : Service { v : Result String (Result String Int) } String
+nested = Service.declare POST "/api/nested"
+
+
+args : Service { v : Result Decimal (Result Int String) } String
+args = Service.declare POST "/api/args"
+`
+	if err := os.WriteFile(entry, []byte(src), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	rEnv, _, _, err := LoadIntoEnvWithModulesAndHook(entry, nil)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	shapeOf := func(name string) runtime.WireShape {
+		v, _ := rEnv.Lookup("Main." + name)
+		return *v.(runtime.VService).InputShape
+	}
+	ok := func(v runtime.Value) runtime.Value { return runtime.VCtor{Tag: "Ok", Args: []runtime.Value{v}} }
+	errv := func(v runtime.Value) runtime.Value { return runtime.VCtor{Tag: "Err", Args: []runtime.Value{v}} }
+	wrap := func(v runtime.Value) runtime.VRecord {
+		return runtime.VRecord{Fields: map[string]runtime.Value{"v": v}, Order: []string{"v"}}
+	}
+
+	nested := shapeOf("nested")
+	if inner := nested.Fields[0].Shape.Args[0][0]; inner.Kind != runtime.WireCtor {
+		t.Fatalf("the inner Result is a union of its own, not a cycle: got %+v", inner)
+	}
+	if err := runtime.CheckWire(wrap(ok(ok(runtime.VInt{V: 5}))), nested); err != nil {
+		t.Fatalf("Ok (Ok 5) is a value of the type: %v", err)
+	}
+	if err := runtime.CheckWire(wrap(ok(ok(runtime.VString{V: "x"}))), nested); err == nil {
+		t.Fatal("Ok (Ok \"x\") is not: the inner Ok carries an Int")
+	}
+
+	args := shapeOf("args")
+	in := wrap(ok(errv(runtime.VInt{V: 3})))
+	if err := runtime.CheckWire(in, args); err != nil {
+		t.Fatalf("Ok (Err 3) is a value of the type: %v", err)
+	}
+	got := runtime.CoerceWire(in, args).(runtime.VRecord).Fields["v"]
+	inner := got.(runtime.VCtor).Args[0].(runtime.VCtor).Args[0]
+	if _, isInt := inner.(runtime.VInt); !isInt {
+		t.Fatalf("the inner Err carries an Int, and arrived as %T", inner)
+	}
+}

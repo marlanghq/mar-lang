@@ -91,24 +91,47 @@ func StripForall(t Type) Type {
 
 // WireShapeOf walks a checked type into a shape.
 //
-// It used to stop at six levels, and the comment here explained that anything
-// deeper was "not something to be asserting about anyway". That was a
-// rationalisation of a mechanism: the cap existed to stop a RECURSIVE type
-// expanding forever, and it paid for that by giving up on ordinary types. A
-// plain record seven levels deep sailed through the guard and hit
-// `+: unsupported types` from an anonymous request.
+// It follows a named type until it closes its own cycle, and names the cycle
+// there (a Ref) rather than expanding forever. Every level above it is
+// checked, however deep. The depth ceiling is a BACKSTOP, high enough that no
+// honest type reaches it, because a compiler that hangs is worse than one that
+// under-checks.
 //
-// So the rule is now the one the cap was standing in for: follow a named type
-// until it closes its own cycle, and give up only there. `path` carries the
-// canonical names currently being expanded. The depth ceiling stays as a
-// BACKSTOP — high enough that no honest type reaches it — because a
-// self-recursive type alias is expanded by the checker before this sees it,
-// and a compiler that hangs is worse than one that under-checks.
+// A cycle is the same INSTANTIATION entered again, not the same name: the
+// inner Result of `Result String (Result String Int)` is a type of its own,
+// with its own arms. So the key is the type with its arguments (shapeKey),
+// and a Ref, which the runtimes resolve by that key, names exactly the
+// instantiation it stands for.
 func WireShapeOf(t Type, tags CtorLookup) ast.WireShape {
-	return wireShapeOf(t, 0, map[string]bool{}, tags)
+	return wireShapeOf(t, 0, &shapePath{open: map[string]bool{}, perName: map[string]int{}}, tags)
 }
 
-func wireShapeOf(t Type, depth int, path map[string]bool, tags CtorLookup) ast.WireShape {
+// shapePath is the unions currently being expanded, outermost first.
+type shapePath struct {
+	open    map[string]bool // by shapeKey: entering one again is a cycle
+	perName map[string]int  // instantiations of each union still open
+}
+
+// maxSameUnion bounds how many instantiations of ONE union may be open at
+// once. A union nested in itself under other arguments is an ordinary type
+// (a Result of a Result), and is expanded; but a non-regular type, whose
+// recursion changes its own arguments (`type Nest a = Nil | Cons a (Nest (List
+// a))`), never re-enters an instantiation, and would grow a new one per level
+// until the depth backstop, once per recursive argument: exponential in the
+// branching. No finite shape describes such a type, so past the bound the
+// shape says so (WireAny), and the checker refuses it in a Service contract
+// or a pinned JSON.decode as a type with no wire form. Eight is far past any
+// honest nesting of one union in itself.
+const maxSameUnion = 8
+
+// shapeKey names an instantiation: the canonical name and its arguments, as
+// TCon.String prints them (module-qualified, fixed arity, so two different
+// instantiations never print alike).
+func shapeKey(n TCon) string {
+	return n.String()
+}
+
+func wireShapeOf(t Type, depth int, path *shapePath, tags CtorLookup) ast.WireShape {
 	if depth > 64 {
 		return ast.WireShape{Kind: ast.WireAny}
 	}
@@ -196,16 +219,21 @@ func wireShapeOf(t Type, depth int, path map[string]bool, tags CtorLookup) ast.W
 			if tags == nil {
 				break
 			}
-			// Already inside this type: name the cycle instead of giving
-			// up. The checker follows it against the data, which ends.
-			if path[n.Name] {
-				return ast.WireShape{Kind: ast.WireRef, Name: n.Name}
+			// Already inside this instantiation: name the cycle instead of
+			// giving up. The checker follows it against the data, which ends.
+			key := shapeKey(n)
+			if path.open[key] {
+				return ast.WireShape{Kind: ast.WireRef, Name: key}
+			}
+			if path.perName[n.Name] >= maxSameUnion {
+				break
 			}
 			arms, ok := tags(n.Name, n.Args)
 			if !ok {
 				break
 			}
-			path[n.Name] = true
+			path.open[key] = true
+			path.perName[n.Name]++
 			names := make([]string, 0, len(arms))
 			args := make([][]ast.WireShape, 0, len(arms))
 			for _, arm := range arms {
@@ -216,13 +244,14 @@ func wireShapeOf(t Type, depth int, path map[string]bool, tags CtorLookup) ast.W
 				}
 				args = append(args, shapes)
 			}
-			delete(path, n.Name)
-			return ast.WireShape{Kind: ast.WireCtor, Tags: names, Args: args, Name: n.Name}
+			delete(path.open, key)
+			path.perName[n.Name]--
+			return ast.WireShape{Kind: ast.WireCtor, Tags: names, Args: args, Name: key}
 		}
 	}
 	// What is left is what genuinely has no shape to assert: a type
-	// variable, a function, a parameterised union, and a named type at the
-	// point where it closes its own cycle.
+	// variable, a function, a union the lookup does not know, and a union
+	// nested in itself past maxSameUnion.
 	return ast.WireShape{Kind: ast.WireAny}
 }
 

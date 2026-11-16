@@ -63,6 +63,19 @@ l = Service.declare GET "/api/l"
 r : Service Shape Int
 r = Service.declare POST "/api/r"
 `},
+		// A non-regular union changes its own arguments as it recurses, so
+		// no finite shape describes it (wireshape.go, maxSameUnion).
+		{"a non-regular union", `module M exposing (..)
+
+
+type Nest a
+    = Nil
+    | Cons a (Nest (List a))
+
+
+n : Service () (Nest Int)
+n = Service.declare GET "/api/n"
+`},
 	}
 
 	for _, tc := range refused {
@@ -109,6 +122,14 @@ type Status
 
 s : Service () (List Status)
 s = Service.declare GET "/api/s"
+`},
+		// A union nested in itself under other arguments is an ordinary
+		// type, not a cycle: each instantiation gets its own shape.
+		{"a Result of a Result, eight deep", `module M exposing (..)
+
+
+r : Service () (Result String (Result String (Result String (Result String (Result String (Result String (Result String (Result String Int))))))))
+r = Service.declare GET "/api/r"
 `},
 	}
 
