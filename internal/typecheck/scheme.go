@@ -10,6 +10,13 @@ package typecheck
 func Generalize(env *TypeEnv, t Type, s *Subst) Type {
 	t = s.Apply(t)
 	tFree := s.FreeVars(t)
+	if len(tFree) == 0 {
+		// Nothing to quantify, whatever the environment holds: the common
+		// case (`n = model.count + 1`), and the one where resolving every
+		// variable in scope was pure cost. Same result as below: no
+		// quantified variables means t itself.
+		return t
+	}
 	envFree := envFreeVars(env, s)
 
 	var qVars []int

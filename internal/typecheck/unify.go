@@ -1,6 +1,9 @@
 package typecheck
 
-import "fmt"
+import (
+	"fmt"
+	"sort"
+)
 
 // UnifyError is returned by Unify when two types cannot be made equal.
 type UnifyError struct {
@@ -47,8 +50,12 @@ func (e *UnifyError) Error() string {
 // Returns an error if the types are incompatible (occurs check or structural
 // mismatch).
 func Unify(a, b Type, s *Subst) error {
-	a = s.Apply(a)
-	b = s.Apply(b)
+	// Head only. Each recursive call below resolves its own head, so
+	// applying the whole substitution to both sides here would deep-copy
+	// the two types once per level of nesting. Errors still carry fully
+	// applied types: see mismatch.
+	a = s.resolve(a)
+	b = s.resolve(b)
 
 	// Var on either side: bind (with occurs check)
 	if va, ok := a.(TVar); ok {
@@ -63,13 +70,13 @@ func Unify(a, b Type, s *Subst) error {
 	case TCon:
 		bv, ok := b.(TCon)
 		if !ok {
-			return &UnifyError{A: a, B: b}
+			return mismatch(a, b, s)
 		}
 		if av.Name != bv.Name {
-			return &UnifyError{A: a, B: b}
+			return mismatch(a, b, s)
 		}
 		if len(av.Args) != len(bv.Args) {
-			return &UnifyError{A: a, B: b}
+			return mismatch(a, b, s)
 		}
 		for i := range av.Args {
 			if err := Unify(av.Args[i], bv.Args[i], s); err != nil {
@@ -81,7 +88,7 @@ func Unify(a, b Type, s *Subst) error {
 	case TArrow:
 		bv, ok := b.(TArrow)
 		if !ok {
-			return &UnifyError{A: a, B: b}
+			return mismatch(a, b, s)
 		}
 		if err := Unify(av.From, bv.From, s); err != nil {
 			return err
@@ -92,15 +99,15 @@ func Unify(a, b Type, s *Subst) error {
 		if _, ok := b.(TUnit); ok {
 			return nil
 		}
-		return &UnifyError{A: a, B: b}
+		return mismatch(a, b, s)
 
 	case TTuple:
 		bv, ok := b.(TTuple)
 		if !ok {
-			return &UnifyError{A: a, B: b}
+			return mismatch(a, b, s)
 		}
 		if len(av.Members) != len(bv.Members) {
-			return &UnifyError{A: a, B: b}
+			return mismatch(a, b, s)
 		}
 		for i := range av.Members {
 			if err := Unify(av.Members[i], bv.Members[i], s); err != nil {
@@ -112,12 +119,19 @@ func Unify(a, b Type, s *Subst) error {
 	case TRecord:
 		bv, ok := b.(TRecord)
 		if !ok {
-			return &UnifyError{A: a, B: b}
+			return mismatch(a, b, s)
 		}
 		return unifyRecords(av, bv, s)
 	}
 
-	return &UnifyError{A: a, B: b, Reason: "unsupported type pair"}
+	return &UnifyError{A: s.Apply(a), B: s.Apply(b), Reason: "unsupported type pair"}
+}
+
+// mismatch is the plain "these two do not unify" error. Unify works on
+// head-resolved types, so the substitution is applied here, on the failure
+// path, to give the message the same fully resolved types it always had.
+func mismatch(a, b Type, s *Subst) *UnifyError {
+	return &UnifyError{A: s.Apply(a), B: s.Apply(b)}
 }
 
 func bindVar(v TVar, t Type, s *Subst) error {
@@ -125,7 +139,7 @@ func bindVar(v TVar, t Type, s *Subst) error {
 		return nil // already equal
 	}
 	if occursIn(v.ID, t, s) {
-		return &UnifyError{A: v, B: t, Reason: "occurs check"}
+		return &UnifyError{A: v, B: s.Apply(t), Reason: "occurs check"}
 	}
 
 	// Constraint enforcement: Elm-style. If v carries a Kind
@@ -152,7 +166,7 @@ func bindVar(v TVar, t Type, s *Subst) error {
 			if !ok {
 				return &UnifyError{
 					A:            v,
-					B:            t,
+					B:            s.Apply(t),
 					Reason:       conflictReason(v.Constraint, other.Constraint),
 					KindMismatch: true,
 				}
@@ -199,7 +213,7 @@ func enforceKind(v TVar, k Kind, t Type, s *Subst) *UnifyError {
 	if !satisfiesKind(k, t) {
 		return &UnifyError{
 			A:            v,
-			B:            t,
+			B:            s.Apply(t),
 			Reason:       kindMismatchReason(k, t),
 			KindMismatch: true,
 		}
@@ -366,7 +380,7 @@ func kindMismatchReason(k Kind, t Type) string {
 
 // occursIn checks whether v appears anywhere in t (after applying s).
 func occursIn(id int, t Type, s *Subst) bool {
-	t = s.Apply(t)
+	t = s.resolve(t)
 	switch v := t.(type) {
 	case TVar:
 		return v.ID == id
@@ -409,16 +423,42 @@ func unifyRecords(a, b TRecord, s *Subst) error {
 	shared := []string{}
 	aOnly := []string{}
 	bOnly := []string{}
-	for n := range a.Fields {
+	// Declaration order, not map order. What is unified first decides which
+	// mismatch gets reported and how far the two types are resolved when it
+	// is, and the leftover names become a row extension whose order is what
+	// the type prints with: ranging over the maps made all three differ
+	// from one run to the next.
+	for _, n := range fieldOrder(a) {
 		if _, ok := b.Fields[n]; ok {
 			shared = append(shared, n)
 		} else {
 			aOnly = append(aOnly, n)
 		}
 	}
-	for n := range b.Fields {
+	for _, n := range fieldOrder(b) {
 		if _, ok := a.Fields[n]; !ok {
 			bOnly = append(bOnly, n)
+		}
+	}
+
+	// A shape mismatch is decided by the field NAMES and the two tails, all
+	// known already. Its error has always shown the two records as they stood
+	// on entry, before the shared fields below taught the substitution
+	// anything, so that is when it is built; it is still only RETURNED after
+	// the shared fields, because a field that disagrees is reported first.
+	var shapeErr *UnifyError
+	switch {
+	case a.Tail == nil && b.Tail == nil:
+		if len(aOnly) > 0 || len(bOnly) > 0 {
+			shapeErr = mismatch(a, b, s)
+		}
+	case a.Tail == nil && b.Tail != nil:
+		if len(bOnly) > 0 {
+			shapeErr = mismatch(a, b, s)
+		}
+	case a.Tail != nil && b.Tail == nil:
+		if len(aOnly) > 0 {
+			shapeErr = mismatch(a, b, s)
 		}
 	}
 
@@ -427,27 +467,21 @@ func unifyRecords(a, b TRecord, s *Subst) error {
 			return err
 		}
 	}
+	if shapeErr != nil {
+		return shapeErr
+	}
 
 	switch {
 	case a.Tail == nil && b.Tail == nil:
-		// closed vs closed: must match exactly
-		if len(aOnly) > 0 || len(bOnly) > 0 {
-			return &UnifyError{A: a, B: b}
-		}
+		// closed vs closed: must match exactly (shapeErr above)
 		return nil
 
 	case a.Tail == nil && b.Tail != nil:
 		// b open, a closed: b's tail = the fields a has that b lacks (i.e. aOnly).
 		// If the open side wants fields the closed side doesn't have, bail.
-		if len(bOnly) > 0 {
-			return &UnifyError{A: a, B: b}
-		}
 		return Unify(b.Tail, makeRowExtension(aOnly, a, nil), s)
 
 	case a.Tail != nil && b.Tail == nil:
-		if len(aOnly) > 0 {
-			return &UnifyError{A: a, B: b}
-		}
 		return Unify(a.Tail, makeRowExtension(bOnly, b, nil), s)
 
 	default:
@@ -460,6 +494,45 @@ func unifyRecords(a, b TRecord, s *Subst) error {
 		// b.Tail = { aOnly fields | freshRow }    (just freshRow if no aOnly)
 		return Unify(b.Tail, extendTail(aOnly, a, freshRow), s)
 	}
+}
+
+// fieldOrder lists a record's field names in a fixed order: the order they
+// were declared in, then any name Order does not carry, sorted. Every record
+// the checker builds keeps Order in step with Fields, so the first return is
+// the one taken; the rest is for a record that does not (a literal that
+// repeats a field has a longer Order than it has fields).
+func fieldOrder(r TRecord) []string {
+	if len(r.Order) == len(r.Fields) {
+		inStep := true
+		for _, n := range r.Order {
+			if _, ok := r.Fields[n]; !ok {
+				inStep = false
+				break
+			}
+		}
+		if inStep {
+			return r.Order
+		}
+	}
+	names := make([]string, 0, len(r.Fields))
+	seen := make(map[string]bool, len(r.Fields))
+	for _, n := range r.Order {
+		if _, ok := r.Fields[n]; ok && !seen[n] {
+			seen[n] = true
+			names = append(names, n)
+		}
+	}
+	if len(names) < len(r.Fields) {
+		var rest []string
+		for n := range r.Fields {
+			if !seen[n] {
+				rest = append(rest, n)
+			}
+		}
+		sort.Strings(rest)
+		names = append(names, rest...)
+	}
+	return names
 }
 
 // makeRowExtension constructs a record type with the given field names

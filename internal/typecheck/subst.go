@@ -7,9 +7,9 @@ import "mar/internal/ast"
 // Substitutions are accumulated during unification. To apply a substitution
 // to a type (replacing all bound vars with their bindings), use Apply.
 //
-// Substitutions compose: extending an existing subst with a new binding
-// applies the existing subst to the new binding's RHS first, so that
-// chains like t1 -> t2 -> Int resolve in one step.
+// A binding is stored as unification makes it: its right-hand side may
+// mention variables that are bound too, and Apply (fully) and resolve (the
+// head only) chase such chains, t1 -> t2 -> Int, transitively.
 type Subst struct {
 	bindings map[int]Type
 
@@ -19,6 +19,12 @@ type Subst struct {
 	// (shape_lint.go) to look up the type of non-literal record values
 	// like `body = input.body` or `createdAt = now`.
 	exprTypes map[ast.Expr]Type
+
+	// resolved memoises Apply per variable while ExtractExprTypes runs,
+	// and is nil at every other time. It is only sound there: nothing is
+	// bound between the first lookup and the last, so a variable's fully
+	// applied type cannot change under it.
+	resolved map[int]Type
 }
 
 // NewSubst returns an empty substitution.
@@ -51,9 +57,13 @@ func (s *Subst) ExtractExprTypes() map[ast.Expr]Type {
 		return nil
 	}
 	out := make(map[ast.Expr]Type, len(s.exprTypes))
+	// One function's `model` is one variable read at hundreds of nodes;
+	// resolving it once per NODE rebuilt the same record chain each time.
+	s.resolved = map[int]Type{}
 	for e, t := range s.exprTypes {
 		out[e] = s.Apply(t)
 	}
+	s.resolved = nil
 	return out
 }
 
@@ -65,51 +75,129 @@ func (s *Subst) Bind(id int, t Type) {
 
 // Apply walks t, replacing every variable that has a binding (transitively)
 // with its resolved type.
+//
+// The result shares every subtree the substitution does not touch with t: a
+// node is rebuilt only when something below it actually changed. Types are
+// immutable values (nothing in the checker writes into a TRecord's field map
+// or a TCon's argument slice after building it), so sharing is unobservable,
+// and it is what keeps a fully resolved type, a page's Model record, say,
+// from being deep-copied every time an expression that mentions it is typed.
 func (s *Subst) Apply(t Type) Type {
+	out, _ := s.apply(t)
+	return out
+}
+
+// resolve chases the binding chain at the HEAD of t and nothing else: the
+// result is either an unbound variable or a non-variable node whose children
+// are left exactly as they were. Unify and occursIn only ever look at the
+// head before recursing, so this is all they need.
+func (s *Subst) resolve(t Type) Type {
+	for {
+		v, ok := t.(TVar)
+		if !ok {
+			return t
+		}
+		bound, ok := s.bindings[v.ID]
+		if !ok {
+			return t
+		}
+		t = bound
+	}
+}
+
+// apply is Apply plus "did anything change", which is what lets a parent
+// return itself instead of a copy.
+func (s *Subst) apply(t Type) (Type, bool) {
 	switch v := t.(type) {
 	case TVar:
-		if bound, ok := s.bindings[v.ID]; ok {
-			return s.Apply(bound)
+		if s.resolved != nil {
+			if out, ok := s.resolved[v.ID]; ok {
+				return out, true
+			}
 		}
-		return v
+		bound, ok := s.bindings[v.ID]
+		if !ok {
+			return t, false
+		}
+		out, _ := s.apply(bound)
+		if s.resolved != nil {
+			s.resolved[v.ID] = out
+		}
+		return out, true
 	case TCon:
-		if len(v.Args) == 0 {
-			return v
-		}
-		args := make([]Type, len(v.Args))
 		for i, a := range v.Args {
-			args[i] = s.Apply(a)
+			na, changed := s.apply(a)
+			if !changed {
+				continue
+			}
+			args := make([]Type, len(v.Args))
+			copy(args, v.Args[:i])
+			args[i] = na
+			for j := i + 1; j < len(v.Args); j++ {
+				args[j], _ = s.apply(v.Args[j])
+			}
+			return TCon{Name: v.Name, Args: args}, true
 		}
-		return TCon{Name: v.Name, Args: args}
+		return t, false
 	case TArrow:
-		return TArrow{From: s.Apply(v.From), To: s.Apply(v.To)}
+		from, c1 := s.apply(v.From)
+		to, c2 := s.apply(v.To)
+		if !c1 && !c2 {
+			return t, false
+		}
+		return TArrow{From: from, To: to}, true
 	case TRecord:
-		fields := make(map[string]Type, len(v.Fields))
+		var fields map[string]Type
 		for n, f := range v.Fields {
-			fields[n] = s.Apply(f)
+			nf, changed := s.apply(f)
+			if !changed {
+				continue
+			}
+			if fields == nil {
+				fields = make(map[string]Type, len(v.Fields))
+				for k, x := range v.Fields {
+					fields[k] = x
+				}
+			}
+			fields[n] = nf
 		}
-		var tail Type
+		tail, tailChanged := v.Tail, false
 		if v.Tail != nil {
-			tail = s.Apply(v.Tail)
+			tail, tailChanged = s.apply(v.Tail)
 		}
-		return TRecord{Fields: fields, Order: v.Order, Tail: tail}
+		if fields == nil && !tailChanged {
+			return t, false
+		}
+		if fields == nil {
+			fields = v.Fields
+		}
+		return TRecord{Fields: fields, Order: v.Order, Tail: tail}, true
 	case TUnit:
-		return v
+		return t, false
 	case TTuple:
-		members := make([]Type, len(v.Members))
 		for i, m := range v.Members {
-			members[i] = s.Apply(m)
+			nm, changed := s.apply(m)
+			if !changed {
+				continue
+			}
+			members := make([]Type, len(v.Members))
+			copy(members, v.Members[:i])
+			members[i] = nm
+			for j := i + 1; j < len(v.Members); j++ {
+				members[j], _ = s.apply(v.Members[j])
+			}
+			return TTuple{Members: members}, true
 		}
-		return TTuple{Members: members}
+		return t, false
 	case TForall:
 		// Don't substitute under bound vars
 		bound := map[int]bool{}
 		for _, id := range v.Vars {
 			bound[id] = true
 		}
-		return TForall{Vars: v.Vars, Body: s.applyAvoiding(v.Body, bound)}
+		return TForall{Vars: v.Vars, Body: s.applyAvoiding(v.Body, bound)}, true
 	}
-	return t
+	return t, false
 }
 
 func (s *Subst) applyAvoiding(t Type, bound map[int]bool) Type {
