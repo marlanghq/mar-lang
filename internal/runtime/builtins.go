@@ -641,29 +641,73 @@ func builtins() map[string]Value {
 		"++": nativeFn(2, appendOp),
 
 		// Cons: a -> List a -> List a
-		"::": nativeFn(2, func(args []Value) (Value, error) {
-			head := args[0]
-			tail, ok := args[1].(VList)
-			if !ok {
-				return nil, fmt.Errorf("::: tail not a list")
-			}
-			out := make([]Value, 0, len(tail.Elements)+1)
-			out = append(out, head)
-			out = append(out, tail.Elements...)
-			return VList{Elements: out}, nil
-		}),
+		"::": nativeFn(2, func(args []Value) (Value, error) { return cons2(args[0], args[1]) }),
 
 		// Pipes
-		"|>": nativeFn(2, func(args []Value) (Value, error) {
-			// x |> f = f x
-			return apply(args[1], args[0])
-		}),
-		"<|": nativeFn(2, func(args []Value) (Value, error) {
-			// f <| x = f x
-			return apply(args[0], args[1])
-		}),
+		"|>": nativeFn(2, func(args []Value) (Value, error) { return pipeForward2(args[0], args[1]) }),
+		"<|": nativeFn(2, func(args []Value) (Value, error) { return apply(args[0], args[1]) }),
 	}
 }
+
+// binopImpl maps an operator to its implementation, or nil for a name that is
+// not one: the same Go functions the entries above wrap, taking the two
+// operands directly so that evaluating `a + b` needs neither an argument slice
+// nor a walk of the environment to find out what `+` means. `&&` and `||` are
+// not here: the evaluator short-circuits them itself.
+//
+// A switch rather than a map: it compiles to a couple of comparisons, and this
+// runs once per operator evaluated.
+func binopImpl(op string) func(a, b Value) (Value, error) {
+	switch op {
+	case "+":
+		return add2
+	case "-":
+		return sub2
+	case "*":
+		return mul2
+	case "//":
+		return intDiv2
+	case "/":
+		return div2
+	case "==":
+		return eq2
+	case "/=":
+		return neq2
+	case "<":
+		return lt2
+	case ">":
+		return gt2
+	case "<=":
+		return lte2
+	case ">=":
+		return gte2
+	case "++":
+		return append2
+	case "::":
+		return cons2
+	case "|>":
+		return pipeForward2
+	case "<|":
+		// f <| x = f x
+		return apply
+	}
+	return nil
+}
+
+// cons2: a -> List a -> List a
+func cons2(head, rest Value) (Value, error) {
+	tail, ok := rest.(VList)
+	if !ok {
+		return nil, fmt.Errorf("::: tail not a list")
+	}
+	out := make([]Value, 0, len(tail.Elements)+1)
+	out = append(out, head)
+	out = append(out, tail.Elements...)
+	return VList{Elements: out}, nil
+}
+
+// pipeForward2: x |> f = f x
+func pipeForward2(x, f Value) (Value, error) { return apply(f, x) }
 
 func nativeFn(arity int, fn func([]Value) (Value, error)) VFn {
 	return VFn{Native: fn, Arity: arity}
@@ -671,16 +715,18 @@ func nativeFn(arity int, fn func([]Value) (Value, error)) VFn {
 
 // --- arithmetic ---
 
-func addOp(args []Value) (Value, error) {
-	switch a := args[0].(type) {
+func addOp(args []Value) (Value, error) { return add2(args[0], args[1]) }
+
+func add2(a0, a1 Value) (Value, error) {
+	switch a := a0.(type) {
 	case VInt:
-		b, ok := args[1].(VInt)
+		b, ok := a1.(VInt)
 		if !ok {
 			return nil, fmt.Errorf("+: expected Int")
 		}
 		return checkedVInt(addInts(a.V, b.V))
 	case VDecimal:
-		b, ok := args[1].(VDecimal)
+		b, ok := a1.(VDecimal)
 		if !ok {
 			return nil, fmt.Errorf("+: expected Decimal")
 		}
@@ -689,16 +735,18 @@ func addOp(args []Value) (Value, error) {
 	return nil, fmt.Errorf("+: unsupported types")
 }
 
-func subOp(args []Value) (Value, error) {
-	switch a := args[0].(type) {
+func subOp(args []Value) (Value, error) { return sub2(args[0], args[1]) }
+
+func sub2(a0, a1 Value) (Value, error) {
+	switch a := a0.(type) {
 	case VInt:
-		b, ok := args[1].(VInt)
+		b, ok := a1.(VInt)
 		if !ok {
 			return nil, fmt.Errorf("-: expected Int")
 		}
 		return checkedVInt(subInts(a.V, b.V))
 	case VDecimal:
-		b, ok := args[1].(VDecimal)
+		b, ok := a1.(VDecimal)
 		if !ok {
 			return nil, fmt.Errorf("-: expected Decimal")
 		}
@@ -707,16 +755,18 @@ func subOp(args []Value) (Value, error) {
 	return nil, fmt.Errorf("-: unsupported")
 }
 
-func mulOp(args []Value) (Value, error) {
-	switch a := args[0].(type) {
+func mulOp(args []Value) (Value, error) { return mul2(args[0], args[1]) }
+
+func mul2(a0, a1 Value) (Value, error) {
+	switch a := a0.(type) {
 	case VInt:
-		b, ok := args[1].(VInt)
+		b, ok := a1.(VInt)
 		if !ok {
 			return nil, fmt.Errorf("*: expected Int")
 		}
 		return checkedVInt(mulInts(a.V, b.V))
 	case VDecimal:
-		b, ok := args[1].(VDecimal)
+		b, ok := a1.(VDecimal)
 		if !ok {
 			return nil, fmt.Errorf("*: expected Decimal")
 		}
@@ -727,12 +777,14 @@ func mulOp(args []Value) (Value, error) {
 
 // intDivOp: `//`, truncating integer division wearing its loss in
 // its spelling (Elm's `//`).
-func intDivOp(args []Value) (Value, error) {
-	a, ok := args[0].(VInt)
+func intDivOp(args []Value) (Value, error) { return intDiv2(args[0], args[1]) }
+
+func intDiv2(a0, a1 Value) (Value, error) {
+	a, ok := a0.(VInt)
 	if !ok {
 		return nil, fmt.Errorf("//: expected Int")
 	}
-	b, ok := args[1].(VInt)
+	b, ok := a1.(VInt)
 	if !ok {
 		return nil, fmt.Errorf("//: expected Int")
 	}
@@ -750,12 +802,14 @@ func intDivOp(args []Value) (Value, error) {
 // divOp, `/`, Decimal-only. Produces a QUESTION, not a number: the
 // inert exact quotient, resolved only by Decimal.rounded /
 // withRemainder, which is where the precision gets written.
-func divOp(args []Value) (Value, error) {
-	a, ok := args[0].(VDecimal)
+func divOp(args []Value) (Value, error) { return div2(args[0], args[1]) }
+
+func div2(a0, a1 Value) (Value, error) {
+	a, ok := a0.(VDecimal)
 	if !ok {
 		return nil, fmt.Errorf("/: expected Decimal")
 	}
-	b, ok := args[1].(VDecimal)
+	b, ok := a1.(VDecimal)
 	if !ok {
 		return nil, fmt.Errorf("/: expected Decimal")
 	}
@@ -764,40 +818,52 @@ func divOp(args []Value) (Value, error) {
 
 // --- comparison ---
 
-func eqOp(args []Value) (Value, error) {
-	return VBool{V: equalValues(args[0], args[1])}, nil
+func eqOp(args []Value) (Value, error) { return eq2(args[0], args[1]) }
+
+func eq2(a0, a1 Value) (Value, error) {
+	return VBool{V: equalValues(a0, a1)}, nil
 }
 
-func neqOp(args []Value) (Value, error) {
-	return VBool{V: !equalValues(args[0], args[1])}, nil
+func neqOp(args []Value) (Value, error) { return neq2(args[0], args[1]) }
+
+func neq2(a0, a1 Value) (Value, error) {
+	return VBool{V: !equalValues(a0, a1)}, nil
 }
 
-func ltOp(args []Value) (Value, error) {
-	c, err := compareValues(args[0], args[1])
+func ltOp(args []Value) (Value, error) { return lt2(args[0], args[1]) }
+
+func lt2(a0, a1 Value) (Value, error) {
+	c, err := compareValues(a0, a1)
 	if err != nil {
 		return nil, err
 	}
 	return VBool{V: c < 0}, nil
 }
 
-func gtOp(args []Value) (Value, error) {
-	c, err := compareValues(args[0], args[1])
+func gtOp(args []Value) (Value, error) { return gt2(args[0], args[1]) }
+
+func gt2(a0, a1 Value) (Value, error) {
+	c, err := compareValues(a0, a1)
 	if err != nil {
 		return nil, err
 	}
 	return VBool{V: c > 0}, nil
 }
 
-func lteOp(args []Value) (Value, error) {
-	c, err := compareValues(args[0], args[1])
+func lteOp(args []Value) (Value, error) { return lte2(args[0], args[1]) }
+
+func lte2(a0, a1 Value) (Value, error) {
+	c, err := compareValues(a0, a1)
 	if err != nil {
 		return nil, err
 	}
 	return VBool{V: c <= 0}, nil
 }
 
-func gteOp(args []Value) (Value, error) {
-	c, err := compareValues(args[0], args[1])
+func gteOp(args []Value) (Value, error) { return gte2(args[0], args[1]) }
+
+func gte2(a0, a1 Value) (Value, error) {
+	c, err := compareValues(a0, a1)
 	if err != nil {
 		return nil, err
 	}
@@ -1033,10 +1099,9 @@ func compareValues(a, b Value) (int, error) {
 // --- logic / strings ---
 
 // andOp and orOp are STRICT, and the evaluator never reaches them for a written
-// `&&` or `||`: evalAt short-circuits those in its EBinop case before the right
-// operand is evaluated. They stay because the operator is looked up by name
-// there, and that lookup is what reports an unknown operator; a `&&` missing
-// from BaseEnv would turn a short-circuit into "unknown operator: &&".
+// `&&` or `||`: evalBinop short-circuits those itself, before the right operand
+// is evaluated, without looking either up. They stay so that BaseEnv still
+// binds every operator a program can write.
 //
 // Mar has no parenthesised-operator syntax, so `(&&)` cannot be passed as a
 // value and there is no route by which a program reaches the strict version.
@@ -1058,16 +1123,18 @@ func orOp(args []Value) (Value, error) {
 	return VBool{V: a.V || b.V}, nil
 }
 
-func appendOp(args []Value) (Value, error) {
-	switch a := args[0].(type) {
+func appendOp(args []Value) (Value, error) { return append2(args[0], args[1]) }
+
+func append2(a0, a1 Value) (Value, error) {
+	switch a := a0.(type) {
 	case VString:
-		b, ok := args[1].(VString)
+		b, ok := a1.(VString)
 		if !ok {
 			return nil, fmt.Errorf("++: expected String")
 		}
 		return VString{V: a.V + b.V}, nil
 	case VList:
-		b, ok := args[1].(VList)
+		b, ok := a1.(VList)
 		if !ok {
 			return nil, fmt.Errorf("++: expected List")
 		}

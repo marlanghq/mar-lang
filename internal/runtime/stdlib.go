@@ -88,11 +88,7 @@ func stdlib() map[string]Value {
 				return nil, fmt.Errorf("listFoldl: third arg not a list")
 			}
 			for _, e := range l.Elements {
-				partial, err := apply(fn, e)
-				if err != nil {
-					return nil, err
-				}
-				next, err := apply(partial, acc)
+				next, err := applyArgs(fn, e, acc)
 				if err != nil {
 					return nil, err
 				}
@@ -320,11 +316,7 @@ func stdlib() map[string]Value {
 				return nil, fmt.Errorf("listFoldr: third arg not a list")
 			}
 			for i := len(l.Elements) - 1; i >= 0; i-- {
-				partial, err := apply(fn, l.Elements[i])
-				if err != nil {
-					return nil, err
-				}
-				next, err := apply(partial, acc)
+				next, err := applyArgs(fn, l.Elements[i], acc)
 				if err != nil {
 					return nil, err
 				}
@@ -341,11 +333,7 @@ func stdlib() map[string]Value {
 			}
 			out := make([]Value, len(l.Elements))
 			for i, e := range l.Elements {
-				partial, err := apply(fn, VInt{V: int64(i)})
-				if err != nil {
-					return nil, err
-				}
-				v, err := apply(partial, e)
+				v, err := applyArgs(fn, VInt{V: int64(i)}, e)
 				if err != nil {
 					return nil, err
 				}
@@ -599,12 +587,7 @@ func stdlib() map[string]Value {
 				if sortErr != nil {
 					return false
 				}
-				partial, err := apply(fn, out[i])
-				if err != nil {
-					sortErr = err
-					return false
-				}
-				v, err := apply(partial, out[j])
+				v, err := applyArgs(fn, out[i], out[j])
 				if err != nil {
 					sortErr = err
 					return false
@@ -837,11 +820,7 @@ func stdlib() map[string]Value {
 			if a.Tag != "Just" || b.Tag != "Just" {
 				return VCtor{Tag: "Nothing"}, nil
 			}
-			partial, err := apply(fn, a.Args[0])
-			if err != nil {
-				return nil, err
-			}
-			v, err := apply(partial, b.Args[0])
+			v, err := applyArgs(fn, a.Args[0], b.Args[0])
 			if err != nil {
 				return nil, err
 			}
@@ -859,15 +838,7 @@ func stdlib() map[string]Value {
 			if a.Tag != "Just" || b.Tag != "Just" || c.Tag != "Just" {
 				return VCtor{Tag: "Nothing"}, nil
 			}
-			p1, err := apply(fn, a.Args[0])
-			if err != nil {
-				return nil, err
-			}
-			p2, err := apply(p1, b.Args[0])
-			if err != nil {
-				return nil, err
-			}
-			v, err := apply(p2, c.Args[0])
+			v, err := applyArgs(fn, a.Args[0], b.Args[0], c.Args[0])
 			if err != nil {
 				return nil, err
 			}

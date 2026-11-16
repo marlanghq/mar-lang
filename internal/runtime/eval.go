@@ -92,8 +92,7 @@ func evalAt(e ast.Expr, env *Env, depth int) (Value, error) {
 		if v, ok := lookupElaborated(n.Impl, env); ok {
 			return v, nil
 		}
-		key := joinName(n.Module, n.Name)
-		if n.Wire != nil && key == "JSON.decode" {
+		if n.Wire != nil && len(n.Module) == 1 && n.Module[0] == "JSON" && n.Name == "decode" {
 			// This occurrence of JSON.decode knows what it is decoding
 			// INTO, because the checker wrote the call site's type onto the
 			// node. Without it the decoder answered Ok for anything that
@@ -105,116 +104,30 @@ func evalAt(e ast.Expr, env *Env, depth int) (Value, error) {
 			// would replace the call with a JSON parser.
 			return decodeWithShape(*n.Wire), nil
 		}
-		if v, ok := env.Lookup(key); ok {
+		if v, ok := env.lookupQualified(n.Module, n.Name); ok {
 			return v, nil
 		}
 		if v, ok := env.Lookup(n.Name); ok {
 			return v, nil
 		}
-		return nil, internalErrorf(n.Pos, "unbound qualified name: %s", key)
+		return nil, internalErrorf(n.Pos, "unbound qualified name: %s", joinName(n.Module, n.Name))
 
 	case *ast.ECtor:
 		// Constructors are looked up like values (registered at module
 		// load). Qualified ones (Shared.Created, Service.Offline) resolve
 		// through the dotted binding the loader registers per module
 		// export; no bare fallback, mirroring the typechecker.
-		ctorName := n.Name
-		if len(n.Module) > 0 {
-			ctorName = joinName(n.Module, n.Name)
-		}
-		v, ok := env.Lookup(ctorName)
+		v, ok := env.lookupQualified(n.Module, n.Name)
 		if !ok {
-			return nil, internalErrorf(n.Pos, "unbound constructor: %s", ctorName)
+			return nil, internalErrorf(n.Pos, "unbound constructor: %s", joinName(n.Module, n.Name))
 		}
 		return v, nil
 
 	case *ast.EApp:
-		fn, err := evalAt(n.Fn, env, depth)
-		if err != nil {
-			return nil, err
-		}
-		arg, err := evalAt(n.Arg, env, depth)
-		if err != nil {
-			return nil, err
-		}
-		return applyAt(fn, arg, depth)
+		return evalApp(n, env, depth)
 
 	case *ast.EBinop:
-		op, ok := env.Lookup(n.Op)
-		if !ok {
-			return nil, internalErrorf(n.Pos, "unknown operator: %s", n.Op)
-		}
-		left, err := evalAt(n.Left, env, depth)
-		if err != nil {
-			return nil, err
-		}
-		// `&&` and `||` SHORT-CIRCUIT: when the left operand already decides
-		// the answer, the right one is never evaluated.
-		//
-		// This is not an optimisation, and purity does not make it one. Mar is
-		// pure but not TOTAL: pure checked code has exactly two ways to fail,
-		// and both are reachable from an operand. `n < 1 && 9007199254740991 + n > 0`
-		// used to raise an Int overflow even though the left side said False,
-		// and `depth < 80 && walk tree > 0` used to spend the stack the guard
-		// existed to protect. A guard that its own language ignores is not a
-		// guard. Elm short-circuits here, so this also closes an Elm divergence
-		// that was never declared (ADR: Elm-fidelity).
-		//
-		// The operator is still looked up above, and `andOp`/`orOp` still live
-		// in BaseEnv, because the lookup is what reports an unknown operator
-		// and the name has to resolve for that to work.
-		if n.Op == "&&" || n.Op == "||" {
-			lb, isBool := left.(VBool)
-			if !isBool {
-				return nil, internalErrorf(n.Pos, "an operand of `%s` evaluated to something that is not a Bool", n.Op)
-			}
-			if n.Op == "&&" && !lb.V {
-				return VBool{V: false}, nil
-			}
-			if n.Op == "||" && lb.V {
-				return VBool{V: true}, nil
-			}
-			right, err := evalAt(n.Right, env, depth)
-			if err != nil {
-				return nil, err
-			}
-			rb, isBool := right.(VBool)
-			if !isBool {
-				return nil, internalErrorf(n.Pos, "an operand of `%s` evaluated to something that is not a Bool", n.Op)
-			}
-			return rb, nil
-		}
-		right, err := evalAt(n.Right, env, depth)
-		if err != nil {
-			return nil, err
-		}
-		// Every operator is a two-argument builtin, and reaching it through
-		// applyAt twice means two argument slices and one throwaway
-		// partially-applied closure for each `+` in the program. Calling the
-		// builtin directly skips all of it. The conditions are checked rather
-		// than assumed so anything unusual falls through to the slow path.
-		if f, isFn := op.(VFn); isFn && f.Native != nil && f.Arity == 2 && len(f.Applied) == 0 {
-			if depth >= MaxCallDepth {
-				return nil, errorf(n.Pos, "too much recursion: more than %d nested calls. "+
-					"A function is calling itself without reaching a base case", MaxCallDepth)
-			}
-			args := []Value{left, right}
-			// `|>` and `<|` APPLY an operand, so the depth has to ride along
-			// here exactly as it does in applyAt: otherwise recursion written
-			// with a pipe would slip past the guard.
-			for i := range args {
-				if af, isF := args[i].(VFn); isF {
-					af.Depth = depth + 1
-					args[i] = af
-				}
-			}
-			return f.Native(args)
-		}
-		out, err := applyAt(op, left, depth)
-		if err != nil {
-			return nil, err
-		}
-		return applyAt(out, right, depth)
+		return evalBinop(n, env, depth)
 
 	case *ast.ENegate:
 		v, err := evalAt(n.Inner, env, depth)
@@ -270,7 +183,12 @@ func evalAt(e ast.Expr, env *Env, depth int) (Value, error) {
 			if err != nil {
 				return nil, err
 			}
-			cur = bindPattern(b.Pattern, val, cur)
+			// The type checker rejects refutable patterns in `let`, so a
+			// failed match means the bound value has the wrong shape: leave
+			// env unchanged rather than crash.
+			if next, ok := matchInto(b.Pattern, val, cur); ok {
+				cur = next
+			}
 		}
 		return evalAt(n.Body, cur, depth)
 
@@ -371,9 +289,7 @@ func evalAt(e ast.Expr, env *Env, depth int) (Value, error) {
 			return nil, err
 		}
 		for _, branch := range n.Branches {
-			bindings, ok := matchPattern(branch.Pattern, subject)
-			if ok {
-				branchEnv := env.BindMany(bindings)
+			if branchEnv, ok := matchInto(branch.Pattern, subject, env); ok {
 				return evalAt(branch.Body, branchEnv, depth)
 			}
 		}
@@ -485,14 +401,46 @@ func apply(fn Value, arg Value) (Value, error) {
 
 func applyAt(fn Value, arg Value, depth int) (Value, error) {
 	if depth >= MaxCallDepth {
-		return nil, fmt.Errorf("too much recursion: more than %d nested calls. "+
-			"A function is calling itself without reaching a base case", MaxCallDepth)
+		return nil, errTooMuchRecursion()
 	}
 	f, ok := fn.(VFn)
 	if !ok {
 		return nil, internalErrorf(ast.Pos{}, "a value that is not a function was applied (got %T)", fn)
 	}
-	applied := append(append([]Value{}, f.Applied...), arg)
+	if f.Native == nil && len(f.Applied)+1 == f.Arity {
+		// The last argument of a closure: the one case that needs no
+		// argument slice at all, and by far the commonest call there is.
+		return callClosure(f, arg, nil, depth)
+	}
+	applied := make([]Value, len(f.Applied)+1)
+	copy(applied, f.Applied)
+	applied[len(f.Applied)] = arg
+	return finishApply(f, applied, depth)
+}
+
+// applyBatch applies f to several arguments in one step. It computes exactly
+// what feeding them to applyAt one at a time computes, without the closure and
+// the argument slice each intermediate step would build and throw away: a
+// three-argument call used to allocate two partial applications on the way to
+// its third argument.
+//
+// The caller has already made applyAt's depth check, and guarantees
+// 2 <= len(args) <= f.Arity-len(f.Applied): a batch never runs past the point
+// where the function is saturated, because what a saturated call returns (and
+// whether it fails) has to be known before the next argument is looked at.
+func applyBatch(f VFn, args []Value, depth int) (Value, error) {
+	if f.Native == nil && len(f.Applied)+len(args) == f.Arity {
+		return callClosure(f, nil, args, depth)
+	}
+	applied := make([]Value, len(f.Applied)+len(args))
+	copy(applied, f.Applied)
+	copy(applied[len(f.Applied):], args)
+	return finishApply(f, applied, depth)
+}
+
+// finishApply is the tail both entry points share once the arguments are
+// gathered into a slice the callee may keep.
+func finishApply(f VFn, applied []Value, depth int) (Value, error) {
 	if len(applied) < f.Arity {
 		// Partial application: return a new closure. It keeps this call's
 		// depth so that finishing the application later resumes the count.
@@ -534,6 +482,255 @@ func applyAt(fn Value, arg Value, depth int) (Value, error) {
 	return evalAt(body, env, depth+1)
 }
 
+// callClosure runs a closure whose last arguments have just arrived: the ones
+// it already held, then `last` (one argument) or `rest` (a batch). Parameters
+// are bound straight into the environment, in order, so the call allocates one
+// small frame per parameter and nothing else.
+func callClosure(f VFn, last Value, rest []Value, depth int) (Value, error) {
+	env := f.Env
+	held := len(f.Applied)
+	for i, v := range f.Applied {
+		env = env.Bind(f.Params[i], v)
+	}
+	if rest == nil {
+		env = env.Bind(f.Params[held], last)
+	} else {
+		for i, v := range rest {
+			env = env.Bind(f.Params[held+i], v)
+		}
+	}
+	body, ok := f.Body.(ast.Expr)
+	if !ok {
+		return nil, internalErrorf(ast.Pos{}, "a closure carries a body that is not an expression")
+	}
+	return evalAt(body, env, depth+1)
+}
+
+func errTooMuchRecursion() error {
+	return fmt.Errorf("too much recursion: more than %d nested calls. "+
+		"A function is calling itself without reaching a base case", MaxCallDepth)
+}
+
+// applyArgs is apply folded over several arguments, `apply(apply(fn, a), b)`,
+// for the builtins that feed a callback more than one (List.foldl, Dict.map,
+// List.sortWith). Same result and same depth accounting, without the partial
+// application in between while fn is still waiting for more than one.
+func applyArgs(fn Value, args ...Value) (Value, error) {
+	cur := fn
+	for i := 0; i < len(args); {
+		if f, ok := cur.(VFn); ok && len(args)-i > 1 {
+			if waiting := f.Arity - len(f.Applied); waiting > 1 {
+				// apply(f, a) would build a partial stamped with f.Depth, and
+				// applying the next argument to that resumes at the same
+				// depth: one check covers the batch.
+				if f.Depth >= MaxCallDepth {
+					return nil, errTooMuchRecursion()
+				}
+				take := min(waiting, len(args)-i)
+				next, err := applyBatch(f, args[i:i+take], f.Depth)
+				if err != nil {
+					return nil, err
+				}
+				cur = next
+				i += take
+				continue
+			}
+		}
+		next, err := apply(cur, args[i])
+		if err != nil {
+			return nil, err
+		}
+		cur = next
+		i++
+	}
+	return cur, nil
+}
+
+// spineMax is how many arguments of one written call are gathered on the Go
+// stack. A longer call still works: the part of the spine beyond it is
+// evaluated as the head.
+const spineMax = 6
+
+// evalApp evaluates an application. `f a b c` parses as ((f a) b) c, and the
+// straightforward reading of that tree applies one argument at a time, which
+// builds a partial application for every argument but the last. This walks the
+// spine instead and hands the function as many arguments as it is waiting for.
+//
+// The order of everything observable is the tree's: the head first, then each
+// argument left to right, and a call that becomes saturated runs BEFORE the
+// arguments after it are evaluated. That last part is not a detail. Mar is
+// pure but not total, so which of two failures a program reports depends on
+// which one is reached first.
+func evalApp(n *ast.EApp, env *Env, depth int) (Value, error) {
+	if _, nested := n.Fn.(*ast.EApp); !nested {
+		fn, err := evalAt(n.Fn, env, depth)
+		if err != nil {
+			return nil, err
+		}
+		arg, err := evalAt(n.Arg, env, depth)
+		if err != nil {
+			return nil, err
+		}
+		return applyAt(fn, arg, depth)
+	}
+
+	var exprs [spineMax]ast.Expr
+	count := 0
+	head := ast.Expr(n)
+	for count < spineMax {
+		app, ok := head.(*ast.EApp)
+		if !ok {
+			break
+		}
+		count++
+		exprs[spineMax-count] = app.Arg
+		head = app.Fn
+	}
+	args := exprs[spineMax-count:]
+
+	cur, err := evalAt(head, env, depth)
+	if err != nil {
+		return nil, err
+	}
+	var vals [spineMax]Value
+	for i := 0; i < len(args); {
+		take := 1
+		f, isFn := cur.(VFn)
+		if isFn {
+			if waiting := f.Arity - len(f.Applied); waiting > 1 {
+				take = min(waiting, len(args)-i)
+			}
+		}
+		if take == 1 {
+			arg, err := evalAt(args[i], env, depth)
+			if err != nil {
+				return nil, err
+			}
+			if cur, err = applyAt(cur, arg, depth); err != nil {
+				return nil, err
+			}
+			i++
+			continue
+		}
+		for j := 0; j < take; j++ {
+			v, err := evalAt(args[i+j], env, depth)
+			if err != nil {
+				return nil, err
+			}
+			// applyAt refuses at the depth limit as soon as it is handed the
+			// first argument, before the second is evaluated. So does this.
+			if j == 0 && depth >= MaxCallDepth {
+				return nil, errTooMuchRecursion()
+			}
+			vals[j] = v
+		}
+		if cur, err = applyBatch(f, vals[:take], depth); err != nil {
+			return nil, err
+		}
+		i += take
+	}
+	return cur, nil
+}
+
+// evalBinop evaluates `left op right`.
+//
+// Every operator Mar has is a builtin, and none can be redefined: a program
+// has no syntax that binds an operator's name. So the operator is resolved
+// here, from the same Go functions BaseEnv registers, instead of by walking
+// the environment from the innermost parameter out to the root on every `+`.
+// An operator this table does not know takes the general path, which looks it
+// up and reports it.
+func evalBinop(n *ast.EBinop, env *Env, depth int) (Value, error) {
+	shortCircuit := n.Op == "&&" || n.Op == "||"
+	impl := binopImpl(n.Op)
+	if impl == nil && !shortCircuit {
+		return evalBinopGeneral(n, env, depth)
+	}
+	left, err := evalAt(n.Left, env, depth)
+	if err != nil {
+		return nil, err
+	}
+	// `&&` and `||` SHORT-CIRCUIT: when the left operand already decides
+	// the answer, the right one is never evaluated.
+	//
+	// This is not an optimisation, and purity does not make it one. Mar is
+	// pure but not TOTAL: pure checked code has exactly two ways to fail,
+	// and both are reachable from an operand. `n < 1 && 9007199254740991 + n > 0`
+	// used to raise an Int overflow even though the left side said False,
+	// and `depth < 80 && walk tree > 0` used to spend the stack the guard
+	// existed to protect. A guard that its own language ignores is not a
+	// guard. Elm short-circuits here, so this also closes an Elm divergence
+	// that was never declared (ADR: Elm-fidelity).
+	if shortCircuit {
+		lb, isBool := left.(VBool)
+		if !isBool {
+			return nil, internalErrorf(n.Pos, "an operand of `%s` evaluated to something that is not a Bool", n.Op)
+		}
+		if n.Op == "&&" && !lb.V {
+			return VBool{V: false}, nil
+		}
+		if n.Op == "||" && lb.V {
+			return VBool{V: true}, nil
+		}
+		right, err := evalAt(n.Right, env, depth)
+		if err != nil {
+			return nil, err
+		}
+		rb, isBool := right.(VBool)
+		if !isBool {
+			return nil, internalErrorf(n.Pos, "an operand of `%s` evaluated to something that is not a Bool", n.Op)
+		}
+		return rb, nil
+	}
+	right, err := evalAt(n.Right, env, depth)
+	if err != nil {
+		return nil, err
+	}
+	if depth >= MaxCallDepth {
+		return nil, errorf(n.Pos, "too much recursion: more than %d nested calls. "+
+			"A function is calling itself without reaching a base case", MaxCallDepth)
+	}
+	// `|>` and `<|` APPLY an operand and `::` keeps one, so the depth has to
+	// ride along on a function operand exactly as it does in applyAt:
+	// otherwise recursion written with a pipe would slip past the guard. The
+	// other operators neither call nor keep what they are given.
+	if n.Op == "|>" || n.Op == "<|" || n.Op == "::" {
+		left, right = stampDepth(left, depth+1), stampDepth(right, depth+1)
+	}
+	return impl(left, right)
+}
+
+func stampDepth(v Value, depth int) Value {
+	if f, isFn := v.(VFn); isFn {
+		f.Depth = depth
+		return f
+	}
+	return v
+}
+
+// evalBinopGeneral resolves the operator through the environment. Nothing a
+// checked program writes reaches it: it is what reports an operator the
+// evaluator has never heard of.
+func evalBinopGeneral(n *ast.EBinop, env *Env, depth int) (Value, error) {
+	op, ok := env.Lookup(n.Op)
+	if !ok {
+		return nil, internalErrorf(n.Pos, "unknown operator: %s", n.Op)
+	}
+	left, err := evalAt(n.Left, env, depth)
+	if err != nil {
+		return nil, err
+	}
+	right, err := evalAt(n.Right, env, depth)
+	if err != nil {
+		return nil, err
+	}
+	out, err := applyAt(op, left, depth)
+	if err != nil {
+		return nil, err
+	}
+	return applyAt(out, right, depth)
+}
+
 func joinName(mod ast.ModuleName, name string) string {
 	if len(mod) == 0 {
 		return name
@@ -552,79 +749,77 @@ func lookupElaborated(impl string, env *Env) (Value, bool) {
 	return env.Lookup(impl)
 }
 
-// matchPattern attempts to match v against pat. Returns the bindings if
-// successful (possibly empty), or ok=false if the pattern doesn't match.
-func matchPattern(pat ast.Pattern, v Value) (map[string]Value, bool) {
-	out := map[string]Value{}
-	if !matchInto(pat, v, out) {
-		return nil, false
-	}
-	return out, true
-}
-
-func matchInto(pat ast.Pattern, v Value, bindings map[string]Value) bool {
+// matchInto matches v against pat. On success it returns env extended with
+// the pattern's variables; on failure it returns ok=false and the env it was
+// given is untouched (binding never mutates an Env, so a half-matched pattern
+// leaves nothing behind for the next branch to see).
+//
+// Variables are bound in the order the pattern lists them, each in its own
+// frame, straight into the environment: a `case` used to build a Go map for
+// every branch it TRIED, and copy it into a second one for the branch that
+// matched.
+func matchInto(pat ast.Pattern, v Value, env *Env) (*Env, bool) {
 	switch p := pat.(type) {
 	case *ast.PWildcard:
-		return true
+		return env, true
 	case *ast.PVar:
-		bindings[p.Name] = v
-		return true
+		return env.Bind(p.Name, v), true
 	case *ast.PInt:
 		iv, ok := v.(VInt)
-		return ok && iv.V == p.Value
+		return env, ok && iv.V == p.Value
 	case *ast.PString:
 		sv, ok := v.(VString)
-		return ok && sv.V == p.Value
+		return env, ok && sv.V == p.Value
 	case *ast.PChar:
 		cv, ok := v.(VChar)
-		return ok && cv.V == p.Value
+		return env, ok && cv.V == p.Value
 	case *ast.PUnit:
 		_, ok := v.(VUnit)
-		return ok
+		return env, ok
 	case *ast.PCtor:
 		cv, ok := v.(VCtor)
 		if !ok || cv.Tag != p.Name || len(cv.Args) != len(p.Args) {
-			return false
+			return env, false
 		}
 		for i, sub := range p.Args {
-			if !matchInto(sub, cv.Args[i], bindings) {
-				return false
+			if env, ok = matchInto(sub, cv.Args[i], env); !ok {
+				return env, false
 			}
 		}
-		return true
+		return env, true
 	case *ast.PTuple:
 		tv, ok := v.(VTuple)
 		if !ok || len(tv.Members) != len(p.Members) {
-			return false
+			return env, false
 		}
 		for i, sub := range p.Members {
-			if !matchInto(sub, tv.Members[i], bindings) {
-				return false
+			if env, ok = matchInto(sub, tv.Members[i], env); !ok {
+				return env, false
 			}
 		}
-		return true
+		return env, true
 	case *ast.PList:
 		lv, ok := v.(VList)
 		if !ok || len(lv.Elements) != len(p.Elements) {
-			return false
+			return env, false
 		}
 		for i, sub := range p.Elements {
-			if !matchInto(sub, lv.Elements[i], bindings) {
-				return false
+			if env, ok = matchInto(sub, lv.Elements[i], env); !ok {
+				return env, false
 			}
 		}
-		return true
+		return env, true
 	case *ast.PCons:
 		lv, ok := v.(VList)
 		if !ok || len(lv.Elements) == 0 {
-			return false
+			return env, false
 		}
-		if !matchInto(p.Head, lv.Elements[0], bindings) {
-			return false
+		if env, ok = matchInto(p.Head, lv.Elements[0], env); !ok {
+			return env, false
 		}
 		// Tail value is the rest of the list.
 		rest := VList{Elements: lv.Elements[1:]}
-		return matchInto(p.Tail, rest, bindings)
+		return matchInto(p.Tail, rest, env)
 	case *ast.PRecord:
 		// `{ f1, f2, ... }`: bind each listed field's value into the
 		// local scope. Partial-match semantics: the value record may
@@ -637,32 +832,18 @@ func matchInto(pat ast.Pattern, v Value, bindings map[string]Value) bool {
 		// than panic.
 		rv, ok := v.(VRecord)
 		if !ok {
-			return false
+			return env, false
 		}
 		for _, fname := range p.Fields {
 			fv, present := rv.Fields[fname]
 			if !present {
-				return false
+				return env, false
 			}
-			bindings[fname] = fv
+			env = env.Bind(fname, fv)
 		}
-		return true
+		return env, true
 	}
-	return false
-}
-
-// bindPattern adds a value-pattern binding to an env (no fallible matching).
-// Used for `let x = ...`.
-func bindPattern(pat ast.Pattern, v Value, env *Env) *Env {
-	bindings, ok := matchPattern(pat, v)
-	if !ok {
-		// Shouldn't happen for irrefutable patterns. The type checker
-		// rejects refutable patterns in `let`, so reaching here means
-		// the bound value has the wrong shape: leave env unchanged
-		// rather than crash.
-		return env
-	}
-	return env.BindMany(bindings)
+	return env, false
 }
 
 // missingFieldMessage names the field that is not there and lists the ones

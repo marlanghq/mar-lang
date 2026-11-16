@@ -181,11 +181,7 @@ func charBuiltins() map[string]Value {
 				return nil, fmt.Errorf("String.foldl: third arg not a String")
 			}
 			for _, r := range s.V {
-				partial, err := apply(fn, VChar{V: r})
-				if err != nil {
-					return nil, err
-				}
-				next, err := apply(partial, acc)
+				next, err := applyArgs(fn, VChar{V: r}, acc)
 				if err != nil {
 					return nil, err
 				}

@@ -186,11 +186,7 @@ func dictBuiltins() map[string]Value {
 			}
 			out := make([]VDictPair, len(d.Pairs))
 			for i, p := range d.Pairs {
-				partial, err := apply(fn, p.Key)
-				if err != nil {
-					return nil, err
-				}
-				v, err := apply(partial, p.Value)
+				v, err := applyArgs(fn, p.Key, p.Value)
 				if err != nil {
 					return nil, err
 				}
@@ -208,15 +204,7 @@ func dictBuiltins() map[string]Value {
 				return nil, fmt.Errorf("Dict.foldl: not a Dict")
 			}
 			for _, p := range d.Pairs {
-				partial, err := apply(fn, p.Key)
-				if err != nil {
-					return nil, err
-				}
-				partial2, err := apply(partial, p.Value)
-				if err != nil {
-					return nil, err
-				}
-				next, err := apply(partial2, acc)
+				next, err := applyArgs(fn, p.Key, p.Value, acc)
 				if err != nil {
 					return nil, err
 				}
@@ -233,15 +221,7 @@ func dictBuiltins() map[string]Value {
 			}
 			for i := len(d.Pairs) - 1; i >= 0; i-- {
 				p := d.Pairs[i]
-				partial, err := apply(fn, p.Key)
-				if err != nil {
-					return nil, err
-				}
-				partial2, err := apply(partial, p.Value)
-				if err != nil {
-					return nil, err
-				}
-				next, err := apply(partial2, acc)
+				next, err := applyArgs(fn, p.Key, p.Value, acc)
 				if err != nil {
 					return nil, err
 				}
@@ -476,11 +456,7 @@ func setBuiltins() map[string]Value {
 				return nil, fmt.Errorf("Set.foldl: not a Set")
 			}
 			for _, it := range s.Items {
-				partial, err := apply(fn, it)
-				if err != nil {
-					return nil, err
-				}
-				next, err := apply(partial, acc)
+				next, err := applyArgs(fn, it, acc)
 				if err != nil {
 					return nil, err
 				}
@@ -496,11 +472,7 @@ func setBuiltins() map[string]Value {
 				return nil, fmt.Errorf("Set.foldr: not a Set")
 			}
 			for i := len(s.Items) - 1; i >= 0; i-- {
-				partial, err := apply(fn, s.Items[i])
-				if err != nil {
-					return nil, err
-				}
-				next, err := apply(partial, acc)
+				next, err := applyArgs(fn, s.Items[i], acc)
 				if err != nil {
 					return nil, err
 				}
@@ -705,11 +677,7 @@ func dictRemoveAt(d VDict, idx int) VDict {
 
 // dictPredicate applies a (k -> v -> Bool) function to a pair.
 func dictPredicate(fn Value, p VDictPair) (bool, error) {
-	partial, err := apply(fn, p.Key)
-	if err != nil {
-		return false, err
-	}
-	v, err := apply(partial, p.Value)
+	v, err := applyArgs(fn, p.Key, p.Value)
 	if err != nil {
 		return false, err
 	}

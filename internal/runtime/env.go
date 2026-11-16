@@ -3,8 +3,19 @@ package runtime
 import "strings"
 
 // Env is a runtime environment: name -> value, lexically scoped via parent links.
+//
+// A frame has one of two shapes:
+//
+//   - a TABLE (bindings != nil): the root built by BaseEnv and each module's
+//     scope. These are the only frames Define writes to.
+//   - ONE BINDING (bindings == nil): a parameter, a `let`, a pattern variable.
+//     Every call binds its parameters this way, so this is the shape the
+//     evaluator allocates in its inner loop, and it carries its name and value
+//     inline instead of in a Go map built to hold a single key.
 type Env struct {
 	bindings map[string]Value
+	name     string
+	val      Value
 	parent   *Env
 }
 
@@ -25,7 +36,40 @@ func NewChildEnv(parent *Env) *Env {
 // Lookup finds name in this env or any parent. Returns the value and true if found.
 func (e *Env) Lookup(name string) (Value, bool) {
 	for cur := e; cur != nil; cur = cur.parent {
+		if cur.bindings == nil {
+			if cur.name == name {
+				return cur.val, true
+			}
+			continue
+		}
 		if v, ok := cur.bindings[name]; ok {
+			return v, true
+		}
+	}
+	return nil, false
+}
+
+// lookupQualified is Lookup for the dotted key `Module.name`, without building
+// that key on the heap: a qualified reference is evaluated every time control
+// passes through it, and joining its parts each time was two allocations per
+// `List.map` in the program. The key is assembled in a stack buffer, and a map
+// index or a comparison through string(bytes) does not copy it.
+func (e *Env) lookupQualified(mod []string, name string) (Value, bool) {
+	var stack [96]byte
+	key := stack[:0]
+	for _, part := range mod {
+		key = append(key, part...)
+		key = append(key, '.')
+	}
+	key = append(key, name...)
+	for cur := e; cur != nil; cur = cur.parent {
+		if cur.bindings == nil {
+			if cur.name == string(key) {
+				return cur.val, true
+			}
+			continue
+		}
+		if v, ok := cur.bindings[string(key)]; ok {
 			return v, true
 		}
 	}
@@ -45,16 +89,23 @@ func (e *Env) ExportsOf(modName string) map[string]Value {
 		frames = append(frames, cur)
 	}
 	out := map[string]Value{}
+	export := func(name string, v Value) {
+		if !strings.HasPrefix(name, prefix) {
+			return
+		}
+		suffix := name[len(prefix):]
+		if suffix == "" || strings.Contains(suffix, ".") {
+			return
+		}
+		out[suffix] = v
+	}
 	for i := len(frames) - 1; i >= 0; i-- {
+		if frames[i].bindings == nil {
+			export(frames[i].name, frames[i].val)
+			continue
+		}
 		for name, v := range frames[i].bindings {
-			if !strings.HasPrefix(name, prefix) {
-				continue
-			}
-			suffix := name[len(prefix):]
-			if suffix == "" || strings.Contains(suffix, ".") {
-				continue
-			}
-			out[suffix] = v
+			export(name, v)
 		}
 	}
 	return out
@@ -62,24 +113,19 @@ func (e *Env) ExportsOf(modName string) map[string]Value {
 
 // Bind returns a new env extending this with name -> v.
 func (e *Env) Bind(name string, v Value) *Env {
-	frame := map[string]Value{name: v}
-	return &Env{bindings: frame, parent: e}
-}
-
-// BindMany returns a new env extending this with all bindings in m.
-func (e *Env) BindMany(m map[string]Value) *Env {
-	if len(m) == 0 {
-		return e
-	}
-	frame := make(map[string]Value, len(m))
-	for k, v := range m {
-		frame[k] = v
-	}
-	return &Env{bindings: frame, parent: e}
+	return &Env{name: name, val: v, parent: e}
 }
 
 // Define mutates the env to add a binding. Used at module load time when we
 // need to set up mutually recursive references.
+//
+// Every caller defines into a table (a NewEnv / NewChildEnv frame). A
+// one-binding frame is promoted to a table first, keeping what it held, so
+// Define stays total instead of depending on that survey remaining true.
 func (e *Env) Define(name string, v Value) {
+	if e.bindings == nil {
+		e.bindings = map[string]Value{e.name: e.val}
+		e.name, e.val = "", nil
+	}
 	e.bindings[name] = v
 }

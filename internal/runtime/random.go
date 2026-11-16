@@ -261,11 +261,7 @@ func randomBuiltins() map[string]Value {
 				if err != nil {
 					return nil, nil, err
 				}
-				fv, err := apply(f, v1)
-				if err != nil {
-					return nil, nil, err
-				}
-				fv, err = apply(fv, v2)
+				fv, err := applyArgs(f, v1, v2)
 				if err != nil {
 					return nil, nil, err
 				}
@@ -289,15 +285,7 @@ func randomBuiltins() map[string]Value {
 				if err != nil {
 					return nil, nil, err
 				}
-				fv, err := apply(f, v1)
-				if err != nil {
-					return nil, nil, err
-				}
-				fv, err = apply(fv, v2)
-				if err != nil {
-					return nil, nil, err
-				}
-				fv, err = apply(fv, v3)
+				fv, err := applyArgs(f, v1, v2, v3)
 				if err != nil {
 					return nil, nil, err
 				}

@@ -127,10 +127,10 @@ func TestOkUnitPatternMatches(t *testing.T) {
 	}
 	wrapped := VCtor{Tag: "Ok", Args: []Value{decoded}}
 
-	// Run `case wrapped of Ok () -> True ; _ -> False` via the
-	// runtime evaluator. (Easier to express via runValue but it
-	// doesn't take a pre-built Value, so we test matchPattern
-	// directly: same code path the evaluator uses for case.)
+	// The same patterns, through the runtime evaluator: runValue
+	// takes source rather than a pre-built Value, so each case
+	// matches `Ok ()` written out, which reaches matchInto exactly
+	// as a `case` on the decoded value would.
 	src := []struct {
 		name    string
 		pattern string
