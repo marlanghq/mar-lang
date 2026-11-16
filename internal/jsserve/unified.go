@@ -220,7 +220,7 @@ func loadUserForRequest(req *http.Request) runtime.Value {
 	if err != nil {
 		return runtime.VCtor{Tag: "Nothing"}
 	}
-	uid, ok := sessionUserID(db, secret, tok)
+	uid, ok := requestSessionUserID(req, db, secret, tok)
 	if !ok {
 		return runtime.VCtor{Tag: "Nothing"}
 	}

@@ -189,16 +189,35 @@ func startAuthSweeper() {
 // dbHandle returns the project's SQLite handle, ensuring auth tables
 // are migrated on first use. Errors out cleanly when the project has
 // no database configured (Auth requires a DB).
+//
+// The migration runs once per handle, not once per call. Every statement in
+// auth.Migrate is `CREATE ... IF NOT EXISTS`, so repeating it changes nothing,
+// but this function sits on the path of every request that carries a session,
+// and those six statements went through the app's single connection, which
+// every request shares. Keyed on the handle itself: runtime.SetDBPath closes
+// the handle and opens another when the path changes, and a new handle is a
+// database this process has not migrated yet.
 func dbHandle() (*sql.DB, error) {
 	db, err := runtime.AuthDB()
 	if err != nil {
 		return nil, err
 	}
+	authMigratedMu.Lock()
+	defer authMigratedMu.Unlock()
+	if authMigratedDB == db {
+		return db, nil
+	}
 	if err := auth.Migrate(db); err != nil {
 		return nil, err
 	}
+	authMigratedDB = db
 	return db, nil
 }
+
+var (
+	authMigratedMu sync.Mutex
+	authMigratedDB *sql.DB // the handle auth.Migrate last succeeded on
+)
 
 // readJSON reads + decodes the request body into a map.
 func readJSON(r *http.Request) (map[string]any, error) {
@@ -611,7 +630,7 @@ func handleWhoami(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, nil)
 		return
 	}
-	userID, ok := sessionUserID(db, secret, tok)
+	userID, ok := requestSessionUserID(r, db, secret, tok)
 	if !ok {
 		writeJSON(w, http.StatusOK, nil)
 		return
@@ -678,15 +697,57 @@ const bearerTokenHeader = "X-Mar-Auth-Token"
 // token, or false if the token doesn't match a live session.
 func sessionUserID(db *sql.DB, secret, rawToken string) (int64, bool) {
 	now := time.Now().Unix()
+	tokenHash := auth.Hash(secret, rawToken)
 	var userID int64
 	row := db.QueryRow(
 		`SELECT user_id FROM _mar_auth_sessions WHERE token_hash = ? AND expires_at >= ?`,
-		auth.Hash(secret, rawToken), now,
+		tokenHash, now,
 	)
 	if err := row.Scan(&userID); err != nil {
 		return 0, false
 	}
 	_, _ = db.Exec(`UPDATE _mar_auth_sessions SET last_used_at = ? WHERE token_hash = ?`,
-		now, auth.Hash(secret, rawToken))
+		now, tokenHash)
 	return userID, true
+}
+
+// sessionMemo remembers, for the life of ONE request, which user its session
+// token resolved to.
+//
+// A request to a protected service asked this question twice: once to hand the
+// handler its user, and once more after the handler returned, so the request
+// log could name who made it. Each ask is a SELECT and an UPDATE on the app's
+// single connection. The answer is a fact about the request, so it is looked
+// up once and carried on the request's context.
+//
+// Only a successful lookup is remembered; a miss is asked again. Sign-out is
+// the one request whose two answers used to differ, and it is unchanged:
+// handleLogout deletes the session without looking it up first, so the memo
+// is still empty when the request log asks, and that entry names nobody.
+type sessionMemo struct {
+	token  string
+	userID int64
+	ok     bool
+}
+
+type sessionMemoKey struct{}
+
+// withSessionMemo gives a request somewhere to remember its session.
+func withSessionMemo(r *http.Request) *http.Request {
+	return r.WithContext(context.WithValue(r.Context(), sessionMemoKey{}, &sessionMemo{}))
+}
+
+// requestSessionUserID is sessionUserID, asked at most once per request for a
+// token that resolves. A request with no memo (a handler reached without the
+// instrumenting middleware, as tests do) asks every time, as before.
+func requestSessionUserID(r *http.Request, db *sql.DB, secret, rawToken string) (int64, bool) {
+	memo, _ := r.Context().Value(sessionMemoKey{}).(*sessionMemo)
+	if memo != nil && memo.ok && memo.token == rawToken {
+		return memo.userID, true
+	}
+	uid, ok := sessionUserID(db, secret, rawToken)
+	if memo != nil && ok {
+		*memo = sessionMemo{token: rawToken, userID: uid, ok: true}
+	}
+	return uid, ok
 }

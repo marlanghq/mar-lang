@@ -129,6 +129,12 @@ func adminInstrument(h http.Handler) http.Handler {
 
 		started := time.Now()
 		recorder := &statusRecorder{ResponseWriter: w, status: 200}
+		// The handler and the log entry below both ask who this request
+		// belongs to; the memo lets the second ask reuse the first answer.
+		// A request that carries no credential has nothing to remember.
+		if r.Header.Get("Cookie") != "" || r.Header.Get("Authorization") != "" {
+			r = withSessionMemo(r)
+		}
 		h.ServeHTTP(recorder, r)
 
 		adminRecord(admin.RequestLog{
@@ -190,7 +196,7 @@ func bestEffortUserEmail(r *http.Request) string {
 	if err != nil {
 		return ""
 	}
-	uid, ok := sessionUserID(db, secret, tok)
+	uid, ok := requestSessionUserID(r, db, secret, tok)
 	if !ok {
 		return ""
 	}
