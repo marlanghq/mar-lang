@@ -128,25 +128,55 @@ func marKindOf(v Value) string {
 }
 
 func encodeValue(v Value) (string, error) {
+	// One buffer for the whole value. This used to build a string per
+	// nested value and copy it into its parent's builder, so a list of
+	// records was copied once per level and allocated once per field; the
+	// bytes are the same, they are just written once.
+	buf, err := appendValue(make([]byte, 0, 64), v)
+	if err != nil {
+		return "", err
+	}
+	return string(buf), nil
+}
+
+// appendJSONString writes s as a JSON string, byte for byte what json.Marshal
+// writes. Printable ASCII other than the five characters json.Marshal escapes
+// (`"`, `\`, and the HTML three) is emitted as itself, which is every field
+// name and most text; anything else takes json.Marshal's own path, so the
+// escaping rules live in one place and are not restated here.
+func appendJSONString(dst []byte, s string) []byte {
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c < 0x20 || c > 0x7e || c == '"' || c == '\\' || c == '<' || c == '>' || c == '&' {
+			b, _ := json.Marshal(s)
+			return append(dst, b...)
+		}
+	}
+	dst = append(dst, '"')
+	dst = append(dst, s...)
+	return append(dst, '"')
+}
+
+func appendValue(dst []byte, v Value) ([]byte, error) {
 	switch x := v.(type) {
 	case VInt:
-		return strconv.FormatInt(x.V, 10), nil
+		return strconv.AppendInt(dst, x.V, 10), nil
 	case VString:
-		b, _ := json.Marshal(x.V)
-		return string(b), nil
+		return appendJSONString(dst, x.V), nil
 	case VChar:
 		// Wire format `{"__char": "x"}`, a 1-char string under the
 		// marker. JSON itself has no Char type; this marker tells the
 		// decoder side (Go's convertJSON / JS jsToMar / Swift
 		// MarJSONCodec) to rebuild a VChar instead of degrading to a
 		// 1-char VString.
-		b, _ := json.Marshal(string(x.V))
-		return `{"__char":` + string(b) + `}`, nil
+		dst = append(dst, `{"__char":`...)
+		dst = appendJSONString(dst, string(x.V))
+		return append(dst, '}'), nil
 	case VBool:
 		if x.V {
-			return "true", nil
+			return append(dst, "true"...), nil
 		}
-		return "false", nil
+		return append(dst, "false"...), nil
 	case VDecimal:
 		// Wire format `{"__dec": "1.50"}`, the value rides as a STRING
 		// so no JSON parser on any side ever runs it through binary
@@ -154,20 +184,21 @@ func encodeValue(v Value) (string, error) {
 		// lets jsToMar / MarJSONCodec rebuild a Decimal instead of a
 		// 4-char string; the digits themselves stay readable to non-mar
 		// consumers inspecting raw JSON.
-		b, _ := json.Marshal(decString(x))
-		return `{"__dec":` + string(b) + `}`, nil
+		dst = append(dst, `{"__dec":`...)
+		dst = appendJSONString(dst, decString(x))
+		return append(dst, '}'), nil
 	case VDivision:
 		// Division is deliberately inert: an unresolved exact quotient
 		// has no canonical digit form, so it never crosses a boundary.
 		// Resolve it first (Decimal.rounded / withRemainder).
-		return "", fmt.Errorf("JSON.encode: cannot encode a Decimal.Division — resolve it with Decimal.rounded or Decimal.withRemainder first")
+		return nil, fmt.Errorf("JSON.encode: cannot encode a Decimal.Division — resolve it with Decimal.rounded or Decimal.withRemainder first")
 	case VUnit:
-		return "null", nil
+		return append(dst, "null"...), nil
 	case VDuration:
 		// -1 precision drops trailing zeros, so whole-second durations
 		// still serialize as integers ("2"): only sub-second ones carry
 		// a fraction ("1.5"). Keeps the wire format stable for existing data.
-		return strconv.FormatFloat(x.Seconds, 'f', -1, 64), nil
+		return strconv.AppendFloat(dst, x.Seconds, 'f', -1, 64), nil
 	case VAngle:
 		// Wire format is `{"__angle": 450}`, deci-degrees, the same
 		// marker-object shape as __char / __time / __dec, so the client
@@ -175,7 +206,9 @@ func encodeValue(v Value) (string, error) {
 		// angle in a model has to survive the wire: it goes to App.shared,
 		// through time travel, and into a rules engine replayed on both
 		// sides.
-		return `{"__angle":` + strconv.FormatInt(x.Deci, 10) + `}`, nil
+		dst = append(dst, `{"__angle":`...)
+		dst = strconv.AppendInt(dst, x.Deci, 10)
+		return append(dst, '}'), nil
 	case VTime:
 		// Wire format is `{"__time": "ISO 8601"}`, marker keeps the
 		// type round-trippable on the client (jsToMar / iOS decoder
@@ -188,24 +221,25 @@ func encodeValue(v Value) (string, error) {
 		// with a sub-second Time lost it — while the browser's own
 		// encoder (toISOString) kept it. The loss was one-directional and
 		// silent.
-		iso := time.UnixMilli(x.Millis).UTC().Format(isoMillis)
-		b, _ := json.Marshal(iso)
-		return `{"__time":` + string(b) + `}`, nil
+		//
+		// Written straight into the buffer: the layout produces only digits
+		// and `-T:.Z` (a year past 9999 is just more digits, a year before
+		// 0 a leading `-`), none of which JSON escapes.
+		dst = append(dst, `{"__time":"`...)
+		dst = time.UnixMilli(x.Millis).UTC().AppendFormat(dst, isoMillis)
+		return append(dst, `"}`...), nil
 	case VList:
-		var sb strings.Builder
-		sb.WriteByte('[')
+		var err error
+		dst = append(dst, '[')
 		for i, e := range x.Elements {
 			if i > 0 {
-				sb.WriteByte(',')
+				dst = append(dst, ',')
 			}
-			s, err := encodeValue(e)
-			if err != nil {
-				return "", err
+			if dst, err = appendValue(dst, e); err != nil {
+				return nil, err
 			}
-			sb.WriteString(s)
 		}
-		sb.WriteByte(']')
-		return sb.String(), nil
+		return append(dst, ']'), nil
 	case VRecord:
 		// Sorted by field name, not by the order the literal was written.
 		// `Order` is where the fields appeared in the source, which is not
@@ -214,26 +248,22 @@ func encodeValue(v Value) (string, error) {
 		// a pure function must have: equal inputs, equal output. It also
 		// puts the three runtimes on the same answer; the iOS encoder already
 		// sorted, so web and server were the odd ones out.
-		names := make([]string, len(x.Order))
-		copy(names, x.Order)
+		var stack [16]string
+		names := append(stack[:0], x.Order...)
 		sort.Strings(names)
-		var sb strings.Builder
-		sb.WriteByte('{')
+		var err error
+		dst = append(dst, '{')
 		for i, n := range names {
 			if i > 0 {
-				sb.WriteByte(',')
+				dst = append(dst, ',')
 			}
-			b, _ := json.Marshal(n)
-			sb.Write(b)
-			sb.WriteByte(':')
-			s, err := encodeValue(x.Fields[n])
-			if err != nil {
-				return "", err
+			dst = appendJSONString(dst, n)
+			dst = append(dst, ':')
+			if dst, err = appendValue(dst, x.Fields[n]); err != nil {
+				return nil, err
 			}
-			sb.WriteString(s)
 		}
-		sb.WriteByte('}')
-		return sb.String(), nil
+		return append(dst, '}'), nil
 	case VCtor:
 		// Every constructor, Nothing and Just included, round-trips
 		// as `{"__ctor":"Name"}` (zero-arg) or
@@ -254,42 +284,35 @@ func encodeValue(v Value) (string, error) {
 		// be made deterministic with `.sortedKeys`, so sorted is the one order
 		// all three runtimes can agree on. Decoders look keys up, so none of
 		// them notices.
-		var sb strings.Builder
-		sb.WriteByte('{')
+		var err error
+		dst = append(dst, '{')
 		if len(x.Args) > 0 {
-			sb.WriteString(`"__args":[`)
+			dst = append(dst, `"__args":[`...)
 			for i, a := range x.Args {
 				if i > 0 {
-					sb.WriteByte(',')
+					dst = append(dst, ',')
 				}
-				s, err := encodeValue(a)
-				if err != nil {
-					return "", err
+				if dst, err = appendValue(dst, a); err != nil {
+					return nil, err
 				}
-				sb.WriteString(s)
 			}
-			sb.WriteString(`],`)
+			dst = append(dst, `],`...)
 		}
-		sb.WriteString(`"__ctor":`)
-		b, _ := json.Marshal(x.Tag)
-		sb.Write(b)
-		sb.WriteByte('}')
-		return sb.String(), nil
+		dst = append(dst, `"__ctor":`...)
+		dst = appendJSONString(dst, x.Tag)
+		return append(dst, '}'), nil
 	case VTuple:
-		var sb strings.Builder
-		sb.WriteByte('[')
+		var err error
+		dst = append(dst, '[')
 		for i, e := range x.Members {
 			if i > 0 {
-				sb.WriteByte(',')
+				dst = append(dst, ',')
 			}
-			s, err := encodeValue(e)
-			if err != nil {
-				return "", err
+			if dst, err = appendValue(dst, e); err != nil {
+				return nil, err
 			}
-			sb.WriteString(s)
 		}
-		sb.WriteByte(']')
-		return sb.String(), nil
+		return append(dst, ']'), nil
 	case VDict:
 		// `{"__dict": [[k1,v1], [k2,v2], ...]}`, the marker tells
 		// the decoder side to rebuild a VDict rather than treating
@@ -299,49 +322,41 @@ func encodeValue(v Value) (string, error) {
 		// array-of-pairs otherwise) would need the encoder to peek
 		// at the first key's type, and would split decoders into
 		// two paths.
-		var sb strings.Builder
-		sb.WriteString(`{"__dict":[`)
+		var err error
+		dst = append(dst, `{"__dict":[`...)
 		for i, p := range x.Pairs {
 			if i > 0 {
-				sb.WriteByte(',')
+				dst = append(dst, ',')
 			}
-			ks, err := encodeValue(p.Key)
-			if err != nil {
-				return "", err
+			dst = append(dst, '[')
+			if dst, err = appendValue(dst, p.Key); err != nil {
+				return nil, err
 			}
-			vs, err := encodeValue(p.Value)
-			if err != nil {
-				return "", err
+			dst = append(dst, ',')
+			if dst, err = appendValue(dst, p.Value); err != nil {
+				return nil, err
 			}
-			sb.WriteByte('[')
-			sb.WriteString(ks)
-			sb.WriteByte(',')
-			sb.WriteString(vs)
-			sb.WriteByte(']')
+			dst = append(dst, ']')
 		}
-		sb.WriteString("]}")
-		return sb.String(), nil
+		return append(dst, "]}"...), nil
 	case VSet:
 		// `{"__set":[i1,i2,...]}`, counterpart to the VDict marker.
 		// Items are already sorted; the decoder rebuilds via setInsert
 		// to keep the sorted invariant even if a hand-crafted payload
 		// arrives out of order.
-		var sb strings.Builder
-		sb.WriteString(`{"__set":[`)
+		var err error
+		dst = append(dst, `{"__set":[`...)
 		for i, it := range x.Items {
 			if i > 0 {
-				sb.WriteByte(',')
+				dst = append(dst, ',')
 			}
-			s, err := encodeValue(it)
-			if err != nil {
-				return "", err
+			if dst, err = appendValue(dst, it); err != nil {
+				return nil, err
 			}
-			sb.WriteString(s)
 		}
-		sb.WriteString("]}")
-		return sb.String(), nil
+		return append(dst, "]}"...), nil
 	case VEffect, VFn:
-		return "", fmt.Errorf("JSON.encode: %s has no JSON form.\n"+
+		return nil, fmt.Errorf("JSON.encode: %s has no JSON form.\n"+
 			"  Encode the data it was built FROM, and build it on the side that uses it", marKindOf(v))
 	}
 	// A Go type name is not something the reader wrote. These are the values a
@@ -356,7 +371,7 @@ func encodeValue(v Value) (string, error) {
 	// (see noJSONForm in internal/typecheck/shape_lint.go), with the signature
 	// untouched. What is left here is the case the lint cannot be sure about,
 	// which is why the sentence still has to be worth reading.
-	return "", fmt.Errorf("JSON.encode: %s has no JSON form.\n"+
+	return nil, fmt.Errorf("JSON.encode: %s has no JSON form.\n"+
 		"  Encode the data it was built FROM, and build it on the side that uses it", marKindOf(v))
 }
 

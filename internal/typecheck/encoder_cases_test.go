@@ -22,9 +22,11 @@ func TestTheNoJSONFormListMatchesTheEncodersOwnCases(t *testing.T) {
 		t.Fatal(err)
 	}
 	body := string(src)
-	start := strings.Index(body, "func encodeValue(")
+	// appendValue holds the arms; encodeValue is the wrapper that owns the
+	// buffer.
+	start := strings.Index(body, "func appendValue(")
 	if start < 0 {
-		t.Fatal("encodeValue is not in json.go; this test is looking in the wrong place")
+		t.Fatal("appendValue is not in json.go; this test is looking in the wrong place")
 	}
 	end := strings.Index(body[start:], "\n}\n")
 	if end < 0 {
