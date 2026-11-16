@@ -64,8 +64,8 @@ func displayPath(p string) string {
 // clear message, but the rest of the program runs fine).
 func SetDBPath(path string) {
 	dbMu.Lock()
-	defer dbMu.Unlock()
-	if dbHandle != nil && path != dbPath {
+	changed := path != dbPath
+	if dbHandle != nil && changed {
 		// Path changed mid-session (hot-reload after editing mar.json).
 		// Close the old handle so the next Repo call reopens.
 		_ = dbHandle.Close()
@@ -73,6 +73,14 @@ func SetDBPath(path string) {
 		dbOpenErr = nil
 	}
 	dbPath = path
+	dbMu.Unlock()
+	// The migration cache says "this table is current" about a DATABASE,
+	// and is keyed by table name alone: it has to be forgotten with the
+	// file it described. Outside dbMu, because ensureMigrated takes the
+	// two locks in the other order (cache, then currentDBPath).
+	if changed {
+		ResetMigrationCache()
+	}
 }
 
 // getDB returns the lazy-opened SQLite handle. First call opens the file

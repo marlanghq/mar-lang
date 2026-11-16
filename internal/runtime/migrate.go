@@ -1201,10 +1201,8 @@ func (m *Migrator) liveTableNames() ([]string, error) {
 }
 
 // columnDefSQL builds the per-column DDL fragment used inside CREATE
-// TABLE and ALTER TABLE ADD COLUMN. Mirrors the existing
-// buildCreateTableSQL formatting in entity.go but kept separate so
-// the migrator can produce ALTER fragments without rebuilding the
-// whole table SQL.
+// TABLE and ALTER TABLE ADD COLUMN, so a column is spelled the same
+// way whether the migrator creates its table or adds it later.
 func columnDefSQL(f EntityField) string {
 	parts := []string{quoteIdent(f.Name), sqlTypeForDDL(f.SQLType)}
 	if f.Serial {
@@ -1226,8 +1224,10 @@ func columnDefSQL(f EntityField) string {
 // EXISTS) for the migrator. The migrator only emits CREATE for
 // tables it has just confirmed don't exist, so the guard would be
 // noise, and worse, would mask a real bug if drift were to make
-// the table already exist. entity.go has an IF-NOT-EXISTS variant
-// used elsewhere for one-shot static-table bootstrapping.
+// the table already exist. It is the only CREATE TABLE the runtime
+// runs for an entity (the blocked-migration hints spell others out
+// for the developer to run): sign-in reaches it through
+// ensureMigrated, like every Repo call.
 func buildCreateTableSQLNew(e VEntity) string {
 	cols := make([]string, len(e.Fields))
 	for i, f := range e.Fields {

@@ -195,8 +195,12 @@ func TestBuildCreateTableSQL_EmitsCheckForEnum(t *testing.T) {
 			},
 		},
 	}
-	sql := buildCreateTableSQL(entity)
-	want := `CHECK("role" IN ('Member', 'Admin'))` // identifiers are quoted: see quoteIdent
+	sql := buildCreateTableSQLNew(entity)
+	// The column name inside the CHECK is NOT quoted by the builder the
+	// migrator uses (columnDefSQL), and liveEnumSet's pattern reads it back
+	// in that spelling. This assertion used to demand the quoted form and
+	// passed, because it ran against a second builder nothing shipped.
+	want := `CHECK(role IN ('Member', 'Admin'))`
 	if !strings.Contains(sql, want) {
 		t.Errorf("CREATE TABLE missing CHECK clause.\nGot:  %s\nWant substring: %s", sql, want)
 	}

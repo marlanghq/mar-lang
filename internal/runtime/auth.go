@@ -507,11 +507,12 @@ func fillTimestampsForSignup(entity VEntity, rec VRecord) VRecord {
 // LookupUserID returns the id of the user whose `identify` projection
 // equals the given email, or an error if no such row.
 func LookupUserID(cfg VAuth, email string) (int64, error) {
-	db, err := getDB()
+	// The same door every Repo.* call goes through: a cache hit once the
+	// boot pass has run, the real migrator otherwise. This used to issue its
+	// own `CREATE TABLE IF NOT EXISTS` on every sign-in, built by a second
+	// DDL writer that only this call site used.
+	db, err := ensureMigrated(cfg.Entity)
 	if err != nil {
-		return 0, err
-	}
-	if err := ensureMigratedNoLock(cfg.Entity, db); err != nil {
 		return 0, err
 	}
 	emailCol, err := identifyColumn(cfg)
@@ -574,13 +575,6 @@ func loadUserValue(cfg VAuth, id int64) (Value, error) {
 		return nil, fmt.Errorf("user not found")
 	}
 	return ctor.Args[0], nil
-}
-
-// ensureMigratedNoLock runs the entity's migration. Wrapped helper so
-// auth code can ensure the user table exists before the first query.
-func ensureMigratedNoLock(entity VEntity, db *sql.DB) error {
-	_, err := db.Exec(buildCreateTableSQL(entity))
-	return err
 }
 
 // repoCreateInner is repo.go's repoCreate logic invoked synchronously
