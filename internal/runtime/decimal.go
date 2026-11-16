@@ -50,9 +50,13 @@ func digitCount(c *big.Int) int {
 
 func checkDecimalBound(op string, c *big.Int) error {
 	if digitCount(c) > maxDecimalDigits {
-		return fmt.Errorf("%s: Decimal overflow — the result exceeds %d significant digits", op, maxDecimalDigits)
+		return errDecimalOverflow(op)
 	}
 	return nil
+}
+
+func errDecimalOverflow(op string) error {
+	return fmt.Errorf("%s: Decimal overflow — the result exceeds %d significant digits", op, maxDecimalDigits)
 }
 
 // alignDecimals brings two decimals to a common scale, returning the
@@ -209,7 +213,20 @@ func decimalFromWireNumber(s string) (VDecimal, error) {
 	if scale < 0 {
 		// The point moved past the last digit: pad with zeros rather than
 		// carrying a negative scale, which nothing downstream expects.
-		coef.Mul(coef, new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(-scale)), nil))
+		//
+		// The padding is refused BEFORE it is computed when it cannot fit.
+		// The exponent is the sender's, and `1e999999999` is eleven bytes:
+		// raising ten to it first, to then count the digits and say no, was
+		// measured at 3 s and 112 MB for 1e9999999, and 1e99999999 had not
+		// finished after 20 s. Zero is the one coefficient no padding can
+		// push past the bound, and it needs none.
+		if coef.Sign() == 0 {
+			return VDecimal{Coef: coef, Scale: 0}, nil
+		}
+		if -scale > maxDecimalDigits {
+			return VDecimal{}, errDecimalOverflow("Decimal")
+		}
+		coef.Mul(coef, pow10(-scale))
 		scale = 0
 	}
 	if err := checkDecimalBound("Decimal", coef); err != nil {
