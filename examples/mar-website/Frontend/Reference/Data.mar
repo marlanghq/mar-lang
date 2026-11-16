@@ -373,7 +373,7 @@ sectionsFor m =
               , entries =
                     [ { moduleName = "Decimal", name = "fromInt", signature = "Int -> Decimal", side = "both", description = "An exact Decimal from a whole number.", examples = [ [ "Decimal.toCents (Decimal.fromInt 3)    -- 300" ] ] }
                     , { moduleName = "Decimal", name = "fromCents", signature = "Int -> Decimal", side = "both", description = "A Decimal from a count of hundredths, which is how money usually arrives from a database or an API.", examples = [ [ "Decimal.toCents (Decimal.fromCents 250)    -- 250" ] ] }
-                    , { moduleName = "Decimal", name = "fromString", signature = "String -> Maybe Decimal", side = "both", description = "Parses a Decimal, giving Nothing when the text is not one. The scale comes from the text, so \"2.50\" keeps its two places.", examples = [ [ "Maybe.map Decimal.toCents (Decimal.fromString \"2.50\")    -- Just 250" ], [ "Decimal.fromString \"abc\"    -- Nothing" ] ] }
+                    , { moduleName = "Decimal", name = "fromString", signature = "String -> Maybe Decimal", side = "both", description = "Parses a Decimal, giving Nothing when the text is not one, or when it needs more than 34 significant digits or more than 34 places after the point. The scale comes from the text, so \"2.50\" keeps its two places; zeros at the end of the fraction are dropped only when there are too many to fit.", examples = [ [ "Maybe.map Decimal.toCents (Decimal.fromString \"2.50\")    -- Just 250" ], [ "Decimal.fromString \"abc\"    -- Nothing" ] ] }
                     , { moduleName = "Decimal", name = "zero", signature = "Decimal", side = "both", description = "The Decimal zero.", examples = [ [ "Decimal.toCents Decimal.zero    -- 0" ] ] }
                     ]
               }
@@ -381,7 +381,7 @@ sectionsFor m =
               , entries =
                     [ { moduleName = "Decimal", name = "toString", signature = "Decimal -> String", side = "both", description = "The Decimal written out, keeping its scale.", examples = [ [ "Decimal.toString (Decimal.fromCents 250)    -- \"2.50\"" ] ] }
                     , { moduleName = "Decimal", name = "toCents", signature = "Decimal -> Int", side = "both", description = "The value as a count of hundredths.", examples = [ [ "Decimal.toCents (Decimal.fromCents 250)    -- 250" ] ] }
-                    , { moduleName = "Decimal", name = "toScale", signature = "Decimal.Rounding -> Int -> Decimal -> Decimal", side = "both", description = "Moves the value to a given number of decimal places, rounding the named way when places are lost.", examples = [ [ "Decimal.toString (Decimal.toScale Decimal.HalfUp 2 (Decimal.fromInt 3))    -- \"3.00\"" ] ] }
+                    , { moduleName = "Decimal", name = "toScale", signature = "Decimal.Rounding -> Int -> Decimal -> Decimal", side = "both", description = "Moves the value to a given number of decimal places, from 0 to 34, rounding the named way when places are lost. A scale above 34 is an error. Padding with zeros stops early if the value cannot hold them all within 34 significant digits.", examples = [ [ "Decimal.toString (Decimal.toScale Decimal.HalfUp 2 (Decimal.fromInt 3))    -- \"3.00\"" ] ] }
                     ]
               }
             , { category = "To a whole number"
@@ -395,8 +395,8 @@ sectionsFor m =
               }
             , { category = "Division"
               , entries =
-                    [ { moduleName = "Decimal", name = "rounded", signature = "Decimal.Rounding -> Int -> Decimal.Division -> Decimal", side = "both", description = "The result of a division, rounded the named way to a given number of places. This is the resolver you use when a rule tells you how to round.", examples = [ [ "Decimal.toString (Decimal.rounded Decimal.HalfUp 2 (Decimal.fromInt 10 / Decimal.fromInt 3))    -- \"3.33\"" ] ] }
-                    , { moduleName = "Decimal", name = "withRemainder", signature = "Int -> Decimal.Division -> { quotient : Decimal, remainder : Decimal }", side = "both", description = "Splits a division into a quotient at the given scale plus what is left over. Nothing is lost, so money can be shared out without cents appearing or vanishing.", examples = [ [ "Decimal.toCents ((Decimal.withRemainder 2 (Decimal.fromInt 10 / Decimal.fromInt 4)).quotient)    -- 250" ] ] }
+                    [ { moduleName = "Decimal", name = "rounded", signature = "Decimal.Rounding -> Int -> Decimal.Division -> Decimal", side = "both", description = "The result of a division, rounded the named way to a given number of places, from 0 to 34. This is the resolver you use when a rule tells you how to round. A scale above 34 is an error. Padding with zeros stops early if the value cannot hold them all within 34 significant digits.", examples = [ [ "Decimal.toString (Decimal.rounded Decimal.HalfUp 2 (Decimal.fromInt 10 / Decimal.fromInt 3))    -- \"3.33\"" ] ] }
+                    , { moduleName = "Decimal", name = "withRemainder", signature = "Int -> Decimal.Division -> { quotient : Decimal, remainder : Decimal }", side = "both", description = "Splits a division into a quotient at the given scale, from 0 to 34, plus what is left over. Nothing is lost, so money can be shared out without cents appearing or vanishing. A scale above 34 is an error, and padding the quotient with zeros stops early if it cannot hold them all within 34 significant digits. The remainder is worked out at the given scale plus the divisor's places, or the dividend's if more; zeros past place 34 are dropped, and a nonzero digit there is an error, which only a divisor with places of its own can cause.", examples = [ [ "Decimal.toCents ((Decimal.withRemainder 2 (Decimal.fromInt 10 / Decimal.fromInt 4)).quotient)    -- 250" ] ] }
                     ]
               }
             , { category = "Rounding modes"
@@ -1273,7 +1273,7 @@ blurbFor m =
             "A collection with no duplicates and no order of its own."
 
         "Decimal" ->
-            "Exact decimal arithmetic, with rounding you choose rather than inherit."
+            "Exact decimal arithmetic up to 34 digits and 34 places, with rounding you choose rather than inherit."
 
         "Math" ->
             "Angles, trigonometry, and square roots in whole numbers, identical on every runtime."

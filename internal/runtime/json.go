@@ -475,8 +475,8 @@ func convertJSON(raw any) (Value, error) {
 		// arithmetic could not drift. A float64 admitted at the wire is
 		// that drift coming back through another door, which is what
 		// intrange.go says about Int in the same breath.
-		return nil, fmt.Errorf("JSON: %s is not a number Mar can hold exactly: an Int is at most %d and a Decimal at most %d significant digits",
-			x.String(), MaxSafeInt, maxDecimalDigits)
+		return nil, fmt.Errorf("JSON: %s is not a number Mar can hold exactly: an Int is at most %d and a Decimal at most %d significant digits and %d decimal places",
+			x.String(), MaxSafeInt, maxDecimalDigits, maxDecimalPlaces)
 
 	case []any:
 		out := make([]Value, len(x))

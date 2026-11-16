@@ -131,7 +131,7 @@ enum MarJSONCodec {
             // could construct one.
             throw MarRuntimeError.message(
                 "JSON: \(n.decimalValue) is not a number Mar can hold exactly:"
-                + " an Int is at most 9007199254740991 and a Decimal at most 34 significant digits")
+                + " an Int is at most 9007199254740991 and a Decimal at most 34 significant digits and 34 decimal places")
         }
         if let s = any as? String { return .string(s) }
         if let b = any as? Bool { return .bool(b) }
@@ -469,7 +469,7 @@ enum MarJSONCodec {
 
     /// Turns a JSON number's own text into the Mar value it names: an Int when
     /// it is whole and inside 53 bits, an exact Decimal when it fits 34
-    /// significant digits, and nothing otherwise.
+    /// significant digits and 34 places, and nothing otherwise.
     ///
     /// Nothing else is a number in Mar. `.float` used to catch the rest; the
     /// case is gone now, because with this boundary closed nothing could
@@ -479,12 +479,12 @@ enum MarJSONCodec {
         if isPlainInteger(lit), let n = Int(lit), MarInt.inRange(n) {
             return .int(n)
         }
-        if let dec = DecMath.parseDecimalString(plainDigits(lit)) {
+        if let dec = decimalFromWireNumber(lit) {
             return .decimal(dec)
         }
         throw MarRuntimeError.message(
             "JSON: \(lit) is not a number Mar can hold exactly:"
-            + " an Int is at most \(MarInt.max) and a Decimal at most 34 significant digits")
+            + " an Int is at most \(MarInt.max) and a Decimal at most 34 significant digits and 34 decimal places")
     }
 
     private static func isPlainInteger(_ s: String) -> Bool {
@@ -493,33 +493,54 @@ enum MarJSONCodec {
         return !body.isEmpty && body.allSatisfy { $0.isNumber }
     }
 
-    /// Rewrites exponent notation as digits by MOVING THE POINT, never by
-    /// multiplying a Double -- which is the approximation this path exists to
-    /// avoid. 1e30 becomes a 1 and thirty zeros.
-    static func plainDigits(_ lit: String) -> String {
-        guard let e = lit.firstIndex(where: { $0 == "e" || $0 == "E" }) else { return lit }
-        let mantissa = String(lit[lit.startIndex..<e])
-        guard let exp = Int(lit[lit.index(after: e)...]) else { return lit }
-        var sign = ""
-        var body = mantissa
-        if body.hasPrefix("-") { sign = "-"; body = String(body.dropFirst()) }
-        if body.hasPrefix("+") { body = String(body.dropFirst()) }
-        let parts = body.split(separator: ".", maxSplits: 1, omittingEmptySubsequences: false)
-        let intPart = String(parts.first ?? "")
-        let frac = parts.count > 1 ? String(parts[1]) : ""
-        var digits = intPart + frac
-        var point = intPart.count + exp
-        if point <= 0 {
-            digits = String(repeating: "0", count: 1 - point) + digits
-            point = 1
+    /// Reads a JSON number's text into an exact Decimal, applying the exponent
+    /// by MOVING THE POINT, never by multiplying a Double -- which is the
+    /// approximation this path exists to avoid. 1e30 becomes a 1 and thirty
+    /// zeros.
+    ///
+    /// The exponent is the sender's, so nothing is built from it before the
+    /// bounds are known to hold: reading 1e-999999999 used to start by
+    /// allocating a billion "0"s, and an exponent of Int.max or Int.min
+    /// overflowed the point arithmetic, which traps in Swift and closed the
+    /// app. Same steps and answers as decimalFromWireNumber in
+    /// internal/runtime/decimal.go; nil where that one errors.
+    static func decimalFromWireNumber(_ lit: String) -> MarDec? {
+        var mantissa = Substring(lit)
+        var exp = 0
+        if let e = lit.firstIndex(where: { $0 == "e" || $0 == "E" }) {
+            mantissa = lit[lit.startIndex..<e]
+            // An exponent outside 64 bits is one the server cannot read.
+            guard let n = Int(lit[lit.index(after: e)...]) else { return nil }
+            exp = n
         }
-        if point >= digits.count {
-            digits += String(repeating: "0", count: point - digits.count)
+        var neg = false
+        // One sign, as Go's splitDecimalText takes it: two `if`s read -+5 as -5.
+        if mantissa.hasPrefix("-") { neg = true; mantissa = mantissa.dropFirst() }
+        else if mantissa.hasPrefix("+") { mantissa = mantissa.dropFirst() }
+        let parts = mantissa.split(separator: ".", maxSplits: 1, omittingEmptySubsequences: false)
+        let intPart = parts.first ?? ""
+        let frac = parts.count > 1 ? parts[1] : ""
+        if intPart.isEmpty && frac.isEmpty { return nil }
+        var digits: [UInt8] = []
+        for ch in intPart + frac {
+            guard let d = ch.wholeNumberValue, d >= 0, d <= 9 else { return nil }
+            digits.append(UInt8(d))
         }
-        let idx = digits.index(digits.startIndex, offsetBy: point)
-        let whole = String(digits[digits.startIndex..<idx])
-        let rest = String(digits[idx...])
-        return sign + (rest.isEmpty ? whole : whole + "." + rest)
+        let sig = DecMath.trim(digits)
+        let sigCount = sig == [0] ? 0 : sig.count
+        // Below -(34 + the digits) the number keeps more than 34 places
+        // whatever zeros its digits end with; a zero fits, at 34. Asked before
+        // the subtraction, which would trap for an exponent near Int.min.
+        if exp < -(DecMath.maxDecimalPlaces + sigCount) {
+            return sigCount == 0 ? MarDec(negative: false, digits: [0], scale: DecMath.maxDecimalPlaces) : nil
+        }
+        let scale = frac.count - exp
+        if scale >= 0 { return DecMath.decimalFromDigits(negative: neg, sig, scale) }
+        // The point moved past the last digit: zeros before the point count,
+        // and the padding is refused before it is built. Zero needs none.
+        if sigCount == 0 { return MarDec.zero }
+        if -scale > DecMath.maxDigits - sigCount { return nil }
+        return MarDec(negative: neg, digits: sig + [UInt8](repeating: 0, count: -scale), scale: 0)
     }
 
     // MARK: - Program decoding (program.json → typed Swift)

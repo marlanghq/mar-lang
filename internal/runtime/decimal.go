@@ -16,9 +16,14 @@ package runtime
 // it into a value. That is where the rounding decision is written,
 // and the only place any digit can be dropped.
 //
-// The 34-digit bound is what keeps the three runtimes bit-identical:
-// Go big.Int here, BigInt in runtime.js, Foundation.Decimal-backed
-// words on iOS. Exceeding it is a runtime abort with a clear message.
+// Two bounds, the same on all three runtimes (Go big.Int here, BigInt in
+// runtime.js, a digit array on iOS): at most 34 significant digits and at
+// most 34 places after the point (ADR 0039). The places bound is what keeps
+// every operation cheap: before it, a value carried any scale it was given,
+// and `1e-99999999` turned "add 1" into 98 s and 1.96 GB. Zeros at the right
+// end of the fraction count against neither bound: fitDecimal drops them, only
+// as many as needed, and never a digit that changes the value. Anything else
+// over a bound is a runtime abort with a clear message.
 
 import (
 	"fmt"
@@ -28,6 +33,12 @@ import (
 )
 
 const maxDecimalDigits = 34
+
+// maxDecimalPlaces bounds the SCALE, which maxDecimalDigits does not: 1e-50 is
+// one significant digit with fifty places. runtime.js (MAX_DECIMAL_PLACES) and
+// MarDecimal.swift (DecMath.maxDecimalPlaces) name the same bound, and
+// shared_constants_test.go holds the three to one value.
+const maxDecimalPlaces = 34
 
 var (
 	bigOne = big.NewInt(1)
@@ -39,25 +50,83 @@ func pow10(n int) *big.Int {
 	return new(big.Int).Exp(bigTen, big.NewInt(int64(n)), nil)
 }
 
-// digitCount returns the number of significant decimal digits in c
-// (zero counts as one digit).
-func digitCount(c *big.Int) int {
-	if c.Sign() == 0 {
-		return 1
-	}
-	return len(new(big.Int).Abs(c).String())
-}
-
-func checkDecimalBound(op string, c *big.Int) error {
-	if digitCount(c) > maxDecimalDigits {
-		return errDecimalOverflow(op)
-	}
-	return nil
-}
-
 func errDecimalOverflow(op string) error {
 	return fmt.Errorf("%s: Decimal overflow — the result exceeds %d significant digits", op, maxDecimalDigits)
 }
+
+func errDecimalPlaces(op string) error {
+	return fmt.Errorf("%s: Decimal overflow — the result needs more than %d decimal places", op, maxDecimalPlaces)
+}
+
+// errScaleArgument is the refusal of a scale a caller ASKED for: it is not a
+// result that happened to be too fine, it is a request no Decimal can honor.
+func errScaleArgument(op string, scale int64) error {
+	return fmt.Errorf("%s: scale %d is more than the %d decimal places a Decimal can hold", op, scale, maxDecimalPlaces)
+}
+
+// placesToDrop is the whole rule of the two bounds. digits is a coefficient's
+// magnitude in base ten with no leading zeros, and not zero; scale is how many
+// of those digits sit after the point. It answers how many zeros at the right
+// end must go for the value to fit both bounds, or the error when zeros are
+// not enough: Mar never drops a digit that changes the value.
+//
+// Only zeros AFTER the point can go. A zero before it is part of the number
+// (1e34 is thirty-five digits, and an error). When zeros cannot mend the
+// result, the error names the places if more than 34 would remain once every
+// zero that can go went, and the digits otherwise: 99.1 times
+// 0.1234567890123456789012345678901234 is reported as places, and 99.0 times
+// the same, whose one zero brings the places to 34, as digits.
+//
+// runtime.js (decPlacesToDrop) and MarDecimal.swift (DecMath.placesToDrop)
+// carry the same rule; parityfixture.DecimalBoundCases runs the same programs
+// on the three (TestTheServerAnswersTheDecimalBoundCases and its browser and
+// phone halves) and holds them to the same answers. The parser has a copy for
+// literals (decimalParts), which TestALiteralAndFromStringFitTheSameWay
+// compares.
+func placesToDrop(op string, digits string, scale int) (int, error) {
+	over := max(scale-maxDecimalPlaces, len(digits)-maxDecimalDigits, 0)
+	if over == 0 {
+		return 0, nil
+	}
+	zeros := min(len(digits)-len(strings.TrimRight(digits, "0")), scale)
+	if over > zeros {
+		if scale-zeros > maxDecimalPlaces {
+			return 0, errDecimalPlaces(op)
+		}
+		return 0, errDecimalOverflow(op)
+	}
+	return over, nil
+}
+
+// fitDecimal is how every result is made: coef at scale, held to both bounds.
+// A value that fits comes back exactly as given, so nothing that fitted before
+// the places bound existed changes its scale or its display. Zero always fits,
+// with at most maxDecimalPlaces places.
+func fitDecimal(op string, coef *big.Int, scale int) (VDecimal, error) {
+	if coef.Sign() == 0 {
+		return VDecimal{Coef: coef, Scale: min(scale, maxDecimalPlaces)}, nil
+	}
+	if scale <= maxDecimalPlaces && coef.CmpAbs(decimalDigitsCeiling) < 0 {
+		return VDecimal{Coef: coef, Scale: scale}, nil
+	}
+	digits := new(big.Int).Abs(coef).String()
+	drop, err := placesToDrop(op, digits, scale)
+	if err != nil {
+		return VDecimal{}, err
+	}
+	if drop == 0 {
+		return VDecimal{Coef: coef, Scale: scale}, nil
+	}
+	c, _ := new(big.Int).SetString(digits[:len(digits)-drop], 10)
+	if coef.Sign() < 0 {
+		c.Neg(c)
+	}
+	return VDecimal{Coef: c, Scale: scale - drop}, nil
+}
+
+// decimalDigitsCeiling is 10^34, the smallest magnitude with 35 digits: below
+// it fitDecimal needs no digit count at all, which is every ordinary result.
+var decimalDigitsCeiling = pow10(maxDecimalDigits)
 
 // alignDecimals brings two decimals to a common scale, returning the
 // rescaled coefficients and that scale. Exact: the smaller-scale
@@ -77,28 +146,16 @@ func alignDecimals(a, b VDecimal) (*big.Int, *big.Int, int) {
 
 func decAdd(a, b VDecimal) (VDecimal, error) {
 	ca, cb, scale := alignDecimals(a, b)
-	sum := new(big.Int).Add(ca, cb)
-	if err := checkDecimalBound("+", sum); err != nil {
-		return VDecimal{}, err
-	}
-	return VDecimal{Coef: sum, Scale: scale}, nil
+	return fitDecimal("+", new(big.Int).Add(ca, cb), scale)
 }
 
 func decSub(a, b VDecimal) (VDecimal, error) {
 	ca, cb, scale := alignDecimals(a, b)
-	diff := new(big.Int).Sub(ca, cb)
-	if err := checkDecimalBound("-", diff); err != nil {
-		return VDecimal{}, err
-	}
-	return VDecimal{Coef: diff, Scale: scale}, nil
+	return fitDecimal("-", new(big.Int).Sub(ca, cb), scale)
 }
 
 func decMul(a, b VDecimal) (VDecimal, error) {
-	prod := new(big.Int).Mul(a.Coef, b.Coef)
-	if err := checkDecimalBound("*", prod); err != nil {
-		return VDecimal{}, err
-	}
-	return VDecimal{Coef: prod, Scale: a.Scale + b.Scale}, nil
+	return fitDecimal("*", new(big.Int).Mul(a.Coef, b.Coef), a.Scale+b.Scale)
 }
 
 func decCompare(a, b VDecimal) int {
@@ -127,14 +184,13 @@ func decString(v VDecimal) string {
 	return out
 }
 
-// parseDecimalString accepts the canonical form (optional sign,
-// digits, optional point and digits) and rejects anything else.
-func parseDecimalString(s string) (VDecimal, error) {
+// splitDecimalText reads the canonical form (optional sign, digits, optional
+// point and digits) and answers its parts, or ok=false for anything else.
+func splitDecimalText(s string) (neg bool, intPart, fracPart string, ok bool) {
 	t := strings.TrimSpace(s)
 	if t == "" {
-		return VDecimal{}, fmt.Errorf("invalid Decimal %q", s)
+		return false, "", "", false
 	}
-	neg := false
 	switch t[0] {
 	case '-':
 		neg = true
@@ -142,30 +198,51 @@ func parseDecimalString(s string) (VDecimal, error) {
 	case '+':
 		t = t[1:]
 	}
-	intPart := t
-	fracPart := ""
+	intPart = t
 	if dot := strings.IndexByte(t, '.'); dot >= 0 {
 		intPart, fracPart = t[:dot], t[dot+1:]
 	}
 	if intPart == "" && fracPart == "" {
-		return VDecimal{}, fmt.Errorf("invalid Decimal %q", s)
+		return false, "", "", false
 	}
 	for _, r := range intPart + fracPart {
 		if r < '0' || r > '9' {
-			return VDecimal{}, fmt.Errorf("invalid Decimal %q", s)
+			return false, "", "", false
 		}
 	}
-	coef, ok := new(big.Int).SetString(zeroWhenEmpty(intPart+fracPart), 10)
-	if !ok {
-		return VDecimal{}, fmt.Errorf("invalid Decimal %q", s)
+	return neg, intPart, fracPart, true
+}
+
+// decimalFromDigits builds a Decimal from text: digits is the coefficient with
+// no leading zeros ("" for zero) and scale is how many of them sit after the
+// point. Both bounds are applied to the TEXT, before big.Int reads it, so what
+// big.Int reads is at most 34 digits. SetString is quadratic in the digits and
+// the text can be a whole request body: a megabyte of digits cost 1 to 5 s of
+// CPU and 2.4 GB of allocation to be refused, measured, and `0.<a million
+// zeros>1` was accepted with a scale of a million.
+func decimalFromDigits(op string, neg bool, digits string, scale int) (VDecimal, error) {
+	if digits == "" {
+		return VDecimal{Coef: big.NewInt(0), Scale: min(scale, maxDecimalPlaces)}, nil
 	}
-	if err := checkDecimalBound("Decimal", coef); err != nil {
+	drop, err := placesToDrop(op, digits, scale)
+	if err != nil {
 		return VDecimal{}, err
 	}
+	coef, _ := new(big.Int).SetString(digits[:len(digits)-drop], 10)
 	if neg {
 		coef.Neg(coef)
 	}
-	return VDecimal{Coef: coef, Scale: len(fracPart)}, nil
+	return VDecimal{Coef: coef, Scale: scale - drop}, nil
+}
+
+// parseDecimalString backs `Decimal.fromString` and Mar's own `{"__dec":"…"}`
+// wire form: the canonical form only, no exponent, held to both bounds.
+func parseDecimalString(s string) (VDecimal, error) {
+	neg, intPart, fracPart, ok := splitDecimalText(s)
+	if !ok {
+		return VDecimal{}, fmt.Errorf("invalid Decimal %q", s)
+	}
+	return decimalFromDigits("Decimal", neg, strings.TrimLeft(intPart+fracPart, "0"), len(fracPart))
 }
 
 // decimalFromWireNumber reads a JSON number into an exact Decimal, accepting
@@ -188,6 +265,13 @@ func parseDecimalString(s string) (VDecimal, error) {
 // 1e30 becomes the coefficient 1 followed by thirty zeros, not the double
 // nearest to 10^30. That is the whole reason this exists -- a value Mar can
 // hold exactly used to arrive as an approximation of itself.
+//
+// The exponent is the sender's, so nothing is built from it before the bounds
+// are known to hold. `1e-99999999` is eleven bytes: it used to arrive as a
+// one-digit coefficient with 99,999,999 places, and printing it built a 100 MB
+// string and adding 1 to it then ran for 98 s, 1.96 GB allocated across the
+// two, measured. `1e999999999` used to raise ten to its exponent only to count
+// the digits and say no.
 func decimalFromWireNumber(s string) (VDecimal, error) {
 	mantissa, exp := s, 0
 	for i, r := range s {
@@ -200,46 +284,42 @@ func decimalFromWireNumber(s string) (VDecimal, error) {
 			break
 		}
 	}
-	d, err := parseDecimalString(mantissa)
-	if err != nil {
-		return VDecimal{}, err
+	neg, intPart, fracPart, ok := splitDecimalText(mantissa)
+	if !ok {
+		return VDecimal{}, fmt.Errorf("invalid Decimal %q", s)
 	}
-	if exp == 0 {
-		return d, nil
-	}
-	// scale counts digits after the point, so a positive exponent lowers it.
-	scale := d.Scale - exp
-	coef := new(big.Int).Set(d.Coef)
-	if scale < 0 {
-		// The point moved past the last digit: pad with zeros rather than
-		// carrying a negative scale, which nothing downstream expects.
-		//
-		// The padding is refused BEFORE it is computed when it cannot fit.
-		// The exponent is the sender's, and `1e999999999` is eleven bytes:
-		// raising ten to it first, to then count the digits and say no, was
-		// measured at 3 s and 112 MB for 1e9999999, and 1e99999999 had not
-		// finished after 20 s. Zero is the one coefficient no padding can
-		// push past the bound, and it needs none.
-		if coef.Sign() == 0 {
-			return VDecimal{Coef: coef, Scale: 0}, nil
+	digits := strings.TrimLeft(intPart+fracPart, "0")
+	// The number ends with len(fracPart) - exp places. An exponent below
+	// -(34 + the digits) leaves more than 34 of them whatever zeros the digits
+	// end with, and is answered before the subtraction, which wraps around at
+	// math.MinInt64: that is how `1e-9223372036854775808` used to decode as 1.
+	if exp < -(maxDecimalPlaces + len(digits)) {
+		if digits == "" {
+			return VDecimal{Coef: big.NewInt(0), Scale: maxDecimalPlaces}, nil
 		}
-		if -scale > maxDecimalDigits {
-			return VDecimal{}, errDecimalOverflow("Decimal")
-		}
-		coef.Mul(coef, pow10(-scale))
-		scale = 0
+		return VDecimal{}, errDecimalPlaces("Decimal")
 	}
-	if err := checkDecimalBound("Decimal", coef); err != nil {
-		return VDecimal{}, err
+	scale := len(fracPart) - exp
+	if scale >= 0 {
+		return decimalFromDigits("Decimal", neg, digits, scale)
 	}
-	return VDecimal{Coef: coef, Scale: scale}, nil
-}
-
-func zeroWhenEmpty(s string) string {
-	if strings.TrimLeft(s, "0") == "" {
-		return "0"
+	// The point moved past the last digit: pad with zeros rather than carry a
+	// negative scale, which nothing downstream expects. Those zeros are before
+	// the point, so they count, and the padding is refused before it is built.
+	// Zero is the one coefficient no padding can push past the bound, and it
+	// needs none.
+	if digits == "" {
+		return VDecimal{Coef: big.NewInt(0), Scale: 0}, nil
 	}
-	return s
+	if -scale > maxDecimalDigits-len(digits) {
+		return VDecimal{}, errDecimalOverflow("Decimal")
+	}
+	coef, _ := new(big.Int).SetString(digits, 10)
+	coef.Mul(coef, pow10(-scale))
+	if neg {
+		coef.Neg(coef)
+	}
+	return VDecimal{Coef: coef, Scale: 0}, nil
 }
 
 // roundingModeTag extracts the Decimal.Rounding constructor tag.
@@ -309,10 +389,7 @@ func roundQuotient(num, den VDecimal, scale int, mode string) (VDecimal, error) 
 	if negative && q.Sign() != 0 {
 		q.Neg(q)
 	}
-	if err := checkDecimalBound("Decimal.rounded", q); err != nil {
-		return VDecimal{}, err
-	}
-	return VDecimal{Coef: q, Scale: scale}, nil
+	return fitDecimal("Decimal.rounded", q, scale)
 }
 
 func asDecimal(op string, v Value) (VDecimal, error) {
@@ -346,12 +423,11 @@ func decToScale(v VDecimal, scale int, mode string) (VDecimal, error) {
 	if scale < 0 {
 		return VDecimal{}, fmt.Errorf("Decimal.toScale: negative scale %d", scale)
 	}
+	if scale > maxDecimalPlaces {
+		return VDecimal{}, errScaleArgument("Decimal.toScale", int64(scale))
+	}
 	if scale >= v.Scale {
-		coef := new(big.Int).Mul(v.Coef, pow10(scale-v.Scale))
-		if err := checkDecimalBound("Decimal.toScale", coef); err != nil {
-			return VDecimal{}, err
-		}
-		return VDecimal{Coef: coef, Scale: scale}, nil
+		return fitDecimal("Decimal.toScale", new(big.Int).Mul(v.Coef, pow10(scale-v.Scale)), scale)
 	}
 	one := VDecimal{Coef: big.NewInt(1), Scale: 0}
 	return roundQuotient(v, one, scale, mode)
@@ -575,6 +651,9 @@ func decimalBuiltins() map[string]Value {
 			if scale < 0 {
 				return nil, fmt.Errorf("Decimal.rounded: negative scale %d", scale)
 			}
+			if scale > maxDecimalPlaces {
+				return nil, errScaleArgument("Decimal.rounded", scale)
+			}
 			if dv.Den.Coef.Sign() == 0 {
 				// Total, matching Int's `//`: zero at the requested scale.
 				return VDecimal{Coef: big.NewInt(0), Scale: int(scale)}, nil
@@ -593,6 +672,9 @@ func decimalBuiltins() map[string]Value {
 			if scale < 0 {
 				return nil, fmt.Errorf("Decimal.withRemainder: negative scale %d", scale)
 			}
+			if scale > maxDecimalPlaces {
+				return nil, errScaleArgument("Decimal.withRemainder", scale)
+			}
 			var q VDecimal
 			if dv.Den.Coef.Sign() == 0 {
 				q = VDecimal{Coef: big.NewInt(0), Scale: int(scale)}
@@ -602,13 +684,24 @@ func decimalBuiltins() map[string]Value {
 					return nil, err
 				}
 			}
-			// remainder = a - q*b, computed with the exact ops so the
-			// invariant q * b + r == a holds by construction.
-			qb, err := decMul(q, dv.Den)
-			if err != nil {
-				return nil, err
+			// remainder = a - q*b, exactly, so q * b + r == a holds by
+			// construction. q*b is NOT fitted on its own: it carries n + the
+			// divisor's places, which can be more than 34 on the way to a
+			// remainder that fits, and only the remainder is a value the
+			// program sees. It is formed from q at n places, the zeros the
+			// fit took from a quotient over 34 digits put back, so the
+			// remainder carries max(scale a, n + scale b) places, fitted, in
+			// every case and not only when q kept all of its own (ADR 0039).
+			// When the remainder needs more than 34 places its error names
+			// Decimal.withRemainder; a quotient over 34 digits is reported by
+			// roundQuotient as Decimal.rounded, as it was before the bound.
+			qc := q.Coef
+			if pad := int(scale) - q.Scale; pad > 0 {
+				qc = new(big.Int).Mul(qc, pow10(pad))
 			}
-			r, err := decSub(dv.Num, qb)
+			qb := VDecimal{Coef: new(big.Int).Mul(qc, dv.Den.Coef), Scale: int(scale) + dv.Den.Scale}
+			ca, cb, rs := alignDecimals(dv.Num, qb)
+			r, err := fitDecimal("Decimal.withRemainder", new(big.Int).Sub(ca, cb), rs)
 			if err != nil {
 				return nil, err
 			}

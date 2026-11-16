@@ -138,6 +138,52 @@ numRefusals =
         ]
 
 
+-- A JSON number carries at most 34 places after the point into a Decimal, in
+-- either spelling, and the bound is decided before anything is built from the
+-- exponent. 1e-999999999 is twelve bytes: the server accepted it as a
+-- billion-place Decimal that took minutes to touch, the browser began with
+-- '0'.repeat(999999999) (Safari built it, Chrome threw a RangeError instead of
+-- the sentence), and an exponent near Int.min or Int.max trapped the phone's
+-- point arithmetic. The same table, with the reasons, is
+-- TestAJSONNumberCarriesAtMost34DecimalPlaces in internal/runtime.
+--
+-- The int64 extremes come BEFORE 1e-999999999 on purpose: a phone that loses
+-- the bound traps on them at once, and would otherwise spend minutes building
+-- the billion zeros first.
+numPlaces : String
+numPlaces =
+    String.join "|"
+        [ sayDec "{\"v\":1e-34}"
+        , sayDec "{\"v\":1e-35}"
+        , sayDec "{\"v\":0.0000000000000000000000000000000001}"
+        , sayDec "{\"v\":0.00000000000000000000000000000000001}"
+        , sayDec "{\"v\":1.5e-33}"
+        , sayDec "{\"v\":15e-35}"
+        , sayDec "{\"v\":10e-35}"
+        , sayDec "{\"v\":1.0e-34}"
+        , sayDec "{\"v\":100e-36}"
+        , sayDec "{\"v\":0.00000000000000000000000000000000010}"
+        , sayDec "{\"v\":0.000000000000000000000000000000000010}"
+        , sayDec "{\"v\":0e-34}"
+        , sayDec "{\"v\":-0e-34}"
+        , sayDec "{\"v\":0e-35}"
+        , sayDec "{\"v\":1e-9223372036854775808}"
+        , sayDec "{\"v\":1e9223372036854775807}"
+        , sayDec "{\"v\":0e-9223372036854775808}"
+        , sayDec "{\"v\":1e-999999999}"
+        , sayDec "{\"v\":-1e-999999999}"
+        , sayDec "{\"v\":1e-99999999}"
+        , sayDec "{\"v\":0e-999999999}"
+        , sayDec "{\"v\":0e999999999}"
+        , sayDec "{\"v\":0e9223372036854775807}"
+        , sayDec "{\"v\":0e9223372036854775808}"
+        , sayDec "{\"v\":1e33}"
+        , sayDec "{\"v\":1e34}"
+        , sayDec "{\"v\":0.000e2}"
+        , sayDec "{\"v\":0.0000000000000000000000000000000000000001e10}"
+        ]
+
+
 note : Path { slug : String }
 note =
     "/notes/{slug:String}"
@@ -436,6 +482,7 @@ var Names = []string{
 	"notJSONAtAll",
 	"numNotation",
 	"numRefusals",
+	"numPlaces",
 	"pluralWireError",
 	"link",
 	"money",

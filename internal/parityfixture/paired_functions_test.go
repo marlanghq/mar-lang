@@ -24,8 +24,19 @@ import (
 // test and asks what covers it, which is the moment the question is cheap to
 // answer.
 func TestEveryFunctionImplementedTwiceIsAccountedFor(t *testing.T) {
-	// Two numbers, because one is not enough. Measured: 79 names carry a second
-	// implementation, and 175 implementations exist across them.
+	// Two numbers, because one is not enough. Measured: 83 names carry a second
+	// implementation, and 187 implementations exist across them.
+	//
+	// The newest six are a Decimal's two bounds (ADR 0039), written once per
+	// runtime: errDecimalOverflow, errDecimalPlaces and errScaleArgument (the
+	// three sentences), decimalFromWireNumber (a JSON number's text, now on all
+	// three), and placesToDrop and decimalFromDigits (the rule itself, on the
+	// server and the phone; the browser's are decPlacesToDrop and
+	// decFromDigits). What compares them is parityfixture.DecimalBoundCases,
+	// one program per case on each runtime, which checks the value returned or
+	// the sentence raised, and `numPlaces` in Source for the JSON number. Two
+	// pairs went: plainDigits (both clients now read the exponent the server's
+	// way) and digitCount (the bound no longer counts digits that way).
 	//
 	// The newest three arrived with the browser's standard library catching up
 	// with the other two runtimes. `applyMany` (browser and phone) feeds a
@@ -48,7 +59,7 @@ func TestEveryFunctionImplementedTwiceIsAccountedFor(t *testing.T) {
 	//
 	// The last five arrived together and are compared by `numNotation` and
 	// `numRefusals` in Source: liftNumberLiterals, numberFromLiteral,
-	// parseJSONExact, plainDigits and rawNumberOf -- the two clients' shared
+	// parseJSONExact, plainDigits (gone since) and rawNumberOf -- the two clients' shared
 	// answer to reading a JSON number without letting a float64 near it.
 	//
 	// `simpleCase` is the newest, and it is a pair rather than a trio on
@@ -64,8 +75,8 @@ func TestEveryFunctionImplementedTwiceIsAccountedFor(t *testing.T) {
 	// had it, left the name count unmoved and the test silent. Measured, not
 	// reasoned -- the sabotage was supposed to fail and did not.
 	const (
-		pairs           = 79
-		implementations = 175
+		pairs           = 83
+		implementations = 187
 	)
 
 	js := namesIn(t, []string{"../jsserve/runtime.js"},

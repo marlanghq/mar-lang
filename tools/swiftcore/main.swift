@@ -115,7 +115,10 @@ do {
     default: print(String(describing: v))
     }
 } catch {
-    FileHandle.standardError.write("error: \(error)\n".data(using: .utf8)!)
+    // The sentence a person would read, so a test can compare a RAISED error
+    // with the other runtimes' (parityfixture.DecimalBoundCases does).
+    let text = (error as? LocalizedError)?.errorDescription ?? "\(error)"
+    FileHandle.standardError.write("error: \(text)\n".data(using: .utf8)!)
     exit(1)
 }
 }

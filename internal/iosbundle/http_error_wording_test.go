@@ -63,6 +63,24 @@ func TestThePhoneWordsAFailedCallLikeTheBrowser(t *testing.T) {
 			}
 		})
 	}
+
+	// A response is parsed by JSONSerialization, not parseJSONExact, so its
+	// numbers reach jsonToMar as NSNumber and are read from decimalValue: a
+	// second way in to the 34-place bound, and nothing else drives that branch
+	// with a fraction.
+	for _, c := range []struct {
+		body string
+		ok   bool
+	}{
+		{`{"v":0.0000000000000000000000000000000001}`, true},
+		{`{"v":0.00000000000000000000000000000000001}`, false},
+		{`{"v":1e-50}`, false},
+	} {
+		out, _ := exec.Command(bin, "--service-result", "200", c.body).CombinedOutput()
+		if got := strings.HasPrefix(string(out), "Ok "); got != c.ok {
+			t.Errorf("200 with body %s: decoded=%v, want %v\n  %s", c.body, got, c.ok, out)
+		}
+	}
 }
 
 func itoa(n int) string {

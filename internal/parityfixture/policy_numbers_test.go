@@ -89,8 +89,9 @@ func constantIn(t *testing.T, path, pattern string) int {
 // implementation mirrors another, and this one states a shared constraint
 // instead. Same kind of claim, different words, so it needed its own check.
 //
-// The overflow SENTENCE is identical in all three too, and is checked here
-// because it cannot ride in the fixture: it is raised, not returned.
+// The SENTENCES are identical in all three too. They are raised, not
+// returned, so they cannot ride in Source; DecimalBoundCases compares them as
+// raised, one program per case, and this checks the words are there at all.
 func TestTheThreeRuntimesBoundDecimalsAtTheSameWidth(t *testing.T) {
 	widths := map[string]int{
 		"server":  constantIn(t, "../runtime/decimal.go", `maxDecimalDigits = ([0-9_]+)`),
@@ -107,23 +108,45 @@ func TestTheThreeRuntimesBoundDecimalsAtTheSameWidth(t *testing.T) {
 		}
 	}
 
-	const sentence = ": Decimal overflow — the result exceeds "
-	for _, f := range []struct{ label, path string }{
-		{"server", "../runtime/decimal.go"},
-		{"browser", "../jsserve/runtime.js"},
-		{"phone", "../iosbundle/template/Sources/MarDecimal.swift"},
-	} {
-		b, err := os.ReadFile(f.path)
-		if err != nil {
-			t.Fatalf("%s: %v", f.label, err)
+	// The second bound, the places (ADR 0039). shared_constants_test.go
+	// already compares the three constants by their common name; this pins
+	// that each runtime HAS one, so a rename cannot drop it out of that scan.
+	places := map[string]int{
+		"server":  constantIn(t, "../runtime/decimal.go", `maxDecimalPlaces = ([0-9_]+)`),
+		"browser": constantIn(t, "../jsserve/runtime.js", `MAX_DECIMAL_PLACES = ([0-9_]+)`),
+		"phone":   constantIn(t, "../iosbundle/template/Sources/MarDecimal.swift", `maxDecimalPlaces = ([0-9_]+)`),
+	}
+	for who, n := range places {
+		if n != places["server"] {
+			t.Errorf("%s bounds a Decimal at %d places and the server at %d", who, n, places["server"])
 		}
-		if !strings.Contains(string(b), sentence) {
-			t.Errorf("the %s runtime no longer says %q when a Decimal overflows",
-				f.label, sentence)
+	}
+
+	// The sentences are raised, so the behaviour is compared by
+	// parityfixture.DecimalBoundCases, one program per case; this is the
+	// cheaper check that the words are there at all.
+	for _, sentence := range []string{
+		": Decimal overflow — the result exceeds ",
+		": Decimal overflow — the result needs more than ",
+		" decimal places a Decimal can hold",
+	} {
+		for _, f := range []struct{ label, path string }{
+			{"server", "../runtime/decimal.go"},
+			{"browser", "../jsserve/runtime.js"},
+			{"phone", "../iosbundle/template/Sources/MarDecimal.swift"},
+		} {
+			b, err := os.ReadFile(f.path)
+			if err != nil {
+				t.Fatalf("%s: %v", f.label, err)
+			}
+			if !strings.Contains(string(b), sentence) {
+				t.Errorf("the %s runtime no longer says %q at a Decimal's bounds",
+					f.label, sentence)
+			}
 		}
 	}
 
 	if !t.Failed() {
-		t.Logf("all three bound a Decimal at %d significant digits, and word the overflow the same", first)
+		t.Logf("all three bound a Decimal at %d significant digits and %d places, and word the bounds the same", first, places["server"])
 	}
 }

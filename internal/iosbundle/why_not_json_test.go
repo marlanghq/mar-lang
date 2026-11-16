@@ -103,7 +103,7 @@ keyless =
 		// here because what it still proves is that a VALID document is not
 		// reported as invalid JSON.
 		{"a number no runtime can hold, in a document that IS valid JSON",
-			"huge", "JSON: 1e400 is not a number Mar can hold exactly: an Int is at most 9007199254740991 and a Decimal at most 34 significant digits"},
+			"huge", "JSON: 1e400 is not a number Mar can hold exactly: an Int is at most 9007199254740991 and a Decimal at most 34 significant digits and 34 decimal places"},
 		{"a page where a document was expected", "bad", "the document is not valid JSON"},
 		{"an object with no key", "keyless", "the document is not valid JSON"},
 	} {

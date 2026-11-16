@@ -351,6 +351,7 @@ enum MarBuiltins {
             if scale < 0 {
                 throw MarRuntimeError.message("Decimal.rounded: negative scale \(scale)")
             }
+            if scale > DecMath.maxDecimalPlaces { throw DecMath.errScaleArgument("Decimal.rounded", scale) }
             if den.isZero {
                 // Total, matching Int's `//`: zero at the requested scale.
                 return .decimal(MarDec(negative: false, digits: [0], scale: scale))
@@ -366,12 +367,19 @@ enum MarBuiltins {
             if scale < 0 {
                 throw MarRuntimeError.message("Decimal.withRemainder: negative scale \(scale)")
             }
+            if scale > DecMath.maxDecimalPlaces { throw DecMath.errScaleArgument("Decimal.withRemainder", scale) }
             let q: MarDec = den.isZero
                 ? MarDec(negative: false, digits: [0], scale: scale)
                 : try DecMath.roundQuotient(num, den, scale, "Down")
-            // remainder = a - q*b via the exact ops, so q * b + r == a
-            // holds by construction.
-            let r = try DecMath.decSub(num, DecMath.decMul(q, den))
+            // remainder = a - q*b, exactly, so q * b + r == a holds by
+            // construction. q*b is not fitted on its own, and is formed from q
+            // at n places (the zeros the fit took from a quotient over 34
+            // digits put back), so the remainder carries max(scale a,
+            // n + scale b) places, fitted (decimal.go says why).
+            let qDigits = q.isZero ? q.digits : q.digits + [UInt8](repeating: 0, count: scale - q.scale)
+            let qb = MarDec(negative: (q.negative != den.negative) && !q.isZero && !den.isZero,
+                            digits: DecMath.mulAbs(qDigits, den.digits), scale: scale + den.scale)
+            let r = try DecMath.remainderOf(num, qb)
             return .record(fields: ["quotient": .decimal(q), "remainder": .decimal(r)],
                            order: ["quotient", "remainder"])
         }

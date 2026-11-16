@@ -208,8 +208,8 @@ func entityBuiltins() map[string]Value {
 			if !ok {
 				return nil, fmt.Errorf("Entity.decimal: expected an Int scale")
 			}
-			if n.V < 0 || n.V > int64(maxDecimalDigits) {
-				return nil, fmt.Errorf("Entity.decimal: scale %d out of range (0..%d)", n.V, maxDecimalDigits)
+			if n.V < 0 || n.V > int64(maxDecimalPlaces) {
+				return nil, fmt.Errorf("Entity.decimal: scale %d out of range (0..%d)", n.V, maxDecimalPlaces)
 			}
 			c, ok := args[1].(VConstraint)
 			if !ok {

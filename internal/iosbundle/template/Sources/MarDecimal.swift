@@ -33,6 +33,10 @@ struct MarDec: Sendable {
 
 enum DecMath {
     static let maxDigits = 34
+    /// The second bound (ADR 0039): at most 34 places after the point. Same
+    /// name and value as maxDecimalPlaces in internal/runtime/decimal.go,
+    /// which says why.
+    static let maxDecimalPlaces = 34
 
     // MARK: digit-array primitives (unsigned, big-endian)
 
@@ -51,9 +55,6 @@ enum DecMath {
     }
 
     static func isZero(_ d: [UInt8]) -> Bool { trim(d) == [0] }
-
-    /// Significant digit count; zero counts as one digit (same as Go).
-    static func digitCount(_ d: [UInt8]) -> Int { trim(d).count }
 
     static func cmpAbs(_ a: [UInt8], _ b: [UInt8]) -> Int {
         let ta = trim(a), tb = trim(b)
@@ -145,10 +146,43 @@ enum DecMath {
 
     // MARK: MarDec operations (mirror decimal.go exactly)
 
-    static func checkBound(_ op: String, _ d: [UInt8]) throws {
-        if digitCount(d) > maxDigits {
-            throw MarRuntimeError.message("\(op): Decimal overflow — the result exceeds \(maxDigits) significant digits")
+    static func errDecimalOverflow(_ op: String) -> MarRuntimeError {
+        .message("\(op): Decimal overflow — the result exceeds \(maxDigits) significant digits")
+    }
+
+    static func errDecimalPlaces(_ op: String) -> MarRuntimeError {
+        .message("\(op): Decimal overflow — the result needs more than \(maxDecimalPlaces) decimal places")
+    }
+
+    static func errScaleArgument(_ op: String, _ scale: Int) -> MarRuntimeError {
+        .message("\(op): scale \(scale) is more than the \(maxDecimalPlaces) decimal places a Decimal can hold")
+    }
+
+    /// The whole rule of the two bounds, placesToDrop in decimal.go. `digits`
+    /// is a magnitude with no leading zeros, not zero; `scale` is how many of
+    /// them sit after the point. Answers how many zeros at the right end must
+    /// go for the value to fit both bounds, or throws when zeros are not
+    /// enough: a digit that changes the value never goes.
+    static func placesToDrop(_ op: String, _ digits: [UInt8], _ scale: Int) throws -> Int {
+        let over = max(scale - maxDecimalPlaces, digits.count - maxDigits, 0)
+        if over == 0 { return 0 }
+        var trailing = 0
+        while trailing < digits.count && digits[digits.count - 1 - trailing] == 0 { trailing += 1 }
+        let zeros = min(trailing, scale)
+        if over > zeros {
+            throw scale - zeros > maxDecimalPlaces ? errDecimalPlaces(op) : errDecimalOverflow(op)
         }
+        return over
+    }
+
+    /// Every result is made here: digits at scale, held to both bounds. A
+    /// value that fits comes back exactly as given; zero always fits, at 34
+    /// places at most. fitDecimal in decimal.go.
+    static func fit(_ op: String, negative: Bool, _ digits: [UInt8], _ scale: Int) throws -> MarDec {
+        let d = trim(digits)
+        if d == [0] { return MarDec(negative: false, digits: [0], scale: min(scale, maxDecimalPlaces)) }
+        let drop = try placesToDrop(op, d, scale)
+        return MarDec(negative: negative, digits: Array(d[0..<(d.count - drop)]), scale: scale - drop)
     }
 
     /// Common-scale coefficients as signed digit pairs.
@@ -176,22 +210,27 @@ enum DecMath {
     static func decAdd(_ a: MarDec, _ b: MarDec) throws -> MarDec {
         let (da, db, scale) = align(a, b)
         let (neg, sum) = signedAdd(aNeg: a.negative, a: da, bNeg: b.negative, b: db)
-        try checkBound("+", sum)
-        return MarDec(negative: neg && sum != [0], digits: sum, scale: scale)
+        return try fit("+", negative: neg, sum, scale)
     }
 
     static func decSub(_ a: MarDec, _ b: MarDec) throws -> MarDec {
         let (da, db, scale) = align(a, b)
         let (neg, diff) = signedAdd(aNeg: a.negative, a: da, bNeg: !b.negative, b: db)
-        try checkBound("-", diff)
-        return MarDec(negative: neg && diff != [0], digits: diff, scale: scale)
+        return try fit("-", negative: neg, diff, scale)
     }
 
     static func decMul(_ a: MarDec, _ b: MarDec) throws -> MarDec {
         let prod = mulAbs(a.digits, b.digits)
-        try checkBound("*", prod)
-        let neg = (a.negative != b.negative) && prod != [0]
-        return MarDec(negative: neg, digits: prod, scale: a.scale + b.scale)
+        return try fit("*", negative: a.negative != b.negative, prod, a.scale + b.scale)
+    }
+
+    /// a - qb for Decimal.withRemainder, fitted once with the resolver's
+    /// name: qb may carry more than 34 places on the way to a remainder that
+    /// fits.
+    static func remainderOf(_ a: MarDec, _ qb: MarDec) throws -> MarDec {
+        let (da, db, scale) = align(a, qb)
+        let (neg, diff) = signedAdd(aNeg: a.negative, a: da, bNeg: !qb.negative, b: db)
+        return try fit("Decimal.withRemainder", negative: neg, diff, scale)
     }
 
     static func decCompare(_ a: MarDec, _ b: MarDec) -> Int {
@@ -221,7 +260,8 @@ enum DecMath {
     }
 
     /// Canonical form only (optional sign, digits, optional point +
-    /// digits): exponents and anything else return nil.
+    /// digits): exponents and anything else return nil, and so does a text
+    /// that does not fit both bounds. parseDecimalString in decimal.go.
     static func parseDecimalString(_ s: String) -> MarDec? {
         var t = s.trimmingCharacters(in: .whitespacesAndNewlines)
         if t.isEmpty { return nil }
@@ -237,9 +277,14 @@ enum DecMath {
             guard let d = ch.wholeNumberValue, d >= 0, d <= 9 else { return nil }
             digits.append(UInt8(d))
         }
-        let trimmed = trim(digits)
-        if trimmed.count > maxDigits { return nil }
-        return MarDec(negative: neg && trimmed != [0], digits: trimmed, scale: fracPart.count)
+        return decimalFromDigits(negative: neg, digits, fracPart.count)
+    }
+
+    /// `digits` may carry leading zeros; `scale` is how many digits sit after
+    /// the point. nil when the value does not fit (decimalFromDigits in
+    /// decimal.go, which errors where this answers nil).
+    static func decimalFromDigits(negative: Bool, _ digits: [UInt8], _ scale: Int) -> MarDec? {
+        return try? fit("Decimal", negative: negative, digits.isEmpty ? [0] : digits, scale)
     }
 
     /// Rounding-mode tag from a Decimal.Rounding ctor value.
@@ -279,18 +324,16 @@ enum DecMath {
             }
         }
         if roundUp { q = addAbs(q, [1]) }
-        try checkBound("Decimal.rounded", q)
-        return MarDec(negative: negative && q != [0], digits: q, scale: scale)
+        return try fit("Decimal.rounded", negative: negative, q, scale)
     }
 
     static func decToScale(_ v: MarDec, _ scale: Int, _ mode: String) throws -> MarDec {
         if scale < 0 {
             throw MarRuntimeError.message("Decimal.toScale: negative scale \(scale)")
         }
+        if scale > maxDecimalPlaces { throw errScaleArgument("Decimal.toScale", scale) }
         if scale >= v.scale {
-            let coef = shift10(v.digits, scale - v.scale)
-            try checkBound("Decimal.toScale", coef)
-            return MarDec(negative: v.negative && coef != [0], digits: coef, scale: scale)
+            return try fit("Decimal.toScale", negative: v.negative, shift10(v.digits, scale - v.scale), scale)
         }
         return try roundQuotient(v, MarDec.fromInt(1), scale, mode)
     }

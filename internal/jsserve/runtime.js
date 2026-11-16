@@ -113,17 +113,62 @@
 
   const MAX_DEC_DIGITS = 34;
 
+  // The second bound (ADR 0039): at most 34 places after the point. It bounds
+  // the scale, which MAX_DEC_DIGITS does not: 1e-50 is one digit and fifty
+  // places. Same name and value as maxDecimalPlaces in
+  // internal/runtime/decimal.go, which says why.
+  const MAX_DECIMAL_PLACES = 34;
+
   function decPow10(n) { return 10n ** BigInt(n); }
 
-  function decDigits(c) {
-    const s = (c < 0n ? -c : c).toString();
-    return s.length; // "0" counts as one digit, same as Go
+  function errDecimalOverflow(op) {
+    return new Error(op + ': Decimal overflow — the result exceeds ' + MAX_DEC_DIGITS + ' significant digits');
   }
 
-  function checkDecBound(op, c) {
-    if (decDigits(c) > MAX_DEC_DIGITS) {
-      throw new Error(op + ': Decimal overflow — the result exceeds ' + MAX_DEC_DIGITS + ' significant digits');
+  function errDecimalPlaces(op) {
+    return new Error(op + ': Decimal overflow — the result needs more than ' + MAX_DECIMAL_PLACES + ' decimal places');
+  }
+
+  function errScaleArgument(op, scale) {
+    return new Error(op + ': scale ' + scale + ' is more than the ' + MAX_DECIMAL_PLACES + ' decimal places a Decimal can hold');
+  }
+
+  // The whole rule of the two bounds, placesToDrop in decimal.go. digits is a
+  // magnitude with no leading zeros, not zero; scale is how many of them sit
+  // after the point. Answers how many zeros at the right end must go for the
+  // value to fit both bounds, or throws when zeros are not enough: a digit
+  // that changes the value never goes.
+  function decPlacesToDrop(op, digits, scale) {
+    const over = Math.max(scale - MAX_DECIMAL_PLACES, digits.length - MAX_DEC_DIGITS, 0);
+    if (over === 0) return 0;
+    // Counted by a loop, not by /0+$/: that pattern is not anchored at the
+    // start, so on '1' + a long run of zeros + '1' it restarts at every zero
+    // of the run: Decimal.fromString of 64K zeros took 2 s, 128K 7.7 s and
+    // 256K 31 s.
+    // The text is the sender's, and the count has to be linear in it.
+    let end = digits.length;
+    while (end > 0 && digits.charCodeAt(end - 1) === 48) end--;
+    const zeros = Math.min(digits.length - end, scale);
+    if (over > zeros) {
+      throw scale - zeros > MAX_DECIMAL_PLACES ? errDecimalPlaces(op) : errDecimalOverflow(op);
     }
+    return over;
+  }
+
+  const DEC_DIGITS_CEILING = 10n ** BigInt(MAX_DEC_DIGITS);
+
+  // Every result is made here: coef at scale, held to both bounds. A value
+  // that fits comes back exactly as given; zero always fits, at 34 places at
+  // most. fitDecimal in decimal.go.
+  function decFit(op, coef, scale) {
+    if (coef === 0n) return VDec(0n, Math.min(scale, MAX_DECIMAL_PLACES));
+    const mag = coef < 0n ? -coef : coef;
+    if (scale <= MAX_DECIMAL_PLACES && mag < DEC_DIGITS_CEILING) return VDec(coef, scale);
+    const digits = mag.toString();
+    const drop = decPlacesToDrop(op, digits, scale);
+    if (drop === 0) return VDec(coef, scale);
+    const kept = BigInt(digits.slice(0, digits.length - drop));
+    return VDec(coef < 0n ? -kept : kept, scale - drop);
   }
 
   // Bring two decimals to a common scale (exact rescale of the
@@ -137,22 +182,16 @@
 
   function decAddV(a, b) {
     const [ca, cb, scale] = decAlign(a, b);
-    const sum = ca + cb;
-    checkDecBound('+', sum);
-    return VDec(sum, scale);
+    return decFit('+', ca + cb, scale);
   }
 
   function decSubV(a, b) {
     const [ca, cb, scale] = decAlign(a, b);
-    const diff = ca - cb;
-    checkDecBound('-', diff);
-    return VDec(diff, scale);
+    return decFit('-', ca - cb, scale);
   }
 
   function decMulV(a, b) {
-    const prod = a.coef * b.coef;
-    checkDecBound('*', prod);
-    return VDec(prod, a.scale + b.scale);
+    return decFit('*', a.coef * b.coef, a.scale + b.scale);
   }
 
   function decCmpV(a, b) {
@@ -177,7 +216,10 @@
   }
 
   // Parse the canonical form (optional sign, digits, optional point +
-  // digits). Anything else, exponents included, returns null.
+  // digits). Anything else, exponents included, returns null, and so does a
+  // text that does not fit both bounds. The bounds are applied to the TEXT,
+  // so what BigInt reads is at most 34 digits. parseDecimalString in
+  // decimal.go.
   function parseDecString(s) {
     let t = String(s).trim();
     if (t === '') return null;
@@ -189,11 +231,18 @@
     if (dot >= 0) { intPart = t.slice(0, dot); fracPart = t.slice(dot + 1); }
     if (intPart === '' && fracPart === '') return null;
     if (!/^[0-9]*$/.test(intPart) || !/^[0-9]*$/.test(fracPart)) return null;
-    const joined = (intPart + fracPart).replace(/^0+(?=.)/, '') || '0';
-    if (joined.length > MAX_DEC_DIGITS) return null;
-    let coef = BigInt(joined);
-    if (neg) coef = -coef;
-    return VDec(coef, fracPart.length);
+    return decFromDigits(neg, (intPart + fracPart).replace(/^0+/, ''), fracPart.length);
+  }
+
+  // digits has no leading zeros ('' for zero); scale is how many sit after
+  // the point. null when the value does not fit (decimalFromDigits in
+  // decimal.go, which errors where this answers null).
+  function decFromDigits(neg, digits, scale) {
+    if (digits === '') return VDec(0n, Math.min(scale, MAX_DECIMAL_PLACES));
+    let drop;
+    try { drop = decPlacesToDrop('Decimal', digits, scale); } catch (_) { return null; }
+    const coef = BigInt(digits.slice(0, digits.length - drop));
+    return VDec(neg ? -coef : coef, scale - drop);
   }
 
   function decRoundingTag(v) {
@@ -236,19 +285,15 @@
     }
     if (roundUp) q = q + 1n;
     if (negative && q !== 0n) q = -q;
-    checkDecBound('Decimal.rounded', q);
-    return VDec(q, scale);
+    return decFit('Decimal.rounded', q, scale);
   }
 
   const DEC_ONE = { coef: 1n, scale: 0 };
 
   function decToScaleV(v, scale, mode) {
     if (scale < 0) throw new Error('Decimal.toScale: negative scale ' + scale);
-    if (scale >= v.scale) {
-      const coef = v.coef * decPow10(scale - v.scale);
-      checkDecBound('Decimal.toScale', coef);
-      return VDec(coef, scale);
-    }
+    if (scale > MAX_DECIMAL_PLACES) throw errScaleArgument('Decimal.toScale', scale);
+    if (scale >= v.scale) return decFit('Decimal.toScale', v.coef * decPow10(scale - v.scale), scale);
     return decRoundQuotient(v, DEC_ONE, scale, mode);
   }
 
@@ -559,42 +604,62 @@
 
   // numberFromLiteral turns a JSON number's own text into the Mar value it
   // names: an Int when it is whole and inside 53 bits, an exact Decimal when
-  // it fits 34 significant digits, and nothing otherwise.
+  // it fits 34 significant digits and 34 places, and nothing otherwise.
   //
   // Nothing else is a number in Mar. There used to be a VFloat fallback; the
   // representation is gone now, because with this boundary closed nothing
   // could construct one. It had no type either -- TFloat does not exist, so a
   // checked program could never hold one -- and existed only to reach a shape
   // check and fail there, reporting "should be a number, got a number".
-  // plainDigits rewrites exponent notation as digits, by MOVING THE POINT --
-  // never by multiplying a double, which is the approximation this whole path
-  // exists to avoid. 1e30 becomes a 1 and thirty zeros.
   //
-  // The Decimal parser refuses an exponent on purpose: what a Mar literal and
-  // `Decimal.fromString` accept is the language's business. What a JSON
-  // document may carry is the boundary's, and every serializer prints a large
-  // number in exponent form -- so refusing it there meant one value decoded or
-  // did not depending on how the sender chose to spell it.
-  function plainDigits(lit) {
-    const m = /^(-?)([0-9]*)(?:\.([0-9]*))?[eE]([+-]?[0-9]+)$/.exec(lit);
-    if (!m) return lit;
-    const sign = m[1];
+  // decimalFromWireNumber reads exponent notation by MOVING THE POINT, never
+  // by multiplying a double, which is the approximation this whole path exists
+  // to avoid: 1e30 becomes a 1 and thirty zeros. The Decimal parser refuses
+  // an exponent on purpose (what a Mar literal and `Decimal.fromString` accept
+  // is the language's business); what a JSON document may carry is the
+  // boundary's, and every serializer prints a large number in exponent form.
+  //
+  // The exponent is the sender's, so nothing is built from it before the
+  // bounds are known to hold: reading 1e-999999999 and 1e999999999 alike used
+  // to start with '0'.repeat(999999999), which Safari built (a gigabyte and
+  // seconds) and Chrome refused with a RangeError instead of Mar's sentence.
+  // Same steps and answers as decimalFromWireNumber in
+  // internal/runtime/decimal.go; null where that one errors.
+  function decimalFromWireNumber(lit) {
+    const m = /^(-?)([0-9]*)(?:\.([0-9]*))?(?:[eE]([+-]?[0-9]+))?$/.exec(lit);
+    if (!m) return null;
+    const neg = m[1] === '-';
     const intPart = m[2] || '';
     const frac = m[3] || '';
-    const exp = parseInt(m[4], 10);
-    let digits = intPart + frac;
-    // Where the point sits after the shift, counted from the left.
-    let point = intPart.length + exp;
-    if (point <= 0) {
-      digits = '0'.repeat(1 - point) + digits;
-      point = 1;
+    let exp = 0;
+    if (m[4] !== undefined) {
+      // An exponent outside 64 bits is one the server cannot read. More than
+      // 19 digits is outside whatever they are, and is answered by length:
+      // BigInt reads a long exponent in quadratic time.
+      if (m[4].replace(/^[+-]?0*/, '').length > 19) return null;
+      const bigExp = BigInt(m[4]);
+      if (bigExp > 9223372036854775807n || bigExp < -9223372036854775808n) return null;
+      // A double past 2^53 is not the exponent exactly, but every comparison
+      // below is against a bound far inside that, so it answers the same.
+      exp = Number(bigExp);
     }
-    if (point >= digits.length) {
-      digits += '0'.repeat(point - digits.length);
+    const digits = (intPart + frac).replace(/^0+/, '');
+    // Below -(34 + the digits) the number keeps more than 34 places whatever
+    // zeros its digits end with; a zero fits, at 34. In Go and Swift this is
+    // what keeps the point arithmetic from wrapping or trapping; here exp is a
+    // double and nothing wraps, so it is only the same early answer, kept so
+    // the three read alike (decFromDigits would answer the same).
+    if (exp < -(MAX_DECIMAL_PLACES + digits.length)) {
+      return digits === '' ? VDec(0n, MAX_DECIMAL_PLACES) : null;
     }
-    const whole = digits.slice(0, point);
-    const rest = digits.slice(point);
-    return sign + (rest ? whole + '.' + rest : whole);
+    const scale = frac.length - exp;
+    if (scale >= 0) return decFromDigits(neg, digits, scale);
+    // The point moved past the last digit: zeros before the point count, and
+    // the padding is refused before it is built. Zero needs none.
+    if (digits === '') return VDec(0n, 0);
+    if (-scale > MAX_DEC_DIGITS - digits.length) return null;
+    const coef = BigInt(digits) * decPow10(-scale);
+    return VDec(neg ? -coef : coef, 0);
   }
 
   function numberFromLiteral(lit) {
@@ -606,10 +671,10 @@
       const n = Number(lit);
       if (Number.isSafeInteger(n)) return VInt(n);
     }
-    const d = parseDecString(plainDigits(lit));
+    const d = decimalFromWireNumber(lit);
     if (d) return d;
     throw new Error('JSON: ' + lit + ' is not a number Mar can hold exactly:' +
-      ' an Int is at most 9007199254740991 and a Decimal at most 34 significant digits');
+      ' an Int is at most 9007199254740991 and a Decimal at most 34 significant digits and 34 decimal places');
   }
 
   function jsToMar(v) {
@@ -636,7 +701,7 @@
       const d = parseDecString(String(v));
       if (d) return d;
       throw new Error('JSON: ' + v + ' is not a number Mar can hold exactly:' +
-        ' an Int is at most 9007199254740991 and a Decimal at most 34 significant digits');
+        ' an Int is at most 9007199254740991 and a Decimal at most 34 significant digits and 34 decimal places');
     }
     if (typeof v === 'string') return VString(v);
     if (typeof v === 'boolean') return VBool(v);
@@ -4017,6 +4082,7 @@
     const decimalRoundedImpl = native(3, ([mode, scale, dv]) => {
       const tag = decRoundingTag(mode);
       if (scale.n < 0) throw new Error('Decimal.rounded: negative scale ' + scale.n);
+      if (scale.n > MAX_DECIMAL_PLACES) throw errScaleArgument('Decimal.rounded', scale.n);
       if (dv.den.coef === 0n) return VDec(0n, scale.n); // total, matching Int's `//`
       return decRoundQuotient(dv.num, dv.den, scale.n, tag);
     });
@@ -4025,12 +4091,18 @@
 
     const decimalWithRemainderImpl = native(2, ([scale, dv]) => {
       if (scale.n < 0) throw new Error('Decimal.withRemainder: negative scale ' + scale.n);
+      if (scale.n > MAX_DECIMAL_PLACES) throw errScaleArgument('Decimal.withRemainder', scale.n);
       const q = dv.den.coef === 0n
         ? VDec(0n, scale.n)
         : decRoundQuotient(dv.num, dv.den, scale.n, 'Down');
-      // remainder = a - q*b via the exact ops, so q * b + r == a holds
-      // by construction.
-      const r = decSubV(dv.num, decMulV(q, dv.den));
+      // remainder = a - q*b, exactly, so q * b + r == a holds by
+      // construction. q*b is not fitted on its own, and is formed from q at n
+      // places (the zeros the fit took from a quotient over 34 digits put
+      // back), so the remainder carries max(scale a, n + scale b) places,
+      // fitted (decimal.go says why).
+      const qc = q.coef * decPow10(scale.n - q.scale);
+      const [ca, cb, rs] = decAlign(dv.num, { coef: qc * dv.den.coef, scale: scale.n + dv.den.scale });
+      const r = decFit('Decimal.withRemainder', ca - cb, rs);
       return VRecord({ quotient: q, remainder: r }, ['quotient', 'remainder']);
     });
     def('decimalWithRemainder', decimalWithRemainderImpl);

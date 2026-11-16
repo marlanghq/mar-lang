@@ -938,22 +938,34 @@ func (p *parser) parseExprAtom() (ast.Expr, error) {
 // decimalParts splits a decimal literal ("12.50") into its coefficient
 // digit string with the point removed ("1250") and its scale (2).
 // Leading zeros are trimmed from the coefficient (but "0.05" keeps the
-// significant "5": coef "5", scale 2; plain zero is coef "0"). The
-// 34-significant-digit bound (the language's decimal128-style cap) is
-// enforced here so an oversized literal fails at parse time with a
-// clear message instead of aborting at runtime.
+// significant "5": coef "5", scale 2; plain zero is coef "0").
+//
+// A Decimal holds at most 34 significant digits and 34 places (ADR 0039),
+// and the bounds are enforced here so an oversized literal fails at parse
+// time with a clear message instead of aborting at runtime. Zeros at the
+// right end of the fraction count against neither: they are dropped, only as
+// many as needed, and a literal is refused only when a digit that changes its
+// value would have to go. It is the runtime's rule (placesToDrop in
+// internal/runtime/decimal.go) applied to the text, and
+// TestALiteralAndFromStringFitTheSameWay holds the two to the same answers.
 func decimalParts(lit string) (string, int, error) {
+	const maxDigits, maxPlaces = 34, 34
 	dot := strings.IndexByte(lit, '.')
 	intPart, fracPart := lit[:dot], lit[dot+1:]
-	coef := intPart + fracPart
-	trimmed := strings.TrimLeft(coef, "0")
+	trimmed := strings.TrimLeft(intPart+fracPart, "0")
+	scale := len(fracPart)
 	if trimmed == "" {
-		trimmed = "0"
+		return "0", min(scale, maxPlaces), nil
 	}
-	if len(trimmed) > 34 {
+	over := max(scale-maxPlaces, len(trimmed)-maxDigits, 0)
+	zeros := min(len(trimmed)-len(strings.TrimRight(trimmed, "0")), scale)
+	if over > zeros {
+		if scale-zeros > maxPlaces {
+			return "", 0, fmt.Errorf("decimal literal %s has more than 34 decimal places (Decimal's maximum)", lit)
+		}
 		return "", 0, fmt.Errorf("decimal literal %s exceeds 34 significant digits (Decimal's maximum)", lit)
 	}
-	return trimmed, len(fracPart), nil
+	return trimmed[:len(trimmed)-over], scale - over, nil
 }
 
 func (p *parser) parseExprAtomCore() (ast.Expr, error) {
