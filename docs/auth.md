@@ -222,9 +222,9 @@ When the app provides an `Auth.config` (section 4), the runtime auto-registers t
 | Method | Path | Body | Response |
 |---|---|---|---|
 | POST | `/_auth/request-code` | `{ email : String }` | `{ ok: true }` (always, see section 8) |
-| POST | `/_auth/verify-code` | `{ email : String, code : String }` | `{ user : <User row> }` plus `Set-Cookie` (or `{ user, sessionToken }` for non-cookie clients) |
+| POST | `/_auth/verify-code` | `{ email : String, code : String }` | the User row, in the wire format Service responses use, plus `Set-Cookie` and an `X-Mar-Auth-Token` header carrying the same session token |
 | POST | `/_auth/logout` | (empty) | `{ ok: true }` plus a `Set-Cookie` clearing the session |
-| GET  | `/_auth/whoami` | (none) | `{ user: <User row> | null }` |
+| GET  | `/_auth/whoami` | (none) | the User row in the wire format, or `null` |
 
 The `/_auth/*` prefix is reserved, like `/_mar/*`: a service declared at one of those paths is rejected at compile time. Frontend code never calls these paths directly; it goes through the `Auth.*` commands in section 7.
 
@@ -403,8 +403,8 @@ In production builds (`mar build`), this sink is unavailable; missing SMTP confi
 
 The same backend serves the iOS app. The differences:
 
-- **No cookies.** The auth response from `/_auth/verify-code` returns the session token in the JSON body when the request carries the header `X-Mar-Client: ios`. The iOS runtime sets this header automatically on every request originating from `Service.call`.
-- **Token storage.** The Swift runtime (`MarRuntimeIOS`) provides a small Keychain wrapper. After `Auth.verifyCode` resolves on iOS, the runtime stores the returned token under `kSecAttrAccount = "mar.session"`. Subsequent requests read it back and add `Authorization: Bearer <token>`.
+- **No cookies.** `/_auth/verify-code` returns the session token in the `X-Mar-Auth-Token` response header. Browsers ignore it and use the HttpOnly cookie; the iOS runtime stores it in the Keychain.
+- **Token storage.** The Swift runtime (`MarRuntimeIOS`) provides a small Keychain wrapper. After `Auth.verifyCode` resolves on iOS, the runtime stores the token from that header under `kSecAttrAccount = "session"`. Subsequent requests read it back and add `Authorization: Bearer <token>`.
 - **Logout.** `Auth.logout` calls the same endpoint, then clears the Keychain entry.
 - **`Auth.me` semantics.** Identical: returns `Maybe User` based on the stored token's validity.
 

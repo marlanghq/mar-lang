@@ -683,8 +683,8 @@
     // a service `Int -> ()` returned null, decoded as Nothing on the
     // client, and pattern `Ok ()` failed at runtime. Both Maybe
     // constructors now tag uniformly via {"__ctor":"Nothing"} /
-    // {"__ctor":"Just",...}, matching encodeValue / valueToAny on
-    // the Go side and MarJSONCodec on iOS.
+    // {"__ctor":"Just",...}, matching encodeValue on the Go side and
+    // MarJSONCodec on iOS.
     if (v === null || v === undefined) return VUnit();
     if (typeof v === 'number') {
       // Reached only by a caller that parsed with JSON.parse rather than
@@ -714,7 +714,7 @@
       }
       // Tagged constructor, round-trip from {__ctor: "Tag"} or
       // {__ctor: "Tag", __args: [...]}. Convention shared with the
-      // Go encoder (encodeValue / valueToAny). Any object missing
+      // Go encoder (encodeValue). Any object missing
       // __ctor falls through to the record path.
       if (typeof v.__ctor === 'string') {
         const args = Array.isArray(v.__args) ? v.__args.map(jsToMar) : [];

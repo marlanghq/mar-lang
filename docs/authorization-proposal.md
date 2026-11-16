@@ -586,13 +586,17 @@ Custom-type constructors round-trip through JSON using a marker:
 | Ctor shape    | Wire format              | Example          |
 |---------------|--------------------------|------------------|
 | zero-arg      | `{"__ctor": "Tag"}`      | `{"__ctor": "Member"}` |
-| with payload  | `{"__ctor": "Tag", "__args": [...]}` | `{"__ctor": "Tagged", "__args": [42]}` |
-| `Just x`      | `x` (transparent)        | `{"id": 1}` |
-| `Nothing`     | `null`                   | `null` |
-| `Ok x`        | `x` (transparent)        | depends on x |
-| `Err msg`     | `{"error": msg}`         | `{"error": "boom"}` |
+| with payload  | `{"__args": [...], "__ctor": "Tag"}` | `{"__args": [42], "__ctor": "Tagged"}` |
+| `Just x`      | the same marker          | `{"__args": [{"id": 1}], "__ctor": "Just"}` |
+| `Nothing`     | the same marker          | `{"__ctor": "Nothing"}` |
+| `Ok x`        | the same marker          | `{"__args": [1], "__ctor": "Ok"}` |
+| `Err msg`     | the same marker          | `{"__args": ["boom"], "__ctor": "Err"}` |
 
-`Maybe` and `Result` keep their convenience encodings for backward
-compatibility; everything else uses the marker. Both Go encoders
-(`encodeValue`, `valueToAny`) and both client decoders (JS
-`jsToMar` / `marToJs`, iOS `MarJSONCodec`) follow this convention.
+Every constructor uses the marker on the server, `Maybe` and `Result`
+included. The Go encoder (`encodeValue` in `internal/runtime/json.go`, which
+Service responses and the `/_auth/verify-code` and `/_auth/whoami` answers
+both go through) and both client decoders (JS `jsToMar`, iOS
+`MarJSONCodec`) follow this convention. Both client ENCODERS (JS `marToJs`,
+iOS `marToJSON`) still write `Ok x` as `x` and `Err e` as `{"error": e}`,
+which the server does not read back as a `Result`; that drift is open
+(docs/compiler-runtime-audit-2026-08-21.md).

@@ -618,6 +618,106 @@ var AuthPortCases = []AuthPortCase{
 		"a refusal with no envelope carries the body itself"},
 }
 
+// RichUserProgram signs in a User with one field for each kind of column an
+// Entity can declare (serial, text, decimal, timestamp, enum, bool, int). With
+// RichUserBody and RichUserShown it makes the three parts of signing that user
+// in: the program whose Auth.verifyCode the checker stamps with the user's
+// shape, the body the server has to answer with, and what the browser shows
+// once that body signed it in.
+//
+// The server used to answer through an encoder of its own, a subset of the
+// wire's that knew no Decimal and wrote a Time without its milliseconds. An
+// app whose User had an `Entity.decimal` column compiled, created the column,
+// and read and wrote it through Repo, and then signed nobody in: the field
+// went out as null (RichUserOldBody) and both clients refused a user of the
+// wrong shape. Each side alone passed. internal/jsserve signs that user in on
+// a real server and holds the body to RichUserBody; the browser runs
+// RichUserProgram's Auth.verifyCode against RichUserBody and has to show
+// RichUserShown; the phone decodes RichUserBody through makeAuthOutcomeResult
+// with the shape the checker stamped on RichUserProgram, and has to write
+// RichUserBody back. Both clients also have to refuse RichUserOldBody with
+// RichUserOldSays, which is what makes the shape they used matter.
+const RichUserProgram = `module Main exposing (..)
+
+
+type Plan
+    = Free
+    | Pro
+
+
+type alias User =
+    { id : Int
+    , email : String
+    , balance : Decimal
+    , joinedAt : Time
+    , plan : Plan
+    , verified : Bool
+    , logins : Int
+    }
+
+
+type Msg
+    = Got String
+
+
+planName : Plan -> String
+planName p =
+    case p of
+        Free ->
+            "Free"
+
+        Pro ->
+            "Pro"
+
+
+shown : User -> String
+shown u =
+    String.join " "
+        [ String.fromInt u.id
+        , u.email
+        , Decimal.toString u.balance
+        , String.fromInt (Time.toMillis u.joinedAt)
+        , planName u.plan
+        , if u.verified then "verified" else "unverified"
+        , String.fromInt u.logins
+        ]
+
+
+fromResult : Result Service.Error (Auth.VerifyOutcome User) -> Msg
+fromResult r =
+    case r of
+        Ok (Auth.SignedIn u) ->
+            Got ("SignedIn " ++ shown u)
+
+        Ok Auth.WrongCode ->
+            Got "WrongCode"
+
+        Ok Auth.TooManyAttempts ->
+            Got "TooManyAttempts"
+
+        Err e ->
+            Got (Service.errorToString e)
+
+
+verify : Cmd Msg
+verify =
+    Auth.verifyCode { email = "ana@example.com", code = "1234" } fromResult
+`
+
+// RichUserBody is that user, as the server test in internal/jsserve signs it
+// up, in the form the sign-in endpoint has to send it: the wire format every
+// Service response uses.
+const RichUserBody = `{"id":1,"email":"ana@example.com","balance":{"__dec":"12.50"},"joinedAt":{"__time":"2023-11-14T22:13:20.123Z"},"plan":{"__ctor":"Pro"},"verified":true,"logins":3}`
+
+// RichUserShown is what RichUserProgram shows once RichUserBody signed it in.
+const RichUserShown = "SignedIn 1 ana@example.com 12.50 1700000000123 Pro verified 3"
+
+// RichUserOldBody is what the server sent for the same user before the fix.
+const RichUserOldBody = `{"id":1,"email":"ana@example.com","balance":null,"joinedAt":{"__time":"2023-11-14T22:13:20Z"},"plan":{"__ctor":"Pro"},"verified":true,"logins":3}`
+
+// RichUserOldSays is what both clients answer to RichUserOldBody.
+const RichUserOldSays = "the response does not match what this app expects: `balance` should be a number, got nothing"
+
 // AuthExpiryCase is what a 401 from a Service.call decides, given three facts.
 //
 // This was the last promise in the census with no comparator, and its reason

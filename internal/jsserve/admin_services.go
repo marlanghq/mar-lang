@@ -204,12 +204,16 @@ func bestEffortUserEmail(r *http.Request) string {
 	if cfg == nil {
 		return ""
 	}
-	js, err := runtime.LoadUserJSON(*cfg, uid)
-	if err != nil || js == nil {
+	v, err := runtime.LoadUserValue(*cfg, uid)
+	if err != nil {
 		return ""
 	}
-	if email, ok := js["email"].(string); ok {
-		return email
+	rec, ok := v.(runtime.VRecord)
+	if !ok {
+		return ""
+	}
+	if email, ok := rec.Fields["email"].(runtime.VString); ok {
+		return email.V
 	}
 	return ""
 }

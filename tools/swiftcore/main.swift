@@ -47,11 +47,25 @@ if args.count >= 4, args[1] == "--auth-verify" {
     let data = body.data(using: .utf8) ?? Data()
     let response = HTTPURLResponse(url: URL(string: "https://example.invalid/_auth/verify-code")!,
                                    statusCode: status, httpVersion: nil, headerFields: nil)
-    // { id : Int, email : String }: the shape the probe program declares.
-    // Built through decode rather than by hand, which is both the real path
-    // and the only one now that a shape's fields are private(set) -- built
-    // once, then read, and the compiler keeps it that way.
-    let shape = MarWireShape.decode([
+    // { id : Int, email : String }: the shape the probe program declares,
+    // unless a fifth argument carries one, as the checker stamped it on a
+    // program's Auth.verifyCode. Built through decode rather than by hand,
+    // which is both the real path and the only one now that a shape's fields
+    // are private(set) -- built once, then read, and the compiler keeps it
+    // that way.
+    // A fifth argument that is not a shape is refused, not replaced by the
+    // default: a test that passed its program's shape and silently got
+    // {id, email} would be checking nothing.
+    var given: Any? = nil
+    if args.count >= 5 {
+        guard let obj = try? JSONSerialization.jsonObject(with: Data(args[4].utf8)),
+              MarWireShape.decode(obj) != nil else {
+            FileHandle.standardError.write(Data("error: --auth-verify: the fifth argument is not a wire shape\n".utf8))
+            exit(2)
+        }
+        given = obj
+    }
+    let shape = MarWireShape.decode(given ?? [
         "kind": "Record",
         "fields": [
             ["name": "id", "shape": ["kind": "Int"]],
@@ -72,6 +86,12 @@ if args.count >= 4, args[1] == "--auth-verify" {
             // when it has no argument.
             if case .ctor(let otag, let oargs) = ok, oargs.isEmpty {
                 print("Ok " + otag)
+            } else if given != nil, case .ctor("SignedIn", let uargs) = ok, let user = uargs.first,
+                      let json = try? JSONSerialization.data(withJSONObject: MarJSONCodec.marToJSON(user), options: [.sortedKeys]) {
+                // With a program's shape, the user the app is handed, written
+                // back in the wire format, so it can be compared with the body
+                // it was read from field by field.
+                print("SignedIn " + String(decoding: json, as: UTF8.self))
             } else {
                 print("Ok " + String(describing: ok))
             }

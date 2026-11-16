@@ -4,16 +4,19 @@ import (
 	"bytes"
 	"encoding/json"
 	"io"
+	"math/big"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"strings"
 	"testing"
 	"time"
 
 	"mar/internal/auth"
+	"mar/internal/parityfixture"
 	"mar/internal/runtime"
 )
 
@@ -25,28 +28,12 @@ import (
 
 func authTestServer(t *testing.T) (server *httptest.Server, cleanup func()) {
 	t.Helper()
-	tmp := t.TempDir()
-	dbPath := filepath.Join(tmp, "test.db")
-	runtime.SetDBPath(dbPath)
-	// No SMTP, stdout sink explicitly allowed: the `mar dev` shape.
-	// The flag is required: a zero-value SMTPConfig now refuses to
-	// deliver rather than printing a code (audit finding #6).
-	SetAuthRuntime("test-secret", auth.SMTPConfig{AllowStdoutSink: true})
-
 	// User entity: { id : Serial, email : Text NotNull }.
 	users := runtime.VEntity{
 		Table: "users",
 		Fields: []runtime.EntityField{
 			{Name: "id", SQLType: "INTEGER", NotNull: true, Serial: true},
 			{Name: "email", SQLType: "TEXT", NotNull: true},
-		},
-	}
-	identify := runtime.VFn{
-		Arity: 1,
-		Native: func(args []runtime.Value) (runtime.Value, error) {
-			rec, _ := args[0].(runtime.VRecord)
-			email, _ := rec.Fields["email"].(runtime.VString)
-			return email, nil
 		},
 	}
 	signup := runtime.VFn{
@@ -57,6 +44,29 @@ func authTestServer(t *testing.T) (server *httptest.Server, cleanup func()) {
 				Fields: map[string]runtime.Value{"email": email},
 				Order:  []string{"email"},
 			}, nil
+		},
+	}
+	return authTestServerFor(t, users, signup)
+}
+
+// authTestServerFor is authTestServer with the User entity and the signup
+// hook the test chooses; identify reads the `email` field.
+func authTestServerFor(t *testing.T, users runtime.VEntity, signup runtime.VFn) (server *httptest.Server, cleanup func()) {
+	t.Helper()
+	tmp := t.TempDir()
+	dbPath := filepath.Join(tmp, "test.db")
+	runtime.SetDBPath(dbPath)
+	// No SMTP, stdout sink explicitly allowed: the `mar dev` shape.
+	// The flag is required: a zero-value SMTPConfig now refuses to
+	// deliver rather than printing a code (audit finding #6).
+	SetAuthRuntime("test-secret", auth.SMTPConfig{AllowStdoutSink: true})
+
+	identify := runtime.VFn{
+		Arity: 1,
+		Native: func(args []runtime.Value) (runtime.Value, error) {
+			rec, _ := args[0].(runtime.VRecord)
+			email, _ := rec.Fields["email"].(runtime.VString)
+			return email, nil
 		},
 	}
 	runtime.RegisterAuth(runtime.VAuth{
@@ -358,6 +368,99 @@ func TestRateLimitOnRequestCode(t *testing.T) {
 	}
 	if !strings.Contains(string(body), "rate_limited") {
 		t.Errorf("expected rate_limited, got %s", body)
+	}
+}
+
+// The sign-in answer is the User row in the wire format, whatever columns
+// the User has: both endpoints that send it, against the body the browser and
+// the phone are held to (parityfixture.RichUserBody, which internal/jsserve
+// auth_port_test.go and internal/iosbundle auth_port_test.go sign in with).
+//
+// It used to go through an encoder of its own that knew no Decimal and wrote
+// a Time without its milliseconds: this user went out with `"balance":null`
+// and `"joinedAt":{"__time":"2023-11-14T22:13:20Z"}`, and neither client
+// would sign it in.
+func TestTheSignInAnswerIsTheUserInTheWireFormat(t *testing.T) {
+	users := runtime.VEntity{
+		Table: "users",
+		Fields: []runtime.EntityField{
+			{Name: "id", SQLType: "INTEGER", NotNull: true, Serial: true},
+			{Name: "email", SQLType: "TEXT", NotNull: true},
+			{Name: "balance", SQLType: "DECIMAL", NotNull: true, DecimalScale: 2},
+			{Name: "joinedAt", SQLType: "TIMESTAMP", NotNull: true},
+			{Name: "plan", SQLType: "TEXT", NotNull: true, AcceptedCtors: []string{"Free", "Pro"}},
+			{Name: "verified", SQLType: "BOOLEAN", NotNull: true},
+			{Name: "logins", SQLType: "INTEGER", NotNull: true},
+		},
+	}
+	signup := runtime.VFn{
+		Arity: 1,
+		Native: func(args []runtime.Value) (runtime.Value, error) {
+			email, _ := args[0].(runtime.VString)
+			return runtime.VRecord{
+				Fields: map[string]runtime.Value{
+					"email":    email,
+					"balance":  runtime.VDecimal{Coef: big.NewInt(1250), Scale: 2},
+					"joinedAt": runtime.VTime{Millis: 1700000000123},
+					"plan":     runtime.VCtor{Tag: "Pro"},
+					"verified": runtime.VBool{V: true},
+					"logins":   runtime.VInt{V: 3},
+				},
+				Order: []string{"email", "balance", "joinedAt", "plan", "verified", "logins"},
+			}, nil
+		},
+	}
+	server, cleanup := authTestServerFor(t, users, signup)
+	defer cleanup()
+	client := server.Client()
+
+	out := captureStdout(t, func() {
+		_, _ = postJSON(t, client, server.URL+"/_auth/request-code",
+			map[string]string{"email": "ana@example.com"})
+	})
+	code := extractSinkCode(t, out)
+	resp, body := postJSON(t, client, server.URL+"/_auth/verify-code",
+		map[string]any{"email": "ana@example.com", "code": code})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("verify-code: status = %d, body = %s", resp.StatusCode, body)
+	}
+	sameDocument(t, "verify-code", body, parityfixture.RichUserBody)
+
+	req, err := http.NewRequest(http.MethodGet, server.URL+"/_auth/whoami", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Authorization", "Bearer "+resp.Header.Get(bearerTokenHeader))
+	who, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("whoami: %v", err)
+	}
+	whoBody, _ := io.ReadAll(who.Body)
+	who.Body.Close()
+	if who.StatusCode != http.StatusOK {
+		t.Fatalf("whoami: status = %d, body = %s", who.StatusCode, whoBody)
+	}
+	sameDocument(t, "whoami", whoBody, parityfixture.RichUserBody)
+}
+
+// sameDocument holds a JSON body to the document it should be, as JSON:
+// field order and spacing are not part of the answer.
+func sameDocument(t *testing.T, what string, got []byte, want string) {
+	t.Helper()
+	read := func(b []byte) any {
+		d := json.NewDecoder(bytes.NewReader(b))
+		d.UseNumber()
+		var v any
+		if err := d.Decode(&v); err != nil {
+			t.Fatalf("%s: %v in %s", what, err, b)
+		}
+		if d.More() {
+			t.Fatalf("%s: data after the document: %s", what, b)
+		}
+		return v
+	}
+	if !reflect.DeepEqual(read(got), read([]byte(want))) {
+		t.Errorf("%s answered\n  %s\nwant\n  %s", what, got, want)
 	}
 }
 

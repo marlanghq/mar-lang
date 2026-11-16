@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -531,23 +532,30 @@ func LookupUserID(cfg VAuth, email string) (int64, error) {
 	return id, nil
 }
 
-// LoadUserJSON returns the user record for `id` as a `map[string]any`
-// suitable for JSON encoding. Used by /_auth/whoami and /_auth/verify-code
-// to send the User row to the client.
-func LoadUserJSON(cfg VAuth, id int64) (map[string]any, error) {
+// LoadUserJSON returns the user record for `id` in the wire format, as
+// /_auth/whoami and /_auth/verify-code send it to the client.
+//
+// It is the wire encoder (appendValue, what encodeValue writes with), the one
+// every Service response goes through, and not one of its own. The sign-in answer used to have its own (valueToAny),
+// a subset that had drifted from the wire: it knew no Decimal, so an app
+// whose User had an `Entity.decimal` column created the column, read and
+// wrote it through Repo, and could not sign anyone in (the field went out as
+// null, and both clients refuse a user of the wrong shape); and it wrote a
+// Time without its milliseconds. One encoder means a column type the wire
+// learns is one the sign-in answer knows.
+func LoadUserJSON(cfg VAuth, id int64) (json.RawMessage, error) {
 	v, err := loadUserValue(cfg, id)
 	if err != nil {
 		return nil, err
 	}
-	rec, ok := v.(VRecord)
-	if !ok {
+	if _, ok := v.(VRecord); !ok {
 		return nil, fmt.Errorf("user row is not a record")
 	}
-	out := map[string]any{}
-	for _, name := range rec.Order {
-		out[name] = valueToAny(rec.Fields[name])
+	buf, err := appendValue(make([]byte, 0, 256), v)
+	if err != nil {
+		return nil, err
 	}
-	return out, nil
+	return json.RawMessage(buf), nil
 }
 
 // LoadUserValue returns the user row as a runtime VRecord, used by the
@@ -858,58 +866,4 @@ func CheckAuthIdentity(cfg *VAuth) error {
 			"UNIQUE in the database.\n"+
 			"  Write it as a plain field read, one of: %s",
 		cfg.Entity.Table, strings.Join(names, ", "))
-}
-
-// valueToAny converts a runtime Value to a JSON-friendly Go value.
-// Subset of what JSON.encode does; used to serialize user records for
-// the /_auth/* responses.
-func valueToAny(v Value) any {
-	switch x := v.(type) {
-	case VInt:
-		return x.V
-	case VString:
-		return x.V
-	case VBool:
-		return x.V
-	case VUnit:
-		return nil
-	case VDuration:
-		return x.Seconds
-	case VTime:
-		// Marker form so jsToMar / iOS decoders can rebuild a VTime
-		// (instead of dropping back to a plain VString): same
-		// pattern as VCtor's `{__ctor:...}`.
-		return map[string]any{
-			"__time": time.UnixMilli(x.Millis).UTC().Format(time.RFC3339),
-		}
-	case VList:
-		out := make([]any, 0, len(x.Elements))
-		for _, e := range x.Elements {
-			out = append(out, valueToAny(e))
-		}
-		return out
-	case VRecord:
-		out := map[string]any{}
-		for _, name := range x.Order {
-			out[name] = valueToAny(x.Fields[name])
-		}
-		return out
-	case VCtor:
-		// Every ctor, Nothing and Just included, uses the
-		// `__ctor` marker convention shared with encodeValue + the JS
-		// / iOS runtimes. See the note in internal/runtime/json.go on
-		// why Nothing can't be transparent to null (collides with
-		// VUnit's encoding) and why Just can't be transparent either
-		// (breaks generic decoders on record payloads).
-		out := map[string]any{"__ctor": x.Tag}
-		if len(x.Args) > 0 {
-			args := make([]any, len(x.Args))
-			for i, a := range x.Args {
-				args[i] = valueToAny(a)
-			}
-			out["__args"] = args
-		}
-		return out
-	}
-	return nil
 }
