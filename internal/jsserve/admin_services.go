@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"os"
 	goruntime "runtime"
+	"runtime/debug"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -91,13 +92,27 @@ func SetAdminRequestBufferSize(cap int) {
 	requestLogger = admin.NewRequestLogger(cap)
 }
 
-// adminRecord records a request log entry. Called by the
-// instrumenting middleware. No-op when the logger isn't set.
-func adminRecord(entry admin.RequestLog) {
-	if requestLogger == nil {
+// recordFinished adds a finished request to the admin panel's log. It runs
+// after the response is complete, so nothing in it may reach the client: a
+// panic here used to reach recoverPanic, which appended "internal server
+// error" to the finished body of every signed-in request (the email lookup
+// below reads the session, runs migrations on a cold cache and decodes the
+// user's row). The panic is logged and the entry dropped; the response
+// stays as it was. With the log off (a buffer size of 0) nothing is looked
+// up at all: the email was being fetched for nobody to read.
+func recordFinished(r *http.Request, entry admin.RequestLog) {
+	logger := requestLogger
+	if logger == nil {
 		return
 	}
-	requestLogger.Record(entry)
+	defer func() {
+		if rec := recover(); rec != nil {
+			fmt.Fprintf(os.Stderr, "[mar] panic logging %s %s for the admin panel: %v\n%s\n",
+				r.Method, r.URL.Path, rec, debug.Stack())
+		}
+	}()
+	entry.UserEmail = bestEffortUserEmail(r)
+	logger.Record(entry)
 }
 
 // adminInstrument wraps a handler with the request log middleware.
@@ -137,13 +152,12 @@ func adminInstrument(h http.Handler) http.Handler {
 		}
 		h.ServeHTTP(recorder, r)
 
-		adminRecord(admin.RequestLog{
+		recordFinished(r, admin.RequestLog{
 			AtMs:       started.UnixMilli(),
 			Method:     r.Method,
 			Path:       r.URL.Path,
 			Status:     recorder.status,
 			DurationMs: time.Since(started).Milliseconds(),
-			UserEmail:  bestEffortUserEmail(r),
 		})
 	})
 }
@@ -179,6 +193,10 @@ func (s *statusRecorder) WriteHeader(code int) {
 	s.ResponseWriter.WriteHeader(code)
 }
 
+// userForRequestLog loads the signed-in user for the request log. A variable
+// so a test can make it panic: it runs after the response is complete.
+var userForRequestLog = runtime.LoadUserValue
+
 // bestEffortUserEmail looks for a logged-in user-auth session and
 // returns the email if found. Best-effort, never blocks, never
 // fails the request, returns "" when the user is anonymous or
@@ -204,7 +222,7 @@ func bestEffortUserEmail(r *http.Request) string {
 	if cfg == nil {
 		return ""
 	}
-	v, err := runtime.LoadUserValue(*cfg, uid)
+	v, err := userForRequestLog(*cfg, uid)
 	if err != nil {
 		return ""
 	}

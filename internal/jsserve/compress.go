@@ -40,14 +40,20 @@ func withCompression(h http.HandlerFunc) http.HandlerFunc {
 		cw := &compressedWriter{ResponseWriter: w, w: gw}
 		returned := false
 		defer func() {
-			if !returned && !cw.wrote {
-				// The handler panicked before it wrote anything. Closing
+			if !returned {
+				// The handler panicked. Before it wrote anything: closing
 				// the compressor now would send an empty gzip stream, and
-				// that first byte commits a 200: recoverPanic, further
-				// out, would then have no response left to turn into the
-				// 500 it promises. Leave the response untouched instead,
-				// and take back the one header that would mislabel it.
-				w.Header().Del("Content-Encoding")
+				// that first byte commits a 200, so recoverPanic, further
+				// out, would have no response left to turn into the 500 it
+				// promises. Leave the response untouched instead, and take
+				// back the one header that would mislabel it. After it
+				// wrote: closing would end a valid gzip stream over a cut
+				// body, which a client decodes as a complete, shorter
+				// document (a body of 42 cut after the 4 is the number 4).
+				// Leave the stream unfinished, so the cut shows.
+				if !cw.wrote {
+					w.Header().Del("Content-Encoding")
+				}
 				gw.Reset(io.Discard)
 				gzipWriterPool.Put(gw)
 				return
