@@ -905,46 +905,114 @@
   // `dictSearch` / `setSearch` return the insertion index (binary
   // search) plus a `found` flag. Sort key is cmpValues; runtime
   // throws if cmpValues hits a non-comparable Mar value.
+  //
+  // `found` needs no comparison of its own: keys are unique, so the
+  // lower bound the loop lands on is the slot it last compared (the
+  // last `hi = mid`), and that comparison already said whether it was
+  // equal. When `hi` never moved, lo is the end and nothing matched.
 
   function dictSearch(d, key) {
-    let lo = 0, hi = d.pairs.length;
+    let lo = 0, hi = d.pairs.length, found = false;
     while (lo < hi) {
       const mid = (lo + hi) >> 1;
       const c = cmpValues(d.pairs[mid].key, key);
-      if (c < 0) lo = mid + 1; else hi = mid;
+      if (c < 0) lo = mid + 1; else { hi = mid; found = c === 0; }
     }
-    const found = lo < d.pairs.length && cmpValues(d.pairs[lo].key, key) === 0;
     return { idx: lo, found };
+  }
+
+  // A copy of a sorted array with one element put in or taken out. Dict
+  // and Set are persistent, so every insert and remove builds a new
+  // array; what matters is how many times it copies. slice() then
+  // splice() copies the whole array and then grows and shifts it again;
+  // toSpliced (ES2023) makes the one copy, about 6x faster on a 5003-pair
+  // Dict in node 26. An engine without it takes the two-step copy, which
+  // builds the same array.
+  const HAS_TO_SPLICED = typeof Array.prototype.toSpliced === 'function';
+  function arrayWithInserted(xs, idx, x) {
+    if (HAS_TO_SPLICED) return xs.toSpliced(idx, 0, x);
+    const out = xs.slice();
+    out.splice(idx, 0, x);
+    return out;
+  }
+  function arrayWithRemoved(xs, idx) {
+    if (HAS_TO_SPLICED) return xs.toSpliced(idx, 1);
+    const out = xs.slice();
+    out.splice(idx, 1);
+    return out;
+  }
+
+  // dictPutAt stores `key -> value` at a slot dictSearch already found,
+  // so Dict.update, which has to search before calling its function,
+  // does not search a second time to store the answer.
+  function dictPutAt(d, idx, found, key, value) {
+    if (!found) return VDict(arrayWithInserted(d.pairs, idx, { key, value }));
+    const pairs = d.pairs.slice();
+    pairs[idx] = { key, value };
+    return VDict(pairs);
   }
   function dictInsertHelper(d, key, value) {
     const { idx, found } = dictSearch(d, key);
-    const pairs = d.pairs.slice();
-    if (found) pairs[idx] = { key, value };
-    else pairs.splice(idx, 0, { key, value });
-    return VDict(pairs);
+    return dictPutAt(d, idx, found, key, value);
   }
   function dictRemoveHelper(d, idx) {
-    const pairs = d.pairs.slice();
-    pairs.splice(idx, 1);
-    return VDict(pairs);
+    return VDict(arrayWithRemoved(d.pairs, idx));
   }
 
   function setSearch(s, key) {
-    let lo = 0, hi = s.items.length;
+    let lo = 0, hi = s.items.length, found = false;
     while (lo < hi) {
       const mid = (lo + hi) >> 1;
       const c = cmpValues(s.items[mid], key);
-      if (c < 0) lo = mid + 1; else hi = mid;
+      if (c < 0) lo = mid + 1; else { hi = mid; found = c === 0; }
     }
-    const found = lo < s.items.length && cmpValues(s.items[lo], key) === 0;
     return { idx: lo, found };
   }
   function setInsertHelper(s, item) {
     const { idx, found } = setSearch(s, item);
     if (found) return s;
-    const items = s.items.slice();
-    items.splice(idx, 0, item);
+    return VSet(arrayWithInserted(s.items, idx, item));
+  }
+
+  // Dict.fromList, Set.fromList and Set.map build a whole container at
+  // once. Inserting the items one at a time copies the array once per
+  // item, which is quadratic: a 20000-item Set.fromList took seconds.
+  // Sorting once and dropping duplicates gives the same value, by the
+  // same rule as the Go runtime's buildSetSorted / buildDictSorted:
+  //
+  //   - a Set keeps the FIRST of two equal items, as setInsertHelper
+  //     does (it returns the set untouched when the item is there);
+  //   - a Dict keeps the LAST pair for a key, key and value both, as
+  //     dictInsertHelper does (it overwrites the pair it finds).
+  //
+  // "Equal" is cmpValues answering 0, which is wider than identical:
+  // 1.5 and 1.50 are one key, so which one survives is visible.
+  // Array.prototype.sort is stable (ES2019), so equal items stay in list
+  // order. Only for the values of a checked program, whose items share
+  // one comparable type, so no comparison can fail and WHICH pairs get
+  // compared changes nothing. The wire decoder (jsToMar) keeps inserting
+  // one at a time: there, whether a malformed payload is refused depends
+  // on the comparisons insertion makes.
+  //
+  // Both take a FRESH array in list order, sort it in place and keep it.
+  function setFromItems(items) {
+    items.sort(cmpValues);
+    let n = items.length === 0 ? 0 : 1;
+    for (let i = 1; i < items.length; i++) {
+      if (cmpValues(items[n - 1], items[i]) !== 0) items[n++] = items[i];
+    }
+    items.length = n;
     return VSet(items);
+  }
+  function dictFromPairs(pairs) {
+    pairs.sort((a, b) => cmpValues(a.key, b.key));
+    let n = pairs.length === 0 ? 0 : 1;
+    for (let i = 1; i < pairs.length; i++) {
+      if (cmpValues(pairs[n - 1].key, pairs[i].key) === 0) pairs[n - 1] = pairs[i];
+      else pairs[n++] = pairs[i];
+    }
+    pairs.length = n;
+    return VDict(pairs);
   }
 
   // ---------- Path patterns ----------
@@ -1134,16 +1202,26 @@
 
   // ---------- Environment ----------
 
-  function envNew(parent) { return { bindings: Object.create(null), parent }; }
-  function envBind(env, name, val) {
-    const e = envNew(env);
-    e.bindings[name] = val;
-    return e;
-  }
+  // Two kinds of frame, one object shape. The builtins and each module get a
+  // frame holding many names in `bindings`. Everything a call, a `let` or a
+  // `case` binds gets a frame of its own holding ONE name in `name`/`val`,
+  // with `bindings` null: those are made by the million, and a
+  // `Object.create(null)` per parameter is a dictionary-mode object per
+  // parameter, which made every lookup that walked past it a hash probe.
+  // Lookup is unchanged: innermost frame first, and a name bound to
+  // `undefined` is not found there.
+  function envNew(parent) { return { name: null, val: undefined, bindings: Object.create(null), parent }; }
+  function envBind(env, name, val) { return { name, val, bindings: null, parent: env }; }
   function envDefine(env, name, val) { env.bindings[name] = val; }
   function envLookup(env, name) {
     for (let cur = env; cur; cur = cur.parent) {
-      if (cur.bindings && cur.bindings[name] !== undefined) return cur.bindings[name];
+      const b = cur.bindings;
+      if (b === null) {
+        if (cur.name === name && cur.val !== undefined) return cur.val;
+      } else {
+        const v = b[name];
+        if (v !== undefined) return v;
+      }
     }
     return undefined;
   }
@@ -1198,22 +1276,38 @@
   // frame would carry anything.
   const MAX_CALL_DEPTH = 512;
   let callDepth = 0;
+  function tooMuchRecursion() {
+    return new Error('too much recursion: more than ' + MAX_CALL_DEPTH +
+      ' nested calls. A function is calling itself without reaching a base case');
+  }
 
+  // apply hands a function value ONE more argument: a partial application
+  // until the function has every argument it takes, then the call.
+  //
+  // The arguments gathered so far are copied by hand, not with
+  // `fn.applied.concat([arg])`: concat takes V8's generic path (it has to
+  // honour Symbol.isConcatSpreadable), and this line runs once per ARGUMENT of
+  // every call. It was the most expensive line in the interpreter, 21-30% of
+  // all samples on both benchmark programs.
   function apply(fn, arg) {
     if (fn.k !== 'Fn') throw new Error('apply: not a function: ' + JSON.stringify(fn));
-    const applied = fn.applied.concat([arg]);
+    const applied = withArg(fn.applied, arg);
     if (applied.length < fn.arity) {
       return VFn(fn.params, fn.body, fn.env, fn.native, fn.arity, applied);
     }
     if (fn.native) return fn.native(applied);
+    // The body is entered HERE, not through a helper: every Mar call keeps
+    // the same number of host frames it always had (evalExpr -> apply ->
+    // evalExpr). The guard below is MAX_CALL_DEPTH Mar calls, and the host
+    // stack has to hold that many; a frame more per call made programs a few
+    // calls short of the limit die with the host's "Maximum call stack size
+    // exceeded" instead. evalApp and applyMany repeat these lines for the
+    // same reason.
     let env = fn.env;
     for (let i = 0; i < fn.params.length; i++) {
       env = envBind(env, fn.params[i], applied[i]);
     }
-    if (callDepth >= MAX_CALL_DEPTH) {
-      throw new Error('too much recursion: more than ' + MAX_CALL_DEPTH +
-        ' nested calls. A function is calling itself without reaching a base case');
-    }
+    if (callDepth >= MAX_CALL_DEPTH) throw tooMuchRecursion();
     // try/finally rather than a plain decrement: an error unwinding past here
     // would otherwise leave the counter high, and every later evaluation would
     // start partway to the limit.
@@ -1223,6 +1317,125 @@
     } finally {
       callDepth--;
     }
+  }
+
+  // A fresh array: the arguments a partial application holds are never
+  // mutated, and a native may keep the array it is called with (a
+  // constructor keeps it as its args).
+  function withArg(prev, arg) {
+    const n = prev.length;
+    if (n === 0) return [arg];
+    const out = prev.slice();
+    out.push(arg);
+    return out;
+  }
+
+  // evalApp evaluates a call `f a b c`, which the parser nests one argument at
+  // a time: EApp(EApp(EApp(f, a), b), c). Evaluating it node by node built a
+  // partial application for every argument but the last; this walks the spine
+  // once (cached on the node) and hands the arguments over together.
+  //
+  // The ORDER is the nested evaluation's, step for step: the function first,
+  // then each argument left to right, and the call happens the moment the
+  // function has every argument it takes, BEFORE the next argument is
+  // evaluated (a function that returns a function is called, and then the
+  // rest go to what it returned). A partial application has no effect to
+  // reorder, so only the call points matter, and they are where they were.
+  function evalApp(e, env) {
+    const args = e._args || appSpine(e);
+    let fn = evalExpr(e._head, env);
+    const n = args.length;
+    let i = 0;
+    while (i < n) {
+      const arg = evalExpr(args[i++], env);
+      if (fn.k !== 'Fn') throw new Error('apply: not a function: ' + JSON.stringify(fn));
+      const applied = withArg(fn.applied, arg);
+      while (applied.length < fn.arity && i < n) applied.push(evalExpr(args[i++], env));
+      if (applied.length < fn.arity) {
+        return VFn(fn.params, fn.body, fn.env, fn.native, fn.arity, applied);
+      }
+      if (fn.native) {
+        fn = fn.native(applied);
+        continue;
+      }
+      // Entered inline, as in apply: see the note there.
+      let fenv = fn.env;
+      for (let p = 0; p < fn.params.length; p++) fenv = envBind(fenv, fn.params[p], applied[p]);
+      if (callDepth >= MAX_CALL_DEPTH) throw tooMuchRecursion();
+      callDepth++;
+      try {
+        fn = evalExpr(fn.body, fenv);
+      } finally {
+        callDepth--;
+      }
+    }
+    return fn;
+  }
+
+  function appSpine(e) {
+    const args = [];
+    let head = e;
+    while (head.kind === 'EApp') {
+      args.push(head.arg);
+      head = head.fn;
+    }
+    args.reverse();
+    nodeCache(e, '_head', head);
+    return nodeCache(e, '_args', args);
+  }
+
+  // nodeCache remembers something derived from an AST node ON the node, as a
+  // NON-enumerable property: JSON.stringify, Object.keys and for-in never see
+  // it, so these caches stay out of anything that looks at a node (an error
+  // message that prints a value holding a closure, the dev dock). The older
+  // caches set by plain assignment in evalExpr (_qn, _pn, _decoder, _caller,
+  // _verify, _me) are still enumerable. Program nodes are never frozen; a
+  // reload brings fresh nodes.
+  function nodeCache(node, key, value) {
+    Object.defineProperty(node, key, { value, writable: false, enumerable: false, configurable: false });
+    return value;
+  }
+
+  // applyMany(fn, [a, b]) is apply(apply(fn, a), b), and likewise for three
+  // arguments, without the partial application in between. The stdlib's
+  // folds, indexedMap, Dict.foldl and the rest call a two- or three-argument
+  // function once per element, and going through apply one argument at a
+  // time builds a VFn for each partial and copies the argument array once
+  // per argument, only to throw the partial away.
+  //
+  // When fn still needs at least that many arguments, the inner applies
+  // could only have built partials, so all the arguments go in at once and
+  // the rest is apply's own tail. Otherwise (fn is saturated sooner and
+  // returns another function, or is not a function at all) it IS the nested
+  // apply. Value, error and call depth come out the same either way: a
+  // partial application never counts toward MAX_CALL_DEPTH. `args` must be
+  // a fresh array: it can become the call's argument list.
+  //
+  // Its frame is kept no larger than apply's (the one-at-a-time fallback
+  // lives in its own function), because this frame sits on the host stack
+  // once per nested Mar call that runs through a fold, and the host stack
+  // must not run out sooner than it did.
+  function applyMany(fn, args) {
+    if (fn.k !== 'Fn' || fn.applied.length + args.length > fn.arity) return applyOneByOne(fn, args);
+    if (fn.applied.length !== 0) args = fn.applied.concat(args);
+    if (args.length < fn.arity) {
+      return VFn(fn.params, fn.body, fn.env, fn.native, fn.arity, args);
+    }
+    if (fn.native) return fn.native(args);
+    // Entered inline, as in apply: see the note there.
+    let env = fn.env;
+    for (let i = 0; i < fn.params.length; i++) env = envBind(env, fn.params[i], args[i]);
+    if (callDepth >= MAX_CALL_DEPTH) throw tooMuchRecursion();
+    callDepth++;
+    try {
+      return evalExpr(fn.body, env);
+    } finally {
+      callDepth--;
+    }
+  }
+  function applyOneByOne(fn, args) {
+    for (let i = 0; i < args.length; i++) fn = apply(fn, args[i]);
+    return fn;
   }
 
   // ---------- Pattern matching ----------
@@ -1255,36 +1468,45 @@
     return 'unknown';
   }
 
-  function matchInto(pat, v, bindings) {
+  // matchInto matches v against pat. On success it returns env extended with
+  // the pattern's variables, each in a frame of its own, bound in the order
+  // the pattern lists them; on failure it returns null, and the frames it had
+  // built are unreachable. A `case` used to fill an object for every branch it
+  // TRIED and copy it into a fresh frame for the branch that matched.
+  function matchInto(pat, v, env) {
     switch (pat.kind) {
-      case 'PWildcard': return true;
-      case 'PVar': bindings[pat.name] = v; return true;
-      case 'PInt': return v.k === 'I' && v.n === pat.value;
-      case 'PString': return v.k === 'S' && v.s === pat.value;
-      case 'PChar': return v.k === 'Ch' && v.c === pat.value;
-      case 'PUnit': return v.k === 'U';
+      case 'PWildcard': return env;
+      case 'PVar': return envBind(env, pat.name, v);
+      case 'PInt': return v.k === 'I' && v.n === pat.value ? env : null;
+      case 'PString': return v.k === 'S' && v.s === pat.value ? env : null;
+      case 'PChar': return v.k === 'Ch' && v.c === pat.value ? env : null;
+      case 'PUnit': return v.k === 'U' ? env : null;
       case 'PCtor':
-        if (v.k !== 'C' || v.tag !== pat.name || v.args.length !== pat.args.length) return false;
+        if (v.k !== 'C' || v.tag !== pat.name || v.args.length !== pat.args.length) return null;
         for (let i = 0; i < pat.args.length; i++) {
-          if (!matchInto(pat.args[i], v.args[i], bindings)) return false;
+          env = matchInto(pat.args[i], v.args[i], env);
+          if (env === null) return null;
         }
-        return true;
+        return env;
       case 'PTuple':
-        if (v.k !== 'T' || v.xs.length !== pat.members.length) return false;
+        if (v.k !== 'T' || v.xs.length !== pat.members.length) return null;
         for (let i = 0; i < pat.members.length; i++) {
-          if (!matchInto(pat.members[i], v.xs[i], bindings)) return false;
+          env = matchInto(pat.members[i], v.xs[i], env);
+          if (env === null) return null;
         }
-        return true;
+        return env;
       case 'PList':
-        if (v.k !== 'L' || v.xs.length !== pat.elements.length) return false;
+        if (v.k !== 'L' || v.xs.length !== pat.elements.length) return null;
         for (let i = 0; i < pat.elements.length; i++) {
-          if (!matchInto(pat.elements[i], v.xs[i], bindings)) return false;
+          env = matchInto(pat.elements[i], v.xs[i], env);
+          if (env === null) return null;
         }
-        return true;
+        return env;
       case 'PCons':
-        if (v.k !== 'L' || v.xs.length === 0) return false;
-        if (!matchInto(pat.head, v.xs[0], bindings)) return false;
-        return matchInto(pat.tail, VList(v.xs.slice(1)), bindings);
+        if (v.k !== 'L' || v.xs.length === 0) return null;
+        env = matchInto(pat.head, v.xs[0], env);
+        if (env === null) return null;
+        return matchInto(pat.tail, VList(v.xs.slice(1)), env);
       case 'PRecord':
         // `{ f1, f2, ... }`: bind each listed field's value into
         // the scope. Partial-match: the value record may carry
@@ -1298,15 +1520,15 @@
         // `toString` / `hasOwnProperty` themselves can never satisfy
         // the lookup. v.fields is a plain object literal so its
         // prototype IS Object.prototype.
-        if (v.k !== 'R') return false;
+        if (v.k !== 'R') return null;
         for (let i = 0; i < pat.fields.length; i++) {
           const fname = pat.fields[i];
-          if (!Object.prototype.hasOwnProperty.call(v.fields, fname)) return false;
-          bindings[fname] = v.fields[fname];
+          if (!Object.prototype.hasOwnProperty.call(v.fields, fname)) return null;
+          env = envBind(env, fname, v.fields[fname]);
         }
-        return true;
+        return env;
     }
-    return false;
+    return null;
   }
 
   // ---------- Eval ----------
@@ -1678,13 +1900,22 @@
         throw new Error('negate: unsupported type');
       }
       case 'EApp': {
-        const fn = evalExpr(e.fn, env);
-        const arg = evalExpr(e.arg, env);
-        return apply(fn, arg);
+        // One argument: the original three lines, frame for frame. Only a
+        // call written with several arguments (`f a b`) goes through evalApp.
+        if (e.fn.kind !== 'EApp') {
+          const fn = evalExpr(e.fn, env);
+          const arg = evalExpr(e.arg, env);
+          return apply(fn, arg);
+        }
+        return evalApp(e, env);
       }
       case 'EBinop': {
-        const op = envLookup(env, e.op);
-        if (op === undefined) throw new Error('unknown operator: ' + e.op);
+        // The operator's implementation, from BINOPS (cached on the node: it
+        // depends on the operator alone). One BINOPS does not know takes the
+        // general path, which looks it up and reports it.
+        const impl = e._impl !== undefined ? e._impl : nodeCache(e, '_impl', BINOPS[e.op] || null);
+        const op = impl !== null ? null : envLookup(env, e.op);
+        if (impl === null && op === undefined) throw new Error('unknown operator: ' + e.op);
         const left = evalExpr(e.left, env);
         // `&&` and `||` SHORT-CIRCUIT: when the left operand already decides the
         // answer, the right one is never evaluated. Mirrors evalAt in
@@ -1703,6 +1934,7 @@
           return rv;
         }
         const right = evalExpr(e.right, env);
+        if (impl !== null) return impl(left, right);
         return apply(apply(op, left), right);
       }
       case 'ELambda': {
@@ -1723,12 +1955,8 @@
         let cur = env;
         for (const b of e.bindings) {
           const val = evalExpr(b.body, cur);
-          const bindings = {};
-          if (matchInto(b.pattern, val, bindings)) {
-            const frame = envNew(cur);
-            Object.assign(frame.bindings, bindings);
-            cur = frame;
-          }
+          const next = matchInto(b.pattern, val, cur);
+          if (next !== null) cur = next;
         }
         return evalExpr(e.body, cur);
       }
@@ -1770,12 +1998,8 @@
       case 'ECase': {
         const subj = evalExpr(e.subject, env);
         for (const br of e.branches) {
-          const bindings = {};
-          if (matchInto(br.pattern, subj, bindings)) {
-            const frame = envNew(env);
-            Object.assign(frame.bindings, bindings);
-            return evalExpr(br.body, frame);
-          }
+          const frame = matchInto(br.pattern, subj, env);
+          if (frame !== null) return evalExpr(br.body, frame);
         }
         // Include the subject's shape in the error so the
         // browser console points at WHICH case match exploded.
@@ -3590,6 +3814,75 @@
     }
   }
 
+  // ---------- Binary operators ----------
+  //
+  // Every operator Mar has is a builtin, and none can be rebound: no syntax
+  // binds an operator's name (the parser's operator table is closed, and a
+  // parameter or a pattern variable is always an identifier). So evalExpr
+  // calls these two-argument functions straight from this table, instead of
+  // looking the operator up through every frame of the environment and then
+  // applying it one argument at a time. makeBuiltinEnv binds the very same
+  // functions under the operators' names. Mirrors evalBinop in
+  // internal/runtime/eval.go.
+
+  // Int is 53 bits wide, and this is the runtime the width was chosen FOR:
+  // JavaScript has no integers, so an `Int` here is a double, and past 2^53
+  // it stops being able to tell 9007199254740993 from 9007199254740992 and
+  // says nothing about it. Go wrapped around and Swift trapped; only this
+  // one was quietly wrong, which is the worst of the three.
+  //
+  // Number.isSafeInteger is exactly the predicate: an integer, and within
+  // +/-(2^53-1). It is reliable even for a product that overflowed into the
+  // inexact range, because rounding a double is relatively tiny: a value
+  // past 2^53 never rounds back under it.
+  function checkedInt(a, op, b, c) {
+    if (!Number.isSafeInteger(c)) {
+      throw new Error('Int overflow: ' + a + ' ' + op + ' ' + b +
+        ' is outside the range of Int (-9007199254740991 to 9007199254740991)');
+    }
+    return VInt(c);
+  }
+
+  const BINOPS = Object.create(null);
+  // Arithmetic: `+ - *` close over both Int and Decimal (the
+  // typechecker's `number` constraint guarantees the operands agree).
+  BINOPS['+'] = (a, b) => a.k === 'De' ? decAddV(a, b) : checkedInt(a.n, '+', b.n, a.n + b.n);
+  BINOPS['-'] = (a, b) => a.k === 'De' ? decSubV(a, b) : checkedInt(a.n, '-', b.n, a.n - b.n);
+  BINOPS['*'] = (a, b) => a.k === 'De' ? decMulV(a, b) : checkedInt(a.n, '*', b.n, a.n * b.n);
+  // `//`, truncating Int division, total: /0 yields 0 on every runtime.
+  BINOPS['//'] = (a, b) => VInt(b.n === 0 ? 0 : Math.trunc(a.n / b.n));
+  // `/`, Decimal-only, and it produces a QUESTION, not a number: the
+  // inert exact quotient, resolved by Decimal.rounded / exact /
+  // withRemainder, which is where the precision gets written.
+  BINOPS['/'] = (a, b) => VDivision(a, b);
+  // Comparisons
+  BINOPS['=='] = (a, b) => VBool(eqValues(a, b));
+  BINOPS['/='] = (a, b) => VBool(!eqValues(a, b));
+  BINOPS['<'] = (a, b) => VBool(cmpValues(a, b) < 0);
+  BINOPS['>'] = (a, b) => VBool(cmpValues(a, b) > 0);
+  BINOPS['<='] = (a, b) => VBool(cmpValues(a, b) <= 0);
+  BINOPS['>='] = (a, b) => VBool(cmpValues(a, b) >= 0);
+  // Logic. evalExpr short-circuits `&&` and `||` itself and never calls
+  // these two; they are what the names are bound to.
+  BINOPS['&&'] = (a, b) => VBool(a.b && b.b);
+  BINOPS['||'] = (a, b) => VBool(a.b || b.b);
+  // Append (strings + lists)
+  BINOPS['++'] = (a, b) => {
+    if (a.k === 'S') return VString(a.s + b.s);
+    if (a.k === 'L') return VList(a.xs.concat(b.xs));
+    throw new Error('++: unsupported');
+  };
+  // Cons
+  BINOPS['::'] = (h, t) => VList([h].concat(t.xs));
+  // Pipes
+  BINOPS['|>'] = (x, f) => apply(f, x);
+  BINOPS['<|'] = (f, x) => apply(f, x);
+
+  function binopNative(op) {
+    const f = BINOPS[op];
+    return native(2, ([a, b]) => f(a, b));
+  }
+
   function makeBuiltinEnv() {
     const env = envNew(null);
     const def = (n, v) => envDefine(env, n, v);
@@ -3624,61 +3917,26 @@
     def('serviceErrorToString', native(1, ([e]) => VString(serviceErrorToStringJS(e))));
     def('Service.errorToString', envLookup(env, 'serviceErrorToString'));
 
-    // Int is 53 bits wide, and this is the runtime the width was chosen FOR:
-    // JavaScript has no integers, so an `Int` here is a double, and past 2^53
-    // it stops being able to tell 9007199254740993 from 9007199254740992 and
-    // says nothing about it. Go wrapped around and Swift trapped; only this
-    // one was quietly wrong, which is the worst of the three.
-    //
-    // Number.isSafeInteger is exactly the predicate: an integer, and within
-    // +/-(2^53-1). It is reliable even for a product that overflowed into the
-    // inexact range, because rounding a double is relatively tiny: a value
-    // past 2^53 never rounds back under it.
-    function checkedInt(a, op, b, c) {
-      if (!Number.isSafeInteger(c)) {
-        throw new Error('Int overflow: ' + a + ' ' + op + ' ' + b +
-          ' is outside the range of Int (-9007199254740991 to 9007199254740991)');
-      }
-      return VInt(c);
-    }
-
-    // Arithmetic: `+ - *` close over both Int and Decimal (the
-    // typechecker's `number` constraint guarantees the operands agree).
-    def('+', native(2, ([a, b]) => a.k === 'De' ? decAddV(a, b) : checkedInt(a.n, '+', b.n, a.n + b.n)));
-    def('-', native(2, ([a, b]) => a.k === 'De' ? decSubV(a, b) : checkedInt(a.n, '-', b.n, a.n - b.n)));
-    def('*', native(2, ([a, b]) => a.k === 'De' ? decMulV(a, b) : checkedInt(a.n, '*', b.n, a.n * b.n)));
-    // `//`, truncating Int division, total: /0 yields 0 on every runtime.
-    def('//', native(2, ([a, b]) => VInt(b.n === 0 ? 0 : Math.trunc(a.n / b.n))));
-    // `/`, Decimal-only, and it produces a QUESTION, not a number: the
-    // inert exact quotient, resolved by Decimal.rounded / exact /
-    // withRemainder, which is where the precision gets written.
-    def('/', native(2, ([a, b]) => VDivision(a, b)));
-
-    // Comparisons
-    def('==', native(2, ([a, b]) => VBool(eqValues(a, b))));
-    def('/=', native(2, ([a, b]) => VBool(!eqValues(a, b))));
-    def('<',  native(2, ([a, b]) => VBool(cmpValues(a, b) <  0)));
-    def('>',  native(2, ([a, b]) => VBool(cmpValues(a, b) >  0)));
-    def('<=', native(2, ([a, b]) => VBool(cmpValues(a, b) <= 0)));
-    def('>=', native(2, ([a, b]) => VBool(cmpValues(a, b) >= 0)));
-
-    // Logic
-    def('&&', native(2, ([a, b]) => VBool(a.b && b.b)));
-    def('||', native(2, ([a, b]) => VBool(a.b || b.b)));
-
-    // Append (strings + lists)
-    def('++', native(2, ([a, b]) => {
-      if (a.k === 'S') return VString(a.s + b.s);
-      if (a.k === 'L') return VList(a.xs.concat(b.xs));
-      throw new Error('++: unsupported');
-    }));
-
-    // Cons
-    def('::', native(2, ([h, t]) => VList([h].concat(t.xs))));
-
-    // Pipes
-    def('|>', native(2, ([x, f]) => apply(f, x)));
-    def('<|', native(2, ([f, x]) => apply(f, x)));
+    // The operators. Their implementations live in BINOPS (above), which is
+    // also where evalExpr calls them from; these bindings are the same
+    // functions under their names.
+    def('+', binopNative('+'));
+    def('-', binopNative('-'));
+    def('*', binopNative('*'));
+    def('//', binopNative('//'));
+    def('/', binopNative('/'));
+    def('==', binopNative('=='));
+    def('/=', binopNative('/='));
+    def('<',  binopNative('<'));
+    def('>',  binopNative('>'));
+    def('<=', binopNative('<='));
+    def('>=', binopNative('>='));
+    def('&&', binopNative('&&'));
+    def('||', binopNative('||'));
+    def('++', binopNative('++'));
+    def('::', binopNative('::'));
+    def('|>', binopNative('|>'));
+    def('<|', binopNative('<|'));
 
     // Decimal stdlib: semantics match internal/runtime/decimal.go
     // exactly (the conformance vectors in decimal_test.go must agree).
@@ -3969,7 +4227,7 @@
     // List.foldl : (a -> b -> b) -> b -> List a -> b
     const listFoldlImpl = native(3, ([fn, init, l]) => {
       let acc = init;
-      for (const x of l.xs) acc = apply(apply(fn, x), acc);
+      for (const x of l.xs) acc = applyMany(fn, [x, acc]);
       return acc;
     });
     def('listFoldl', listFoldlImpl);
@@ -4066,7 +4324,7 @@
     // listFoldr : (a -> b -> b) -> b -> List a -> b
     const listFoldrImpl = native(3, ([fn, acc, l]) => {
       for (let i = l.xs.length - 1; i >= 0; i--) {
-        acc = apply(apply(fn, l.xs[i]), acc);
+        acc = applyMany(fn, [l.xs[i], acc]);
       }
       return acc;
     });
@@ -4074,8 +4332,14 @@
     def('List.foldr', listFoldrImpl);
 
     // listIndexedMap : (Int -> a -> b) -> List a -> List b
-    const listIndexedMapImpl = native(2, ([fn, l]) =>
-      VList(l.xs.map((e, i) => apply(apply(fn, VInt(i)), e))));
+    // A plain loop rather than Array.prototype.map: the callback frame and
+    // map's own builtin frame would sit on the host stack under every nested
+    // Mar call that runs through here.
+    const listIndexedMapImpl = native(2, ([fn, l]) => {
+      const out = [];
+      for (let i = 0; i < l.xs.length; i++) out.push(applyMany(fn, [VInt(i), l.xs[i]]));
+      return VList(out);
+    });
     def('listIndexedMap', listIndexedMapImpl);
     def('List.indexedMap', listIndexedMapImpl);
 
@@ -4192,17 +4456,24 @@
     // that returned something that isn't an Order ctor (typecheck
     // should catch this, but the runtime guard keeps the failure mode
     // localized rather than producing nonsense ordering).
+    //
+    // The comparator callback stays small (orderSign does the reading after
+    // the call has returned): its frame is on the host stack under every
+    // nested Mar call the comparator makes.
+    const orderSign = (r) => {
+      if (r.k === 'C') {
+        switch (r.tag) {
+          case 'LT': return -1;
+          case 'EQ': return 0;
+          case 'GT': return 1;
+        }
+      }
+      throw new Error('List.sortWith: comparator did not return Order (LT/EQ/GT)');
+    };
     const listSortWithImpl = native(2, ([fn, l]) =>
       VList([...l.xs].sort((a, b) => {
-        const r = apply(apply(fn, a), b);
-        if (r.k === 'C') {
-          switch (r.tag) {
-            case 'LT': return -1;
-            case 'EQ': return 0;
-            case 'GT': return 1;
-          }
-        }
-        throw new Error('List.sortWith: comparator did not return Order (LT/EQ/GT)');
+        const args = [a, b];
+        return orderSign(applyMany(fn, args));
       })));
     def('listSortWith', listSortWithImpl);
     def('List.sortWith', listSortWithImpl);
@@ -4272,14 +4543,14 @@
     // Maybe.map2 / map3
     const maybeMap2Impl = native(3, ([fn, a, b]) => {
       if (a.tag !== 'Just' || b.tag !== 'Just') return VCtor('Nothing');
-      return VCtor('Just', [apply(apply(fn, a.args[0]), b.args[0])]);
+      return VCtor('Just', [applyMany(fn, [a.args[0], b.args[0]])]);
     });
     def('maybeMap2', maybeMap2Impl);
     def('Maybe.map2', maybeMap2Impl);
 
     const maybeMap3Impl = native(4, ([fn, a, b, c]) => {
       if (a.tag !== 'Just' || b.tag !== 'Just' || c.tag !== 'Just') return VCtor('Nothing');
-      return VCtor('Just', [apply(apply(apply(fn, a.args[0]), b.args[0]), c.args[0])]);
+      return VCtor('Just', [applyMany(fn, [a.args[0], b.args[0], c.args[0]])]);
     });
     def('maybeMap3', maybeMap3Impl);
     def('Maybe.map3', maybeMap3Impl);
@@ -4398,7 +4669,7 @@
         return found ? dictRemoveHelper(d, idx) : d;
       }
       if (next.tag === 'Just') {
-        return dictInsertHelper(d, k, next.args[0]);
+        return dictPutAt(d, idx, found, k, next.args[0]);
       }
       throw new Error('Dict.update: function did not return a Maybe');
     });
@@ -4444,26 +4715,21 @@
     def('dictToList', dictToListImpl);
     def('Dict.toList', dictToListImpl);
 
-    const dictFromListImpl = native(1, ([l]) => {
-      let d = VDict([]);
-      for (const e of l.xs) {
-        d = dictInsertHelper(d, e.xs[0], e.xs[1]);
-      }
-      return d;
-    });
+    const dictFromListImpl = native(1, ([l]) =>
+      dictFromPairs(l.xs.map(e => ({ key: e.xs[0], value: e.xs[1] }))));
     def('dictFromList', dictFromListImpl);
     def('Dict.fromList', dictFromListImpl);
 
     // Dict.map : (k -> v -> w) -> Dict k v -> Dict k w  - keys
     // untouched so we keep the pair order without re-sorting.
     const dictMapImpl = native(2, ([fn, d]) =>
-      VDict(d.pairs.map(p => ({ key: p.key, value: apply(apply(fn, p.key), p.value) }))));
+      VDict(d.pairs.map(p => ({ key: p.key, value: applyMany(fn, [p.key, p.value]) }))));
     def('dictMap', dictMapImpl);
     def('Dict.map', dictMapImpl);
 
     const dictFoldlImpl = native(3, ([fn, init, d]) => {
       let acc = init;
-      for (const p of d.pairs) acc = apply(apply(apply(fn, p.key), p.value), acc);
+      for (const p of d.pairs) acc = applyMany(fn, [p.key, p.value, acc]);
       return acc;
     });
     def('dictFoldl', dictFoldlImpl);
@@ -4473,7 +4739,7 @@
       let acc = init;
       for (let i = d.pairs.length - 1; i >= 0; i--) {
         const p = d.pairs[i];
-        acc = apply(apply(apply(fn, p.key), p.value), acc);
+        acc = applyMany(fn, [p.key, p.value, acc]);
       }
       return acc;
     });
@@ -4481,14 +4747,14 @@
     def('Dict.foldr', dictFoldrImpl);
 
     const dictFilterImpl = native(2, ([fn, d]) =>
-      VDict(d.pairs.filter(p => apply(apply(fn, p.key), p.value).b)));
+      VDict(d.pairs.filter(p => applyMany(fn, [p.key, p.value]).b)));
     def('dictFilter', dictFilterImpl);
     def('Dict.filter', dictFilterImpl);
 
     const dictPartitionImpl = native(2, ([fn, d]) => {
       const yes = [], no = [];
       for (const p of d.pairs) {
-        if (apply(apply(fn, p.key), p.value).b) yes.push(p);
+        if (applyMany(fn, [p.key, p.value]).b) yes.push(p);
         else no.push(p);
       }
       return VTuple([VDict(yes), VDict(no)]);
@@ -4557,9 +4823,7 @@
     const setRemoveImpl = native(2, ([k, s]) => {
       const { idx, found } = setSearch(s, k);
       if (!found) return s;
-      const items = s.items.slice();
-      items.splice(idx, 1);
-      return VSet(items);
+      return VSet(arrayWithRemoved(s.items, idx));
     });
     def('setRemove', setRemoveImpl);
     def('Set.remove', setRemoveImpl);
@@ -4580,27 +4844,20 @@
     def('setToList', setToListImpl);
     def('Set.toList', setToListImpl);
 
-    const setFromListImpl = native(1, ([l]) => {
-      let s = VSet([]);
-      for (const e of l.xs) s = setInsertHelper(s, e);
-      return s;
-    });
+    const setFromListImpl = native(1, ([l]) => setFromItems(l.xs.slice()));
     def('setFromList', setFromListImpl);
     def('Set.fromList', setFromListImpl);
 
-    // Set.map can change the element type, so we re-sort/dedupe via
-    // setInsertHelper rather than copy in place.
-    const setMapImpl = native(2, ([fn, s]) => {
-      let out = VSet([]);
-      for (const it of s.items) out = setInsertHelper(out, apply(fn, it));
-      return out;
-    });
+    // Set.map can change the element type and the order, and can map two
+    // items to one, so the mapped items are re-sorted and deduped rather
+    // than copied in place.
+    const setMapImpl = native(2, ([fn, s]) => setFromItems(s.items.map(it => apply(fn, it))));
     def('setMap', setMapImpl);
     def('Set.map', setMapImpl);
 
     const setFoldlImpl = native(3, ([fn, init, s]) => {
       let acc = init;
-      for (const it of s.items) acc = apply(apply(fn, it), acc);
+      for (const it of s.items) acc = applyMany(fn, [it, acc]);
       return acc;
     });
     def('setFoldl', setFoldlImpl);
@@ -4608,7 +4865,7 @@
 
     const setFoldrImpl = native(3, ([fn, init, s]) => {
       let acc = init;
-      for (let i = s.items.length - 1; i >= 0; i--) acc = apply(apply(fn, s.items[i]), acc);
+      for (let i = s.items.length - 1; i >= 0; i--) acc = applyMany(fn, [s.items[i], acc]);
       return acc;
     });
     def('setFoldr', setFoldrImpl);
@@ -4814,7 +5071,8 @@
     const stringFoldlImpl = native(3, ([fn, init, s]) => {
       let acc = init;
       for (const ch of s.s) {
-        acc = apply(apply(fn, VChar(ch.codePointAt(0))), acc);
+        const c = VChar(ch.codePointAt(0));
+        acc = applyMany(fn, [c, acc]);
       }
       return acc;
     });
@@ -5999,32 +6257,66 @@
 
     // Random: Elm-style generators with a PURE, seedable core. A Generator a
     // is Seed -> (a, Seed): native(1) taking a Seed, returning VTuple([value,
-    // nextSeed]). PCG-XSH-RR (64-bit state in BigInt) mirrors internal/runtime/
-    // random.go bit-for-bit: the golden vectors in random_test.go are the
-    // contract. A Seed rides inside a VTuple of two 32-bit halves, opaque at the
-    // type level, so it serializes/compares like any tuple and needs no new kind.
-    const _PCG_MUL = 6364136223846793005n, _PCG_INC = 1442695040888963407n;
-    const _M64 = (1n << 64n) - 1n, _M32 = 0xFFFFFFFFn;
-    const pcgStep = (state) => {
-      const ns = (state * _PCG_MUL + _PCG_INC) & _M64;
-      const xs = Number((((state >> 18n) ^ state) >> 27n) & _M32);
-      const rot = Number(state >> 59n);
-      const out = ((xs >>> rot) | (xs << (32 - rot))) >>> 0; // rotate right by rot
-      return [ns, out];
+    // nextSeed]). PCG-XSH-RR mirrors internal/runtime/random.go bit-for-bit:
+    // the golden vectors in random_test.go are the contract. A Seed rides
+    // inside a VTuple of two 32-bit halves, opaque at the type level, so it
+    // serializes/compares like any tuple and needs no new kind.
+    //
+    // The 64-bit state is worked on as those same two unsigned 32-bit halves,
+    // in plain Numbers. It used to be one BigInt, and every step then built
+    // about ten heap BigInts: a third of a Random.list's time went to
+    // collecting them. Everything below is exact: the one 32x32 product that
+    // needs its high half is split into 16-bit pieces, so no intermediate
+    // passes 2^53.
+    const PCG_MUL_HI = 0x5851F42D, PCG_MUL_LO = 0x4C957F2D; // 6364136223846793005
+    const PCG_INC_HI = 0x14057B7E, PCG_INC_LO = 0xF767814F; // 1442695040888963407
+    // pcgStep returns the XSH-RR output of the state (hi, lo) and leaves the
+    // next state, state * MUL + INC mod 2^64, in pcgHi / pcgLo. Read them
+    // before the next step.
+    let pcgHi = 0, pcgLo = 0;
+    const pcgStep = (hi, lo) => {
+      // rotr32(((state >> 18) ^ state) >> 27, state >> 59)
+      const xhi = (hi ^ (hi >>> 18)) >>> 0;
+      const xlo = (lo ^ ((lo >>> 18) | (hi << 14))) >>> 0;
+      const xs = ((xlo >>> 27) | (xhi << 5)) >>> 0;
+      const rot = hi >>> 27;
+      const out = ((xs >>> rot) | (xs << (32 - rot))) >>> 0;
+      // lo * MUL_LO in full (64 bits), from 16-bit pieces
+      const a0 = lo & 0xFFFF, a1 = lo >>> 16;
+      const b0 = PCG_MUL_LO & 0xFFFF, b1 = PCG_MUL_LO >>> 16;
+      const p00 = a0 * b0, p01 = a0 * b1, p10 = a1 * b0;
+      const mid = (p00 >>> 16) + (p01 & 0xFFFF) + (p10 & 0xFFFF);
+      const prodLo = (mid & 0xFFFF) * 0x10000 + (p00 & 0xFFFF);
+      // high half: the carry out of lo * MUL_LO, plus the two cross terms,
+      // whose own high halves fall off the top of 64 bits
+      const prodHi = a1 * b1 + (p01 >>> 16) + (p10 >>> 16) + (mid >>> 16) +
+        Math.imul(lo, PCG_MUL_HI) + Math.imul(hi, PCG_MUL_LO);
+      const sumLo = prodLo + PCG_INC_LO;
+      pcgLo = sumLo >>> 0;
+      pcgHi = (prodHi + PCG_INC_HI + (sumLo > 0xFFFFFFFF ? 1 : 0)) >>> 0;
+      return out;
     };
-    const seedState = (s) => (BigInt(s.xs[0].n >>> 0) << 32n) | BigInt(s.xs[1].n >>> 0);
-    const makeSeed = (state) => VTuple([VInt(Number(state >> 32n)), VInt(Number(state & _M32))]);
-    const scramble = (n) => pcgStep((BigInt.asUintN(64, BigInt(n)) * _PCG_MUL + _PCG_INC) & _M64)[0];
+    const makeSeed = (hi, lo) => VTuple([VInt(hi), VInt(lo)]);
+    // One step from a Seed: returns the output; the next Seed's halves are
+    // in pcgHi / pcgLo.
+    const stepSeed = (seed) => pcgStep(seed.xs[0].n >>> 0, seed.xs[1].n >>> 0);
+    // Random.initialSeed n: n as an unsigned 64-bit value (two's complement),
+    // advanced twice.
+    const initialSeed = (n) => {
+      pcgStep(Math.floor(n / 4294967296) >>> 0, n >>> 0);
+      pcgStep(pcgHi, pcgLo);
+      return makeSeed(pcgHi, pcgLo);
+    };
     const entropySeed = () => {
       const a = new Uint32Array(2);
       (globalThis.crypto || (typeof require !== 'undefined' && require('crypto').webcrypto)).getRandomValues(a);
-      return makeSeed((BigInt(a[0]) << 32n) | BigInt(a[1]));
+      return makeSeed(a[0], a[1]);
     };
     const runGen = (g, seed) => { const r = apply(g, seed); return [r.xs[0], r.xs[1]]; };
     const asGen = (step) => native(1, ([seed]) => { const [v, next] = step(seed); return VTuple([v, next]); });
 
     // Random.initialSeed : Int -> Seed
-    const randomInitialSeed = native(1, ([n]) => makeSeed(scramble(n.n)));
+    const randomInitialSeed = native(1, ([n]) => initialSeed(n.n));
     def('randomInitialSeed', randomInitialSeed); def('Random.initialSeed', randomInitialSeed);
     // Random.step : Generator a -> Seed -> (a, Seed), pure, runs anywhere.
     const randomStep = native(2, ([g, seed]) => { const [v, next] = runGen(g, seed); return VTuple([v, next]); });
@@ -6044,14 +6336,14 @@
     const randomInt = native(2, ([lo, hi]) => {
       let a = lo.n, b = hi.n; if (a > b) { const t = a; a = b; b = t; }
       const span = b - a + 1;
-      return asGen((seed) => { const [ns, out] = pcgStep(seedState(seed)); return [VInt(a + (out % span)), makeSeed(ns)]; });
+      return asGen((seed) => { const out = stepSeed(seed); return [VInt(a + (out % span)), makeSeed(pcgHi, pcgLo)]; });
     });
     def('randomInt', randomInt); def('Random.int', randomInt);
     const randomConstant = native(1, ([v]) => asGen((seed) => [v, seed]));
     def('randomConstant', randomConstant); def('Random.constant', randomConstant);
     const randomUniform = native(2, ([first, rest]) => {
       const items = [first].concat((rest && rest.xs) || []);
-      return asGen((seed) => { const [ns, out] = pcgStep(seedState(seed)); return [items[out % items.length], makeSeed(ns)]; });
+      return asGen((seed) => { const out = stepSeed(seed); return [items[out % items.length], makeSeed(pcgHi, pcgLo)]; });
     });
     def('randomUniform', randomUniform); def('Random.uniform', randomUniform);
     const randomList = native(2, ([n, g]) => asGen((seed) => {
@@ -6069,12 +6361,12 @@
     def('randomMap', randomMap); def('Random.map', randomMap);
     const randomMap2 = native(3, ([f, g1, g2]) => asGen((seed) => {
       const [v1, s1] = runGen(g1, seed); const [v2, s2] = runGen(g2, s1);
-      return [apply(apply(f, v1), v2), s2];
+      return [applyMany(f, [v1, v2]), s2];
     }));
     def('randomMap2', randomMap2); def('Random.map2', randomMap2);
     const randomMap3 = native(4, ([f, g1, g2, g3]) => asGen((seed) => {
       const [v1, s1] = runGen(g1, seed); const [v2, s2] = runGen(g2, s1); const [v3, s3] = runGen(g3, s2);
-      return [apply(apply(apply(f, v1), v2), v3), s3];
+      return [applyMany(f, [v1, v2, v3]), s3];
     }));
     def('randomMap3', randomMap3); def('Random.map3', randomMap3);
     const randomAndThen = native(2, ([f, g]) => asGen((seed) => {

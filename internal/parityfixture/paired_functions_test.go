@@ -24,8 +24,27 @@ import (
 // test and asks what covers it, which is the moment the question is cheap to
 // answer.
 func TestEveryFunctionImplementedTwiceIsAccountedFor(t *testing.T) {
-	// Two numbers, because one is not enough. Measured: 75 names carry a second
-	// implementation, and 169 implementations exist across them.
+	// Two numbers, because one is not enough. Measured: 79 names carry a second
+	// implementation, and 175 implementations exist across them.
+	//
+	// The newest three arrived with the browser's standard library catching up
+	// with the other two runtimes. `applyMany` (browser and phone) feeds a
+	// stdlib callback all its arguments at once; `dictFromPairs` and
+	// `setFromItems` (browser and server) build a Dict or a Set by sorting once
+	// instead of inserting one item at a time, keeping the LAST pair for a key
+	// and the FIRST of equal items, as insertion did. What compares them is the
+	// conformance corpus, which runs every fold, indexedMap, sortWith and
+	// Dict/Set.fromList case (duplicate keys included) on all three runtimes.
+	// The browser's Random also lost `scramble` and `seedState` (it now steps
+	// the 64-bit state as two 32-bit halves); the server and the phone still
+	// pair them, so the names stay and two implementations go.
+	//
+	// `evalApp` came just before them: the browser applies a call with several
+	// arguments in one step the way the server already did (the call happens
+	// where the nested one-argument applications would make it, with no partial
+	// application built in between). What compares the two is behaviour, not a
+	// table: every multi-argument call in the corpus and the conformance
+	// programs goes through both.
 	//
 	// The last five arrived together and are compared by `numNotation` and
 	// `numRefusals` in Source: liftNumberLiterals, numberFromLiteral,
@@ -45,8 +64,8 @@ func TestEveryFunctionImplementedTwiceIsAccountedFor(t *testing.T) {
 	// had it, left the name count unmoved and the test silent. Measured, not
 	// reasoned -- the sabotage was supposed to fail and did not.
 	const (
-		pairs           = 75
-		implementations = 169
+		pairs           = 79
+		implementations = 175
 	)
 
 	js := namesIn(t, []string{"../jsserve/runtime.js"},
