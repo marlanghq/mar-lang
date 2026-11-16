@@ -4,7 +4,6 @@ import (
 	"crypto/sha256"
 	_ "embed"
 	"fmt"
-	"io"
 	"net"
 	"net/http"
 	"os"
@@ -595,16 +594,7 @@ func ServeLive(port int, lp *LiveProgram, hub *ReloadHub, onReady func()) error 
 	}
 
 	if hasFrontend {
-		mux.HandleFunc("/_mar/runtime.js", withCompression(func(w http.ResponseWriter, r *http.Request) {
-			// no-store on dev runtime: hot-reload changes the embedded
-			// runtime.js on every `mar dev` restart, but Safari/Chrome
-			// happily serve a cached copy unless we tell them not to.
-			// `no-store` is stricter than `no-cache`: guarantees a
-			// network fetch, not a 304 Not Modified.
-			w.Header().Set("Cache-Control", "no-store")
-			w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
-			_, _ = io.WriteString(w, runtimeJS)
-		}))
+		mux.HandleFunc("/_mar/runtime.js", handleRuntimeJS)
 		mux.HandleFunc("/_mar/program.json", withCompression(func(w http.ResponseWriter, r *http.Request) {
 			// `no-cache` (not `no-store`) so the browser CAN cache the
 			// response, but must revalidate with the strong ETag on
@@ -641,7 +631,7 @@ func ServeLive(port int, lp *LiveProgram, hub *ReloadHub, onReady func()) error 
 		for _, size := range pwa.IconSizes {
 			size := size // capture per iteration
 			mux.HandleFunc(fmt.Sprintf("/_mar/icon-%d.png", size), func(w http.ResponseWriter, r *http.Request) {
-				b, err := pwa.IconPNG(currentPWA(), size)
+				b, err := cachedIconPNG(currentPWA(), size)
 				if err != nil {
 					http.Error(w, "icon generation failed", http.StatusInternalServerError)
 					return
@@ -657,7 +647,7 @@ func ServeLive(port int, lp *LiveProgram, hub *ReloadHub, onReady func()) error 
 		// it the SPA catch-all returns HTML and the tab shows a generic
 		// icon. pwa.FaviconSize keeps it crisp at tab sizes.
 		mux.HandleFunc("/favicon.ico", func(w http.ResponseWriter, r *http.Request) {
-			b, err := pwa.IconPNG(currentPWA(), pwa.FaviconSize)
+			b, err := cachedIconPNG(currentPWA(), pwa.FaviconSize)
 			if err != nil {
 				http.Error(w, "icon generation failed", http.StatusInternalServerError)
 				return
