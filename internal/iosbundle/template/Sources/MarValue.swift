@@ -60,7 +60,14 @@ enum MarValue: @unchecked Sendable {
     /// The inert exact quotient `/` produces. Opaque: no codec, no
     /// arithmetic, not comparable: only Decimal.rounded / exact /
     /// withRemainder turn it into a value.
-    case division(num: MarDec, den: MarDec)
+    ///
+    /// `indirect` for SIZE, not recursion: an enum is as large as its
+    /// largest case, and two inline MarDecs (2 x 24 bytes) made EVERY
+    /// MarValue 48 bytes, an Int included. Boxed, this rare case costs one
+    /// allocation per `/`, and every other value shrinks to 32 bytes (a
+    /// stride of 32: 24 for `.decimal` / `.ctor` plus the tag), which is a
+    /// third less to copy in every list, record, Dict pair and Env slot.
+    indirect case division(num: MarDec, den: MarDec)
     case list([MarValue])
     case tuple([MarValue])
     case record(fields: [String: MarValue], order: [String])
@@ -69,7 +76,7 @@ enum MarValue: @unchecked Sendable {
     /// are kept sorted ascending by key per compareMar; the invariant
     /// is rebuilt on every insert / merge by Dict.swift's helpers.
     /// Wire format: `{"__dict": [[k, v], ...]}` (see MarJSONCodec).
-    case dict([(MarValue, MarValue)])
+    case dict([MarPair])
 
     /// Ordered set (Elm-style `Set k`). Same comparable-key constraint
     /// and sorted-on-mutation invariant as `.dict`. Wire format:
@@ -86,6 +93,19 @@ enum MarValue: @unchecked Sendable {
     /// MarValue?), so it alone carries `indirect` to keep the enum finite.
     indirect case view(MarView)
     case effect(MarEffect)
+}
+
+/// One entry of a `.dict`. A struct rather than a `(MarValue, MarValue)`
+/// tuple, for speed alone: an Array of tuples is copied and destroyed through
+/// the Swift runtime's GENERIC tuple witnesses, which walk the tuple's metadata
+/// for every element, while a struct gets value witnesses compiled for it.
+/// Dict.insert and Dict.update copy the whole pair array on every call (a Dict
+/// is an immutable value, so the old one is still referenced), and that copy,
+/// plus destroying the previous version, was most of the interpreter's time on
+/// a Dict-heavy fold.
+struct MarPair {
+    var key: MarValue
+    var value: MarValue
 }
 
 // MARK: - Functions (with native + interpreted variants)
@@ -276,8 +296,8 @@ extension MarValue {
         case (.dict(let a), .dict(let b)):
             guard a.count == b.count else { return false }
             for (pa, pb) in zip(a, b) {
-                if !pa.0.equalsMar(pb.0) { return false }
-                if !pa.1.equalsMar(pb.1) { return false }
+                if !pa.key.equalsMar(pb.key) { return false }
+                if !pa.value.equalsMar(pb.value) { return false }
             }
             return true
         case (.set(let a), .set(let b)):

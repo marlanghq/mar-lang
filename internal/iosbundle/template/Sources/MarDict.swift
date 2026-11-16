@@ -31,10 +31,10 @@ enum MarDict {
         var lo = 0, hi = pairs.count
         while lo < hi {
             let mid = (lo + hi) >> 1
-            let c = pairs[mid].0.compareMar(key)
+            let c = pairs[mid].key.compareMar(key)
             if c < 0 { lo = mid + 1 } else { hi = mid }
         }
-        let found = lo < pairs.count && pairs[lo].0.compareMar(key) == 0
+        let found = lo < pairs.count && pairs[lo].key.compareMar(key) == 0
         return (lo, found)
     }
 
@@ -42,13 +42,13 @@ enum MarDict {
     /// is unmodified; we return a fresh `.dict` with the new pair
     /// spliced in at the right sorted position.
     static func insert(_ d: MarValue, _ key: MarValue, _ value: MarValue) -> MarValue {
-        guard case .dict(let pairs) = d else { return .dict([(key, value)]) }
+        guard case .dict(let pairs) = d else { return .dict([MarPair(key: key, value: value)]) }
         let (idx, found) = search(d, key)
         var out = pairs
         if found {
-            out[idx] = (key, value)
+            out[idx] = MarPair(key: key, value: value)
         } else {
-            out.insert((key, value), at: idx)
+            out.insert(MarPair(key: key, value: value), at: idx)
         }
         return .dict(out)
     }
@@ -94,7 +94,7 @@ enum MarDict {
         env.define("Dict.empty", .dict([]))
 
         let dictSingleton = MarFn.native(2) { args in
-            .dict([(args[0], args[1])])
+            .dict([MarPair(key: args[0], value: args[1])])
         }
         env.define("dictSingleton",  .fn(dictSingleton))
         env.define("Dict.singleton", .fn(dictSingleton))
@@ -115,7 +115,7 @@ enum MarDict {
             }
             let (idx, found) = MarDict.search(args[2], args[0])
             let current: MarValue = found
-                ? .ctor(tag: "Just", args: [pairs[idx].1])
+                ? .ctor(tag: "Just", args: [pairs[idx].value])
                 : .ctor(tag: "Nothing", args: [])
             let next = try Eval.apply(args[1], current)
             guard case .ctor(let tag, let nArgs) = next else {
@@ -172,7 +172,7 @@ enum MarDict {
             }
             let (idx, found) = MarDict.search(args[1], args[0])
             if !found { return .ctor(tag: "Nothing", args: []) }
-            return .ctor(tag: "Just", args: [pairs[idx].1])
+            return .ctor(tag: "Just", args: [pairs[idx].value])
         }
         env.define("dictGet",  .fn(dictGet))
         env.define("Dict.get", .fn(dictGet))
@@ -190,7 +190,7 @@ enum MarDict {
             guard case .dict(let pairs) = args[0] else {
                 throw MarRuntimeError.typeMismatch(expected: "Dict", got: Eval.typeOf(args[0]))
             }
-            return .list(pairs.map { $0.0 })
+            return .list(pairs.map { $0.key })
         }
         env.define("dictKeys",  .fn(dictKeys))
         env.define("Dict.keys", .fn(dictKeys))
@@ -199,7 +199,7 @@ enum MarDict {
             guard case .dict(let pairs) = args[0] else {
                 throw MarRuntimeError.typeMismatch(expected: "Dict", got: Eval.typeOf(args[0]))
             }
-            return .list(pairs.map { $0.1 })
+            return .list(pairs.map { $0.value })
         }
         env.define("dictValues",  .fn(dictValues))
         env.define("Dict.values", .fn(dictValues))
@@ -208,7 +208,7 @@ enum MarDict {
             guard case .dict(let pairs) = args[0] else {
                 throw MarRuntimeError.typeMismatch(expected: "Dict", got: Eval.typeOf(args[0]))
             }
-            return .list(pairs.map { .tuple([$0.0, $0.1]) })
+            return .list(pairs.map { .tuple([$0.key, $0.value]) })
         }
         env.define("dictToList",  .fn(dictToList))
         env.define("Dict.toList", .fn(dictToList))
@@ -234,12 +234,12 @@ enum MarDict {
             guard case .dict(let pairs) = args[1] else {
                 throw MarRuntimeError.typeMismatch(expected: "Dict", got: Eval.typeOf(args[1]))
             }
-            var out: [(MarValue, MarValue)] = []
+            var out: [MarPair] = []
             out.reserveCapacity(pairs.count)
             for p in pairs {
-                let partial = try Eval.apply(args[0], p.0)
-                let v = try Eval.apply(partial, p.1)
-                out.append((p.0, v))
+                let partial = try Eval.apply(args[0], p.key)
+                let v = try Eval.apply(partial, p.value)
+                out.append(MarPair(key: p.key, value: v))
             }
             return .dict(out)
         }
@@ -252,8 +252,8 @@ enum MarDict {
             }
             var acc = args[1]
             for p in pairs {
-                let p1 = try Eval.apply(args[0], p.0)
-                let p2 = try Eval.apply(p1, p.1)
+                let p1 = try Eval.apply(args[0], p.key)
+                let p2 = try Eval.apply(p1, p.value)
                 acc = try Eval.apply(p2, acc)
             }
             return acc
@@ -267,8 +267,8 @@ enum MarDict {
             }
             var acc = args[1]
             for p in pairs.reversed() {
-                let p1 = try Eval.apply(args[0], p.0)
-                let p2 = try Eval.apply(p1, p.1)
+                let p1 = try Eval.apply(args[0], p.key)
+                let p2 = try Eval.apply(p1, p.value)
                 acc = try Eval.apply(p2, acc)
             }
             return acc
@@ -280,10 +280,10 @@ enum MarDict {
             guard case .dict(let pairs) = args[1] else {
                 throw MarRuntimeError.typeMismatch(expected: "Dict", got: Eval.typeOf(args[1]))
             }
-            var out: [(MarValue, MarValue)] = []
+            var out: [MarPair] = []
             for p in pairs {
-                let p1 = try Eval.apply(args[0], p.0)
-                let res = try Eval.apply(p1, p.1)
+                let p1 = try Eval.apply(args[0], p.key)
+                let res = try Eval.apply(p1, p.value)
                 guard case .bool(let keep) = res else {
                     throw MarRuntimeError.message("Dict.filter: predicate didn't return Bool")
                 }
@@ -298,11 +298,11 @@ enum MarDict {
             guard case .dict(let pairs) = args[1] else {
                 throw MarRuntimeError.typeMismatch(expected: "Dict", got: Eval.typeOf(args[1]))
             }
-            var yes: [(MarValue, MarValue)] = []
-            var no: [(MarValue, MarValue)] = []
+            var yes: [MarPair] = []
+            var no: [MarPair] = []
             for p in pairs {
-                let p1 = try Eval.apply(args[0], p.0)
-                let res = try Eval.apply(p1, p.1)
+                let p1 = try Eval.apply(args[0], p.key)
+                let res = try Eval.apply(p1, p.value)
                 guard case .bool(let keep) = res else {
                     throw MarRuntimeError.message("Dict.partition: predicate didn't return Bool")
                 }
@@ -319,10 +319,10 @@ enum MarDict {
                 throw MarRuntimeError.typeMismatch(expected: "Dict, Dict",
                                                    got: "\(Eval.typeOf(args[0])), \(Eval.typeOf(args[1]))")
             }
-            var out: [(MarValue, MarValue)] = []
+            var out: [MarPair] = []
             var i = 0, j = 0
             while i < a.count && j < b.count {
-                let c = a[i].0.compareMar(b[j].0)
+                let c = a[i].key.compareMar(b[j].key)
                 if c < 0 { out.append(a[i]); i += 1 } else if c > 0 { out.append(b[j]); j += 1 } else { out.append(a[i]); i += 1; j += 1 }
             }
             while i < a.count { out.append(a[i]); i += 1 }
@@ -337,10 +337,10 @@ enum MarDict {
                 throw MarRuntimeError.typeMismatch(expected: "Dict, Dict",
                                                    got: "\(Eval.typeOf(args[0])), \(Eval.typeOf(args[1]))")
             }
-            var out: [(MarValue, MarValue)] = []
+            var out: [MarPair] = []
             var i = 0, j = 0
             while i < a.count && j < b.count {
-                let c = a[i].0.compareMar(b[j].0)
+                let c = a[i].key.compareMar(b[j].key)
                 if c < 0 { i += 1 } else if c > 0 { j += 1 } else { out.append(a[i]); i += 1; j += 1 }
             }
             return .dict(out)
@@ -353,14 +353,14 @@ enum MarDict {
                 throw MarRuntimeError.typeMismatch(expected: "Dict, Dict",
                                                    got: "\(Eval.typeOf(args[0])), \(Eval.typeOf(args[1]))")
             }
-            var out: [(MarValue, MarValue)] = []
+            var out: [MarPair] = []
             var i = 0, j = 0
             while i < a.count {
                 if j >= b.count {
                     out.append(contentsOf: a[i...])
                     break
                 }
-                let c = a[i].0.compareMar(b[j].0)
+                let c = a[i].key.compareMar(b[j].key)
                 if c < 0 { out.append(a[i]); i += 1 } else if c > 0 { j += 1 } else { i += 1; j += 1 }
             }
             return .dict(out)

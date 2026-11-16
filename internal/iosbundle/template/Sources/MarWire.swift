@@ -219,8 +219,8 @@ enum MarWire {
             guard case .dict(let pairs) = v else { return bad("a dictionary") }
             if s.members.count != 2 { return nil }
             for (i, pair) in pairs.enumerated() {
-                if let err = check(pair.0, s.members[0], "\(path)[\(i)].key", seen) { return err }
-                if let err = check(pair.1, s.members[1], "\(path)[\(i)].value", seen) { return err }
+                if let err = check(pair.key, s.members[0], "\(path)[\(i)].key", seen) { return err }
+                if let err = check(pair.value, s.members[1], "\(path)[\(i)].value", seen) { return err }
             }
             return nil
 

@@ -242,11 +242,9 @@ enum Eval {
             var cur = env
             for b in bindings {
                 let v = try eval(b.body, cur)
-                var bag: [(String, MarValue)] = []
+                var bag: [EnvBinding] = []
                 if matchInto(b.pattern, v, &bag), !bag.isEmpty {
-                    let frame = Env(parent: cur)
-                    for (k, bv) in bag { frame.appendBinding(k, bv) }
-                    cur = frame
+                    cur = Env(parent: cur, adopting: bag)
                 }
             }
             return try eval(body, cur)
@@ -303,16 +301,14 @@ enum Eval {
         case .caseExpr(let subject, let branches):
             let subj = try eval(subject, env)
             for br in branches {
-                var bag: [(String, MarValue)] = []
+                var bag: [EnvBinding] = []
                 if matchInto(br.pattern, subj, &bag) {
                     // Tag-only patterns (the common Msg dispatch) bind
                     // nothing: evaluate the body in the current env
                     // instead of pushing an empty frame every lookup in
                     // the body would have to walk through.
                     if bag.isEmpty { return try eval(br.body, env) }
-                    let frame = Env(parent: env)
-                    for (k, v) in bag { frame.appendBinding(k, v) }
-                    return try eval(br.body, frame)
+                    return try eval(br.body, Env(parent: env, adopting: bag))
                 }
             }
             throw MarRuntimeError.noMatch
@@ -348,9 +344,11 @@ enum Eval {
         }
         if f.applied.count + 1 == f.arity, f.native == nil,
            let params = f.params, let body = f.body, let fnEnv = f.env {
-            let frame = Env(parent: fnEnv)
-            for (p, v) in zip(params, f.applied) { frame.appendBinding(p, v) }
-            frame.appendBinding(params[f.applied.count], arg)
+            var bound: [EnvBinding] = []
+            bound.reserveCapacity(f.arity)
+            for (p, v) in zip(params, f.applied) { bound.append(EnvBinding(name: p, value: v)) }
+            bound.append(EnvBinding(name: params[f.applied.count], value: arg))
+            let frame = Env(parent: fnEnv, adopting: bound)
             return try inCallFrame { try eval(body, frame) }
         }
         return try applyMany(fn, [arg])
@@ -390,15 +388,17 @@ enum Eval {
                     guard let params = f.params, let body = f.body, let fnEnv = f.env else {
                         throw MarRuntimeError.internalError("a closure carries a body that is not an expression")
                     }
-                    // Bind straight into the frame: no intermediate
-                    // `all` array; params of one call are distinct.
-                    let frame = Env(parent: fnEnv)
-                    for (p, v) in zip(params, f.applied) { frame.appendBinding(p, v) }
+                    // Gather the params into one buffer sized once, which
+                    // the frame adopts; params of one call are distinct.
+                    var bound: [EnvBinding] = []
+                    bound.reserveCapacity(f.arity)
+                    for (p, v) in zip(params, f.applied) { bound.append(EnvBinding(name: p, value: v)) }
                     var j = 0
                     while j < need {
-                        frame.appendBinding(params[f.applied.count + j], args[i + j])
+                        bound.append(EnvBinding(name: params[f.applied.count + j], value: args[i + j]))
                         j += 1
                     }
+                    let frame = Env(parent: fnEnv, adopting: bound)
                     fv = try inCallFrame { try eval(body, frame) }
                 }
                 i += need
@@ -425,12 +425,12 @@ enum Eval {
     /// array literal allocates nothing on the (common) tag-only match,
     /// and the caller adopts the pairs into an Env frame without
     /// re-hashing anything.
-    static func matchInto(_ pat: Pat, _ v: MarValue, _ bag: inout [(String, MarValue)]) -> Bool {
+    static func matchInto(_ pat: Pat, _ v: MarValue, _ bag: inout [EnvBinding]) -> Bool {
         switch pat {
         case .wildcard:
             return true
         case .var(let name):
-            bag.append((name, v))
+            bag.append(EnvBinding(name: name, value: v))
             return true
         case .int(let i):
             if case .int(let n) = v, n == i { return true }
@@ -477,7 +477,7 @@ enum Eval {
             guard case .record(let recFields, _) = v else { return false }
             for fname in fields {
                 guard let fv = recFields[fname] else { return false }
-                bag.append((fname, fv))
+                bag.append(EnvBinding(name: fname, value: fv))
             }
             return true
         }

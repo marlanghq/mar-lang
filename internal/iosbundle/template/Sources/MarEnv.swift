@@ -19,14 +19,23 @@
 //
 // `define` mutates the current frame (used by `loadModule` to set
 // top-level bindings, replacing on redefinition); `appendBinding` is the
-// no-replace-scan fast path for freshly-created frames whose names are
-// known distinct (function params, pattern-match bags); `bind` returns a
-// new single-binding child frame.
+// no-replace-scan path for frames whose names are known distinct; and
+// `init(parent:adopting:)` builds a call / let / case frame from bindings
+// gathered beforehand, taking the array as its storage.
 
 import Foundation
 
+/// One name in a frame. A struct, not a `(name, value)` tuple: an Array of
+/// tuples is copied and destroyed through the Swift runtime's GENERIC tuple
+/// witnesses, which walk the tuple's metadata per element, and every call
+/// frame is destroyed when its call returns.
+struct EnvBinding {
+    let name: String
+    var value: MarValue
+}
+
 final class Env {
-    private var slots: [(name: String, value: MarValue)] = []
+    private var slots: [EnvBinding] = []
     private var dict: [String: MarValue]?
     let parent: Env?
 
@@ -36,6 +45,24 @@ final class Env {
 
     init(parent: Env? = nil) {
         self.parent = parent
+    }
+
+    /// A frame whose bindings are already known: a call's parameters, or the
+    /// variables one pattern bound. The array BECOMES the frame's storage, so
+    /// a frame costs one buffer sized once, instead of a buffer regrown by
+    /// each append (a 3-parameter call used to allocate three times) and a
+    /// copy of every binding out of the pattern's bag. The names are distinct
+    /// by construction; were they not, the reverse lookup would still let the
+    /// later one win, exactly as appending them one by one did.
+    init(parent: Env?, adopting bindings: [EnvBinding]) {
+        self.parent = parent
+        if bindings.count > Env.spillThreshold {
+            var d = [String: MarValue](minimumCapacity: bindings.count * 2)
+            for b in bindings { d[b.name] = b.value }
+            dict = d
+        } else {
+            slots = bindings
+        }
     }
 
     /// Define with replace-on-same-name semantics (module load, builtin
@@ -58,18 +85,19 @@ final class Env {
     }
 
     /// Append WITHOUT scanning for an existing entry. Callers guarantee
-    /// the name isn't already in this frame (params of one call, the
-    /// variables of one pattern: both distinct by construction). Reverse
-    /// lookup keeps shadowing correct even if that guarantee ever slips.
+    /// the name isn't already in this frame (`define` has just looked).
+    /// Reverse lookup keeps shadowing correct even if that guarantee ever
+    /// slips. Call and pattern frames do not come through here: they are
+    /// built whole by `init(parent:adopting:)`.
     func appendBinding(_ name: String, _ value: MarValue) {
         if dict != nil {
             dict![name] = value
             return
         }
-        slots.append((name, value))
+        slots.append(EnvBinding(name: name, value: value))
         if slots.count > Env.spillThreshold {
             var d = [String: MarValue](minimumCapacity: slots.count * 2)
-            for (n, v) in slots { d[n] = v }
+            for b in slots { d[b.name] = b.value }
             dict = d
             slots.removeAll(keepingCapacity: false)
         }
@@ -130,11 +158,11 @@ final class Env {
             }
             // Within one array frame, later slots must win: iterate in
             // insertion order so the last write lands in `out`.
-            for (name, v) in e.slots {
-                guard name.hasPrefix(prefix) else { continue }
-                let suffix = String(name.dropFirst(prefix.count))
+            for b in e.slots {
+                guard b.name.hasPrefix(prefix) else { continue }
+                let suffix = String(b.name.dropFirst(prefix.count))
                 if suffix.isEmpty || suffix.contains(".") { continue }
-                out[suffix] = v
+                out[suffix] = b.value
             }
         }
         return out

@@ -59,7 +59,7 @@ enum MarJSONCodec {
         var first: MarValue?
         switch collection {
         case .set(let items):  first = items.first
-        case .dict(let pairs): first = pairs.first?.0
+        case .dict(let pairs): first = pairs.first?.key
         default: return true
         }
         guard let existing = first else { return true }
@@ -383,7 +383,7 @@ enum MarJSONCodec {
             // `{"__dict": [[k, v], ...]}`, marker matches the Go and
             // JS encoders. Pairs ride as 2-element arrays so non-
             // String keys (Int / Float) round-trip too.
-            let arr = pairs.map { [marToJSON($0.0), marToJSON($0.1)] as [Any] }
+            let arr = pairs.map { [marToJSON($0.key), marToJSON($0.value)] as [Any] }
             return ["__dict": arr] as [String: Any]
         case .set(let items):
             return ["__set": items.map(marToJSON)] as [String: Any]
