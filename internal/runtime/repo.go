@@ -141,29 +141,23 @@ func repoCreate(args []Value) (Value, error) {
 			}
 			placeholders := strings.Repeat("?, ", len(cols))
 			placeholders = strings.TrimSuffix(placeholders, ", ")
-			sqlText := "INSERT INTO " + quoteIdent(entity.Table) + " (" + strings.Join(cols, ", ") + ") VALUES (" + placeholders + ")"
-			res, err := db.Exec(sqlText, params...)
+			// One statement: insert and hand back the row as stored (id
+			// included). It was an INSERT and then a SELECT of that id: two
+			// transactions on the single connection, with a gap between them
+			// in which another request could change the row.
+			sqlText := "INSERT INTO " + quoteIdent(entity.Table) + " (" + strings.Join(cols, ", ") + ") VALUES (" + placeholders + ")" +
+				" RETURNING " + selectColumns(entity)
+			rec, found, err, decodeErr := runWriteReturning(db, entity, sqlText, params)
 			if err != nil {
 				return nil, fmt.Errorf("Repo.create: %w", err)
 			}
-			id, err := res.LastInsertId()
-			if err != nil {
-				return nil, fmt.Errorf("Repo.create: %w", err)
+			if decodeErr != nil {
+				return nil, decodeErr
 			}
-			// Read back the row so the caller gets the full record (including
-			// the just-assigned id). This is the simplest cross-DB path
-			// without RETURNING; fine for SQLite.
-			result, err := runSelectOne(db, entity,
-				"WHERE "+quoteIdent(pk.Name)+" = ?",
-				[]any{id})
-			if err != nil {
-				return nil, err
-			}
-			ctor, ok := result.(VCtor)
-			if !ok || ctor.Tag != "Just" || len(ctor.Args) != 1 {
+			if !found {
 				return nil, fmt.Errorf("Repo.create: insert produced no row")
 			}
-			return ctor.Args[0], nil
+			return rec, nil
 		},
 	}, nil
 }
@@ -217,19 +211,19 @@ func repoUpdate(args []Value) (Value, error) {
 				params = append(params, p)
 			}
 			params = append(params, idVal.V)
-			sqlText := "UPDATE " + quoteIdent(entity.Table) + " SET " + strings.Join(sets, ", ") + " WHERE " + quoteIdent(pk.Name) + " = ?"
-			res, err := db.Exec(sqlText, params...)
+			sqlText := "UPDATE " + quoteIdent(entity.Table) + " SET " + strings.Join(sets, ", ") + " WHERE " + quoteIdent(pk.Name) + " = ?" +
+				" RETURNING " + selectColumns(entity)
+			rec, found, err, decodeErr := runWriteReturning(db, entity, sqlText, params)
 			if err != nil {
 				return nil, fmt.Errorf("Repo.update: %w", err)
 			}
-			affected, err := res.RowsAffected()
-			if err != nil {
-				return nil, fmt.Errorf("Repo.update: %w", err)
+			if decodeErr != nil {
+				return nil, decodeErr
 			}
-			if affected == 0 {
+			if !found {
 				return VCtor{Tag: "Nothing"}, nil
 			}
-			return runSelectOne(db, entity, "WHERE "+quoteIdent(pk.Name)+" = ?", []any{idVal.V})
+			return VCtor{Tag: "Just", Args: []Value{rec}}, nil
 		},
 	}, nil
 }
@@ -386,15 +380,58 @@ func runSelectOne(db *sql.DB, entity VEntity, whereClause string, params []any) 
 	return VCtor{Tag: "Just", Args: []Value{rec}}, nil
 }
 
-// buildSelectSQL composes `SELECT a, b FROM table WHERE ...`. Columns are
-// listed explicitly (instead of `SELECT *`) so the order matches the row
-// shape we expect to decode into.
-func buildSelectSQL(entity VEntity, whereClause string) string {
+// runWriteReturning runs an INSERT or UPDATE that ends in `RETURNING <the
+// entity's columns>` and decodes the one row it affects. found is false when
+// it affected none. The write is committed when the statement finishes, which
+// is at Close: its error is the write's error.
+//
+// Two errors, because they were always worded differently: a failed write is
+// reported under the caller's name, and a row that was written but does not
+// decode is reported as the stored value it is.
+func runWriteReturning(db *sql.DB, entity VEntity, sqlText string, params []any) (rec Value, found bool, writeErr, decodeErr error) {
+	rows, err := db.Query(sqlText, params...)
+	if err != nil {
+		return nil, false, err, nil
+	}
+	if !rows.Next() {
+		err := rows.Err()
+		if cerr := rows.Close(); err == nil {
+			err = cerr
+		}
+		return nil, false, err, nil
+	}
+	row, scanErr := scanRow(rows, entity)
+	// Step to the end before closing so the statement completes, not aborts.
+	for rows.Next() {
+	}
+	err = rows.Err()
+	if cerr := rows.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		return nil, false, err, nil
+	}
+	if scanErr != nil {
+		return nil, false, nil, scanErr
+	}
+	return row, true, nil, nil
+}
+
+// selectColumns is the entity's columns, quoted, in declaration order: the
+// order scanRow decodes.
+func selectColumns(entity VEntity) string {
 	cols := make([]string, len(entity.Fields))
 	for i, f := range entity.Fields {
 		cols[i] = quoteIdent(f.Name)
 	}
-	sql := "SELECT " + strings.Join(cols, ", ") + " FROM " + quoteIdent(entity.Table)
+	return strings.Join(cols, ", ")
+}
+
+// buildSelectSQL composes `SELECT a, b FROM table WHERE ...`. Columns are
+// listed explicitly (instead of `SELECT *`) so the order matches the row
+// shape we expect to decode into.
+func buildSelectSQL(entity VEntity, whereClause string) string {
+	sql := "SELECT " + selectColumns(entity) + " FROM " + quoteIdent(entity.Table)
 	if whereClause != "" {
 		sql += " " + whereClause
 	}
