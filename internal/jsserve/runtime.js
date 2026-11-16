@@ -15033,18 +15033,30 @@
     const root = document.getElementById('mar-root');
     if (root) while (root.firstChild) root.removeChild(root.firstChild);
     return fetch('/_mar/program.json', { cache: 'no-store' })
-      .then(function (r) { return r.json(); })
+      .then(readProgram)
       .then(function (p) { global.marRun(p); })
-      .catch(function (err) {
-        console.error('marReload failed:', err);
-        if (root) {
-          const pre = document.createElement('pre');
-          pre.style.color = '#b00';
-          pre.textContent = String(err && err.message || err);
-          root.appendChild(pre);
-        }
-      });
+      .catch(bootFailed);
   };
+
+  // readProgram turns a program.json response into the program, and a
+  // non-2xx one into an error that names the status, rather than letting
+  // r.json() fail on an error page as "Unexpected token".
+  function readProgram(r) {
+    if (!r.ok) throw new Error('/_mar/program.json answered HTTP ' + r.status);
+    return r.json();
+  }
+
+  // bootFailed reports a program that could not be started: fetched badly,
+  // refused by checkProgramShape, missing its entry, or throwing while main
+  // ran. The screen itself is the shell's (BootFailureHead in
+  // internal/jsserve/bootfail.go), because it also has to cover runtime.js
+  // never running, which nothing in this file can report. Every page Mar
+  // serves defines it; a page that does not is not a Mar shell, and gets
+  // the console.
+  function bootFailed(e) {
+    if (typeof global.__marBootFailed === 'function') global.__marBootFailed(e);
+    else console.error('[mar] the app could not start:', e);
+  }
 
   // marBootstrap is the entry point invoked from the host HTML page.
   // It fetches the program, runs it, and (in dev) opens the SSE
@@ -15073,27 +15085,14 @@
     // didn't provide one (e.g. when the runtime is mounted by a
     // non-mar host page like the static `dist/` build).
     var pending = global.__marProgramPromise
-      || fetch('/_mar/program.json').then(function (r) { return r.json(); });
-    pending
-      .then(function (p) {
-        try { global.marRun(p); }
-        catch (e) {
-          console.error(e);
-          const root = document.getElementById('mar-root');
-          if (root) {
-            // Wipe the boot placeholder (and anything else) so the
-            // error message stands alone: otherwise "Loading…" stays
-            // stacked above the red error which reads like a fresh
-            // load is still in progress.
-            while (root.firstChild) root.removeChild(root.firstChild);
-            const pre = document.createElement('pre');
-            pre.style.color = '#b00';
-            pre.textContent = String(e && e.message || e);
-            root.appendChild(pre);
-          }
-        }
-        if (__MAR_DEV__ && global.__marDevMode) setupDevChannel();
-      });
+      || fetch('/_mar/program.json').then(readProgram);
+    // Both outcomes are handled: a program.json that failed ends on the
+    // boot failure screen, never on the loading placeholder.
+    pending.then(function (p) {
+      try { global.marRun(p); }
+      catch (e) { bootFailed(e); }
+      if (__MAR_DEV__ && global.__marDevMode) setupDevChannel();
+    }, bootFailed);
   };
 
   // setupDevChannel opens the SSE connection used by `mar dev` for both

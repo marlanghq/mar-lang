@@ -821,7 +821,9 @@ func buildIndexHTML(locale, title string, programJSON []byte) string {
 	// Escape the < as <: JSON.parse ignores it, no other char
 	// classes need escaping in <script type="application/json">.
 	safeProgram := strings.ReplaceAll(string(programJSON), "</", `</`)
-	return fmt.Sprintf(productionPageHTML, locale, title, safeProgram)
+	// BootFailureHead(false): a deployed app shows the plain message only;
+	// the cause goes to the console.
+	return fmt.Sprintf(productionPageHTML, locale, title, jsserve.BootFailureHead(false), safeProgram)
 }
 
 const productionPageHTML = `<!doctype html>
@@ -854,7 +856,7 @@ const productionPageHTML = `<!doctype html>
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <title>%s</title>
-<style>
+%s<style>
   *, *::before, *::after { box-sizing: border-box; }
   :root {
     /* Mirrors the <meta> above: the meta drives the first paint, this
@@ -915,40 +917,25 @@ const productionPageHTML = `<!doctype html>
 <script src="/runtime.js"></script>
 <script>
 (function () {
-  function showError(e) {
-    var root = document.getElementById('mar-root');
-    var pre = document.createElement('pre');
-    pre.style.color = '#b00';
-    pre.textContent = String(e && e.message || e);
-    root.appendChild(pre);
-  }
   function boot() {
     try {
       var raw = document.getElementById('mar-program').textContent;
       marRun(JSON.parse(raw));
     } catch (e) {
-      showError(e);
+      window.__marBootFailed(e);
     }
   }
+  // marRun missing means /runtime.js did not execute. Two known causes:
+  // a dropped fetch on a flaky connection, or, right after a deploy, a
+  // CDN edge that does not have the file yet. Static hosts with SPA
+  // routing (Cloudflare Pages) answer missing paths with this page's
+  // own HTML, so the "script" parses as HTML and dies without firing
+  // onerror. __marWhenRuntime (BootFailureHead, in the head) retries
+  // once with a cache-busting query, which defeats both by forcing a
+  // fresh fetch past any cached bad response, and shows the failure
+  // screen if that does not work either.
   function start() {
-    if (typeof marRun === 'function') { boot(); return; }
-    // marRun missing means /runtime.js did not execute. Two known causes:
-    // a dropped fetch on a flaky connection, or, right after a deploy, a
-    // CDN edge that does not have the file yet. Static hosts with SPA
-    // routing (Cloudflare Pages) answer missing paths with this page's
-    // own HTML, so the "script" parses as HTML and dies without firing
-    // onerror. One retry with a cache-busting query defeats both cases
-    // by forcing a fresh fetch past any cached bad response.
-    var s = document.createElement('script');
-    s.src = '/runtime.js?retry=' + Date.now();
-    s.onload = function () {
-      if (typeof marRun === 'function') boot();
-      else showError(new Error('runtime.js did not load correctly. A new deploy may still be propagating. Reload in a moment.'));
-    };
-    s.onerror = function () {
-      showError(new Error('could not load runtime.js. Check your connection and reload the page.'));
-    };
-    document.head.appendChild(s);
+    window.__marWhenRuntime('marRun', '/runtime.js', boot);
   }
   if (document.readyState === 'loading') {
     window.addEventListener('DOMContentLoaded', start);

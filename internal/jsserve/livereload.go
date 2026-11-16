@@ -63,6 +63,16 @@ func (lp *LiveProgram) SetDevMode(on bool) {
 	lp.devMode = on
 }
 
+// DevMode reports whether this is `mar dev`. The HTML shell reads it to
+// decide whether the boot failure screen shows the technical detail: it
+// has to know before program.json (which carries the same flag) arrives,
+// because program.json not arriving is one of the failures it reports.
+func (lp *LiveProgram) DevMode() bool {
+	lp.mu.RLock()
+	defer lp.mu.RUnlock()
+	return lp.devMode
+}
+
 // SetPort sets the listening port. Called once on first capture; ignored
 // on subsequent updates so a code change can't move the server mid-session.
 func (lp *LiveProgram) SetPort(p int) {

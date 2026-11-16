@@ -229,7 +229,7 @@ func renderShell(w http.ResponseWriter, lp *LiveProgram) {
 	// one layer down, for the readers that never look at the markup:
 	// crawlers, proxies, and anything doing content negotiation.
 	w.Header().Set("Content-Language", currentLocale())
-	_, _ = fmt.Fprintf(w, pageHTML, currentLocale(), lp.Title())
+	_, _ = fmt.Fprintf(w, pageHTML, currentLocale(), lp.Title(), BootFailureHead(lp.DevMode()))
 }
 
 // programETag returns the strong ETag value for a program.json payload.
@@ -251,7 +251,8 @@ func programETag(body []byte) string {
 // Asset paths are stable (`/_mar/...`) so hot-reload's SSE channel sits
 // alongside them without colliding with user routes.
 //
-// One `%s` substitution: <title>.
+// Three `%s` substitutions: <html lang>, <title>, and the boot failure
+// screen (BootFailureHead), which has to precede everything that can fail.
 //
 // Cold-start optimization: kick off program.json's download as soon
 // as the head parses, in parallel with runtime.js. Effective wait
@@ -303,11 +304,20 @@ const pageHTML = `<!doctype html>
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <title>%s</title>
-<script>
+%s<script>
   // Eager fetch — same effect as <link rel="preload"> but works
   // uniformly across Chrome and Safari. The runtime reads
   // window.__marProgramPromise instead of issuing its own fetch.
-  window.__marProgramPromise = fetch('/_mar/program.json').then(function (r) { return r.json(); });
+  //
+  // A non-2xx answer is a failure, not JSON to parse. The catch draws the boot
+  // failure screen (BootFailureHead, just above) even when runtime.js
+  // never runs; when it does run, marBootstrap reports the same
+  // failure and the screen is already up.
+  window.__marProgramPromise = fetch('/_mar/program.json').then(function (r) {
+    if (!r.ok) throw new Error('/_mar/program.json answered HTTP ' + r.status);
+    return r.json();
+  });
+  window.__marProgramPromise.catch(window.__marBootFailed);
 </script>
 <style>
   /* Reasonable defaults so the bare view DSL renders looking like a
@@ -498,7 +508,11 @@ const pageHTML = `<!doctype html>
 <script src="/_mar/runtime.js"></script>
 <script>
 window.addEventListener('DOMContentLoaded', function () {
-  marBootstrap();
+  // marBootstrap missing means runtime.js did not run; __marWhenRuntime
+  // fetches it once more, then shows the failure screen.
+  window.__marWhenRuntime('marBootstrap', '/_mar/runtime.js', function () {
+    try { marBootstrap(); } catch (e) { window.__marBootFailed(e); }
+  });
 });
 </script>
 </body>

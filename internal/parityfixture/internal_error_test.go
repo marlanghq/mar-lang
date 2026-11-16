@@ -115,6 +115,23 @@ func TestTheSentencesAUserReadsAreWrittenTheSameThreeTimes(t *testing.T) {
 	}
 }
 
+// The screen an app shows when it could not start, on the two clients that
+// have one: the browser's boot failure screen (internal/jsserve/bootfail.go)
+// and the phone's FailedView. The button is each platform's (Reload, Retry);
+// the words a person reads are one message.
+func TestTheAppThatCouldNotStartSaysTheSameOnBothClients(t *testing.T) {
+	for _, sentence := range []string{"This app couldn't load.", "Check your connection and try again."} {
+		for _, f := range []struct{ label, path string }{
+			{"browser", "../jsserve"},
+			{"phone", "../iosbundle/template/Sources"},
+		} {
+			if !sentenceIn(t, f.path, sentence) {
+				t.Errorf("the %s no longer says %q when the app could not start, and the other client still does", f.label, sentence)
+			}
+		}
+	}
+}
+
 func sentenceIn(t *testing.T, dir, sentence string) bool {
 	t.Helper()
 	entries, err := os.ReadDir(dir)

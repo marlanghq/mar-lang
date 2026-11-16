@@ -408,20 +408,34 @@ private struct BackendOnlyPlaceholder: View {
     }
 }
 
+/// What the phone shows when the app could not start: the same words as the
+/// browser's boot failure screen (BootFailureHead in internal/jsserve), so a
+/// person sees one message on either. The cause shows under it only in a
+/// DEBUG build, where the person looking can fix it, like the detail
+/// `mar dev` adds in the browser. The button is the platform's: Retry runs
+/// the load again in place, where the browser reloads.
 private struct FailedView: View {
     let message: String
     @Environment(AppViewModel.self) private var viewModel
 
     var body: some View {
         ContentUnavailableView {
-            Label("Couldn't load the mar program", systemImage: "exclamationmark.triangle")
+            Label("This app couldn't load.", systemImage: "exclamationmark.triangle")
         } description: {
-            Text(message)
+            Text(Self.description(message))
         } actions: {
             Button("Retry") {
                 Task { await viewModel.loadAll() }
             }
             .buttonStyle(.borderedProminent)
         }
+    }
+
+    static func description(_ cause: String) -> String {
+        #if DEBUG
+        return "Check your connection and try again.\n\n" + cause
+        #else
+        return "Check your connection and try again."
+        #endif
     }
 }

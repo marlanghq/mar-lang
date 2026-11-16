@@ -431,7 +431,7 @@ func handleAdminMarShell(w http.ResponseWriter, r *http.Request) {
 		// The panel is the framework's own UI and is written in English,
 		// so it declares English regardless of what the app declares. A
 		// Portuguese app does not make "Entities" a Portuguese word.
-		fmt.Sprintf(pageHTML, "en", "Mar Admin"),
+		fmt.Sprintf(pageHTML, "en", "Mar Admin", BootFailureHead(false)),
 		"/_mar/program.json",
 		"/_mar/admin/program.json",
 	)
