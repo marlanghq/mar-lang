@@ -144,6 +144,10 @@ func CheckModuleWith(
 	// appends has no name; its types keep the bare form.
 	modPrefix := strings.Join([]string(mod.Name), ".")
 
+	// One frame for everything this module declares at its top level; see
+	// TypeEnv.Scope. The caller's environment is not touched.
+	valueEnv = valueEnv.Scope()
+
 	tEnv := newTypeNameEnv()
 	// Imported types arrive keyed CANONICALLY (`Shared.User`). Each is
 	// registered under that key and ALSO bound to its bare tail, because
@@ -180,13 +184,13 @@ func CheckModuleWith(
 		modName := strings.Join(imp.Module, ".")
 		if imp.Exposing.All {
 			for name, t := range valueEnv.ExportsOf(modName) {
-				valueEnv = valueEnv.Bind(name, t)
+				valueEnv.bindHere(name, t)
 			}
 		}
 		for _, item := range imp.Exposing.Items {
 			qual := modName + "." + item.Name
 			if t, ok := valueEnv.Lookup(qual); ok {
-				valueEnv = valueEnv.Bind(item.Name, t)
+				valueEnv.bindHere(item.Name, t)
 			}
 			// Type names: naming a type in an `exposing` list binds its bare
 			// form. The loops above already bound every imported type's bare
@@ -203,7 +207,7 @@ func CheckModuleWith(
 					// Expose constructors as bare values too.
 					for _, ctorName := range ct.CtorOrder {
 						if t, ok := valueEnv.Lookup(modName + "." + ctorName); ok {
-							valueEnv = valueEnv.Bind(ctorName, t)
+							valueEnv.bindHere(ctorName, t)
 						}
 					}
 				}
@@ -292,7 +296,7 @@ func CheckModuleWith(
 				if len(paramIDs) > 0 {
 					ctorType = TForall{Vars: paramIDs, Body: ctorType}
 				}
-				valueEnv = valueEnv.Bind(n.Name, ctorType)
+				valueEnv.bindHere(n.Name, ctorType)
 				res.ValueTypes[n.Name] = ctorType
 			}
 
@@ -350,7 +354,7 @@ func CheckModuleWith(
 					}
 					ctorType = TForall{Vars: ids, Body: ctorType}
 				}
-				valueEnv = valueEnv.Bind(c.Name, ctorType)
+				valueEnv.bindHere(c.Name, ctorType)
 				// Also expose the ctor in res.ValueTypes so the
 				// project loader can register a qualified
 				// `Module.Ctor` form for downstream imports
@@ -414,9 +418,9 @@ func CheckModuleWith(
 	for _, d := range mod.Decls {
 		if v, ok := d.(*ast.ValueDecl); ok {
 			if t, has := annotations[v.Name]; has {
-				valueEnv = valueEnv.Bind(v.Name, t)
+				valueEnv.bindHere(v.Name, t)
 			} else {
-				valueEnv = valueEnv.Bind(v.Name, FreshVar())
+				valueEnv.bindHere(v.Name, FreshVar())
 			}
 		}
 	}

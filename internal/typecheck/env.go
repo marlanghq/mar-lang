@@ -4,29 +4,36 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 )
 
-// TypeEnv maps names to types (or schemes). Implemented as an immutable
-// linked list of frames so that scoping works naturally.
+// TypeEnv maps names to types (or schemes). Implemented as a linked list of
+// frames so that scoping works naturally: Bind adds a frame and never touches
+// the old one. The builtins share one frame, built once (see BaseEnv), and a
+// module's top level fills one frame of its own before inference reads it
+// (see Scope).
 //
-// The root frame also carries a customs map: the registered custom-type
+// A frame may also carry a customs map: the registered custom-type
 // declarations indexed by name. Used by exhaustiveness checking on case
 // expressions to know "what are all the constructors of Msg?" without
 // reverse-engineering it from the constructor schemes.
 type TypeEnv struct {
 	bindings map[string]Type
 	parent   *TypeEnv
-	customs  map[string]CustomType // populated only on the root frame
+	// customs: on the frame that owns a check's registrations (the one
+	// BaseEnv hands out, or the root of a NewEnv chain) and on the shared
+	// builtin frame. LookupCustom walks up through both.
+	customs map[string]CustomType
 
 	// free is every type-variable ID occurring free in ANY binding
 	// reachable from this frame, its own and all its ancestors'. It is
 	// what let-generalization must NOT quantify: a variable still bound
 	// somewhere out here is not this binding's to make polymorphic.
 	//
-	// It is carried on the frame rather than recomputed because a frame
-	// holds exactly ONE binding (see Bind) and the chain is long: the
-	// base environment alone is 936 frames. Walking it per
-	// generalization measured 13x on a real project.
+	// It is carried on the frame rather than recomputed because the
+	// chain can be long (let and lambda add a frame per binding, see
+	// Bind), and walking it per generalization measured 13x on a real
+	// project back when the builtins were a frame each.
 	//
 	// Sharing is what makes it cheap. A binding whose type has no free
 	// variables — every builtin, every generalized top-level value —
@@ -70,12 +77,15 @@ func NewEnv() *TypeEnv {
 	return &TypeEnv{bindings: map[string]Type{}, customs: map[string]CustomType{}}
 }
 
-// RegisterCustom adds (or overwrites) a custom-type entry on the root
-// environment. Walks up the parent chain to find the root frame and
-// registers there so all child scopes see the same entry.
+// RegisterCustom adds (or overwrites) a custom-type entry on the frame that
+// owns this check's registrations: the nearest one that carries a customs
+// map, which every child scope sees. Never the shared builtin frame.
 func (e *TypeEnv) RegisterCustom(name string, ct CustomType) {
+	// The nearest frame that carries a customs map owns the registrations of
+	// this check: the frame BaseEnv hands out, or the root of a NewEnv chain.
+	// It is never the shared builtin frame below it, which is read-only.
 	root := e
-	for root.parent != nil {
+	for root.customs == nil && root.parent != nil {
 		root = root.parent
 	}
 	if root.customs == nil {
@@ -113,6 +123,28 @@ func (e *TypeEnv) Lookup(name string) (Type, bool) {
 func (e *TypeEnv) Bind(name string, t Type) *TypeEnv {
 	frame := map[string]Type{name: t}
 	return &TypeEnv{bindings: frame, parent: e, free: extendFree(e.free, t)}
+}
+
+// Scope returns a fresh, empty frame on top of e, for a caller that is about to
+// declare a whole scope's worth of names at once (a module's top level).
+//
+// Bind gives every name its own frame, which is what `let` and lambda need:
+// each binding is a new environment and the old one stays valid. A module's
+// top level does not need that. All of its names are declared before any body
+// is inferred, nothing holds the half-built environment, and a frame per
+// declaration means every lookup that misses the module (each builtin, each
+// imported name) walks one frame per declaration first. Scope + bindHere put
+// the module's names in ONE map.
+func (e *TypeEnv) Scope() *TypeEnv {
+	return &TypeEnv{bindings: map[string]Type{}, parent: e, free: e.free}
+}
+
+// bindHere adds name -> t to THIS frame, in place. Only for a frame obtained
+// from Scope and not yet handed to inference: it has the meaning of Bind
+// (later wins, the free set grows) without the new frame.
+func (e *TypeEnv) bindHere(name string, t Type) {
+	e.bindings[name] = t
+	e.free = extendFree(e.free, t)
 }
 
 // extendFree returns the free-variable set for a frame binding t under
@@ -179,21 +211,42 @@ func (e *TypeEnv) Define(name string, t Type) {
 //
 // Built-ins are encoded as TForall when polymorphic (e.g. == : forall a. a -> a -> Bool).
 func BaseEnv() *TypeEnv {
-	env := NewEnv()
+	baseOnce.Do(buildBaseFrame)
+	// A fresh, empty frame per caller: Define and RegisterCustom land here,
+	// so one check never sees another's modules or types. Everything below
+	// it is the shared builtin frame, built once and never written again.
+	return &TypeEnv{bindings: map[string]Type{}, parent: baseFrame, customs: map[string]CustomType{}}
+}
+
+var (
+	baseOnce  sync.Once
+	baseFrame *TypeEnv
+)
+
+// buildBaseFrame builds the one frame every BaseEnv shares: all builtins in a
+// single map, so a builtin lookup is one probe instead of a walk down a frame
+// per builtin. Sharing is sound because every builtin scheme is closed (the
+// frame's free set is nil; asserted below) and types are never mutated in
+// place.
+func buildBaseFrame() {
 	flat := baseBindings()
+	aliases := qualifiedAliases(flat)
+	bindings := make(map[string]Type, len(flat)+len(aliases))
 	for name, t := range flat {
-		env = env.Bind(name, t)
+		bindings[name] = t
 	}
-	for name, t := range qualifiedAliases(flat) {
-		env = env.Bind(name, t)
+	for name, t := range aliases {
+		bindings[name] = t
 	}
-	// Register built-in custom types so the exhaustiveness check on case
-	// expressions can see their variants. Without these, `case (x : Maybe a)`
-	// branches that omit one of `Just`/`Nothing` would compile silently.
-	for name, ct := range builtinCustomTypes() {
-		env.RegisterCustom(name, ct)
+	for name, t := range bindings {
+		if extendFree(nil, t) != nil {
+			panic("typecheck: builtin `" + name + "` has a free type variable; quantify it")
+		}
 	}
-	return env
+	// Built-in custom types, so the exhaustiveness check on case expressions
+	// can see their variants. Without these, `case (x : Maybe a)` branches
+	// that omit one of `Just`/`Nothing` would compile silently.
+	baseFrame = &TypeEnv{bindings: bindings, customs: builtinCustomTypes()}
 }
 
 // AllQualifiedSymbols returns EVERY user-facing name that carries a module

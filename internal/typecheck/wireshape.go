@@ -34,9 +34,10 @@ func CtorsFromEnv(env *TypeEnv) CtorLookup {
 		return nil
 	}
 	return func(canonical string, useArgs []Type) ([]CtorArm, bool) {
-		// LookupCustom rather than the map: registrations live on the ROOT
-		// frame and the env in hand here is a child, so reading the field
-		// directly answered "no custom types exist" for every module.
+		// LookupCustom rather than the map: registrations live on an
+		// ancestor frame and the env in hand here is a child, so reading
+		// the field directly answered "no custom types exist" for every
+		// module.
 		ct, ok := env.LookupCustom(canonical)
 		if !ok || len(ct.CtorOrder) == 0 {
 			return nil, false
