@@ -1,6 +1,9 @@
 package typecheck
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // Keyboard.Key is a builtin union whose ~100 constructors mirror the DOM
 // event.code set. These lock in the two things that matter: valid key patterns
@@ -46,9 +49,14 @@ toDir key =
 }
 
 func TestKeyboardKeyBindingsMatchCodes(t *testing.T) {
-	b := keyboardKeyBindings()
+	b := map[string]Type{}
+	for name, ty := range baseBindings() {
+		if strings.HasPrefix(name, "Keyboard.") && Pretty(ty) == "Keyboard.Key" {
+			b[name] = ty
+		}
+	}
 	if len(b) != len(keyboardKeyCodes) {
-		t.Fatalf("keyboardKeyBindings has %d entries, want %d (one per code)", len(b), len(keyboardKeyCodes))
+		t.Fatalf("baseBindings has %d Keyboard.Key constructors, want %d (one per code)", len(b), len(keyboardKeyCodes))
 	}
 	for _, code := range []string{"KeyW", "ArrowUp", "Space", "F1", "Numpad0"} {
 		if _, ok := b["Keyboard."+code]; !ok {

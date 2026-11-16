@@ -322,17 +322,18 @@ func BareGlobals() map[string]Type {
 	return out
 }
 
-// BaseCustomTypes returns the stdlib custom-type registrations
-// (Maybe, Result, Bool) so the LSP can advertise the variants for
-// completion in case expressions and surface a hover summary.
+// BaseCustomTypes returns the builtin union registrations (Maybe, Result,
+// Bool, Order, ...) so the LSP can advertise the variants for completion in
+// case expressions and surface a hover summary.
 func BaseCustomTypes() map[string]CustomType {
 	return builtinCustomTypes()
 }
 
-// builtinCustomTypes returns the CustomType registrations for stdlib types
-// that participate in pattern matching (Maybe, Result, Bool). These mirror
-// the value-env entries for Just/Nothing/Ok/Err in baseBindings, just at
-// the custom-type level so exhaustiveness checking has them on hand.
+// builtinCustomTypes returns the builtin unions, the ONE table that declares
+// them. Exhaustiveness checking reads it, baseBindings binds every
+// constructor from it, and internal/ctorgen generates the runtimes'
+// qualified constructors (Module.Ctor) from it. A constructor's documentation
+// belongs on its entry here.
 func builtinCustomTypes() map[string]CustomType {
 	tva := TVar{ID: -101}
 	tvb := TVar{ID: -102}
@@ -450,20 +451,45 @@ func builtinCustomTypes() map[string]CustomType {
 			Params: nil,
 			Constructors: map[string]CustomCtor{
 				"Translate": {Args: []Type{TInt, TInt}, Result: TTransform},
-				"Scale":     {Args: []Type{TInt, TInt}, Result: TTransform},
-				// Rotate takes an Angle, not a bare Int: the unit is named
-				// at construction (Math.degrees / .deciDegrees / .turns)
-				// like everywhere else a rotation appears, and a heading
-				// computed with Math can be handed straight to the canvas.
+				// Scale takes percent ints (100 = 1×, 150 = 1.5×). Mar has
+				// no Float, so continuous transforms are integer-encoded and
+				// the renderer divides Scale by 100.
+				"Scale": {Args: []Type{TInt, TInt}, Result: TTransform},
+				// Rotate takes an Angle, not a bare Int: an angle is a
+				// quantity with a unit, so it has a type (ADR 0029). The unit
+				// is named at construction (Math.degrees / .deciDegrees /
+				// .turns) like everywhere else a rotation appears, and a
+				// heading computed with Math can be handed straight to the
+				// canvas.
 				"Rotate": {Args: []Type{TAngle}, Result: TTransform},
-				"Alpha":  {Args: []Type{TInt}, Result: TTransform},
-				"Blend":  {Args: []Type{TBlend}, Result: TTransform},
+				// Alpha takes a percent int too (100 = opaque). It fades the
+				// group as ONE composited image, not shape by shape: a sprite
+				// built from overlapping parts fades as a whole instead of
+				// turning into glass, and a cloud drawn from overlapping
+				// puffs comes out evenly translucent instead of showing its
+				// seams. Reach for `rgba` when a single shape is translucent;
+				// reach for Alpha when a group of them has to fade together.
+				"Alpha": {Args: []Type{TInt}, Result: TTransform},
+				// Blend governs how the group's pixels land, on each other
+				// AND on what is below. Absent = Normal, which is exactly
+				// what every group already did, so it is inert for existing
+				// code. Add sums light (stacked explosion discs climb
+				// orange → gold → white on their own); Multiply darkens by
+				// the backdrop (one grey reads as a shadow over ANY
+				// background, instead of a hand-picked "background × 0.7"
+				// constant that breaks the moment it crosses a line); Screen
+				// lightens without clipping; Erase punches holes, and Erase
+				// alone always composites the group as one stamp, so
+				// overlapping erasers cut a single clean silhouette instead
+				// of eating the seam twice.
+				"Blend": {Args: []Type{TBlend}, Result: TTransform},
 			},
 			CtorOrder: []string{"Translate", "Scale", "Rotate", "Alpha", "Blend"},
 		},
-		// Canvas.Blend: the compositing mode of a group (see TBlend). Same
-		// exposing rule as Align and for a sharper reason: a game writing
-		// `type Op = Add | Sub` must not collide with a rendering mode.
+		// Decimal.Rounding: the rounding modes, qualified-only
+		// (Decimal.HalfEven): Up / Down / Floor / Ceiling are far too
+		// ordinary to reserve as bare global names: half the app unions ever
+		// written use them.
 		"Rounding": {
 			Name:   "Rounding",
 			Module: "Decimal",
@@ -478,6 +504,9 @@ func builtinCustomTypes() map[string]CustomType {
 			},
 			CtorOrder: []string{"HalfEven", "HalfUp", "Down", "Up", "Floor", "Ceiling"},
 		},
+		// Canvas.Blend: the compositing mode of a group (see TBlend). Same
+		// exposing rule as Align and for a sharper reason: a game writing
+		// `type Op = Add | Sub` must not collide with a rendering mode.
 		"Blend": {
 			Name:   "Blend",
 			Module: "Canvas",
@@ -537,7 +566,9 @@ func builtinCustomTypes() map[string]CustomType {
 		// ~100 constructors mirroring the DOM event.code set of a US keyboard,
 		// built from the shared list in keyboard.go. Qualified-only (like
 		// Service.Error) so the ~100 names don't pollute the global scope.
-		"Keyboard.Key":   keyboardKeyCustomType(),
+		"Keyboard.Key": keyboardKeyCustomType(),
+		// Gamepad.Button: the standard controller buttons (Gamepad.A,
+		// Gamepad.Up, ...) from gamepad.go, qualified-only like Keyboard.Key.
 		"Gamepad.Button": gamepadButtonCustomType(),
 		// Sound.Wave: chip-audio waveforms (Square/Triangle/Sawtooth/Noise) from
 		// sound.go. Qualified-only, like the other web-first input/output unions.
@@ -696,55 +727,32 @@ func baseBindings() map[string]Type {
 		},
 	}
 
-	// Bool literals
-	out["True"] = TBool
-	out["False"] = TBool
-
-	// Maybe constructors
-	out["Nothing"] = TForall{Vars: []int{a.ID}, Body: TMaybe(a)}
-	out["Just"] = TForall{Vars: []int{a.ID}, Body: TArrow{From: a, To: TMaybe(a)}}
-
-	// Result constructors
-	out["Ok"] = TForall{Vars: []int{a.ID, b.ID}, Body: TArrow{From: b, To: TResult(a, b)}}
-	out["Err"] = TForall{Vars: []int{a.ID, b.ID}, Body: TArrow{From: a, To: TResult(a, b)}}
-
-	// Order constructors: nullary, monomorphic.
-	out["LT"] = TOrder
-	out["EQ"] = TOrder
-	out["GT"] = TOrder
-
-	// Method constructors: the HTTP verbs, nullary and monomorphic.
-	// Bare-exposed (like LT/EQ/GT) so a service reads `Service.declare
-	// GET "/path"`.
-	out["GET"] = TMethod
-	out["POST"] = TMethod
-	out["PUT"] = TMethod
-	out["PATCH"] = TMethod
-	out["DELETE"] = TMethod
-
-	// Service.Error constructors: the transport failure a Service.call
-	// delivers in its Err. Offline / Unauthorized / RateLimited are nullary;
-	// ServerError carries the server's message.
-	out["Service.Offline"] = TServiceError
-	out["Service.Unauthorized"] = TServiceError
-	out["Service.RateLimited"] = TServiceError
-	out["Service.ServerError"] = TArrow{From: TString, To: TServiceError}
-
-	// Auth outcome constructors: qualified-only, like Service.Error.
-	// SignedIn is polymorphic in the app's user record.
-	out["Auth.CodeSent"] = TAuthRequestOutcome
-	out["Auth.InvalidEmail"] = TAuthRequestOutcome
-	out["Auth.RateLimited"] = TAuthRequestOutcome
-	out["Auth.SignedIn"] = TForall{Vars: []int{a.ID}, Body: TArrow{From: a, To: TAuthVerifyOutcome(a)}}
-	out["Auth.WrongCode"] = TForall{Vars: []int{a.ID}, Body: TAuthVerifyOutcome(a)}
-	out["Auth.TooManyAttempts"] = TForall{Vars: []int{a.ID}, Body: TAuthVerifyOutcome(a)}
-
-	// Keyboard.Key constructors (Keyboard.KeyW, Keyboard.ArrowUp, Keyboard.Space,
-	// ...): the ~100 physical keys from keyboard.go, qualified-only like
-	// Service.Error so the names don't leak into the global scope.
-	for name, ty := range keyboardKeyBindings() {
-		out[name] = ty
+	// Every builtin union constructor (True, Just, Ok, LT, GET, Service.Offline,
+	// Canvas.Translate, Keyboard.KeyW, ...) is bound from the ONE table that
+	// declares the unions, builtinCustomTypes: bare when the union has no
+	// Module, `Module.Ctor` when it has one. The exhaustiveness check reads
+	// the same table, and so does internal/ctorgen, which generates the
+	// runtimes' QUALIFIED constructors from it; the bare ones (True, Just,
+	// LT, GET, ...) each runtime still registers by hand.
+	for _, ct := range builtinCustomTypes() {
+		for _, name := range ct.CtorOrder {
+			ctor := ct.Constructors[name]
+			key := name
+			if ct.Module != "" {
+				key = ct.Module + "." + name
+			}
+			t := buildCtorType(ctor.Args, ctor.Result)
+			if res, ok := ctor.Result.(TCon); ok && len(res.Args) > 0 {
+				vars := make([]int, 0, len(res.Args))
+				for _, a := range res.Args {
+					vars = append(vars, a.(TVar).ID)
+				}
+				t = TForall{Vars: vars, Body: t}
+			}
+			out[key] = t
+		}
 	}
+
 	// Keyboard.watch : ({ down : List Keyboard.Key } -> msg) -> Sub msg, the
 	// held-key MIRROR. Fires the whole current set on subscribe and on every
 	// change; OS auto-repeat emits nothing (the set is unchanged) and window
@@ -753,11 +761,6 @@ func baseBindings() map[string]Type {
 	// held keys are state, so they arrive as state.
 	out["keyboardWatch"] = TForall{Vars: []int{b.ID}, Body: TArrow{From: TArrow{From: TKeyboardStateRecord(), To: b}, To: TSub(b)}}
 
-	// Gamepad.Button constructors (Gamepad.A, Gamepad.Up, ...): the standard
-	// controller buttons from gamepad.go, qualified-only like Keyboard.Key.
-	for name, ty := range gamepadButtonBindings() {
-		out[name] = ty
-	}
 	// Gamepad.watch : (pad -> msg) -> Sub msg, the full-pad MIRROR: connection,
 	// both analog sticks (x/y in -100..100 with a deadzone), and the held
 	// buttons, as one snapshot that re-fires on change. Web-first (JS polls
@@ -767,13 +770,11 @@ func baseBindings() map[string]Type {
 
 	// === Sound: chip-audio SFX + looping music (docs/proposals/sound.md) ===
 	//
-	// Sound.Wave constructors (Sound.Square, ...) come from soundWaveBindings
-	// (used as VALUES, the first arg to tone). The builders are monomorphic
-	// (Sound in, Sound out); play yields a Cmd and music a Sub, both parametric
-	// in the page msg. The JS runtime does the WebAudio synthesis; Go is inert.
-	for name, ty := range soundWaveBindings() {
-		out[name] = ty
-	}
+	// Sound.Wave constructors (Sound.Square, ...) are bound with the other
+	// unions' above (used as VALUES, the first arg to tone). The builders are
+	// monomorphic (Sound in, Sound out); play yields a Cmd and music a Sub,
+	// both parametric in the page msg. The JS runtime does the WebAudio
+	// synthesis; Go is inert.
 	// Sound.tone : Sound.Wave -> Int -> Int -> Sound  (wave, freq Hz, ms)
 	out["soundTone"] = TArrow{From: TSoundWave, To: TArrow{From: TInt, To: TArrow{From: TInt, To: TSound}}}
 	// EVERY combinator below patches EVERY voice of the sound it is given. There
@@ -1086,46 +1087,14 @@ func baseBindings() map[string]Type {
 		},
 	}
 
-	// Transform / Align / Blend constructors: qualified-only bindings. These
-	// dotted names are the ONLY way to reach them: open-exposing a builtin
-	// union is unimplemented, so `exposing (Transform(..))` parses and then
-	// leaves `Translate` unbound.
-	out["Canvas.Translate"] = TArrow{From: TInt, To: TArrow{From: TInt, To: TTransform}}
-	// Scale takes percent ints (100 = 1×, 150 = 1.5×). Mar has no Float, so
-	// continuous transforms are integer-encoded and the renderer divides
-	// Scale by 100. Rotate is the exception: an angle is a quantity with a
-	// unit, so it has a type (ADR 0029) and Math builds it.
-	out["Canvas.Scale"] = TArrow{From: TInt, To: TArrow{From: TInt, To: TTransform}}
-	out["Canvas.Rotate"] = TArrow{From: TAngle, To: TTransform}
-	// Alpha takes a percent int too (100 = opaque). It fades the group as ONE
-	// composited image, not shape by shape: a sprite built from overlapping
-	// parts fades as a whole instead of turning into glass, and a cloud drawn
-	// from overlapping puffs comes out evenly translucent instead of showing
-	// its seams. Reach for `rgba` when a single shape is translucent; reach
-	// for Alpha when a group of them has to fade together.
-	out["Canvas.Alpha"] = TArrow{From: TInt, To: TTransform}
-	// Canvas.Blend : Blend -> Transform. Governs how the group's pixels land,
-	// on each other AND on what is below. Absent = Normal, which is exactly
-	// what every group already did, so this is inert for existing code. Add
-	// sums light (stacked explosion discs climb orange → gold → white on their
-	// own); Multiply darkens by the backdrop (one grey reads as a shadow over
-	// ANY background, instead of a hand-picked "background × 0.7" constant
-	// that breaks the moment it crosses a line); Screen lightens without
-	// clipping; Erase punches holes, and Erase alone always composites the
-	// group as one stamp, so overlapping erasers cut a single clean silhouette
-	// instead of eating the seam twice.
-	out["Canvas.Blend"] = TArrow{From: TBlend, To: TTransform}
+	// The Transform / Align / Blend constructors (Canvas.Translate, ...) are
+	// bound with the other unions' above; their entries in builtinCustomTypes
+	// carry their documentation.
+
 	// === Decimal (docs/proposals/decimal.md): exact base-10 numbers ===
 	//
-	// Rounding-mode constructors are qualified-only (Decimal.HalfEven):
-	// Up / Down / Floor / Ceiling are far too ordinary to reserve as
-	// bare global names: half the app unions ever written use them.
-	out["Decimal.HalfEven"] = TRounding
-	out["Decimal.HalfUp"] = TRounding
-	out["Decimal.Down"] = TRounding
-	out["Decimal.Up"] = TRounding
-	out["Decimal.Floor"] = TRounding
-	out["Decimal.Ceiling"] = TRounding
+	// The rounding modes (Decimal.HalfEven, ...) are the Decimal.Rounding
+	// union's, bound above.
 
 	// Conversions and arithmetic helpers. round uses banker's
 	// (HalfEven): Mar's round exists mostly for money; toIntWith
@@ -1157,15 +1126,6 @@ func baseBindings() map[string]Type {
 		Order:  []string{"quotient", "remainder"},
 	}}}
 
-	out["Canvas.Normal"] = TBlend
-	out["Canvas.Add"] = TBlend
-	out["Canvas.Multiply"] = TBlend
-	out["Canvas.Screen"] = TBlend
-	out["Canvas.Erase"] = TBlend
-	out["Canvas.Left"] = TAlign
-	out["Canvas.Center"] = TAlign
-	out["Canvas.Right"] = TAlign
-
 	// === Device (docs/proposals/device.md): capabilities, not identities ===
 	//
 	// Device.watch : (Device -> msg) -> Sub msg. Fires immediately with the
@@ -1185,12 +1145,9 @@ func baseBindings() map[string]Type {
 	//   hover-reveal buttons are usable).
 	out["deviceTouchOnly"] = TArrow{From: TDeviceRecord(), To: TBool}
 	out["deviceCanHover"] = TArrow{From: TDeviceRecord(), To: TBool}
-	// Pointer constructors: global (like Order's LT / Method's GET), so a game
-	// writes `d.pointer == Coarse` without an import.
-	out["Coarse"] = TPointer
-	out["Fine"] = TPointer
-	out["Pixelated"] = TCanvasMode
-	out["Crisp"] = TCanvasMode
+	// The Pointer constructors (Coarse, Fine) are global, bound with the
+	// other unions' above, so a game writes `d.pointer == Coarse` without an
+	// import.
 
 	// --- stdlib (List, String, Maybe) ---
 	for k, v := range stdlibBindings() {

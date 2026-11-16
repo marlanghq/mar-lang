@@ -42,9 +42,10 @@ var keyboardKeyCodes = []string{
 	"NumpadDecimal", "NumpadEnter",
 }
 
-// keyboardKeyCustomType is the Keyboard.Key union registration used for
-// exhaustiveness checking: each code becomes a nullary constructor whose
-// result is Keyboard.Key.
+// keyboardKeyCustomType is the Keyboard.Key union registration, which
+// exhaustiveness checking reads and baseBindings binds the constructors
+// from: each code becomes a nullary constructor whose result is
+// Keyboard.Key.
 func keyboardKeyCustomType() CustomType {
 	ctors := make(map[string]CustomCtor, len(keyboardKeyCodes))
 	for _, code := range keyboardKeyCodes {
@@ -59,15 +60,4 @@ func keyboardKeyCustomType() CustomType {
 		CtorOrder:    order,
 		Module:       "Keyboard",
 	}
-}
-
-// keyboardKeyBindings is the value-env half: each constructor is a nullary
-// value of type Keyboard.Key, bound under its qualified name (Keyboard.KeyW),
-// mirroring how Service.Offline etc. are bound. Merged into baseBindings.
-func keyboardKeyBindings() map[string]Type {
-	out := make(map[string]Type, len(keyboardKeyCodes))
-	for _, code := range keyboardKeyCodes {
-		out["Keyboard."+code] = TKeyboardKey
-	}
-	return out
 }

@@ -22,9 +22,10 @@ var gamepadButtons = []string{
 	"Up", "Down", "Left", "Right",
 }
 
-// gamepadButtonCustomType is the Gamepad.Button union registration used for
-// exhaustiveness checking: each name becomes a nullary constructor whose result
-// is Gamepad.Button. Mirrors keyboardKeyCustomType.
+// gamepadButtonCustomType is the Gamepad.Button union registration, which
+// exhaustiveness checking reads and baseBindings binds the constructors from:
+// each name becomes a nullary constructor whose result is Gamepad.Button.
+// Mirrors keyboardKeyCustomType.
 func gamepadButtonCustomType() CustomType {
 	ctors := make(map[string]CustomCtor, len(gamepadButtons))
 	for _, b := range gamepadButtons {
@@ -39,15 +40,4 @@ func gamepadButtonCustomType() CustomType {
 		CtorOrder:    order,
 		Module:       "Gamepad",
 	}
-}
-
-// gamepadButtonBindings is the value-env half: each constructor is a nullary
-// value of type Gamepad.Button bound under its qualified name (Gamepad.A),
-// mirroring keyboardKeyBindings / Service.Offline. Merged into baseBindings.
-func gamepadButtonBindings() map[string]Type {
-	out := make(map[string]Type, len(gamepadButtons))
-	for _, b := range gamepadButtons {
-		out["Gamepad."+b] = TGamepadButton
-	}
-	return out
 }

@@ -21,8 +21,9 @@ var soundNoteNames = []string{"c", "cs", "d", "ds", "e", "f", "fs", "g", "gs", "
 // that is the trade recorded in docs/proposals/sound-snes.md.
 var soundWaves = []string{"Square", "Triangle", "Sawtooth", "Sine", "Noise"}
 
-// soundWaveCustomType registers the Sound.Wave union for exhaustiveness
-// checking. Mirrors gamepadButtonCustomType / keyboardKeyCustomType.
+// soundWaveCustomType is the Sound.Wave union registration, which
+// exhaustiveness checking reads and baseBindings binds the constructors from.
+// Mirrors gamepadButtonCustomType / keyboardKeyCustomType.
 func soundWaveCustomType() CustomType {
 	ctors := make(map[string]CustomCtor, len(soundWaves))
 	for _, w := range soundWaves {
@@ -37,16 +38,4 @@ func soundWaveCustomType() CustomType {
 		CtorOrder:    order,
 		Module:       "Sound",
 	}
-}
-
-// soundWaveBindings is the value-env half: each wave constructor is a nullary
-// value of type Sound.Wave bound under its qualified name (Sound.Square, ...).
-// Unlike Keyboard/Gamepad, these ARE used as values (the first argument to
-// Sound.tone), so the Go and JS runtimes register matching runtime values.
-func soundWaveBindings() map[string]Type {
-	out := make(map[string]Type, len(soundWaves))
-	for _, w := range soundWaves {
-		out["Sound."+w] = TSoundWave
-	}
-	return out
 }
