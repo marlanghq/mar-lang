@@ -37,11 +37,26 @@ func withCompression(h http.HandlerFunc) http.HandlerFunc {
 
 		gw := gzipWriterPool.Get().(*gzip.Writer)
 		gw.Reset(w)
+		cw := &compressedWriter{ResponseWriter: w, w: gw}
+		returned := false
 		defer func() {
+			if !returned && !cw.wrote {
+				// The handler panicked before it wrote anything. Closing
+				// the compressor now would send an empty gzip stream, and
+				// that first byte commits a 200: recoverPanic, further
+				// out, would then have no response left to turn into the
+				// 500 it promises. Leave the response untouched instead,
+				// and take back the one header that would mislabel it.
+				w.Header().Del("Content-Encoding")
+				gw.Reset(io.Discard)
+				gzipWriterPool.Put(gw)
+				return
+			}
 			_ = gw.Close()
 			gzipWriterPool.Put(gw)
 		}()
-		h(&compressedWriter{ResponseWriter: w, w: gw}, r)
+		h(cw, r)
+		returned = true
 	}
 }
 
@@ -70,10 +85,12 @@ func acceptsGzip(header string) bool {
 // pass through untouched.
 type compressedWriter struct {
 	http.ResponseWriter
-	w io.Writer
+	w     io.Writer
+	wrote bool // a body byte has gone to the compressor
 }
 
 func (cw *compressedWriter) Write(b []byte) (int, error) {
+	cw.wrote = true
 	return cw.w.Write(b)
 }
 
