@@ -249,10 +249,10 @@ private struct StackShell: View {
     /// The path SwiftUI renders as the root view of NavigationStack.
     /// In normal operation this is `navPath.first`; the empty-path
     /// fallback covers the brief window during cold-start before
-    /// `seedRoot` runs in AppViewModel: falling back to the first
-    /// declared page keeps the renderer from blanking out.
+    /// `seedRoot` runs in AppViewModel: falling back to where the app
+    /// opens (`startPath`) keeps the renderer from blanking out.
     private var rootPath: String {
-        ctx.navPath.first ?? pages.first?.path ?? "/"
+        ctx.navPath.first ?? pages.startPath ?? "/"
     }
 
     private func isSheetRoute(_ url: String) -> Bool {
@@ -358,7 +358,22 @@ private struct ProtectedRoute: View {
             // hammering the server on every protected-page visit.
             guard ctx.currentUser == nil else { return }
             ctx.authPending = true
+            // An answer that arrives after a replace, a sign-out or a
+            // switch to another server is about what came before, and
+            // would overwrite the answer to the question asked now
+            // (authEpoch moves with all three).
+            let asked = ctx.authEpoch
             let result = await MarHTTP.fetchAuthMe()
+            guard ctx.authEpoch == asked else { return }
+            // Nor is a request this view cancelled, by going away (a
+            // swipe back while the session is checked) an answer:
+            // URLSession reports it as an error, which reads as "nobody",
+            // and the next protected page would send a signed-in person to
+            // sign-in. Leave the question open for the next gate.
+            if Task.isCancelled {
+                ctx.authPending = false
+                return
+            }
             ctx.currentUser = result ?? .ctor(tag: "Nothing", args: [])
             ctx.authPending = false
         }

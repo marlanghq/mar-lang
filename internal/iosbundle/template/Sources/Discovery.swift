@@ -27,7 +27,15 @@ struct DiscoveredServer: Identifiable, Equatable, Hashable, Sendable {
     /// Stable id for SwiftUI ForEach. host:port is enough, same
     /// physical service on the LAN always resolves to the same URL.
     var id: String { "\(host):\(port)" }
-    var url: URL? { URL(string: "http://\(host):\(port)") }
+
+    /// nil until resolved. The browse publishes a found-but-resolving entry
+    /// with an empty host and port 0, and this used to answer
+    /// `http://:0` for it, which AppViewModel took as a server: the app
+    /// adopted it, failed to reach it, and asked who was signed in there.
+    var url: URL? {
+        guard !host.isEmpty, port > 0 else { return nil }
+        return URL(string: "http://\(host):\(port)")
+    }
 }
 
 @MainActor

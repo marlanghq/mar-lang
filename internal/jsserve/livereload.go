@@ -356,19 +356,15 @@ func ProgramTitle(mods []*ast.Module) string {
 }
 
 // ProgramJSON is the one encoder of program.json: the dev and production
-// servers (the app with bakeAuth, the admin panel without), `mar build` and
-// the iOS build (without) all end here. An empty module list is valid (a
-// backend-only project's iOS stub ships one).
+// servers and the iOS snapshot (the app, with bakeAuth), the admin panel and
+// the static `mar build` (without) all end here. An empty module list is
+// valid (a backend-only project's iOS stub ships one).
 //
 // bakeAuth is a parameter rather than a second copy of this function because
 // a second copy is what there was, and the two had already drifted apart on
-// exactly this point. They still differ on it, knowingly: an app whose
-// Auth.config names a sign-in page is served a program carrying
-// auth.signInPath, and the snapshot the iOS build embeds has none. The phone
-// skips re-running the program only when the two are byte-identical, so for
-// such an app it always re-runs once its cold-start fetch lands. Baking auth
-// into the build too would change what `mar build` writes, which is why that
-// is a decision of its own and not a side effect of this function.
+// exactly this point. Whether a caller bakes auth is decided at the call, not
+// here: the iOS build decided to (scaffold/iosbuild.go says why), and the
+// static web build, which has no Auth.config to bake, does not.
 func ProgramJSON(mods []*ast.Module, entry string, devMode bool, bakeAuth bool) ([]byte, error) {
 	// Send modules separately so the runtime registers each decl
 	// under both its bare name and a qualified `Module.name` form.

@@ -1,6 +1,7 @@
 package scaffold
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -55,5 +56,41 @@ func TestBuildIOS_FrontendOnly(t *testing.T) {
 				t.Errorf("%s: expected MissingServerURL (fixtures set no serverUrl)", tc.example)
 			}
 		})
+	}
+}
+
+// The program the iOS build embeds carries the app's sign-in path, as the
+// program the server serves does. The phone opens on "/", which in an app
+// with sign-in is a protected page, and its gate needs the sign-in path to
+// send a signed-out person anywhere: without it in the snapshot the path came
+// only with the cold-start fetch, and until then (for good, offline) the gate
+// showed "Sign-in page not configured".
+func TestBuildIOS_SnapshotCarriesTheSignInPath(t *testing.T) {
+	t.Cleanup(runtime.ResetForReload)
+	dir, err := filepath.Abs(filepath.Join("..", "..", "examples", "pet-expenses"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "Main.mar")); err != nil {
+		t.Skipf("pet-expenses fixture missing: %v", err)
+	}
+	res, err := BuildIOS(dir, t.TempDir(), "")
+	if err != nil {
+		t.Fatalf("BuildIOS(pet-expenses): %v", err)
+	}
+	raw, err := os.ReadFile(filepath.Join(res.OutputDir, "Resources", "program.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var program struct {
+		Auth struct {
+			SignInPath string `json:"signInPath"`
+		} `json:"auth"`
+	}
+	if err := json.Unmarshal(raw, &program); err != nil {
+		t.Fatal(err)
+	}
+	if program.Auth.SignInPath != "/sign-in" {
+		t.Errorf("the embedded program's auth.signInPath is %q, want %q (Auth.config's signInPage)", program.Auth.SignInPath, "/sign-in")
 	}
 }

@@ -31,7 +31,8 @@ final class AppContextStub {
         get { MarStubTrap.hit("AppContext.redirectingToSignIn") }
         set { MarStubTrap.hit("AppContext.redirectingToSignIn=") }
     }
-    func navigate(path: String, replace: Bool, invalidateUser: Bool = false) { MarStubTrap.hit("AppContext.navigate") }
+    func navigate(path: String, replace: Bool) { MarStubTrap.hit("AppContext.navigate") }
+    func forgetUser() { MarStubTrap.hit("AppContext.forgetUser") }
     func dismissTop() { MarStubTrap.hit("AppContext.dismissTop") }
     func handleAuthExpired() -> Bool { MarStubTrap.hit("AppContext.handleAuthExpired") }
     func capturePages(_ v: MarValue) { MarStubTrap.hit("AppContext.capturePages") }

@@ -31,7 +31,7 @@ enum MarHTTP {
 
     /// Wipe the local credential. Called on Auth.logout and any time
     /// the server tells us the session is invalid (401 on a Service
-    /// call, /_auth/me returning null). Idempotent: Keychain delete
+    /// call, /_auth/whoami returning null). Idempotent: Keychain delete
     /// of a missing key is a no-op.
     @MainActor
     static func clearStoredToken() {
@@ -132,14 +132,22 @@ enum MarHTTP {
         }.resume()
     }
 
-    /// GET /_auth/me as an async function (no dispatcher dependency).
+    /// GET /_auth/whoami as an async function (no dispatcher dependency).
+    ///
+    /// The path is the server's: /_auth/whoami is what internal/jsserve
+    /// mounts and what the browser asks. This asked /_auth/me, a path no
+    /// server ever served; the server answered it with the app's HTML
+    /// shell and a 200, which does not parse as JSON, so it read as "no
+    /// user" and every Page.protected sent a signed-in person back to
+    /// sign-in. TestEveryAuthPathAClientAsksForIsServed (internal/jsserve)
+    /// holds both clients' auth paths to the server's routes.
     /// Used by the gating layer (LoadedShell) to bootstrap auth before
     /// any page is mounted. Returns:
     ///   .ctor("Just", [user]): logged in
     ///   .ctor("Nothing", [])  - not logged in
     ///   nil                   - network error (caller decides how to surface)
     static func fetchAuthMe() async -> MarValue? {
-        guard let url = await MainActor.run(body: { MarDispatcher.shared.resolve(path: "/_auth/me") })
+        guard let url = await MainActor.run(body: { MarDispatcher.shared.resolve(path: "/_auth/whoami") })
         else { return nil }
         do {
             var req = URLRequest(url: url)
@@ -163,7 +171,7 @@ enum MarHTTP {
         }
     }
 
-    /// GET /_auth/me. Body is either a JSON user record or `null`.
+    /// GET /_auth/whoami. Body is either a JSON user record or `null`.
     /// Resolves to `Ok (Just user)` or `Ok Nothing`. Network errors
     /// resolve to `Err message`.
     /// @MainActor: the wire shape is a mutable class built at load, so it is
@@ -174,8 +182,8 @@ enum MarHTTP {
     @MainActor
     static func fireAuthMe(toMsg: MarValue, userShape: MarWireShape? = nil) {
         Task { @MainActor in
-            guard let url = MarDispatcher.shared.resolve(path: "/_auth/me") else {
-                dispatchErr(toMsg, message: "invalid auth path: /_auth/me")
+            guard let url = MarDispatcher.shared.resolve(path: "/_auth/whoami") else {
+                dispatchErr(toMsg, message: "invalid auth path: /_auth/whoami")
                 return
             }
             var req = URLRequest(url: url)

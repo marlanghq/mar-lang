@@ -553,6 +553,213 @@ final class AppViewModel {
         if case .fn = v { return true }
         return false
     }
+
+    /// Drives one launch of the sign-in check against a REAL server and
+    /// prints what the person would be looking at after each step. Off unless
+    /// MAR_SIGNIN_CHECK names a step. internal/iosbundle/ios_signin_test.go
+    /// runs `mar dev`, builds the app with `mar build --target ios` pointed at
+    /// it, and launches it once per step.
+    ///
+    /// Each bug this exists for passed every check that stopped short of a
+    /// server and a relaunch: the phone asked a route the server never had, a
+    /// relaunch opened on the first declared page, and a dev server found
+    /// after launch left the protected page waiting on, or believing, the
+    /// baked URL. They were visible only as the screen a person ends up on,
+    /// so that is what this reports: the route on top and the title of the
+    /// page mounted there, never a flag the runtime set.
+    ///
+    /// It types and taps the way a person would: into the screen's first
+    /// text field, on its first enabled button, through the same messages
+    /// the renderer sends. The program decides what those do.
+    private static var signInCheckStarted = false
+
+    @MainActor
+    private static func signInCheck(_ step: String, pages: [DecodedPage],
+                                    adopt: (URL) -> Void) async {
+        let ctx = AppContext.shared
+
+        // The page mounted for a url. Dynamic pages mount under their
+        // pattern, so the url is resolved the way RouteView resolves it.
+        func live(_ url: String) -> PageRuntime? {
+            let page = pages.first { !$0.isDynamic && $0.path == url }
+                ?? pages.first { $0.isDynamic && $0.matchURL(url) != nil }
+            guard let page else { return nil }
+            return MarLiveRuntimes.stack.last { $0.path == page.path }
+        }
+
+        // What is on screen: the route on top, and the title of the page
+        // drawn there. "checking" is the protected-route spinner, and
+        // "nothing mounted" a route with no page on it: both are answers.
+        func screen() -> String {
+            guard let top = ctx.navPath.last else { return "no route" }
+            if ctx.authPending { return "\(top) checking" }
+            guard let runtime = live(top), let view = runtime.currentView() else {
+                return "\(top) nothing mounted"
+            }
+            let title = view.attrs.first { $0.name == "navigationTitle" }
+                .flatMap { attr -> String? in
+                    if case .string(let s) = attr.value { return s }
+                    return nil
+                } ?? runtime.title
+            return "\(top) \"\(title)\""
+        }
+
+        // Waits for the screen to stop moving: one answer held for a whole
+        // second, with no session check in flight. After an action it first
+        // waits for the screen to change, because the request the action
+        // sent is still out when the tap returns; an action that changes
+        // nothing is reported as the same screen once five seconds pass.
+        //
+        // Settling is a wait, not a search for the expected screen: the
+        // answer is whatever the app came to rest on, right or wrong.
+        func settle(after before: String? = nil) async -> String {
+            let start = Date()
+            var last = screen()
+            var since = Date()
+            var changed = before == nil
+            while Date().timeIntervalSince(start) < 20 {
+                try? await Task.sleep(nanoseconds: 100_000_000)
+                let now = screen()
+                if now != last {
+                    last = now
+                    since = Date()
+                }
+                if let before, now != before { changed = true }
+                let still = Date().timeIntervalSince(since) >= 1
+                let busy = now.hasSuffix(" checking") || now.hasSuffix(" nothing mounted")
+                if still && !busy && (changed || Date().timeIntervalSince(start) >= 5) {
+                    return now
+                }
+            }
+            return "\(last) (still moving after 20s)"
+        }
+
+        // The first text field and the first enabled button, in tree order,
+        // reading views carried in attributes too: a toolbar's button lives
+        // there.
+        func find(_ view: MarView, _ match: (MarView) -> Bool) -> MarView? {
+            if match(view) { return view }
+            for child in view.children {
+                if let hit = find(child, match) { return hit }
+            }
+            for attr in view.attrs {
+                if case .view(let inner) = attr.value, let hit = find(inner, match) { return hit }
+            }
+            return nil
+        }
+        func type(_ text: String) -> Bool {
+            guard let top = ctx.navPath.last, let runtime = live(top),
+                  let view = runtime.currentView(),
+                  let field = find(view, { $0.tag == "textField" }),
+                  let onInput = field.msg,
+                  let msg = try? Eval.apply(onInput, .string(text)) else { return false }
+            runtime.dispatch(msg)
+            return true
+        }
+        func tap() -> Bool {
+            guard let top = ctx.navPath.last, let runtime = live(top),
+                  let view = runtime.currentView(),
+                  let button = find(view, { v in
+                      guard v.tag == "button", let msg = v.msg, !isFunction(msg) else { return false }
+                      return !v.attrs.contains { attr in
+                          guard attr.name == "disabled" else { return false }
+                          if case .bool(let b) = attr.value { return b }
+                          return true
+                      }
+                  }),
+                  let msg = button.msg else { return false }
+            runtime.dispatch(msg)
+            return true
+        }
+
+        func report(_ label: String, _ what: String) {
+            print("[mar] SIGNIN \(label)=\(what)")
+        }
+
+        // Waits for a file the test writes into this app's container, and
+        // returns what it holds. Both files are removed before anything is
+        // asked for, so one an earlier run left behind is not read as this
+        // run's answer.
+        func fromTest(_ name: String, seconds: Double) async -> String? {
+            let file = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(name)
+            let asked = Date()
+            while Date().timeIntervalSince(asked) < seconds {
+                if let text = (try? String(contentsOf: file, encoding: .utf8))?
+                    .trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty {
+                    return text
+                }
+                try? await Task.sleep(nanoseconds: 100_000_000)
+            }
+            return nil
+        }
+        for name in ["mar-signin-code", "mar-signin-asked"] {
+            try? FileManager.default.removeItem(
+                at: URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(name))
+        }
+
+        // A dev server found after launch (MAR_SIGNIN_SWITCH): the baked URL
+        // has nothing behind it in time, so the protected page's question is
+        // still out when the browse finds the server. Handed over at that
+        // moment, the way maybeAutoPick does it, and the step then runs
+        // against the server the app switched to.
+        //
+        // "Out" means it reached the baked URL, which only the test can see:
+        // a question still on its way when the switch lands would be asked
+        // of the new server, and there would be no old answer to keep.
+        if let found = ProcessInfo.processInfo.environment["MAR_SIGNIN_SWITCH"],
+           let url = URL(string: found) {
+            print("[mar] SIGNIN NEED-ASKED")
+            guard await fromTest("mar-signin-asked", seconds: 15) != nil, ctx.authPending else {
+                report("switch", "no session question was out on \(screen())")
+                print("[mar] SIGNIN DONE")
+                return
+            }
+            adopt(url)
+        }
+
+        let parts = step.split(separator: ":", maxSplits: 1).map(String.init)
+        switch parts[0] {
+        case "sign-in":
+            let email = parts.count > 1 ? parts[1] : "signin-check@example.com"
+            let cold = await settle()
+            report("cold", cold)
+            guard type(email), tap() else {
+                report("send-code", "no field or button on \(cold)")
+                break
+            }
+            let sent = await settle(after: cold)
+            report("code-sent", sent)
+
+            // The code is in the server's log, where `mar dev` prints it; the
+            // test reads it there and writes it into this app's container.
+            print("[mar] SIGNIN NEED-CODE")
+            guard let code = await fromTest("mar-signin-code", seconds: 30) else {
+                report("verified", "no code arrived")
+                break
+            }
+            guard type(code), tap() else {
+                report("verified", "no field or button on \(sent)")
+                break
+            }
+            report("verified", await settle(after: sent))
+
+        case "sign-out":
+            let cold = await settle()
+            report("cold", cold)
+            guard tap() else {
+                report("signed-out", "no button on \(cold)")
+                break
+            }
+            report("signed-out", await settle(after: cold))
+
+        case "look":
+            report("cold", await settle())
+
+        default:
+            print("[mar] SIGNIN UNKNOWN STEP \(step)")
+        }
+        print("[mar] SIGNIN DONE")
+    }
     #endif
 
     /// Reads the embedded program.json from Bundle.main if present.
@@ -641,14 +848,33 @@ final class AppViewModel {
 
         guard let picked = discovery.servers.first(where: { $0.url != nil && matches($0) }),
               let url = picked.url else { return }
+        adoptDevServer(url, label: "\(picked.host):\(picked.port)")
+    }
+
+    /// Switches the app to a dev server the browse found. Separate from
+    /// maybeAutoPick so the sign-in check can hand it a server the way the
+    /// browse would, without mDNS on the machine running the test.
+    private func adoptDevServer(_ url: URL, label: String) {
         let s = url.absoluteString
         guard s != baseURLString else { return }
         baseURLString = s
-        devOverrideLabel = "\(picked.host):\(picked.port)"
+        devOverrideLabel = label
         print("[mar] DEBUG: connected to mar dev at \(s) — the baked server URL is NOT being used")
         Task {
             await api.setBaseURL(url)
             MarDispatcher.shared.baseURL = url
+            // Who is signed in was learned from the other server: a
+            // protected page asks at once, at launch that is the baked
+            // URL, before the browse has found anything, and the answer
+            // ("nobody", since nothing is there) was kept and sent a
+            // signed-in person to sign-in on every launch. When the app
+            // holds such an answer, a question out, or a sign-in redirect
+            // one produced, start over where the app opens so this server
+            // is asked. An app that never asked keeps its place.
+            let ctx = AppContext.shared
+            if ctx.currentUser != nil || ctx.authPending || ctx.pendingReturnPath != nil {
+                ctx.restart(pages: pages)
+            }
             await loadAll()
         }
     }
@@ -822,8 +1048,8 @@ final class AppViewModel {
         // sensible root so the renderer doesn't blank out on a
         // missing match.
         if isInitialLoad {
-            if let first = decoded.first {
-                AppContext.shared.seedRoot(first.path, pages: decoded)
+            if let start = decoded.startPath {
+                AppContext.shared.seedRoot(start, pages: decoded)
             }
         } else {
             let current = AppContext.shared.currentPath
@@ -853,6 +1079,15 @@ final class AppViewModel {
             MarLiveRuntimes.reset()
             Task { @MainActor in
                 await AppViewModel.navLifecycle(script)
+            }
+        }
+        if let step = ProcessInfo.processInfo.environment["MAR_SIGNIN_CHECK"],
+           !step.isEmpty, !AppViewModel.signInCheckStarted {
+            AppViewModel.signInCheckStarted = true
+            Task { @MainActor [weak self] in
+                await AppViewModel.signInCheck(step, pages: decoded) { url in
+                    self?.adoptDevServer(url, label: "\(url.host ?? ""):\(url.port ?? 0)")
+                }
             }
         }
         #endif

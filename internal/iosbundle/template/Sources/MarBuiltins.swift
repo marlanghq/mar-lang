@@ -1560,7 +1560,7 @@ enum MarBuiltins {
         // Programmatic navigation. Reads the URL string from the
         // effect args and asks AppContext to swap the active page.
         // Replace also invalidates the cached User so a logout flow
-        // re-fetches /_auth/me on the next protected entry.
+        // re-fetches /_auth/whoami on the next protected entry.
         let navPush = MarFn.native(1) { args in
             let path: String
             if case .string(let s) = args[0] { path = s } else { path = "" }
@@ -1604,11 +1604,14 @@ enum MarBuiltins {
         // Resets the redirect-coalescer so the next genuine session
         // expiry triggers a fresh redirect.
         //
-        // Uses `invalidateUser: false` because Auth.verifyCode just
-        // populated AppContext.currentUser with the freshly-signed-in
-        // user, and the destination is almost always a Page.protected
-        // that would otherwise re-fetch Auth.me unnecessarily (and
-        // race against the just-set session cookie).
+        // Forgets the cached user, like every replace and like the
+        // browser's replaceFresh: the destination is almost always a
+        // Page.protected, and its gate asks /_auth/whoami again, now with
+        // the token Auth.verifyCode stored before delivering its result.
+        // This used to keep the cached user, on the belief that
+        // Auth.verifyCode had stored the new one there. Nothing did: the
+        // cache still held the "no user" the gate read before sign-in, so
+        // the gate sent the person straight back to sign-in.
         //
         // Lives under Auth.* (not Nav.*) because it bundles auth-
         // specific cleanup with the navigation step; Nav.* is kept
@@ -1618,7 +1621,7 @@ enum MarBuiltins {
                 let target = AppContext.shared.pendingReturnPath ?? "/"
                 AppContext.shared.pendingReturnPath = nil
                 AppContext.shared.redirectingToSignIn = false
-                AppContext.shared.navigate(path: target, replace: true, invalidateUser: false)
+                AppContext.shared.navigate(path: target, replace: true)
             }
             return .unit
         }
@@ -2574,7 +2577,10 @@ enum MarBuiltins {
                     MarHTTP.clearStoredToken()
                     // Clear the cached user IMMEDIATELY so any
                     // Page.protected gate re-evaluating right after
-                    // sees "no user" and bounces to sign-in.
+                    // sees "no user" and bounces to sign-in. And move
+                    // authEpoch, so a question a gate sent with the old
+                    // token cannot answer "signed in" after this.
+                    AppContext.shared.forgetUser()
                     AppContext.shared.currentUser = .ctor(tag: "Nothing", args: [])
                     // Dispatch Ok(()) so the mar update fires its
                     // post-logout action (typically Auth.completeSignIn).

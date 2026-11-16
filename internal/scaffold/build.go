@@ -804,9 +804,8 @@ func makeFullstackCapture(bc *buildCtx) runtime.Value {
 // browser bundle. devMode controls whether the JS runtime sets up
 // dev affordances (banner, SSE, time-travel): false for built dists.
 func makeProgramJSON(mods []*ast.Module, entry string, devMode bool) ([]byte, error) {
-	// bakeAuth false: what this path has always written. See the note on
-	// jsserve.ProgramJSON before changing it; the iOS snapshot built here
-	// is compared byte for byte with what the server serves.
+	// bakeAuth false: the static web build, which has no Auth.config to
+	// bake. The iOS snapshot bakes it, at its own call (iosbuild.go).
 	return jsserve.ProgramJSON(mods, entry, devMode, false)
 }
 

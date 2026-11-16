@@ -9,6 +9,7 @@ import (
 	"mar/internal/apphost"
 	"mar/internal/ast"
 	"mar/internal/iosbundle"
+	"mar/internal/jsserve"
 	"mar/internal/project"
 	"mar/internal/runtime"
 )
@@ -349,7 +350,16 @@ func compileIOSProgram(entry string) (program []byte, frontendOnly bool, err err
 	if err != nil {
 		return nil, false, err
 	}
-	b, err := makeProgramJSON(mods, "__entry", false)
+	// The snapshot carries the app's auth metadata (its sign-in path), as
+	// the program the server serves does. The phone opens on "/", which in
+	// an app with sign-in is a protected page, and the gate there needs the
+	// sign-in path to send a signed-out person somewhere. Without it in the
+	// snapshot the path arrived only with the cold-start fetch, and until
+	// then (or for good, offline) the gate's answer was the "Sign-in page
+	// not configured" screen. It also makes the snapshot byte-identical to
+	// the served program, so the phone no longer re-runs the program on
+	// every cold start of an app with sign-in.
+	b, err := jsserve.ProgramJSON(mods, "__entry", false, true)
 	return b, frontendOnly, err
 }
 

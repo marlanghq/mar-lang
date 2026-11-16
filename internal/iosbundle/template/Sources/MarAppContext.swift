@@ -99,6 +99,15 @@ final class AppContext {
     /// transitions.
     var rootGeneration: Int = 0
 
+    /// Bumped whenever an answer to "who is signed in" stops being about
+    /// the present: a replace (the next protected page asks again), a
+    /// sign-out, a switch to another server. The protected-route gate
+    /// records it before asking and keeps the answer only if it has not
+    /// moved, so a late answer to an old question cannot overwrite the
+    /// new one. rootGeneration is not the right clock: a sign-out does
+    /// not replace the stack.
+    var authEpoch: Int = 0
+
     private init() {}
 
     func reset() {
@@ -106,13 +115,15 @@ final class AppContext {
         navPath = []
         currentUser = nil
         authPending = false
+        authEpoch += 1
         signInPath = ""
         pendingReturnPath = nil
         redirectingToSignIn = false
     }
 
     /// Initial seed for the navigation stack: called once at app
-    /// startup with the path of the first registered page. Idempotent:
+    /// startup with `startPath` ("/" when a page answers it, else the
+    /// first declared page). Idempotent:
     /// only sets when the stack is empty so a hot-reload or program
     /// refresh doesn't bulldoze the user's current location.
     func seedRoot(_ path: String, pages: [DecodedPage] = []) {
@@ -197,19 +208,19 @@ final class AppContext {
     /// auth-expired redirect). `replace: false` appends, letting the
     /// user swipe back to where they were.
     ///
-    /// `invalidateUser` opts out of clearing `currentUser` on replace,
-    /// for the case where the caller has just installed a fresh user
-    /// value and a navigate(replace:true) follows immediately:
-    /// `Auth.completeSignIn` is the canonical example. Without this
-    /// escape hatch, the just-set user would be wiped before the
-    /// destination's protected-page gate could see it, forcing an
-    /// extra Auth.me round-trip that's racy against the freshly-set
-    /// session cookie.
-    func navigate(path: String, replace: Bool, invalidateUser: Bool = true) {
+    /// A replace forgets the cached user, so the next protected page asks
+    /// the server again: the browser's replace and replaceFresh do the
+    /// same. There used to be an opt-out for Auth.completeSignIn, for a
+    /// fresh user nothing ever installed (see the comment there).
+    ///
+    /// It also forgets the question in flight, which the browser does
+    /// not: there one shared request answers every gate, so a replace
+    /// made while it is out shows its answer. Here each gate asks for
+    /// itself and the gate of the replaced stack is torn down, so its
+    /// answer would land on the new stack.
+    func navigate(path: String, replace: Bool) {
         if replace {
-            if invalidateUser {
-                currentUser = nil
-            }
+            forgetUser()
             // Bump the generation BEFORE mutating navPath so SwiftUI
             // sees both observable changes in the same tick and treats
             // the NavigationStack as identity-swapped: triggering the
@@ -222,6 +233,28 @@ final class AppContext {
         } else {
             navPath.append(path)
         }
+    }
+
+    /// Who is signed in is no longer known: the cached answer and any
+    /// question in flight are dropped (authEpoch), and the next protected
+    /// page asks again.
+    func forgetUser() {
+        currentUser = nil
+        authPending = false
+        authEpoch += 1
+    }
+
+    /// Open the app again where it opens, as at launch, forgetting who is
+    /// signed in and where a sign-in was going to return to. A DEBUG
+    /// switch to another dev server does this: what the app learned
+    /// came from the other one.
+    func restart(pages: [DecodedPage]) {
+        guard let start = pages.startPath else { return }
+        forgetUser()
+        pendingReturnPath = nil
+        redirectingToSignIn = false
+        rootGeneration += 1
+        navPath = Self.stackFor(start, pages: pages)
     }
 
     /// Decoded view of the captured pages, ready for the renderer
@@ -364,6 +397,28 @@ extension Array where Element == DecodedPage {
             if pg.matchURL(url) != nil { return pg.isSheet }
         }
         return false
+    }
+
+    /// Where the app opens: "/", when a page answers it, and the first
+    /// declared page only when none does. That is the browser's answer for
+    /// the address a person types, the bare domain, which arrives as "/"
+    /// (currentPage in runtime.js; a "/" declared with Page.sheet is
+    /// presented over the first page there, and stackFor does the same
+    /// here). The browser's fallback takes the first page only when it is
+    /// static, and paints nothing for a dynamic one; this opens it and
+    /// shows "Page not found". Neither is an answer, and no app has that
+    /// shape.
+    ///
+    /// The phone has no address bar, so it opens where the browser would.
+    /// It used to open on the first declared page, which in every example
+    /// with sign-in is the sign-in page, listed first: a person with a valid
+    /// session was shown sign-in at every launch, while the browser, at
+    /// "/", reached the protected page and its session. Where an app opens
+    /// is lifecycle, not chrome.
+    @MainActor
+    var startPath: String? {
+        if contains(where: { $0.matchURL("/") != nil }) { return "/" }
+        return first?.path
     }
 }
 

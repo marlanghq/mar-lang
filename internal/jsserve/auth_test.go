@@ -712,3 +712,68 @@ func TestExtractSessionTokenPrecedence(t *testing.T) {
 		})
 	}
 }
+
+// Every /_auth/* path the browser or the phone asks for is one this server
+// mounts. The phone asked GET /_auth/me, a path no server ever had: the real
+// server answered it with the app's HTML shell and a 200, the phone read that
+// as "no user", and every Page.protected sent a signed-in person back to
+// sign-in. Each client was tested against fixtures, and both halves passed.
+//
+// The paths are read from the client sources, so a path added to a client is
+// held to the server too. A path with no handler gets the mux's 404 here; a
+// mounted one answers anything else (a wrong method is 405).
+func TestEveryAuthPathAClientAsksForIsServed(t *testing.T) {
+	server, cleanup := authTestServer(t)
+	defer cleanup()
+
+	clients := map[string]struct {
+		files   []string
+		literal *regexp.Regexp
+	}{
+		"browser": {[]string{"runtime.js"}, regexp.MustCompile(`'(/_auth/[a-z-]+)'`)},
+		"phone":   {nil, regexp.MustCompile(`"(/_auth/[a-z-]+)"`)},
+	}
+	swift, err := filepath.Glob(filepath.Join("..", "iosbundle", "template", "Sources", "*.swift"))
+	if err != nil || len(swift) == 0 {
+		t.Fatalf("the phone's sources: %v", err)
+	}
+	phone := clients["phone"]
+	phone.files = swift
+	clients["phone"] = phone
+
+	for name, c := range clients {
+		asked := map[string]bool{}
+		for _, f := range c.files {
+			src, err := os.ReadFile(f)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, m := range c.literal.FindAllStringSubmatch(string(src), -1) {
+				asked[m[1]] = true
+			}
+		}
+		// The two every signed-in session goes through, so a pattern that
+		// stopped matching cannot pass by finding nothing.
+		for _, must := range []string{"/_auth/verify-code", "/_auth/whoami"} {
+			if !asked[must] {
+				t.Errorf("%s: found no request to %s in its sources; the scan is not reading what it should", name, must)
+			}
+		}
+		for path := range asked {
+			for _, method := range []string{http.MethodGet, http.MethodPost} {
+				req, err := http.NewRequest(method, server.URL+path, nil)
+				if err != nil {
+					t.Fatal(err)
+				}
+				resp, err := server.Client().Do(req)
+				if err != nil {
+					t.Fatal(err)
+				}
+				resp.Body.Close()
+				if resp.StatusCode == http.StatusNotFound {
+					t.Errorf("the %s asks %s %s, and the server has no such route", name, method, path)
+				}
+			}
+		}
+	}
+}
