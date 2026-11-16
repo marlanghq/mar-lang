@@ -734,14 +734,8 @@ func makeFrontendCapture(mods []*ast.Module, bc *buildCtx) runtime.Value {
 			bc.kind = kindFrontend
 			bc.frontMods = merged
 			bc.pages = pageList.Elements
-			// Title heuristic: pick the last USER-named module. The
-			// synthetic __entry module that PickFrontMods appends has
-			// Name == nil, so skip it.
-			for i := len(merged) - 1; i >= 0; i-- {
-				if nm := merged[i].Name; len(nm) > 0 {
-					bc.title = nm[len(nm)-1]
-					break
-				}
+			if t := jsserve.ProgramTitle(merged); t != "" {
+				bc.title = t
 			}
 			return runtime.VEffect{Tag: "appFrontend", Run: func() (runtime.Value, error) {
 				return runtime.VUnit{}, nil
@@ -796,11 +790,8 @@ func makeFullstackCapture(bc *buildCtx) runtime.Value {
 			bc.kind = kindFullstack
 			bc.frontMods = checked.FrontMods
 			bc.pages = pageList.Elements
-			for i := len(checked.FrontMods) - 1; i >= 0; i-- {
-				if nm := checked.FrontMods[i].Name; len(nm) > 0 {
-					bc.title = nm[len(nm)-1]
-					break
-				}
+			if t := jsserve.ProgramTitle(checked.FrontMods); t != "" {
+				bc.title = t
 			}
 			return runtime.VEffect{Tag: "appFullstack", Run: func() (runtime.Value, error) {
 				return runtime.VUnit{}, nil
@@ -813,23 +804,10 @@ func makeFullstackCapture(bc *buildCtx) runtime.Value {
 // browser bundle. devMode controls whether the JS runtime sets up
 // dev affordances (banner, SSE, time-travel): false for built dists.
 func makeProgramJSON(mods []*ast.Module, entry string, devMode bool) ([]byte, error) {
-	// Send modules separately so the browser/iOS runtime can register
-	// each decl under both its bare name (for intra-module references
-	// during evaluation) and a qualified `Module.name` form (so
-	// EQualified lookups from other modules resolve correctly).
-	// Merging everything into one module here is tempting but silently
-	// overwrites same-named decls across modules: e.g. both
-	// `Frontend.SignIn.page` and `Frontend.Home.page` would collapse
-	// into whichever was evaluated last, breaking multi-page apps.
-	serializedModules := make([]any, 0, len(mods))
-	for _, m := range mods {
-		serializedModules = append(serializedModules, jsserve.SerializeModule(m))
-	}
-	return json.Marshal(map[string]any{
-		"modules": serializedModules,
-		"entry":   entry,
-		"devMode": devMode,
-	})
+	// bakeAuth false: what this path has always written. See the note on
+	// jsserve.ProgramJSON before changing it; the iOS snapshot built here
+	// is compared byte for byte with what the server serves.
+	return jsserve.ProgramJSON(mods, entry, devMode, false)
 }
 
 // buildIndexHTML produces the production HTML page with `program.json`

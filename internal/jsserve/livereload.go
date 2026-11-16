@@ -96,14 +96,8 @@ func (lp *LiveProgram) Update(routes []runtime.Value, mods []*ast.Module, entry 
 		if err != nil {
 			return err
 		}
-		// Pick the last user-named module as the page title (the synthetic
-		// __entry module that the CLI appends has Name == nil, so it's
-		// skipped here).
-		for i := len(mods) - 1; i >= 0; i-- {
-			if nm := mods[i].Name; len(nm) > 0 {
-				title = nm[len(nm)-1]
-				break
-			}
+		if t := ProgramTitle(mods); t != "" {
+			title = t
 		}
 	}
 	// Cache the program hash so the version-headers middleware (which
@@ -342,6 +336,40 @@ func makeProgramJSON(mods []*ast.Module, entry string, devMode bool, bakeAuth bo
 	if len(mods) == 0 {
 		return nil, fmt.Errorf("no modules to serialize")
 	}
+	return ProgramJSON(mods, entry, devMode, bakeAuth)
+}
+
+// ProgramTitle is the name a bundle shows before any page has set its own:
+// the last component of the last user-named module. The synthetic `__entry`
+// module PickFrontMods appends has no name, so it is skipped. "" when no
+// module is named; each caller has its own fallback for that.
+//
+// The served shell and the built index.html both use this, so the two cannot
+// come to disagree about what one program is called.
+func ProgramTitle(mods []*ast.Module) string {
+	for i := len(mods) - 1; i >= 0; i-- {
+		if nm := mods[i].Name; len(nm) > 0 {
+			return nm[len(nm)-1]
+		}
+	}
+	return ""
+}
+
+// ProgramJSON is the one encoder of program.json: the dev and production
+// servers (the app with bakeAuth, the admin panel without), `mar build` and
+// the iOS build (without) all end here. An empty module list is valid (a
+// backend-only project's iOS stub ships one).
+//
+// bakeAuth is a parameter rather than a second copy of this function because
+// a second copy is what there was, and the two had already drifted apart on
+// exactly this point. They still differ on it, knowingly: an app whose
+// Auth.config names a sign-in page is served a program carrying
+// auth.signInPath, and the snapshot the iOS build embeds has none. The phone
+// skips re-running the program only when the two are byte-identical, so for
+// such an app it always re-runs once its cold-start fetch lands. Baking auth
+// into the build too would change what `mar build` writes, which is why that
+// is a decision of its own and not a side effect of this function.
+func ProgramJSON(mods []*ast.Module, entry string, devMode bool, bakeAuth bool) ([]byte, error) {
 	// Send modules separately so the runtime registers each decl
 	// under both its bare name and a qualified `Module.name` form.
 	// Merging them into one module silently overwrote same-named
