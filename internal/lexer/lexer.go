@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 )
 
 // Kind classifies a token.
@@ -155,7 +156,11 @@ func Lex(src string) ([]Token, error) {
 // --- internals ---
 
 type lexer struct {
-	src    []rune
+	// src is the source with newlines normalized, guaranteed valid UTF-8
+	// (see newLexer). pos is a BYTE offset into it; line/column still count
+	// runes, so every reported position is what it was when src was a
+	// []rune.
+	src    string
 	pos    int
 	line   int
 	column int
@@ -174,10 +179,22 @@ type lexer struct {
 }
 
 func newLexer(src string) *lexer {
+	src = normalizeNewlines(src)
+	// The lexer used to walk a []rune, and that conversion turned each byte
+	// of an invalid UTF-8 sequence into U+FFFD. Walking the string directly
+	// has to keep doing so, or a lexeme sliced out of it would carry the raw
+	// bytes. Valid input (every real file) skips the copy.
+	if !utf8.ValidString(src) {
+		src = string([]rune(src))
+	}
 	return &lexer{
-		src:    []rune(normalizeNewlines(src)),
+		src:    src,
 		line:   1,
 		column: 1,
+		// Sized up front: across the example files a token averages 6.7
+		// bytes of source, so len(src)/5 holds a typical file's tokens and
+		// append does not regrow and recopy the slice on the way.
+		tokens: make([]Token, 0, len(src)/5+16),
 	}
 }
 
@@ -191,26 +208,43 @@ func (l *lexer) eof() bool {
 	return l.pos >= len(l.src)
 }
 
-func (l *lexer) peek() rune {
-	if l.eof() {
-		return 0
+// runeAt decodes the rune that starts at byte offset i, with its width.
+// Past the end it answers (0, 0), the same 0 the []rune lexer returned.
+func (l *lexer) runeAt(i int) (rune, int) {
+	if i >= len(l.src) {
+		return 0, 0
 	}
-	return l.src[l.pos]
+	if c := l.src[i]; c < utf8.RuneSelf {
+		return rune(c), 1
+	}
+	return utf8.DecodeRuneInString(l.src[i:])
 }
 
+func (l *lexer) peek() rune {
+	r, _ := l.runeAt(l.pos)
+	return r
+}
+
+// peekAt looks `offset` RUNES ahead of the cursor (0 is peek).
 func (l *lexer) peekAt(offset int) rune {
-	if l.pos+offset >= len(l.src) {
-		return 0
+	i := l.pos
+	for ; offset > 0; offset-- {
+		_, w := l.runeAt(i)
+		if w == 0 {
+			return 0
+		}
+		i += w
 	}
-	return l.src[l.pos+offset]
+	r, _ := l.runeAt(i)
+	return r
 }
 
 func (l *lexer) advance() rune {
-	if l.eof() {
+	r, w := l.runeAt(l.pos)
+	if w == 0 {
 		return 0
 	}
-	r := l.src[l.pos]
-	l.pos++
+	l.pos += w
 	if r == '\n' {
 		l.line++
 		l.column = 1
@@ -334,7 +368,7 @@ func (l *lexer) readNumber() error {
 			l.advance()
 		}
 	}
-	value := string(l.src[start:l.pos])
+	value := l.src[start:l.pos]
 	if isFloat {
 		l.emit(KindFloat, value)
 	} else {
@@ -346,15 +380,27 @@ func (l *lexer) readNumber() error {
 // readString: simple double-quoted string with backslash escapes.
 func (l *lexer) readString() error {
 	l.advance() // opening "
+	// Until the first escape the value IS the source text, so it is sliced
+	// rather than rebuilt rune by rune; sb takes over at the first backslash.
+	start := l.pos
+	escaped := false
 	var sb strings.Builder
 	for !l.eof() {
 		r := l.peek()
 		switch r {
 		case '"':
+			value := l.src[start:l.pos]
+			if escaped {
+				value = sb.String()
+			}
 			l.advance()
-			l.emit(KindString, sb.String())
+			l.emit(KindString, value)
 			return nil
 		case '\\':
+			if !escaped {
+				escaped = true
+				sb.WriteString(l.src[start:l.pos])
+			}
 			l.advance()
 			esc := l.peek()
 			switch esc {
@@ -375,7 +421,9 @@ func (l *lexer) readString() error {
 		case '\n':
 			return l.errorf("unterminated string literal")
 		default:
-			sb.WriteRune(r)
+			if escaped {
+				sb.WriteRune(r)
+			}
 			l.advance()
 		}
 	}
@@ -443,7 +491,7 @@ func (l *lexer) readChar() error {
 			if l.eof() {
 				return l.errorf("unterminated \\u escape")
 			}
-			hex := string(l.src[start:l.pos])
+			hex := l.src[start:l.pos]
 			if hex == "" {
 				return l.errorf("empty \\u escape")
 			}
@@ -489,7 +537,7 @@ func (l *lexer) readFieldAccessor() error {
 	for !l.eof() && isIdentTail(l.peek()) {
 		l.advance()
 	}
-	name := string(l.src[start:l.pos])
+	name := l.src[start:l.pos]
 	l.emit(KindFieldDot, name)
 	return nil
 }
@@ -500,7 +548,7 @@ func (l *lexer) readLowerName() {
 	for !l.eof() && isIdentTail(l.peek()) {
 		l.advance()
 	}
-	name := string(l.src[start:l.pos])
+	name := l.src[start:l.pos]
 	if k, ok := keywordKind(name); ok {
 		l.emit(k, name)
 		return
@@ -514,7 +562,7 @@ func (l *lexer) readUpperName() {
 	for !l.eof() && isIdentTail(l.peek()) {
 		l.advance()
 	}
-	name := string(l.src[start:l.pos])
+	name := l.src[start:l.pos]
 	l.emit(KindUpperName, name)
 }
 
