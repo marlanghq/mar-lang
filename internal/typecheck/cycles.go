@@ -65,7 +65,15 @@ func checkValueCycles(mod *ast.Module) error {
 
 	// For each non-function value, DFS to see if it depends back on
 	// itself transitively.
-	for name, d := range decls {
+	// Source order, so the cycle reported is the first one written. Ranging
+	// over the map named a different value, at a different line, on
+	// different runs of the same file.
+	for _, decl := range mod.Decls {
+		v, ok := decl.(*ast.ValueDecl)
+		if !ok {
+			continue
+		}
+		name, d := v.Name, decls[v.Name]
 		if d.isFunction {
 			continue
 		}
