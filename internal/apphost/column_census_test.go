@@ -2,16 +2,9 @@ package apphost
 
 import (
 	"fmt"
-	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 	"testing"
-
-	"mar/internal/ast"
-	"mar/internal/jsserve"
-	"mar/internal/project"
-	"mar/internal/runtime"
 )
 
 // The database boundary, censused the way the wire boundary is.
@@ -29,43 +22,15 @@ func TestEveryColumnKindInTheExamplesIsCheckedBothWays(t *testing.T) {
 	if testing.Short() {
 		t.Skip("boots every example; skipped under -short")
 	}
-	dirs, err := filepath.Glob("../../examples/*")
-	if err != nil || len(dirs) == 0 {
-		t.Fatalf("no examples found: %v", err)
-	}
-
 	kinds := map[string]int{}
 	var unchecked []string
-	for _, dir := range dirs {
-		entry := filepath.Join(dir, "Main.mar")
-		if _, err := os.Stat(entry); err != nil {
-			continue
+	for _, ex := range loadEveryExample(t) {
+		for _, c := range ex.columns {
+			kinds[c.kind]++
+			if !c.checked {
+				unchecked = append(unchecked, c.where)
+			}
 		}
-		name := filepath.Base(dir)
-		func() {
-			defer func() { _ = recover() }()
-			runtime.ResetForReload()
-			runtime.SetDBPath(filepath.Join(t.TempDir(), "census.db"))
-			lp := &jsserve.LiveProgram{}
-			_, _, _, err := project.LoadIntoEnvWithModulesAndHook(entry,
-				func(env *runtime.Env, ms []*ast.Module) { Install(env, ms, 0, lp) })
-			if err != nil {
-				return
-			}
-			for _, ent := range runtime.RegisteredEntities() {
-				for _, f := range ent.Fields {
-					kind := f.SQLType
-					if f.AcceptedCtors != nil {
-						kind = "TEXT(enum)"
-					}
-					kinds[kind]++
-					if !runtime.ColumnIsCheckedBothWays(f) {
-						unchecked = append(unchecked, fmt.Sprintf(
-							"%s: %s.%s holds %s", name, ent.Table, f.Name, kind))
-					}
-				}
-			}
-		}()
 	}
 
 	if len(kinds) < 3 {

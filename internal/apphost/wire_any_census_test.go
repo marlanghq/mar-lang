@@ -2,16 +2,11 @@ package apphost
 
 import (
 	"fmt"
-	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 	"testing"
 
 	"mar/internal/ast"
-	"mar/internal/jsserve"
-	"mar/internal/project"
-	"mar/internal/runtime"
 )
 
 // WireAny is the shape that asserts nothing. Every position that reduces to it
@@ -31,52 +26,11 @@ func TestNoExampleHasAnUncheckedPositionInAServiceRequest(t *testing.T) {
 	if testing.Short() {
 		t.Skip("boots every example; skipped under -short")
 	}
-	dirs, err := filepath.Glob("../../examples/*")
-	if err != nil || len(dirs) == 0 {
-		t.Fatalf("no examples found: %v", err)
-	}
-
 	var anyFound []string
 	var contracts int
-	for _, dir := range dirs {
-		entry := filepath.Join(dir, "Main.mar")
-		if _, err := os.Stat(entry); err != nil {
-			continue
-		}
-		name := filepath.Base(dir)
-		func() {
-			defer func() { _ = recover() }()
-			runtime.ResetForReload()
-			runtime.SetDBPath(filepath.Join(t.TempDir(), "census.db"))
-			lp := &jsserve.LiveProgram{}
-			rEnv, mods, _, err := project.LoadIntoEnvWithModulesAndHook(entry,
-				func(env *runtime.Env, ms []*ast.Module) { Install(env, ms, 0, lp) })
-			if err != nil {
-				return
-			}
-			for _, m := range mods {
-				prefix := strings.Join(m.Name, ".")
-				for _, d := range m.Decls {
-					vd, ok := d.(*ast.ValueDecl)
-					if !ok {
-						continue
-					}
-					v, ok := rEnv.Lookup(prefix + "." + vd.Name)
-					if !ok {
-						continue
-					}
-					svc, ok := v.(runtime.VService)
-					if !ok || svc.InputShape == nil {
-						continue
-					}
-					contracts++
-					if where := findWireAny(*svc.InputShape, ""); where != "" {
-						anyFound = append(anyFound,
-							fmt.Sprintf("%s: %s %s at %s", name, svc.Verb, svc.Path, where))
-					}
-				}
-			}
-		}()
+	for _, ex := range loadEveryExample(t) {
+		contracts += ex.contracts
+		anyFound = append(anyFound, ex.requests...)
 	}
 
 	if contracts < 20 {
@@ -147,41 +101,15 @@ func TestNoExampleHasAnUncheckedPositionInAServiceResponse(t *testing.T) {
 	if testing.Short() {
 		t.Skip("boots every example; skipped under -short")
 	}
-	dirs, _ := filepath.Glob("../../examples/*")
 	var anyFound []string
 	byKind := map[string]int{}
-	for _, dir := range dirs {
-		entry := filepath.Join(dir, "Main.mar")
-		if _, err := os.Stat(entry); err != nil {
-			continue
+	for _, ex := range loadEveryExample(t) {
+		for _, r := range ex.responses {
+			byKind[r.kind]++
+			if r.where != "" {
+				anyFound = append(anyFound, r.where)
+			}
 		}
-		name := filepath.Base(dir)
-		func() {
-			defer func() { _ = recover() }()
-			runtime.ResetForReload()
-			runtime.SetDBPath(filepath.Join(t.TempDir(), "census.db"))
-			lp := &jsserve.LiveProgram{}
-			_, mods, _, err := project.LoadIntoEnvWithModulesAndHook(entry,
-				func(env *runtime.Env, ms []*ast.Module) { Install(env, ms, 0, lp) })
-			if err != nil {
-				return
-			}
-			for _, m := range mods {
-				for _, d := range m.Decls {
-					vd, ok := d.(*ast.ValueDecl)
-					if !ok {
-						continue
-					}
-					eachServiceCallShape(vd.Body, func(kind string, s ast.WireShape, line int) {
-						byKind[kind]++
-						if where := findWireAny(s, ""); where != "" {
-							anyFound = append(anyFound, fmt.Sprintf(
-								"%s: %s line %d, at %s", name, strings.Join(m.Name, "."), line, where))
-						}
-					})
-				}
-			}
-		}()
 	}
 
 	// Counted per kind, so an arm that never fires is visible rather than
@@ -218,49 +146,5 @@ func eachServiceCallShape(e ast.Expr, visit func(string, ast.WireShape, int)) {
 	if q, ok := e.(*ast.EQualified); ok && q.Wire != nil && wireCarrier(q) {
 		visit(moduleName(q.Module)+"."+q.Name, *q.Wire, q.Pos.Line)
 	}
-	switch n := e.(type) {
-	case *ast.EApp:
-		eachServiceCallShape(n.Fn, visit)
-		eachServiceCallShape(n.Arg, visit)
-	case *ast.EBinop:
-		eachServiceCallShape(n.Left, visit)
-		eachServiceCallShape(n.Right, visit)
-	case *ast.ELambda:
-		eachServiceCallShape(n.Body, visit)
-	case *ast.EIf:
-		eachServiceCallShape(n.Cond, visit)
-		eachServiceCallShape(n.Then, visit)
-		eachServiceCallShape(n.Else, visit)
-	case *ast.ELet:
-		for _, b := range n.Bindings {
-			eachServiceCallShape(b.Body, visit)
-		}
-		eachServiceCallShape(n.Body, visit)
-	case *ast.ETuple:
-		for _, m := range n.Members {
-			eachServiceCallShape(m, visit)
-		}
-	case *ast.EList:
-		for _, el := range n.Elements {
-			eachServiceCallShape(el, visit)
-		}
-	case *ast.ERecord:
-		for _, f := range n.Fields {
-			eachServiceCallShape(f.Value, visit)
-		}
-	case *ast.ERecordUpdate:
-		eachServiceCallShape(n.Record, visit)
-		for _, f := range n.Fields {
-			eachServiceCallShape(f.Value, visit)
-		}
-	case *ast.EFieldAccess:
-		eachServiceCallShape(n.Record, visit)
-	case *ast.ECase:
-		eachServiceCallShape(n.Subject, visit)
-		for _, b := range n.Branches {
-			eachServiceCallShape(b.Body, visit)
-		}
-	case *ast.ENegate:
-		eachServiceCallShape(n.Inner, visit)
-	}
+	ast.EachChild(e, func(child ast.Expr) { eachServiceCallShape(child, visit) })
 }

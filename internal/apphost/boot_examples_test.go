@@ -1,16 +1,8 @@
 package apphost
 
 import (
-	"bytes"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
-
-	"mar/internal/ast"
-	"mar/internal/jsserve"
-	"mar/internal/project"
-	"mar/internal/runtime"
 )
 
 // The floor under every boot check in this package.
@@ -41,73 +33,47 @@ func TestNoExampleIsRefusedAtBoot(t *testing.T) {
 	if testing.Short() {
 		t.Skip("boots every example; skipped under -short")
 	}
-	dirs, err := filepath.Glob("../../examples/*")
-	if err != nil || len(dirs) == 0 {
-		t.Fatalf("no examples found: %v", err)
-	}
 
 	var booted, identified int
 	var refusals, guessing []string
-	for _, dir := range dirs {
-		entry := filepath.Join(dir, "Main.mar")
-		if _, err := os.Stat(entry); err != nil {
-			continue // not a project (the-last-developer holds no sources)
+	for _, ex := range loadEveryExample(t) {
+		// A panic here is a bug in the checks, not in the example.
+		if ex.panicked != nil {
+			t.Errorf("%s panicked during boot: %v", ex.name, ex.panicked)
+			continue
 		}
-		name := filepath.Base(dir)
-		func() {
-			defer func() {
-				// A panic here is a bug in the checks, not in the example.
-				if r := recover(); r != nil {
-					t.Errorf("%s panicked during boot: %v", name, r)
-				}
-			}()
-			runtime.ResetForReload()
-			runtime.SetDBPath(filepath.Join(t.TempDir(), "boot.db"))
-			var notes bytes.Buffer
-			routeNoteWriter = &notes
-			defer func() { routeNoteWriter = os.Stderr }()
-
-			lp := &jsserve.LiveProgram{}
-			rEnv, mods, _, err := project.LoadIntoEnvWithModulesAndHook(entry,
-				func(env *runtime.Env, ms []*ast.Module) { Install(env, ms, 0, lp) })
-			if err != nil {
-				// A boot check raised from inside the loader's hook arrives
-				// HERE, not from eff.Run(). The first version of this test
-				// treated a load failure as "skip", which let a check that
-				// refused two working examples read as a pass — the exact
-				// thing the test exists to prevent. A load failure that
-				// mentions one of the checks is a refusal; anything else is
-				// a broken example, which check-examples already covers.
-				if isBootRefusal(err) {
-					refusals = append(refusals, name+": "+strings.ReplaceAll(err.Error(), "\n", " "))
-				}
-				return
+		if ex.loadErr != nil {
+			// A boot check raised from inside the loader's hook arrives
+			// HERE, not from eff.Run(). The first version of this test
+			// treated a load failure as "skip", which let a check that
+			// refused two working examples read as a pass — the exact
+			// thing the test exists to prevent. A load failure that
+			// mentions one of the checks is a refusal; anything else is
+			// a broken example, which check-examples already covers.
+			if isBootRefusal(ex.loadErr) {
+				refusals = append(refusals, ex.name+": "+strings.ReplaceAll(ex.loadErr.Error(), "\n", " "))
 			}
-			mainV, ok := project.LookupMain(rEnv, mods)
-			if !ok {
-				return
+			continue
+		}
+		if !ex.ran {
+			continue
+		}
+		booted++
+		if ex.runErr != nil {
+			refusals = append(refusals, ex.name+": "+strings.ReplaceAll(ex.runErr.Error(), "\n", " "))
+			continue
+		}
+		// A boot check that never fires is not a check. Examples
+		// declare `identify` (the log line below counts them), and
+		// the framework used to ignore it and guess; this asserts the
+		// declaration is what answers, so a silent return to guessing
+		// fails here.
+		if ex.hasIdentify {
+			if !ex.fromIdentify {
+				guessing = append(guessing, ex.name+" (guessed `"+ex.identityCol+"`)")
 			}
-			eff, isEff := mainV.(runtime.VEffect)
-			if !isEff {
-				return
-			}
-			booted++
-			if _, err := eff.Run(); err == nil {
-				// A boot check that never fires is not a check. Twelve
-				// examples declare `identify`, and the framework used to
-				// ignore it and guess; this asserts the declaration is what
-				// answers, so a silent return to guessing fails here.
-				if cfg := runtime.CurrentAuth(); cfg != nil && cfg.Identify != nil {
-					col, fromIdentify := runtime.ResolveIdentityColumn(*cfg)
-					if !fromIdentify {
-						guessing = append(guessing, name+" (guessed `"+col+"`)")
-					}
-					identified++
-				}
-			} else {
-				refusals = append(refusals, name+": "+strings.ReplaceAll(err.Error(), "\n", " "))
-			}
-		}()
+			identified++
+		}
 	}
 
 	if booted < 30 {
