@@ -151,51 +151,10 @@ func (idx *declIndex) walk(from string, e ast.Expr) {
 		// case, and an unknown module here simply finds nothing.
 		idx.reach(joinModuleName(x.Module), x.Name)
 		idx.reach(idx.resolveAlias(from, x.Module), x.Name)
-	case *ast.EApp:
-		idx.walk(from, x.Fn)
-		idx.walk(from, x.Arg)
-	case *ast.EBinop:
-		idx.walk(from, x.Left)
-		idx.walk(from, x.Right)
-	case *ast.ELambda:
-		idx.walk(from, x.Body)
-	case *ast.EIf:
-		idx.walk(from, x.Cond)
-		idx.walk(from, x.Then)
-		idx.walk(from, x.Else)
-	case *ast.ECase:
-		idx.walk(from, x.Subject)
-		for _, b := range x.Branches {
-			idx.walk(from, b.Body)
-		}
-	case *ast.ELet:
-		for _, b := range x.Bindings {
-			idx.walk(from, b.Body)
-		}
-		idx.walk(from, x.Body)
-	case *ast.ETuple:
-		for _, m := range x.Members {
-			idx.walk(from, m)
-		}
-	case *ast.EList:
-		for _, el := range x.Elements {
-			idx.walk(from, el)
-		}
-	case *ast.ERecord:
-		for _, f := range x.Fields {
-			idx.walk(from, f.Value)
-		}
-	case *ast.ERecordUpdate:
-		idx.walk(from, x.Record)
-		for _, f := range x.Fields {
-			idx.walk(from, f.Value)
-		}
-	case *ast.EFieldAccess:
-		idx.walk(from, x.Record)
-	case *ast.ENegate:
-		idx.walk(from, x.Inner)
 	}
-	// Literals, EUnit, ECtor and EFieldAccessor reference no value declaration.
+	// Every other kind reaches a declaration only through its children, if it
+	// has any (literals, EUnit, ECtor and EFieldAccessor have none).
+	ast.EachChild(e, func(child ast.Expr) { idx.walk(from, child) })
 }
 
 // resolveAlias maps `import Backend.Notes as N` so that `N.notes` finds the
@@ -250,58 +209,16 @@ func scanBackendOnly(module, decl string, e ast.Expr) []backendOnlyLeak {
 	var found []backendOnlyLeak
 	var walk func(ast.Expr)
 	walk = func(e ast.Expr) {
-		switch x := e.(type) {
-		case nil:
+		if e == nil {
 			return
-		case *ast.EQualified:
+		}
+		if x, ok := e.(*ast.EQualified); ok {
 			qualified := joinModuleName(x.Module) + "." + x.Name
 			if typecheck.IsBackendOnlyBuiltin(qualified) {
 				found = append(found, backendOnlyLeak{module, decl, qualified, x.Pos})
 			}
-		case *ast.EApp:
-			walk(x.Fn)
-			walk(x.Arg)
-		case *ast.EBinop:
-			walk(x.Left)
-			walk(x.Right)
-		case *ast.ELambda:
-			walk(x.Body)
-		case *ast.EIf:
-			walk(x.Cond)
-			walk(x.Then)
-			walk(x.Else)
-		case *ast.ECase:
-			walk(x.Subject)
-			for _, b := range x.Branches {
-				walk(b.Body)
-			}
-		case *ast.ELet:
-			for _, b := range x.Bindings {
-				walk(b.Body)
-			}
-			walk(x.Body)
-		case *ast.ETuple:
-			for _, m := range x.Members {
-				walk(m)
-			}
-		case *ast.EList:
-			for _, el := range x.Elements {
-				walk(el)
-			}
-		case *ast.ERecord:
-			for _, f := range x.Fields {
-				walk(f.Value)
-			}
-		case *ast.ERecordUpdate:
-			walk(x.Record)
-			for _, f := range x.Fields {
-				walk(f.Value)
-			}
-		case *ast.EFieldAccess:
-			walk(x.Record)
-		case *ast.ENegate:
-			walk(x.Inner)
 		}
+		ast.EachChild(e, walk)
 	}
 	walk(e)
 	return found

@@ -127,7 +127,7 @@ func walkCalls(e ast.Expr, found *[]calledContract) {
 			}
 		}
 	}
-	walkCallChildren(e, found)
+	ast.EachChild(e, func(child ast.Expr) { walkCalls(child, found) })
 }
 
 func isServiceCall(head ast.Expr) bool {
@@ -154,52 +154,4 @@ func flattenApp(e ast.Expr) (ast.Expr, []ast.Expr) {
 		return h, append(a, app.Arg)
 	}
 	return e, nil
-}
-
-func walkCallChildren(e ast.Expr, found *[]calledContract) {
-	switch n := e.(type) {
-	case *ast.EApp:
-		walkCalls(n.Fn, found)
-		walkCalls(n.Arg, found)
-	case *ast.EBinop:
-		walkCalls(n.Left, found)
-		walkCalls(n.Right, found)
-	case *ast.ELambda:
-		walkCalls(n.Body, found)
-	case *ast.EIf:
-		walkCalls(n.Cond, found)
-		walkCalls(n.Then, found)
-		walkCalls(n.Else, found)
-	case *ast.ELet:
-		for _, b := range n.Bindings {
-			walkCalls(b.Body, found)
-		}
-		walkCalls(n.Body, found)
-	case *ast.ETuple:
-		for _, m := range n.Members {
-			walkCalls(m, found)
-		}
-	case *ast.EList:
-		for _, el := range n.Elements {
-			walkCalls(el, found)
-		}
-	case *ast.ERecord:
-		for _, f := range n.Fields {
-			walkCalls(f.Value, found)
-		}
-	case *ast.ERecordUpdate:
-		walkCalls(n.Record, found)
-		for _, f := range n.Fields {
-			walkCalls(f.Value, found)
-		}
-	case *ast.EFieldAccess:
-		walkCalls(n.Record, found)
-	case *ast.ECase:
-		walkCalls(n.Subject, found)
-		for _, b := range n.Branches {
-			walkCalls(b.Body, found)
-		}
-	case *ast.ENegate:
-		walkCalls(n.Inner, found)
-	}
 }
