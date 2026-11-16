@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"fmt"
+	"slices"
 	"sort"
 )
 
@@ -164,19 +165,15 @@ func dictBuiltins() map[string]Value {
 			if !ok {
 				return nil, fmt.Errorf("Dict.fromList: not a List")
 			}
-			d := VDict{}
-			for _, e := range l.Elements {
+			pairs := make([]VDictPair, len(l.Elements))
+			for i, e := range l.Elements {
 				t, ok := e.(VTuple)
 				if !ok || len(t.Members) != 2 {
 					return nil, fmt.Errorf("Dict.fromList: element not a 2-tuple")
 				}
-				next, err := dictInsert(d, t.Members[0], t.Members[1])
-				if err != nil {
-					return nil, err
-				}
-				d = next.(VDict)
+				pairs[i] = VDictPair{Key: t.Members[0], Value: t.Members[1]}
 			}
-			return d, nil
+			return dictFromPairs(pairs)
 		}),
 		// dictMap : (k -> v -> w) -> Dict k v -> Dict k w
 		// Keys are NOT touched, so sort order is preserved without
@@ -450,15 +447,7 @@ func setBuiltins() map[string]Value {
 			if !ok {
 				return nil, fmt.Errorf("Set.fromList: not a List")
 			}
-			s := VSet{}
-			for _, e := range l.Elements {
-				next, err := setInsert(s, e)
-				if err != nil {
-					return nil, err
-				}
-				s = next.(VSet)
-			}
-			return s, nil
+			return setFromItems(l.Elements)
 		}),
 		// setMap : (k -> j) -> Set k -> Set j
 		// Output element type can change, so we re-sort/dedupe by
@@ -469,19 +458,15 @@ func setBuiltins() map[string]Value {
 			if !ok {
 				return nil, fmt.Errorf("Set.map: not a Set")
 			}
-			out := VSet{}
-			for _, it := range s.Items {
+			mapped := make([]Value, len(s.Items))
+			for i, it := range s.Items {
 				v, err := apply(fn, it)
 				if err != nil {
 					return nil, err
 				}
-				next, err := setInsert(out, v)
-				if err != nil {
-					return nil, err
-				}
-				out = next.(VSet)
+				mapped[i] = v
 			}
-			return out, nil
+			return setFromItems(mapped)
 		}),
 		"setFoldl": nativeFn(3, func(args []Value) (Value, error) {
 			fn := args[0]
@@ -878,4 +863,165 @@ func setPredicate(fn Value, item Value) (bool, error) {
 		return false, fmt.Errorf("Set predicate didn't return Bool")
 	}
 	return b.V, nil
+}
+
+// --- building a Dict or a Set from many items at once ---
+//
+// Inserting n items one at a time rebuilds the whole sorted slice n times:
+// n*n/2 copies. That is invisible at twenty items and ruinous at a hundred
+// thousand, and one of the callers is the JSON decoder, which builds whatever
+// a request body asks for. Measured before these existed: an 869 KB body, under
+// the server's 1 MiB limit, holding one `{"__set":[...]}` of 140,000 integers
+// took 38 s to decode and allocated 157 GB doing it; built this way it takes
+// 0.12 s and 24 MB.
+//
+// Sorting once and dropping duplicates gives the same value:
+//
+//   - a Set keeps the FIRST of two equal items, as setInsert does (it returns
+//     the set untouched when the item is already there);
+//   - a Dict keeps the LAST pair for a key, key and value both, as dictInsert
+//     does (it overwrites the pair it finds).
+//
+// "Equal" is compareValues answering 0, which is wider than identical: 1.5 and
+// 1.50 are one key. That is why which one survives is spelled out.
+
+// setFromItems is Set.fromList: the items of a checked program all have one
+// comparable type, so the comparison cannot fail and sorting is always safe.
+func setFromItems(items []Value) (Value, error) {
+	return buildSetSorted(items)
+}
+
+// dictFromPairs is Dict.fromList, on the same terms as setFromItems.
+func dictFromPairs(pairs []VDictPair) (Value, error) {
+	return buildDictSorted(pairs)
+}
+
+func buildSetSorted(items []Value) (VSet, error) {
+	if len(items) == 0 {
+		return VSet{}, nil
+	}
+	out := make([]Value, len(items))
+	copy(out, items)
+	var cmpErr error
+	sort.SliceStable(out, func(i, j int) bool {
+		if cmpErr != nil {
+			return false
+		}
+		c, err := compareValues(out[i], out[j])
+		if err != nil {
+			cmpErr = err
+			return false
+		}
+		return c < 0
+	})
+	if cmpErr != nil {
+		return VSet{}, cmpErr
+	}
+	n := 1
+	for i := 1; i < len(out); i++ {
+		c, err := compareValues(out[n-1], out[i])
+		if err != nil {
+			return VSet{}, err
+		}
+		if c != 0 {
+			out[n] = out[i]
+			n++
+		}
+	}
+	return VSet{Items: out[:n:n]}, nil
+}
+
+func buildDictSorted(pairs []VDictPair) (VDict, error) {
+	if len(pairs) == 0 {
+		return VDict{}, nil
+	}
+	out := make([]VDictPair, len(pairs))
+	copy(out, pairs)
+	var cmpErr error
+	sort.SliceStable(out, func(i, j int) bool {
+		if cmpErr != nil {
+			return false
+		}
+		c, err := compareValues(out[i].Key, out[j].Key)
+		if err != nil {
+			cmpErr = err
+			return false
+		}
+		return c < 0
+	})
+	if cmpErr != nil {
+		return VDict{}, cmpErr
+	}
+	n := 1
+	for i := 1; i < len(out); i++ {
+		c, err := compareValues(out[n-1].Key, out[i].Key)
+		if err != nil {
+			return VDict{}, err
+		}
+		if c == 0 {
+			out[n-1] = out[i]
+			continue
+		}
+		out[n] = out[i]
+		n++
+	}
+	return VDict{Pairs: out[:n:n]}, nil
+}
+
+// isCompoundKey reports a key whose comparison looks inside it. Two such keys
+// can compare without error even when they do not have one type ([1,"a"]
+// against [2,3] is decided by the first position), so WHICH pairs get compared
+// decides whether a malformed payload is refused. For those the wire builders
+// below keep the comparisons insertion makes.
+func isCompoundKey(v Value) bool {
+	switch v.(type) {
+	case VList, VTuple:
+		return true
+	}
+	return false
+}
+
+// setFromWire builds the Set a `{"__set":[...]}` payload describes, refusing
+// exactly the payloads one-at-a-time insertion refused.
+//
+// Flat items (numbers, strings, characters, and everything that cannot be
+// ordered at all) fail a comparison precisely when two of them are not one
+// orderable type, whichever two are compared, so sorting refuses the same
+// payloads insertion did. Compound items are inserted one at a time, in place:
+// the same binary search, without rebuilding the slice for each.
+func setFromWire(items []Value) (VSet, error) {
+	if !slices.ContainsFunc(items, isCompoundKey) {
+		return buildSetSorted(items)
+	}
+	out := make([]Value, 0, len(items))
+	for _, it := range items {
+		idx, found, err := setSearch(VSet{Items: out}, it)
+		if err != nil {
+			return VSet{}, err
+		}
+		if !found {
+			out = slices.Insert(out, idx, it)
+		}
+	}
+	return VSet{Items: slices.Clip(out)}, nil
+}
+
+// dictFromWire is setFromWire for `{"__dict":[[k,v],...]}`.
+func dictFromWire(pairs []VDictPair) (VDict, error) {
+	if !slices.ContainsFunc(pairs, func(p VDictPair) bool { return isCompoundKey(p.Key) }) {
+		return buildDictSorted(pairs)
+	}
+	out := make([]VDictPair, 0, len(pairs))
+	for _, p := range pairs {
+		idx, found, err := dictSearch(VDict{Pairs: out}, p.Key)
+		if err != nil {
+			return VDict{}, err
+		}
+		if found {
+			out[idx] = p
+		} else {
+			out = slices.Insert(out, idx, p)
+		}
+	}
+	return VDict{Pairs: slices.Clip(out)}, nil
 }

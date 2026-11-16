@@ -341,9 +341,9 @@ func appendValue(dst []byte, v Value) ([]byte, error) {
 		return append(dst, "]}"...), nil
 	case VSet:
 		// `{"__set":[i1,i2,...]}`, counterpart to the VDict marker.
-		// Items are already sorted; the decoder rebuilds via setInsert
-		// to keep the sorted invariant even if a hand-crafted payload
-		// arrives out of order.
+		// Items are already sorted; the decoder sorts again anyway
+		// (setFromWire), so a hand-crafted payload that arrives out of
+		// order still decodes to a valid Set.
 		var err error
 		dst = append(dst, `{"__set":[`...)
 		for i, it := range x.Items {
@@ -534,63 +534,84 @@ func convertJSON(raw any) (Value, error) {
 		// Tagged dict, `{"__dict": [[k,v], [k,v], ...]}`. Counterpart
 		// to the VDict encoder; rebuilds the sorted-pair invariant
 		// the runtime expects. Pairs come over as arbitrary nested
-		// values; we convertJSON each side and then insert into a
-		// fresh VDict to preserve sort order via the runtime's own
-		// insert routine (so e.g. Int keys 10/2/30 land as 2/10/30).
+		// values; we convertJSON each side and build the dictionary
+		// with dictFromWire, which orders the pairs by key and keeps
+		// the last pair for a repeated key (so e.g. Int keys 10/2/30
+		// land as 2/10/30).
 		if rawPairs, ok := x["__dict"]; ok && len(x) == 1 {
 			arr, ok := rawPairs.([]any)
 			if !ok {
 				return nil, fmt.Errorf("the value should be a list of key/value pairs")
 			}
-			d := VDict{}
+			// Same as the set below: a dictionary is sorted by key, so keys
+			// of mixed types fail the comparison rather than the request.
+			//
+			// The pairs are gathered and the dictionary built once
+			// (dictFromWire), not grown a pair at a time. A pair that cannot
+			// be read still yields to an EARLIER pair that could not be
+			// ordered, which is the order the two were found in when every
+			// pair was inserted as soon as it was read.
+			const keysOneType = "the value should be a list of key/value pairs whose keys are one type"
+			pairs := make([]VDictPair, 0, len(arr))
+			refuse := func(err error) (Value, error) {
+				if _, orderErr := dictFromWire(pairs); orderErr != nil {
+					return nil, errors.New(keysOneType)
+				}
+				return nil, err
+			}
 			for _, p := range arr {
 				pair, ok := p.([]any)
 				if !ok || len(pair) != 2 {
-					return nil, fmt.Errorf("the value should be a key/value pair of two items")
+					return refuse(fmt.Errorf("the value should be a key/value pair of two items"))
 				}
 				k, err := convertJSON(pair[0])
 				if err != nil {
-					return nil, err
+					return refuse(err)
 				}
 				v, err := convertJSON(pair[1])
 				if err != nil {
-					return nil, err
+					return refuse(err)
 				}
-				// Same as the set below: a dictionary is sorted by key,
-				// so keys of mixed types fail the comparison rather than
-				// the request.
-				next, err := dictInsert(d, k, v)
-				if err != nil {
-					return nil, fmt.Errorf("the value should be a list of key/value pairs whose keys are one type")
-				}
-				d = next.(VDict)
+				pairs = append(pairs, VDictPair{Key: k, Value: v})
+			}
+			d, err := dictFromWire(pairs)
+			if err != nil {
+				return nil, errors.New(keysOneType)
 			}
 			return d, nil
 		}
 		// Tagged set, `{"__set": [i1, i2, ...]}`. Same idea as __dict:
-		// rebuild via setInsert so the sorted/dedup invariants hold
-		// even for a hand-crafted out-of-order payload.
+		// setFromWire sorts and drops duplicates, so the invariants
+		// hold even for a hand-crafted out-of-order payload.
 		if rawItems, ok := x["__set"]; ok && len(x) == 1 {
 			arr, ok := rawItems.([]any)
 			if !ok {
 				return nil, fmt.Errorf("the value should be a list of items")
 			}
-			s := VSet{}
+			// A set is sorted, so building one compares its items — and a
+			// payload mixing types made that comparison fail with
+			// `comparison: type mismatch`, which says nothing about the
+			// request. The items are what is wrong, and saying so is the
+			// whole job of a 422.
+			//
+			// Built once from all the items (setFromWire); see the dictionary
+			// above for why an unreadable item defers to an earlier
+			// unorderable one.
+			const itemsOneType = "the value should be a list of items of one type"
+			items := make([]Value, 0, len(arr))
 			for _, e := range arr {
 				v, err := convertJSON(e)
 				if err != nil {
+					if _, orderErr := setFromWire(items); orderErr != nil {
+						return nil, errors.New(itemsOneType)
+					}
 					return nil, err
 				}
-				// A set is sorted, so building one compares its items —
-				// and a payload mixing types made that comparison fail
-				// with `comparison: type mismatch`, which says nothing
-				// about the request. The items are what is wrong, and
-				// saying so is the whole job of a 422.
-				next, err := setInsert(s, v)
-				if err != nil {
-					return nil, fmt.Errorf("the value should be a list of items of one type")
-				}
-				s = next.(VSet)
+				items = append(items, v)
+			}
+			s, err := setFromWire(items)
+			if err != nil {
+				return nil, errors.New(itemsOneType)
 			}
 			return s, nil
 		}
