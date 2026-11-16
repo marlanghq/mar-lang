@@ -631,6 +631,10 @@ type DecShape
     | DecNamed String Int
 
 
+type DecThread
+    = DecThread String (Maybe DecThread)
+
+
 type alias DecOpt =
     { note : Maybe String
     , amount : Decimal
@@ -682,6 +686,16 @@ dp r =
 
                 DecNamed n k ->
                     "ok:" ++ n ++ ":" ++ String.fromInt k
+
+        Err e ->
+            e
+
+
+dth : Result String DecThread -> String
+dth r =
+    case r of
+        Ok (DecThread name _) ->
+            "ok:" ++ name
 
         Err e ->
             e
@@ -1071,6 +1085,11 @@ decodeCases =
         , "ctorWrongArity=" ++ dp (JSON.decode "{\"__ctor\":\"DecCircle\",\"__args\":[]}")
         , "ctorWrongArgType=" ++ dp (JSON.decode "{\"__ctor\":\"DecCircle\",\"__args\":[\"x\"]}")
         , "ctorNotACtor=" ++ dp (JSON.decode "{}")
+
+        -- A type that re-enters itself under a Maybe: the re-entry below the
+        -- Just is checked like the first level.
+        , "threadOk=" ++ dth (JSON.decode "{\"__ctor\":\"DecThread\",\"__args\":[\"a\",{\"__ctor\":\"Just\",\"__args\":[{\"__ctor\":\"DecThread\",\"__args\":[\"b\",{\"__ctor\":\"Nothing\"}]}]}]}")
+        , "threadDeepWrong=" ++ dth (JSON.decode "{\"__ctor\":\"DecThread\",\"__args\":[\"a\",{\"__ctor\":\"Just\",\"__args\":[{\"__ctor\":\"DecThread\",\"__args\":[5,{\"__ctor\":\"Nothing\"}]}]}]}")
         , "tupleOk=" ++ dt (JSON.decode "[7,\"abc\"]")
         , "tupleShort=" ++ dt (JSON.decode "[7]")
         , "tupleWrongType=" ++ dt (JSON.decode "[\"x\",\"abc\"]")
@@ -2021,6 +2040,8 @@ const decodeExpectations = "Decode.ok=ok:ana:3\n" +
 	"Decode.ctorWrongArity=the value: `DecCircle` takes 1 value, got 0" + "\n" +
 	"Decode.ctorWrongArgType=`.DecCircle[0]` should be a whole number, got a string" + "\n" +
 	"Decode.ctorNotACtor=the value should be one of `DecCircle`, `DecNamed`, got an empty object" + "\n" +
+	"Decode.threadOk=ok:a" + "\n" +
+	"Decode.threadDeepWrong=`.DecThread[1].DecThread[0]` should be a string, got a whole number" + "\n" +
 	"Decode.isoMillis=2023-11-14T22:13:20.123Z" + "\n" +
 	"Decode.isoWhole=2023-11-14T22:13:20.000Z" + "\n" +
 	"Decode.isoRoundTrip=1700000000123" + "\n" +

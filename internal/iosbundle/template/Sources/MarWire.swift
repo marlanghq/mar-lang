@@ -171,7 +171,7 @@ enum MarWire {
             if tag == "Nothing" { return nil }
             if tag == "Just", args.count == 1 {
                 guard let elem = s.elem else { return nil }
-                return check(args[0], elem, path)
+                return check(args[0], elem, path, seen)
             }
             return bad("a Maybe (leave the field out for Nothing)")
 
