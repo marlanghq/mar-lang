@@ -132,7 +132,13 @@ func MakeFullstackBuiltin(env *runtime.Env, mods []*ast.Module, port int, lp *js
 // browser: importing a module for one type alias used to ship everything else
 // in it, schema and service handlers included. See prune.go.
 func PickFrontMods(pages []runtime.Value, mods []*ast.Module) ([]*ast.Module, error) {
-	roots := map[string]bool{}
+	// Roots are kept in the order the page list first names them, not in a
+	// map: the order decides the module order of the bundle, and through it
+	// the program hash every response advertises and the page title. Ranging
+	// over a map here made two boots of one unchanged program serve two
+	// different programs.
+	var roots []string
+	rootSeen := map[string]bool{}
 	pageRefs := make([]ast.Expr, 0, len(pages))
 	for i, pv := range pages {
 		page, ok := pv.(runtime.VPage)
@@ -142,7 +148,10 @@ func PickFrontMods(pages []runtime.Value, mods []*ast.Module) ([]*ast.Module, er
 		if page.OriginName == "" {
 			return nil, fmt.Errorf("page %d has no provenance — pages must be top-level bindings (e.g. `myPage = Page.create ...`), not inline expressions", i)
 		}
-		roots[page.OriginModule] = true
+		if !rootSeen[page.OriginModule] {
+			rootSeen[page.OriginModule] = true
+			roots = append(roots, page.OriginModule)
+		}
 		pageRefs = append(pageRefs, &ast.EQualified{
 			Module: parseModulePath(page.OriginModule),
 			Name:   page.OriginName,
@@ -150,7 +159,7 @@ func PickFrontMods(pages []runtime.Value, mods []*ast.Module) ([]*ast.Module, er
 	}
 	merged := []*ast.Module{}
 	seen := map[string]bool{}
-	for root := range roots {
+	for _, root := range roots {
 		for _, m := range reachableFrom(root, mods) {
 			name := joinModuleName(m.Name)
 			if seen[name] {
