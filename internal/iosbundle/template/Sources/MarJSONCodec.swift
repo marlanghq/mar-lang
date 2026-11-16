@@ -509,8 +509,12 @@ enum MarJSONCodec {
         }
         var neg = false
         // One sign, as Go's splitDecimalText takes it: two `if`s read -+5 as -5.
-        if mantissa.hasPrefix("-") { neg = true; mantissa = mantissa.dropFirst() }
-        else if mantissa.hasPrefix("+") { mantissa = mantissa.dropFirst() }
+        if mantissa.hasPrefix("-") {
+            neg = true
+            mantissa = mantissa.dropFirst()
+        } else if mantissa.hasPrefix("+") {
+            mantissa = mantissa.dropFirst()
+        }
         let parts = mantissa.split(separator: ".", maxSplits: 1, omittingEmptySubsequences: false)
         let intPart = parts.first ?? ""
         let frac = parts.count > 1 ? parts[1] : ""

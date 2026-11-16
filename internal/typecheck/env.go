@@ -23,8 +23,7 @@ type TypeEnv struct {
 	bindings map[string]Type
 	parent   *TypeEnv
 	// customs: on the frame that owns a check's registrations (the one
-	// BaseEnv hands out, or the root of a NewEnv chain) and on the shared
-	// builtin frame. LookupCustom walks up through both.
+	// BaseEnv hands out) and on the shared builtin frame. LookupCustom walks up through both.
 	customs map[string]CustomType
 
 	// free is every type-variable ID occurring free in ANY binding
@@ -74,18 +73,12 @@ func (e *TypeEnv) Names() []string {
 	return out
 }
 
-// NewEnv returns an empty top-level environment.
-func NewEnv() *TypeEnv {
-	return &TypeEnv{bindings: map[string]Type{}, customs: map[string]CustomType{}}
-}
-
 // RegisterCustom adds (or overwrites) a custom-type entry on the frame that
 // owns this check's registrations: the nearest one that carries a customs
 // map, which every child scope sees. Never the shared builtin frame.
 func (e *TypeEnv) RegisterCustom(name string, ct CustomType) {
 	// The nearest frame that carries a customs map owns the registrations of
-	// this check: the frame BaseEnv hands out, or the root of a NewEnv chain.
-	// It is never the shared builtin frame below it, which is read-only.
+	// this check: the frame BaseEnv hands out. It is never the shared builtin frame below it, which is read-only.
 	root := e
 	for root.customs == nil && root.parent != nil {
 		root = root.parent
