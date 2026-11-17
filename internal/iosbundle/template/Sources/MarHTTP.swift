@@ -244,7 +244,7 @@ enum MarHTTP {
     /// service is down, and it used to be compared on no runtime at all.
     static func decodeServerError(body data: Data, fallbackBody: String, status: Int) -> String {
         var decoded = fallbackBody
-        if let any = try? JSONSerialization.jsonObject(with: data, options: []) as? [String: Any],
+        if let any = try? MarJSONCodec.parse(data) as? [String: Any],
            let code = any["error"] as? String {
             // Even when the code is EMPTY. An empty code is no code, and the
             // envelope was still understood, so the raw JSON is not what to

@@ -493,6 +493,11 @@ jsonCases =
         , "roundTripErr=" ++ showNested (decodeNested (JSON.encode errBad))
         , "encodeDuration=" ++ q (JSON.encode (Time.millis 100))
         , "encodeDurationNeg=" ++ q (JSON.encode (Time.millis (-2500)))
+
+        -- Keys in code point order: a digit before a letter, a capital
+        -- before a small one, U+FF41 before U+1D465.
+        , "encodeKeyOrder=" ++ q (JSON.encode { a10 = 1, a2 = 2, endTime = 3, ends = 4, posX = 5, position = 6 })
+        , "encodeKeyOrderWide=" ++ q (JSON.encode { x𝑥 = 1, xａ = 2 })
         ]
 
 
@@ -826,6 +831,26 @@ ddu r =
     case r of
         Ok d ->
             Time.toIso (Time.add (Time.fromYMD 1970 1 1) d)
+
+        Err e ->
+            e
+
+
+dkeyed : Result String { a : Int } -> String
+dkeyed r =
+    case r of
+        Ok v ->
+            JSON.encode v
+
+        Err e ->
+            e
+
+
+unpinned : String -> String
+unpinned s =
+    case JSON.decode s of
+        Ok _ ->
+            "ok"
 
         Err e ->
             e
@@ -1225,6 +1250,19 @@ decodeCases =
         , "durationExponent=" ++ ddu (JSON.decode "{\"__duration\":1e3}")
         , "durationTooLong=" ++ ddu (JSON.decode "{\"__duration\":9007199254740992}")
         , "durationNotANumber=" ++ ddu (JSON.decode "{\"__duration\":\"5\"}")
+        , "durationLeadingZero=" ++ ddu (JSON.decode "{\"__duration\":007}")
+        , "durationTrailingDot=" ++ ddu (JSON.decode "{\"__duration\":1.}")
+        , "durationNotADuration=" ++ q (ddu (JSON.decode "1500"))
+        , "durationIsATime=" ++ q (ddu (JSON.decode "{\"__time\":\"2023-11-14T22:13:20Z\"}"))
+        , "loneKey=" ++ q (dkeyed (JSON.decode "{\"a\":1,\"\\ud800\":2}"))
+
+        -- With no type to decode into, a tagged value that cannot be one is
+        -- refused in its own words too, and only a document that does not
+        -- parse is "not valid JSON".
+        , "unpinnedDuration=" ++ unpinned "{\"__duration\":1.5}"
+        , "unpinnedAngle=" ++ unpinned "{\"__angle\":1.5}"
+        , "unpinnedChar=" ++ unpinned "{\"__char\":\"abc\"}"
+        , "unpinnedNotJSON=" ++ unpinned "{\"a\":"
         ]
 
 
@@ -1289,9 +1327,8 @@ equalityCases =
         , "memberFound=" ++ yn (List.member eqTwo [ eqOther, eqOne ])
         , "memberMissing=" ++ yn (List.member eqOther [ eqOne, eqTwo ])
 
-        -- Duration normalizes to seconds at construction, so the unit one was
-        -- BUILT with is not part of its identity. Missing from all three
-        -- switches at once, which is why no drift test saw it: they agreed.
+        -- A Duration is milliseconds, so the unit one was BUILT with is not
+        -- part of its identity.
         , "durSame=" ++ yn (Time.seconds 1 == Time.seconds 1)
         , "durMinutes=" ++ yn (Time.seconds 60 == Time.minutes 1)
         , "durHours=" ++ yn (Time.hours 1 == Time.minutes 60)
@@ -1819,6 +1856,8 @@ JSON.roundTripOk=Ok 1
 JSON.roundTripErr=Err bad
 JSON.encodeDuration={'__duration':100}
 JSON.encodeDurationNeg={'__duration':-2500}
+JSON.encodeKeyOrder={'a10':1,'a2':2,'endTime':3,'ends':4,'posX':5,'position':6}
+JSON.encodeKeyOrderWide={'xａ':2,'x𝑥':1}
 
 Math.degEqDeci=T
 Math.degWraps=T
@@ -2172,6 +2211,15 @@ const decodeExpectations = "Decode.ok=ok:ana:3\n" +
 	"Decode.durationExponent=the value should be a whole number of milliseconds, got 1e3" + "\n" +
 	"Decode.durationTooLong=Duration out of range: a duration of 9007199254740992 milliseconds is outside the range of a Duration (-9007199254740991 to 9007199254740991 milliseconds)" + "\n" +
 	"Decode.durationNotANumber=the value should be a whole number of milliseconds" + "\n" +
+	"Decode.durationLeadingZero=the document is not valid JSON" + "\n" +
+	"Decode.durationTrailingDot=the document is not valid JSON" + "\n" +
+	"Decode.durationNotADuration=the value should be a duration (whole milliseconds under '__duration'), got a whole number" + "\n" +
+	"Decode.durationIsATime=the value should be a duration (whole milliseconds under '__duration'), got a time" + "\n" +
+	"Decode.loneKey={'a':1,'\uFFFD':2}" + "\n" +
+	"Decode.unpinnedDuration=the value should be a whole number of milliseconds, got 1.5" + "\n" +
+	"Decode.unpinnedAngle=the value should be a whole number of deci-degrees, got 1.5" + "\n" +
+	"Decode.unpinnedChar=the value should be a single character, got 3" + "\n" +
+	"Decode.unpinnedNotJSON=the document is not valid JSON" + "\n" +
 	"Decode.tupleOk=ok:7:abc" + "\n" +
 	"Decode.tupleShort=the value should be a list of 2 values, got 1" + "\n" +
 	"Decode.tupleWrongType=`[0]` should be a whole number, got a string" + "\n" +

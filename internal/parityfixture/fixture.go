@@ -251,8 +251,8 @@ charEdges =
         )
 
 
--- "Each constructor multiplies by its unit's seconds-count", except millis,
--- which divides. A unit table is the kind of thing that gets one entry wrong.
+-- Each constructor multiplies by its unit's milliseconds. A unit table is the
+-- kind of thing that gets one entry wrong.
 durations : String
 durations =
     String.join "|"
@@ -542,6 +542,8 @@ var HTTPErrorCases = []HTTPErrorCase{
 		"blank is not empty: the server said something, even if it is spaces"},
 	{500, `null`, `null`,
 		"a JSON fragment is not an object either"},
+	{500, `{"error":"x\ud800y"}`, "x\uFFFDy",
+		"a code is a String: a lone surrogate in it reads as U+FFFD, as in any other"},
 
 	// A body that ARRIVES fine and is not JSON. The status is 200, so these
 	// go down the decode path rather than the error path -- the other half of

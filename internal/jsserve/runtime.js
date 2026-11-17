@@ -684,8 +684,12 @@
     return VDec(neg ? -coef : coef, 0);
   }
 
+  // The JSON number grammar (RFC 8259): a lifted literal that does not match
+  // it was never a number, and the document is not JSON.
+  const JSON_NUMBER = /^-?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][+-]?[0-9]+)?$/;
+
   function numberFromLiteral(lit) {
-    if (!/^-?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][+-]?[0-9]+)?$/.test(lit)) {
+    if (!JSON_NUMBER.test(lit)) {
       throw new Error('the document is not valid JSON');
     }
     // A plain integer short enough to be exact stays an Int.
@@ -697,6 +701,21 @@
     if (d) return d;
     throw new Error('JSON: ' + lit + ' is not a number Mar can hold exactly:' +
       ' an Int is at most 9007199254740991 and a Decimal at most 34 significant digits and 34 decimal places');
+  }
+
+  // codePointCompare orders two strings by their Unicode scalars, which is
+  // the byte order of their UTF-8 (Go's sort.Strings). The default sort
+  // compares UTF-16 code units, which puts a character past U+FFFF before
+  // one in U+E000..U+FFFF.
+  function codePointCompare(a, b) {
+    const n = Math.min(a.length, b.length);
+    for (let i = 0; i < n; i++) {
+      const x = a.codePointAt(i);
+      const y = b.codePointAt(i);
+      if (x !== y) return x < y ? -1 : 1;
+      if (x > 0xFFFF) i++;
+    }
+    return a.length - b.length;
   }
 
   // wellFormed replaces each surrogate that is not half of a pair with
@@ -763,7 +782,7 @@
       // __ctor falls through to the record path.
       if (typeof v.__ctor === 'string') {
         const args = Array.isArray(v.__args) ? v.__args.map(jsToMar) : [];
-        return VCtor(v.__ctor, args);
+        return VCtor(wellFormed(v.__ctor), args);
       }
       // Time round-trip, `{__time: "ISO 8601"}` from the Go
       // encoder rebuilds a VTime so user code typed as
@@ -802,6 +821,7 @@
       if ('__duration' in v && Object.keys(v).length === 1) {
         const lit = numberLiteralOf(v.__duration);
         if (lit === undefined) throw new Error('the value should be a whole number of milliseconds');
+        if (!JSON_NUMBER.test(lit)) throw new Error('the document is not valid JSON');
         if (!/^-?[0-9]+$/.test(lit)) {
           throw new Error('the value should be a whole number of milliseconds, got ' + lit);
         }
@@ -889,9 +909,10 @@
       // and cannot see the document order at all, so sorted is the only
       // order all three can produce. `order` is what Display and the
       // missing-field error print.
+      // Keys are strings too, so they are well-formed like any other.
       const fields = {};
-      const order = Object.keys(v).slice().sort();
-      for (const k of order) fields[k] = jsToMar(v[k]);
+      for (const raw of Object.keys(v)) fields[wellFormed(raw)] = jsToMar(v[raw]);
+      const order = Object.keys(fields).sort(codePointCompare);
       return VRecord(fields, order);
     }
     return VString(String(v));
@@ -907,15 +928,13 @@
       case 'L': return v.xs.map(marToJs);
       case 'T': return v.xs.map(marToJs);
       case 'R': {
-        // Sorted by field name, not by the order the literal was written.
-        // `order` records where the fields appeared in the source, which is
-        // not part of the value: `{ a = 1, b = 2 }` and `{ b = 2, a = 1 }`
-        // are equal, and encoding them differently would break the one
-        // property a pure function must have: equal inputs, equal output.
-        // It also puts the three runtimes on the same answer; iOS already
-        // sorted, so web and server were the odd ones out.
+        // Sorted by field name in code point order, as the server and the
+        // phone sort them, not by the order the literal was written. `order`
+        // records where the fields appeared in the source, which is not part
+        // of the value: `{ a = 1, b = 2 }` and `{ b = 2, a = 1 }` are equal,
+        // and a pure function gives equal output for equal input.
         const out = {};
-        for (const k of (v.order || Object.keys(v.fields)).slice().sort()) out[k] = marToJs(v.fields[k]);
+        for (const k of (v.order || Object.keys(v.fields)).slice().sort(codePointCompare)) out[k] = marToJs(v.fields[k]);
         return out;
       }
       case 'C':
@@ -7036,12 +7055,20 @@
     // JSON.decode : String -> Result String α, uses the IIFE-level
     // jsToMar so that fetchAuthMe (in mountPages) can reach the
     // same decoder.
+    // Only a document that does not parse is "not valid JSON"; a tagged
+    // value that cannot be one is refused in its own words, as
+    // decodeWithShape and the other two runtimes do.
     def('jsonDecode', native(1, ([raw]) => {
+      let parsed;
       try {
-        const parsed = parseJSONExact(raw.s);
-        return VCtor('Ok', [jsToMar(parsed)]);
+        parsed = parseJSONExact(raw.s);
       } catch (e) {
         return VCtor('Err', [VString('the document is not valid JSON')]);
+      }
+      try {
+        return VCtor('Ok', [jsToMar(parsed)]);
+      } catch (e) {
+        return VCtor('Err', [VString(String((e && e.message) || e))]);
       }
     }));
     def('JSON.decode', envLookup(env, 'jsonDecode'));
@@ -7372,7 +7399,7 @@
       try {
         const j = JSON.parse(body);
         if (j && typeof j.error === 'string') {
-          return j.error;
+          return wellFormed(j.error);
         }
       } catch (_) { /* fall through to raw body */ }
       return body;

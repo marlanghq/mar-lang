@@ -285,13 +285,13 @@ func appendValue(dst []byte, v Value) ([]byte, error) {
 		}
 		return append(dst, ']'), nil
 	case VRecord:
-		// Sorted by field name, not by the order the literal was written.
-		// `Order` is where the fields appeared in the source, which is not
-		// part of the value: `{ a = 1, b = 2 }` and `{ b = 2, a = 1 }` are
-		// equal, and encoding them differently would break the one property
-		// a pure function must have: equal inputs, equal output. It also
-		// puts the three runtimes on the same answer; the iOS encoder already
-		// sorted, so web and server were the odd ones out.
+		// Sorted by field name in code point order (byte order of UTF-8, as
+		// sort.Strings gives it; codePointCompare in runtime.js and
+		// MarJSONCodec.jsonText use the same), not by the order the literal
+		// was written. `Order` is where the fields appeared in the source,
+		// which is not part of the value: `{ a = 1, b = 2 }` and
+		// `{ b = 2, a = 1 }` are equal, and a pure function gives equal
+		// output for equal input.
 		var stack [16]string
 		names := append(stack[:0], x.Order...)
 		sort.Strings(names)

@@ -15,6 +15,7 @@
 		2CEBD3F805F7B14B80F13C54 /* MarEnv.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5AC6D6C31DA699017A49EC69 /* MarEnv.swift */; };
 		3261C4D120A0A85998999F24 /* APIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = B978C6A4C024308BE99BE1A3 /* APIClient.swift */; };
 		34107512D960020FE2233B04 /* MarWire.swift in Sources */ = {isa = PBXBuildFile; fileRef = E781E4F57603C4ADA03DC036 /* MarWire.swift */; };
+		34BD268845E2FD3AD976DEAF /* MarJSONText.swift in Sources */ = {isa = PBXBuildFile; fileRef = 44DA4DA762F728712BFF879D /* MarJSONText.swift */; };
 		493D3C02C5420E09DC9A9D58 /* MarPageRuntime.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49572645D20DFF429518E618 /* MarPageRuntime.swift */; };
 		4F5F61AC66A3FB62634EC9D5 /* MarSharedStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7514C4E0930E690C37F202EA /* MarSharedStore.swift */; };
 		4FA4A6208515E57314147BD2 /* MarEval.swift in Sources */ = {isa = PBXBuildFile; fileRef = D82563539CB5C35B24C312D6 /* MarEval.swift */; };
@@ -50,6 +51,7 @@
 		232B6AA41600028041EB6429 /* MarDispatcher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarDispatcher.swift; sourceTree = "<group>"; };
 		2601D2B11FA17DA79E7C5038 /* MarApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarApp.swift; sourceTree = "<group>"; };
 		3E6B24402BFE4C86F6628838 /* MarDecimal.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarDecimal.swift; sourceTree = "<group>"; };
+		44DA4DA762F728712BFF879D /* MarJSONText.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarJSONText.swift; sourceTree = "<group>"; };
 		49572645D20DFF429518E618 /* MarPageRuntime.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarPageRuntime.swift; sourceTree = "<group>"; };
 		4B8BEE1B6D5036252F0DB880 /* MarBuiltinCtors.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarBuiltinCtors.swift; sourceTree = "<group>"; };
 		4E68B48D2583997A1EFC3A94 /* MarHTTP.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarHTTP.swift; sourceTree = "<group>"; };
@@ -131,6 +133,7 @@
 				F15A6A6A0C7D7381FC8AD2C4 /* MarInput.swift */,
 				5BD25436BE07553942EAB5F8 /* MarIntRange.swift */,
 				5A87CE1F15247B2227EE9907 /* MarJSONCodec.swift */,
+				44DA4DA762F728712BFF879D /* MarJSONText.swift */,
 				F2F47775647F77B2B2DBD640 /* MarKeychain.swift */,
 				79888DFD3A4BC98247BD5AA1 /* MarLoader.swift */,
 				66B5426D39360C64FA93BDAD /* MarMath.swift */,
@@ -239,6 +242,7 @@
 				5357A3F6632D8A28E7865332 /* MarInput.swift in Sources */,
 				2A8A24B8F8B7B91BC5FC81E8 /* MarIntRange.swift in Sources */,
 				9EBCC3CD90B7AFD22B80077C /* MarJSONCodec.swift in Sources */,
+				34BD268845E2FD3AD976DEAF /* MarJSONText.swift in Sources */,
 				60C37209F73BD3AFFA4C4A12 /* MarKeychain.swift in Sources */,
 				9AEBE17711083E8BEB18294A /* MarLoader.swift in Sources */,
 				FBA266607F60546DB86E7538 /* MarMath.swift in Sources */,

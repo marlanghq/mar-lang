@@ -2,7 +2,6 @@ package runtime
 
 import (
 	"math/big"
-	"os"
 	"strings"
 	"testing"
 )
@@ -11,7 +10,8 @@ import (
 // constructor whose interval does not fit refuses, naming itself and its
 // argument. `Time.weeks n` with an `n` known only at runtime cannot be ruled
 // out by the compiler, so this is a runtime error, in one wording on all three
-// runtimes.
+// runtimes: the browser's and the phone's are run against the same sentence
+// in internal/jsserve and internal/iosbundle duration_range_test.go.
 func TestADurationTooLongForIntIsRefused(t *testing.T) {
 	if _, err := durationOf("Time.weeks", MaxSafeInt, 7*24*60*60*1000); err == nil {
 		t.Fatal("Time.weeks of the largest Int was accepted")
@@ -35,38 +35,6 @@ func TestADurationTooLongForIntIsRefused(t *testing.T) {
 	if _, err := durationOf("Time.seconds", MaxSafeInt/1000+1, 1000); err == nil {
 		t.Error("one second past the edge was accepted")
 	}
-}
-
-// The refusal has to read the same on the phone and in the browser, and there
-// is no harness that can run a program to failure on all three: a Mar error is
-// not catchable by design, so it cannot come back as a String the way every
-// value in internal/parityfixture does. What can be checked is that the three
-// sources carry the same sentence.
-func TestTheRefusalIsWordedTheSameInAllThreeRuntimes(t *testing.T) {
-	for _, f := range []struct{ label, path string }{
-		{"browser", "../jsserve/runtime.js"},
-		{"phone", "../iosbundle/template/Sources/MarIntRange.swift"},
-	} {
-		b, err := readFileForTest(f.path)
-		if err != nil {
-			t.Fatalf("%s: %v", f.label, err)
-		}
-		for _, fragment := range []string{
-			"Duration out of range: ",
-			" is outside the range of a Duration",
-			" milliseconds)",
-		} {
-			if !strings.Contains(b, fragment) {
-				t.Errorf("the %s runtime's refusal is missing %q; the three wordings have drifted",
-					f.label, fragment)
-			}
-		}
-	}
-}
-
-func readFileForTest(path string) (string, error) {
-	b, err := os.ReadFile(path)
-	return string(b), err
 }
 
 // The same hole, in the API Mar's whole Decimal doctrine exists to protect.
