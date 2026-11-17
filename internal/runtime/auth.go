@@ -256,7 +256,7 @@ func makeAuthConfig(args []Value) (Value, error) {
 	// expects Duration here, so this is just the runtime guard.
 	durationSecs := int64(0)
 	if d, ok := rec.Fields["sessionDuration"].(VDuration); ok {
-		durationSecs = int64(d.Seconds)
+		durationSecs = d.Millis / 1000
 	}
 	// `role` is optional; only required when the app uses
 	// Auth.requireRole. We don't validate the field's type here: the

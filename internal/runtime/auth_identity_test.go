@@ -303,7 +303,7 @@ func TestTheSignInPageMessageNamesTheValueTheWayTheLanguageDoes(t *testing.T) {
 			"identify":        projects("id"),
 			"signup":          VFn{Arity: 1, Native: func([]Value) (Value, error) { return VRecord{}, nil }},
 			"email":           VRecord{Fields: map[string]Value{"subject": VString{V: "s"}}, Order: []string{"subject"}},
-			"sessionDuration": VDuration{Seconds: 60},
+			"sessionDuration": VDuration{Millis: 60000},
 			"signInPage":      VInt{V: 42},
 		},
 		Order: []string{"entity", "identify", "signup", "email", "sessionDuration", "signInPage"},
@@ -334,7 +334,7 @@ func TestAFieldAuthConfigDoesNotReadIsRefused(t *testing.T) {
 		"identify":        projects("id"),
 		"signup":          VFn{Arity: 1, Native: func([]Value) (Value, error) { return VRecord{}, nil }},
 		"email":           VRecord{Fields: map[string]Value{"subject": VString{V: "s"}}, Order: []string{"subject"}},
-		"sessionDuration": VDuration{Seconds: 60},
+		"sessionDuration": VDuration{Millis: 60000},
 	}
 	order := []string{"entity", "identify", "signup", "email", "sessionDuration"}
 
@@ -366,7 +366,7 @@ func TestTheOptionalFieldsAreNotRejectedAsUnknown(t *testing.T) {
 		"identify":        projects("id"),
 		"signup":          VFn{Arity: 1, Native: func([]Value) (Value, error) { return VRecord{}, nil }},
 		"email":           VRecord{Fields: map[string]Value{"subject": VString{V: "s"}}, Order: []string{"subject"}},
-		"sessionDuration": VDuration{Seconds: 60},
+		"sessionDuration": VDuration{Millis: 60000},
 		"role":            projects("id"),
 	}
 	order := []string{"entity", "identify", "signup", "email", "sessionDuration", "role"}

@@ -315,6 +315,8 @@ Two things follow from the type. The first is that a unit mix-up is a compile er
 
 The internal resolution is a tenth of a degree: a program can tell 45.0° from 45.1° and nothing finer. That number is not observable: no function hands it back.
 
+**A `Duration` is a whole number of milliseconds**, the unit a `Time` is counted in, so `Time.add`, `Time.sub` and `Time.diff` are exact: `Time.add t (Time.millis 1001)` moves `t` by exactly 1001 ms, and `Time.diff a b` is what separates them to the millisecond. It is built only by a constructor that names the unit (`Time.millis`, `Time.seconds`, `Time.minutes`, `Time.hours`, `Time.days`, `Time.weeks`) or by `Time.diff`, and it holds the range of `Int` in milliseconds: an interval past that, such as `Time.weeks` of a very large number, raises "Duration out of range" rather than wrapping. `Time.toSeconds` gives whole seconds, toward zero. On the wire a Duration is `{"__duration": 1500}`, and it can be part of a service contract or a pinned `JSON.decode` like any other value.
+
 ### 3.5 Nominal IDs
 
 Every entity ID is a nominal wrap of a primitive:

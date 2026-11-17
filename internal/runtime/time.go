@@ -13,31 +13,22 @@ import (
 func timeBuiltins() map[string]Value {
 	return map[string]Value{
 		// Duration constructors (unit-named so the call site documents
-		// the unit and arithmetic is centralized here). millis divides
-		// rather than multiplies so `Time.millis 1500` is exactly 1.5s.
-		"timeMillis": nativeFn(1, func(args []Value) (Value, error) {
-			n, ok := args[0].(VInt)
-			if !ok {
-				return nil, fmt.Errorf("Time.millis: expected Int (got %T)", args[0])
-			}
-			return VDuration{Seconds: float64(n.V) / 1000}, nil
-		}),
-		"timeSeconds": nativeFn(1, makeUnitConstructor("Time.seconds", 1)),
-		"timeMinutes": nativeFn(1, makeUnitConstructor("Time.minutes", 60)),
-		"timeHours":   nativeFn(1, makeUnitConstructor("Time.hours", 60*60)),
-		"timeDays":    nativeFn(1, makeUnitConstructor("Time.days", 24*60*60)),
-		"timeWeeks":   nativeFn(1, makeUnitConstructor("Time.weeks", 7*24*60*60)),
+		// the unit). Each is n of its unit in milliseconds, exactly, or a
+		// "Duration out of range" error when that is past Int.
+		"timeMillis":  nativeFn(1, makeUnitConstructor("Time.millis", 1)),
+		"timeSeconds": nativeFn(1, makeUnitConstructor("Time.seconds", 1000)),
+		"timeMinutes": nativeFn(1, makeUnitConstructor("Time.minutes", 60*1000)),
+		"timeHours":   nativeFn(1, makeUnitConstructor("Time.hours", 60*60*1000)),
+		"timeDays":    nativeFn(1, makeUnitConstructor("Time.days", 24*60*60*1000)),
+		"timeWeeks":   nativeFn(1, makeUnitConstructor("Time.weeks", 7*24*60*60*1000)),
 
+		// Whole seconds, toward zero: 1.5s is 1 and -1.5s is -1.
 		"timeToSeconds": nativeFn(1, func(args []Value) (Value, error) {
 			d, ok := args[0].(VDuration)
 			if !ok {
 				return nil, fmt.Errorf("Time.toSeconds: expected Duration (got %T)", args[0])
 			}
-			n, err := intFromSeconds("Time.toSeconds", d.Seconds)
-			if err != nil {
-				return nil, err
-			}
-			return VInt{V: n}, nil
+			return VInt{V: d.Millis / 1000}, nil
 		}),
 
 		// Absolute time. Time.now reads the wall clock: wrapped as
@@ -63,16 +54,15 @@ func timeBuiltins() map[string]Value {
 			}, nil
 		}),
 
-		// Time.add / Time.sub shift a moment by a duration.
-		// Returning a new VTime: durations are seconds, times are
-		// milliseconds, so multiply by 1000 to align units.
+		// Time.add / Time.sub shift a moment by a duration, both counted in
+		// milliseconds, so the shift is exact.
 		"timeAdd": nativeFn(2, func(args []Value) (Value, error) {
 			t, ok1 := args[0].(VTime)
 			d, ok2 := args[1].(VDuration)
 			if !ok1 || !ok2 {
 				return nil, fmt.Errorf("Time.add: expected (Time, Duration) (got %T, %T)", args[0], args[1])
 			}
-			return VTime{Millis: t.Millis + int64(d.Seconds*1000)}, nil
+			return VTime{Millis: t.Millis + d.Millis}, nil
 		}),
 		"timeSub": nativeFn(2, func(args []Value) (Value, error) {
 			t, ok1 := args[0].(VTime)
@@ -80,19 +70,22 @@ func timeBuiltins() map[string]Value {
 			if !ok1 || !ok2 {
 				return nil, fmt.Errorf("Time.sub: expected (Time, Duration) (got %T, %T)", args[0], args[1])
 			}
-			return VTime{Millis: t.Millis - int64(d.Seconds*1000)}, nil
+			return VTime{Millis: t.Millis - d.Millis}, nil
 		}),
 
-		// Time.diff a b returns the Duration FROM a TO b. Negative if
-		// a is later than b. Floored to whole seconds because Duration
-		// has no sub-second precision.
+		// Time.diff a b returns the Duration FROM a TO b, to the
+		// millisecond. Negative if a is later than b.
 		"timeDiff": nativeFn(2, func(args []Value) (Value, error) {
 			a, ok1 := args[0].(VTime)
 			b, ok2 := args[1].(VTime)
 			if !ok1 || !ok2 {
 				return nil, fmt.Errorf("Time.diff: expected (Time, Time) (got %T, %T)", args[0], args[1])
 			}
-			return VDuration{Seconds: float64(b.Millis-a.Millis) / 1000}, nil
+			ms := b.Millis - a.Millis
+			if !inIntRange(ms) {
+				return nil, durationOutOfRange("Time.diff")
+			}
+			return VDuration{Millis: ms}, nil
 		}),
 
 		"timeBefore": nativeFn(2, timeCompare("Time.before", func(a, b int64) bool { return a < b })),
@@ -228,15 +221,14 @@ func makeCalendarShift(name string, yearMul, monthMul, dayMul int) func([]Value)
 }
 
 // makeUnitConstructor returns a builder for one of the unit-named
-// Duration constructors. The multiplier is the number of seconds in
-// one of the named units (fractional for Time.millis = 1/1000).
-func makeUnitConstructor(name string, multiplier float64) func([]Value) (Value, error) {
+// Duration constructors: n of the unit, unitMs milliseconds each.
+func makeUnitConstructor(name string, unitMs int64) func([]Value) (Value, error) {
 	return func(args []Value) (Value, error) {
 		n, ok := args[0].(VInt)
 		if !ok {
 			return nil, fmt.Errorf("%s: expected Int (got %T)", name, args[0])
 		}
-		return VDuration{Seconds: float64(n.V) * multiplier}, nil
+		return durationOf(name, n.V, unitMs)
 	}
 }
 

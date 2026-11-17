@@ -15,7 +15,6 @@ package wireparity
 import (
 	"encoding/json"
 	"fmt"
-	"math"
 	"net/http"
 	"net/url"
 	"os"
@@ -219,7 +218,7 @@ func Dump(v runtime.Value) string {
 	case runtime.VAngle:
 		return "A" + strconv.FormatInt(x.Deci, 10)
 	case runtime.VDuration:
-		return "Du" + strconv.FormatInt(int64(math.Round(x.Seconds*1000)), 10)
+		return "Du" + strconv.FormatInt(x.Millis, 10)
 	case runtime.VList:
 		return "L" + dumpAll(x.Elements)
 	case runtime.VTuple:

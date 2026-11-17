@@ -123,6 +123,12 @@ type Status
 s : Service () (List Status)
 s = Service.declare GET "/api/s"
 `},
+		{"a Duration on both sides, and in a field", `module M exposing (..)
+
+
+d : Service { every : Duration } Duration
+d = Service.declare POST "/api/d"
+`},
 		// A union nested in itself under other arguments is an ordinary
 		// type, not a cycle: each instantiation gets its own shape.
 		{"a Result of a Result, eight deep", `module M exposing (..)

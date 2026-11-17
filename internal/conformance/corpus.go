@@ -491,6 +491,8 @@ jsonCases =
         , "encodeJustOk=" ++ q (JSON.encode (Just okOne))
         , "roundTripOk=" ++ showNested (decodeNested (JSON.encode okOne))
         , "roundTripErr=" ++ showNested (decodeNested (JSON.encode errBad))
+        , "encodeDuration=" ++ q (JSON.encode (Time.millis 100))
+        , "encodeDurationNeg=" ++ q (JSON.encode (Time.millis (-2500)))
         ]
 
 
@@ -819,6 +821,16 @@ dse r =
             e
 
 
+ddu : Result String Duration -> String
+ddu r =
+    case r of
+        Ok d ->
+            Time.toIso (Time.add (Time.fromYMD 1970 1 1) d)
+
+        Err e ->
+            e
+
+
 dcodes : Result String String -> String
 dcodes r =
     case r of
@@ -984,6 +996,14 @@ timeCases =
         , "weeks=" ++ Time.toIso (Time.add base (Time.weeks 2))
         , "diff=" ++ String.fromInt (Time.toSeconds (Time.diff base (instant "2023-11-14T22:14:20.000Z")))
         , "diffBackwards=" ++ String.fromInt (Time.toSeconds (Time.diff (instant "2023-11-14T22:14:20.000Z") base))
+
+        -- A Duration is whole milliseconds, so a shift by one is exact and
+        -- Time.diff keeps what it measured.
+        , "addOddMillis=" ++ Time.toIso (Time.add base (Time.millis 1001))
+        , "subOddMillis=" ++ Time.toIso (Time.sub base (Time.millis 1003))
+        , "diffMillis=" ++ yn (Time.diff base (Time.add base (Time.millis 1500)) == Time.millis 1500)
+        , "diffRoundTrip=" ++ Time.toIso (Time.add base (Time.diff base (instant "2023-11-14T22:13:21.250Z")))
+        , "toSecondsTowardZero=" ++ String.fromInt (Time.toSeconds (Time.diff (Time.add base (Time.millis 1500)) base))
         , "before=" ++ yn (Time.before base (Time.addDays base 1))
         , "after=" ++ yn (Time.after base (Time.addDays base 1))
         , "epochRoundTrip=" ++ Time.toIso (Time.fromYMD 1970 1 1)
@@ -1196,6 +1216,15 @@ decodeCases =
         , "loneThenPair=" ++ dcodes (JSON.decode "\"\\ud800\\ud83d\\ude00\"")
         , "loneInChar=" ++ dch (JSON.decode "{\"__char\":\"\\udfff\"}")
         , "escapedBackslash=" ++ dcodes (JSON.decode "\"\\\\ud800\"")
+
+        -- A Duration is {"__duration": ms}: an integer literal inside the
+        -- range of Int, and nothing else.
+        , "durationOk=" ++ ddu (JSON.decode "{\"__duration\":1500}")
+        , "durationNeg=" ++ ddu (JSON.decode "{\"__duration\":-1}")
+        , "durationFraction=" ++ ddu (JSON.decode "{\"__duration\":1.5}")
+        , "durationExponent=" ++ ddu (JSON.decode "{\"__duration\":1e3}")
+        , "durationTooLong=" ++ ddu (JSON.decode "{\"__duration\":9007199254740992}")
+        , "durationNotANumber=" ++ ddu (JSON.decode "{\"__duration\":\"5\"}")
         ]
 
 
@@ -1788,6 +1817,8 @@ JSON.encodeErr={'__args':['bad'],'__ctor':'Err'}
 JSON.encodeJustOk={'__args':[{'__args':[1],'__ctor':'Ok'}],'__ctor':'Just'}
 JSON.roundTripOk=Ok 1
 JSON.roundTripErr=Err bad
+JSON.encodeDuration={'__duration':100}
+JSON.encodeDurationNeg={'__duration':-2500}
 
 Math.degEqDeci=T
 Math.degWraps=T
@@ -2015,6 +2046,11 @@ const timeExpectations = "" +
 	"Time.day=14" + "\n" +
 	"Time.diff=60" + "\n" +
 	"Time.diffBackwards=-60" + "\n" +
+	"Time.addOddMillis=2023-11-14T22:13:21.001Z" + "\n" +
+	"Time.subOddMillis=2023-11-14T22:13:18.997Z" + "\n" +
+	"Time.diffMillis=T" + "\n" +
+	"Time.diffRoundTrip=2023-11-14T22:13:21.250Z" + "\n" +
+	"Time.toSecondsTowardZero=-1" + "\n" +
 	"Time.durToSeconds=180" + "\n" +
 	"Time.epochRoundTrip=1970-01-01T00:00:00.000Z" + "\n" +
 	"Time.fromIsoBad=Nothing" + "\n" +
@@ -2130,6 +2166,12 @@ const decodeExpectations = "Decode.ok=ok:ana:3\n" +
 	"Decode.loneThenPair=65533,128512" + "\n" +
 	"Decode.loneInChar=ok:\uFFFD" + "\n" +
 	"Decode.escapedBackslash=92,117,100,56,48,48" + "\n" +
+	"Decode.durationOk=1970-01-01T00:00:01.500Z" + "\n" +
+	"Decode.durationNeg=1969-12-31T23:59:59.999Z" + "\n" +
+	"Decode.durationFraction=the value should be a whole number of milliseconds, got 1.5" + "\n" +
+	"Decode.durationExponent=the value should be a whole number of milliseconds, got 1e3" + "\n" +
+	"Decode.durationTooLong=Duration out of range: a duration of 9007199254740992 milliseconds is outside the range of a Duration (-9007199254740991 to 9007199254740991 milliseconds)" + "\n" +
+	"Decode.durationNotANumber=the value should be a whole number of milliseconds" + "\n" +
 	"Decode.tupleOk=ok:7:abc" + "\n" +
 	"Decode.tupleShort=the value should be a list of 2 values, got 1" + "\n" +
 	"Decode.tupleWrongType=`[0]` should be a whole number, got a string" + "\n" +

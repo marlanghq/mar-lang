@@ -11,21 +11,16 @@ import (
 )
 
 // intrange.go claims: "Everything that can produce or admit an Int goes
-// through it, so there is one answer to 'is this a Mar Int'." That was prose,
-// and two sites did not — both found by hand, both real:
+// through it, so there is one answer to 'is this a Mar Int'."
 //
-//	Time.toSeconds     int64(d.Seconds) from a float64 that holds 5e21
-//	Decimal.toCents    IsInt64(), which is the wrong bound by ten orders
-//
-// The shared shape is a value arriving from a REPRESENTATION WIDER THAN INT —
-// a float64 duration, a big.Int coefficient — and being narrowed by a Go
-// conversion instead of by Mar's bound. Nothing else in the runtime can be out
-// of range: an Int that is already an Int stays one, a `len` is bounded by
-// memory, and an index is bounded by the list it indexes.
+// The way an Int escapes that is a value arriving from a REPRESENTATION WIDER
+// THAN INT (a big.Int coefficient, an int64 from the host) and being narrowed
+// by a Go conversion instead of by Mar's bound. An Int that is already an Int
+// stays one, a `len` is bounded by memory, and an index is bounded by the list
+// it indexes.
 //
 // So this is the rule, and it is narrow on purpose: a VInt built out of a
-// widening conversion has to be listed here with the reason it is safe. It
-// catches the next one without asking anyone to keep a 46-row table honest.
+// widening conversion has to be listed here with the reason it is safe.
 func TestNoIntIsNarrowedByGoInsteadOfByMarsBound(t *testing.T) {
 	// Each entry is the expression as it appears, and why it cannot leave the
 	// range. Anything not here fails the test.
@@ -72,7 +67,7 @@ func TestNoIntIsNarrowedByGoInsteadOfByMarsBound(t *testing.T) {
 				problems = append(problems, strings.Join([]string{
 					f + ":" + strconv.Itoa(i+1) + ": VInt{" + expr + "} narrows with a Go conversion.",
 					"    Mar's Int is 53 bits and Go's is 64: if the value can come from",
-					"    anything wider, route it through inIntRange (see intFromSeconds).",
+					"    anything wider, route it through inIntRange (see decToInt).",
 					"    If it cannot, add the expression here with the reason.",
 				}, "\n"))
 			}

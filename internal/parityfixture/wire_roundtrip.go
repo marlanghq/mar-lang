@@ -35,10 +35,6 @@ type WireCase struct {
 	Name string
 	Type string
 	Expr string
-	// NoContract marks a kind the checker refuses in a Service contract and in
-	// a pinned JSON.decode. It still has an encoder, so its JSON.encode is
-	// compared; it gets no service and no decode.
-	NoContract bool
 }
 
 // WireCases is the table. One row per KIND, plus the edges each kind has:
@@ -80,8 +76,12 @@ var WireCases = []WireCase{
 	{Name: "AngleDeg", Type: "Angle", Expr: "Math.degrees 45"},
 	{Name: "AngleDeci", Type: "Angle", Expr: "Math.deciDegrees 3599"},
 
-	{Name: "DurationSub", Type: "Duration", Expr: "Time.millis 1500", NoContract: true},
-	{Name: "DurationWhole", Type: "Duration", Expr: "Time.seconds 90", NoContract: true},
+	{Name: "DurationSub", Type: "Duration", Expr: "Time.millis 1500"},
+	{Name: "DurationWhole", Type: "Duration", Expr: "Time.seconds 90"},
+	{Name: "DurationTenth", Type: "Duration", Expr: "Time.millis 100"},
+	{Name: "DurationOdd", Type: "Duration", Expr: "Time.millis 1001"},
+	{Name: "DurationNeg", Type: "Duration", Expr: "Time.millis (-2500)"},
+	{Name: "DurationMax", Type: "Duration", Expr: "Time.millis 9007199254740991"},
 
 	{Name: "Unit", Type: "()", Expr: "()"},
 
@@ -208,9 +208,6 @@ func WireRoundTripSource() string {
 		v := "v" + c.Name
 		decl(v, c.Type, c.Expr)
 		decl("enc"+c.Name, "String", "JSON.encode "+v)
-		if c.NoContract {
-			continue
-		}
 		decl("dec"+c.Name, "Result String ("+c.Type+")", "JSON.decode enc"+c.Name)
 		for _, leg := range WireLegs {
 			svc := leg.Prefix + c.Name

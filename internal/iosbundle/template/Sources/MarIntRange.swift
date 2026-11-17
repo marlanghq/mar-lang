@@ -26,21 +26,20 @@ enum MarInt {
     // a message no code can produce is a claim about behaviour that does not
     // exist.
 
-    /// A Duration's seconds converted to an Int, or a refusal.
-    ///
-    /// A Duration is a Double and holds far more than Int does: `Time.weeks`
-    /// of a legal Int is about 5e21 seconds. `Int(_:)` TRAPS on a Double that
-    /// large — the same uncatchable crash this file exists to end, still alive
-    /// in the one conversion that did not go through here.
-    static func fromSeconds(_ source: String, _ seconds: Double) throws -> Int {
-        let whole = seconds.rounded(.towardZero)
-        // max is exactly representable as a Double, so these are exact.
-        guard whole.isFinite, whole >= Double(min), whole <= Double(max) else {
-            throw MarRuntimeError.message(
-                "Int out of range: \(String(format: "%.0f", seconds)) seconds from \(source)"
-                + " is outside the range of Int (\(min) to \(max))")
-        }
-        return Int(whole)
+    /// What building a Duration raises when the interval does not fit in Int
+    /// milliseconds. The same sentence as Go's durationOutOfRange
+    /// (internal/runtime/intrange.go) and runtime.js's.
+    static func durationOutOfRange(_ source: String) -> MarRuntimeError {
+        .message("Duration out of range: \(source) is outside the range of a Duration"
+            + " (\(min) to \(max) milliseconds)")
+    }
+
+    /// n of a unit, unitMs milliseconds each, or the refusal naming the
+    /// constructor and its argument.
+    static func duration(_ name: String, _ n: Int, _ unitMs: Int) throws -> Int {
+        let (ms, didOverflow) = n.multipliedReportingOverflow(by: unitMs)
+        guard !didOverflow, inRange(ms) else { throw durationOutOfRange("\(name) \(n)") }
+        return ms
     }
 
     /// Both operands are already in range, so the sum reaches 2^54 and cannot

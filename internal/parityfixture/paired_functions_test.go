@@ -24,8 +24,15 @@ import (
 // test and asks what covers it, which is the moment the question is cheap to
 // answer.
 func TestEveryFunctionImplementedTwiceIsAccountedFor(t *testing.T) {
-	// Two numbers, because one is not enough. Measured: 83 names carry a second
-	// implementation, and 189 implementations exist across them.
+	// Two numbers, because one is not enough. Measured: 85 names carry a second
+	// implementation, and 194 implementations exist across them.
+	//
+	// `durationOutOfRange` (all three) is the sentence a Duration that does not
+	// fit raises; internal/runtime int_producers_test.go holds the three
+	// sources to the same words, and the corpus's Decode block pins the one a
+	// decoder can return. `numberLiteralOf` (the two clients) reads a JSON
+	// number's own text, for the `__duration` payload; the Decode block's
+	// duration cases compare it with the server's json.Number.
 	//
 	// `dictFromPairs` and `setFromItems` are trios. The phone rebuilds a
 	// Dict or a Set with them where the wire shape converts its keys (a tuple
@@ -82,8 +89,8 @@ func TestEveryFunctionImplementedTwiceIsAccountedFor(t *testing.T) {
 	// had it, left the name count unmoved and the test silent. Measured, not
 	// reasoned -- the sabotage was supposed to fail and did not.
 	const (
-		pairs           = 83
-		implementations = 189
+		pairs           = 85
+		implementations = 194
 	)
 
 	js := namesIn(t, []string{"../jsserve/runtime.js"},

@@ -135,7 +135,7 @@ func TestAGuardAProgramCanReachDoesNotNameAGoType(t *testing.T) {
 	// The total is pinned rather than merely non-zero, because the interesting
 	// direction is a guard silently LEAVING the population: rewording one out
 	// of the patterns above is invisible otherwise.
-	const total = 77
+	const total = 76
 	if pinned+reachable != total {
 		t.Errorf("the census sees %d argument guards and expects %d.\n"+
 			"    Up: a new guard needs its argument checked against the declared type.\n"+

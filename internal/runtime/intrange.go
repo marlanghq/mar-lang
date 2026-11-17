@@ -2,7 +2,6 @@ package runtime
 
 import (
 	"fmt"
-	"math"
 )
 
 // Int is 53 bits wide, and leaving that range is an error rather than a
@@ -53,30 +52,23 @@ func intOutOfRange(source string, v int64) error {
 		v, source, MinSafeInt, MaxSafeInt)
 }
 
-// intFromSeconds converts a Duration's seconds to an Int, or refuses.
-//
-// A Duration is a float64 and holds far more than Int does: `Time.weeks` of a
-// legal Int is about 5e21 seconds, which is not an Int on any runtime. Nothing
-// overflowed and nothing arrived from outside — a duration was asked to become
-// a number Mar cannot represent — so this says so instead of guessing, which
-// is what all three runtimes used to do, each differently: Go saturated at
-// int64's ceiling, the browser handed back a float that is not an Int, and the
-// phone trapped and took the app with it.
-func intFromSeconds(source string, seconds float64) (int64, error) {
-	whole := math.Trunc(seconds)
-	// MaxSafeInt is exactly representable as a float64, so these comparisons
-	// are exact rather than nearly-exact.
-	if math.IsNaN(whole) || whole < float64(MinSafeInt) || whole > float64(MaxSafeInt) {
-		return 0, intOutOfRangeSeconds(source, seconds)
-	}
-	return int64(whole), nil
+// durationOutOfRange is what building a Duration raises when the interval
+// does not fit: a Duration is a whole number of milliseconds inside the range
+// of Int, so `Time.weeks n` for a large enough n has no Duration to be. The
+// same sentence on all three runtimes (MarIntRange.swift, runtime.js).
+func durationOutOfRange(source string) error {
+	return fmt.Errorf("Duration out of range: %s is outside the range of a Duration (%d to %d milliseconds)",
+		source, MinSafeInt, MaxSafeInt)
 }
 
-// intOutOfRangeSeconds is intOutOfRange for a value that never fit in an
-// int64, so it cannot be printed as one.
-func intOutOfRangeSeconds(source string, seconds float64) error {
-	return fmt.Errorf("Int out of range: %.0f seconds from %s is outside the range of Int (%d to %d)",
-		seconds, source, MinSafeInt, MaxSafeInt)
+// durationOf is n units of unitMs milliseconds each, or the refusal naming
+// the constructor and its argument.
+func durationOf(name string, n, unitMs int64) (VDuration, error) {
+	ms, err := mulInts(n, unitMs)
+	if err != nil {
+		return VDuration{}, durationOutOfRange(fmt.Sprintf("%s %d", name, n))
+	}
+	return VDuration{Millis: ms}, nil
 }
 
 func addInts(a, b int64) (int64, error) {

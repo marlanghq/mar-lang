@@ -454,9 +454,6 @@ func TestAuthConfigStillTakesItsOptionalFields(t *testing.T) {
 // Every kind of value the wire carries is tried on every verb.
 func TestABodilessRequestIsARecord(t *testing.T) {
 	for _, c := range parityfixture.WireCases {
-		if c.NoContract {
-			continue
-		}
 		recordOrUnit := strings.HasPrefix(c.Type, "{") || c.Type == "()"
 		for _, verb := range []string{"GET", "DELETE", "POST", "PUT", "PATCH"} {
 			src := parityfixture.WireTypesSource() + fmt.Sprintf(

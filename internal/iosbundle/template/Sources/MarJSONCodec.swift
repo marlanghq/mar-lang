@@ -207,6 +207,22 @@ enum MarJSONCodec {
                 }
                 return .angle(MarMath.posMod(i, MarMath.deciFull))
             }
+            // Duration round-trip, `{__duration: 1500}`, whole milliseconds
+            // inside the range of Int: an integer literal, read from its own
+            // text, by the rules and sentences of Go's durationFromWire.
+            if let payload = dict["__duration"], dict.count == 1 {
+                guard let lit = numberLiteralOf(payload) else {
+                    throw MarRuntimeError.message("the value should be a whole number of milliseconds")
+                }
+                let digits = lit.hasPrefix("-") ? lit.dropFirst() : Substring(lit)
+                guard !digits.isEmpty, digits.allSatisfy({ $0.isASCII && $0.isNumber }) else {
+                    throw MarRuntimeError.message("the value should be a whole number of milliseconds, got \(lit)")
+                }
+                guard let ms = Int(lit), MarInt.inRange(ms) else {
+                    throw MarInt.durationOutOfRange("a duration of \(lit) milliseconds")
+                }
+                return .duration(ms)
+            }
             // Time round-trip, `{__time: "ISO 8601"}` rebuilds a
             // VTime so user code typed as `createdAt : Time`
             // actually receives a Time, not a String.
@@ -366,7 +382,7 @@ enum MarJSONCodec {
         case .string(let s): return s
         case .bool(let b): return b
         case .unit: return NSNull()
-        case .duration(let s): return s     // Duration → seconds (whole renders as int, sub-second keeps the fraction)
+        case .duration(let ms): return ["__duration": ms] as [String: Any]
         case .angle(let d): return ["__angle": d] as [String: Any]
         case .time(let ms):
             return ["__time": formatISO(ms)] as [String: Any]
@@ -472,6 +488,19 @@ enum MarJSONCodec {
         }
         if let d = any as? [String: Any], d.count == 1, let lit = d["__num"] as? String {
             return Double(lit)
+        }
+        return nil
+    }
+
+    /// A JSON number's own text: the lifted literal after parseJSONExact, or
+    /// an NSNumber's text from a plain parse. nil for anything that is not a
+    /// number.
+    static func numberLiteralOf(_ any: Any?) -> String? {
+        if let n = any as? NSNumber, CFGetTypeID(n) != CFBooleanGetTypeID() {
+            return n.stringValue
+        }
+        if let d = any as? [String: Any], d.count == 1, let lit = d["__num"] as? String {
+            return lit
         }
         return nil
     }

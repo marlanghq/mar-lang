@@ -19,7 +19,7 @@ import (
 //
 //	a type variable in a contract      refused by `mar check`
 //	a function in a contract           refused by `mar check`
-//	Set, Dict, Angle                   kinds of their own
+//	Set, Dict, Angle, Duration         kinds of their own
 //	a parameterised union              substituted at the use site
 //	a recursive type's cycle closure   named, and followed against the data
 func TestNoExampleHasAnUncheckedPositionInAServiceRequest(t *testing.T) {

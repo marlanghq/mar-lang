@@ -13,6 +13,7 @@ package runtime
 import (
 	"fmt"
 	"math/big"
+	"strconv"
 	"strings"
 )
 
@@ -84,17 +85,33 @@ type VUnit struct{}
 func (VUnit) isValue()        {}
 func (VUnit) Display() string { return "()" }
 
-// VDuration is a time interval, normalized to seconds (fractional, so
-// Time.millis can express sub-second intervals). Built only via
-// Time.millis / Time.seconds / Time.minutes / Time.hours / Time.days /
-// Time.weeks: there's no public number → Duration coercion, so unit
-// confusion is impossible at the call site.
-type VDuration struct{ Seconds float64 }
+// VDuration is a time interval, a whole number of milliseconds inside the
+// range of Int, the unit a Time is counted in. Built only via Time.millis /
+// Time.seconds / Time.minutes / Time.hours / Time.days / Time.weeks and
+// Time.diff: there's no public number → Duration coercion, so unit confusion
+// is impossible at the call site. Its wire form is `{"__duration": ms}`.
+type VDuration struct{ Millis int64 }
 
 func (VDuration) isValue() {}
+
+// Display writes the interval in seconds, exactly: "90s", "1.5s", "-0.001s".
 func (v VDuration) Display() string {
-	// %g renders whole seconds as "2s" and sub-second as "1.5s".
-	return fmt.Sprintf("%gs", v.Seconds)
+	return DurationSecondsText(v.Millis) + "s"
+}
+
+// DurationSecondsText writes a number of milliseconds as seconds, exactly,
+// with no trailing zeros: 90000 is "90", 1500 is "1.5", -1 is "-0.001".
+func DurationSecondsText(ms int64) string {
+	sign := ""
+	if ms < 0 {
+		sign, ms = "-", -ms
+	}
+	whole := strconv.FormatInt(ms/1000, 10)
+	frac := ms % 1000
+	if frac == 0 {
+		return sign + whole
+	}
+	return sign + whole + "." + strings.TrimRight(fmt.Sprintf("%03d", frac), "0")
 }
 
 // VAngle is a rotation, carried as a whole number of deci-degrees in

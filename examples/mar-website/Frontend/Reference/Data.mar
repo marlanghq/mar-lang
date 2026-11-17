@@ -473,7 +473,7 @@ sectionsFor m =
                     , { moduleName = "Time", name = "hours", signature = "Int -> Duration", side = "both", description = "A duration of that many hours.", examples = [ [ "Time.toSeconds (Time.hours 1)    -- 3600" ] ] }
                     , { moduleName = "Time", name = "days", signature = "Int -> Duration", side = "both", description = "A duration of that many days.", examples = [ [ "Time.toSeconds (Time.days 1)    -- 86400" ] ] }
                     , { moduleName = "Time", name = "weeks", signature = "Int -> Duration", side = "both", description = "A duration of that many weeks.", examples = [ [ "Time.toSeconds (Time.weeks 1)    -- 604800" ] ] }
-                    , { moduleName = "Time", name = "toSeconds", signature = "Duration -> Int", side = "both", description = "How many whole seconds a duration is.", examples = [ [ "Time.toSeconds (Time.minutes 3)    -- 180" ] ] }
+                    , { moduleName = "Time", name = "toSeconds", signature = "Duration -> Int", side = "both", description = "How many whole seconds a duration is, counted toward zero.", examples = [ [ "Time.toSeconds (Time.minutes 3)    -- 180" ] ] }
                     ]
               }
             , { category = "Shift a time"

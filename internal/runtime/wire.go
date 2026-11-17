@@ -34,23 +34,24 @@ type (
 )
 
 const (
-	WireInt     = ast.WireInt
-	WireString  = ast.WireString
-	WireBool    = ast.WireBool
-	WireDecimal = ast.WireDecimal
-	WireTime    = ast.WireTime
-	WireChar    = ast.WireChar
-	WireUnit    = ast.WireUnit
-	WireList    = ast.WireList
-	WireMaybe   = ast.WireMaybe
-	WireRecord  = ast.WireRecord
-	WireTuple   = ast.WireTuple
-	WireSet     = ast.WireSet
-	WireDict    = ast.WireDict
-	WireAngle   = ast.WireAngle
-	WireRef     = ast.WireRef
-	WireCtor    = ast.WireCtor
-	WireAny     = ast.WireAny
+	WireInt      = ast.WireInt
+	WireString   = ast.WireString
+	WireBool     = ast.WireBool
+	WireDecimal  = ast.WireDecimal
+	WireTime     = ast.WireTime
+	WireChar     = ast.WireChar
+	WireUnit     = ast.WireUnit
+	WireList     = ast.WireList
+	WireMaybe    = ast.WireMaybe
+	WireRecord   = ast.WireRecord
+	WireTuple    = ast.WireTuple
+	WireSet      = ast.WireSet
+	WireDict     = ast.WireDict
+	WireAngle    = ast.WireAngle
+	WireDuration = ast.WireDuration
+	WireRef      = ast.WireRef
+	WireCtor     = ast.WireCtor
+	WireAny      = ast.WireAny
 )
 
 // CheckWire reports whether a decoded request matches the declared input type,
@@ -249,6 +250,12 @@ func checkWireIn(v Value, s WireShape, path string, seen map[string]WireShape) e
 		}
 		return nil
 
+	case WireDuration:
+		if _, ok := v.(VDuration); !ok {
+			return bad("a duration (whole milliseconds under \"__duration\")")
+		}
+		return nil
+
 	case WireTuple:
 		// A tuple travels as a JSON array, and comes back from the decoder
 		// as a LIST, because an array is all the wire has and nothing tells
@@ -390,6 +397,8 @@ func wireDescribe(v Value) string {
 		return "nothing"
 	case VTime:
 		return "a time"
+	case VDuration:
+		return "a duration"
 	case VCtor:
 		return "`" + t.Tag + "`"
 	}

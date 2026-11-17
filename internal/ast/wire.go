@@ -80,6 +80,9 @@ const (
 	WireSet   WireKind = "Set"
 	WireDict  WireKind = "Dict"
 	WireAngle WireKind = "Angle"
+	// WireDuration is a Duration, `{"__duration": ms}` on the wire, which
+	// the decoders turn into one before the check.
+	WireDuration WireKind = "Duration"
 
 	// WireCtor is a union: the finite set of constructors the type
 	// declares, and what each one carries.

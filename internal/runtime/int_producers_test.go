@@ -1,73 +1,39 @@
 package runtime
 
 import (
-	"math"
 	"math/big"
 	"os"
 	"strings"
 	"testing"
 )
 
-// `Time.toSeconds` was the one Int-producing site that did not go through
-// intrange.go, and the file's own claim is that everything does: "Everything
-// that can produce or admit an Int goes through it, so there is one answer to
-// 'is this a Mar Int'."
-//
-// A Duration is a float64 holding seconds, and `Time.weeks` of a legal Int is
-// about 5e21 of them. Asking for that as an Int used to produce three
-// different wrong answers, none of them an error:
-//
-//	server   9223372036854775807   int64's ceiling, silently
-//	browser  5.4432e21             a float, which is not an Int at all
-//	phone    (crash)               Int(_:) traps on a Double that large
-//
-// The expression is legal Mar and type-checks. It cannot be caught earlier
-// than this: `Time.weeks n` with an `n` that is only known at runtime is not
-// something the compiler or the boot pass can rule out. So it stays a runtime
-// error — but one error, in one wording, on all three.
-func TestADurationTooBigForIntIsRefusedRatherThanGuessed(t *testing.T) {
-	tooBig := float64(MaxSafeInt) * 604800 // Time.weeks MaxSafeInt
-
-	if _, err := intFromSeconds("Time.toSeconds", tooBig); err == nil {
-		t.Fatal("a duration of 5e21 seconds was accepted as an Int")
-	} else if !strings.Contains(err.Error(), "Int out of range") ||
-		!strings.Contains(err.Error(), "Time.toSeconds") {
+// A Duration is a whole number of milliseconds inside the range of Int, so a
+// constructor whose interval does not fit refuses, naming itself and its
+// argument. `Time.weeks n` with an `n` known only at runtime cannot be ruled
+// out by the compiler, so this is a runtime error, in one wording on all three
+// runtimes.
+func TestADurationTooLongForIntIsRefused(t *testing.T) {
+	if _, err := durationOf("Time.weeks", MaxSafeInt, 7*24*60*60*1000); err == nil {
+		t.Fatal("Time.weeks of the largest Int was accepted")
+	} else if !strings.Contains(err.Error(), "Duration out of range: Time.weeks 9007199254740991 is outside the range of a Duration") {
 		t.Errorf("the refusal does not say what it is or where it came from: %v", err)
 	}
-
-	// The boundary is inclusive on both sides, and nothing inside it moves.
+	// The edge, inclusive on both sides.
 	for _, c := range []struct {
-		seconds float64
-		want    int64
+		n, unit, want int64
 	}{
-		{float64(MaxSafeInt), MaxSafeInt},
-		{float64(MinSafeInt), MinSafeInt},
-		{1.5, 1},
-		{-1.5, -1}, // toward zero, matching Math.trunc and .towardZero
-		{0, 0},
+		{MaxSafeInt, 1, MaxSafeInt},
+		{-MaxSafeInt, 1, -MaxSafeInt},
+		{MaxSafeInt / 1000, 1000, MaxSafeInt / 1000 * 1000},
+		{1, 7 * 24 * 60 * 60 * 1000, 604800000},
 	} {
-		got, err := intFromSeconds("Time.toSeconds", c.seconds)
-		if err != nil {
-			t.Errorf("%v seconds: %v", c.seconds, err)
-			continue
-		}
-		if got != c.want {
-			t.Errorf("%v seconds became %d, want %d", c.seconds, got, c.want)
+		d, err := durationOf("Time.x", c.n, c.unit)
+		if err != nil || d.Millis != c.want {
+			t.Errorf("%d x %d: got %v, %v; want %d", c.n, c.unit, d, err, c.want)
 		}
 	}
-
-	// One past the edge, on both sides, and the shapes a float can take that
-	// an Int cannot.
-	for _, bad := range []float64{
-		float64(MaxSafeInt) + 1,
-		float64(MinSafeInt) - 1,
-		math.Inf(1),
-		math.Inf(-1),
-		math.NaN(),
-	} {
-		if _, err := intFromSeconds("Time.toSeconds", bad); err == nil {
-			t.Errorf("%v seconds was accepted as an Int", bad)
-		}
+	if _, err := durationOf("Time.seconds", MaxSafeInt/1000+1, 1000); err == nil {
+		t.Error("one second past the edge was accepted")
 	}
 }
 
@@ -75,9 +41,7 @@ func TestADurationTooBigForIntIsRefusedRatherThanGuessed(t *testing.T) {
 // is no harness that can run a program to failure on all three: a Mar error is
 // not catchable by design, so it cannot come back as a String the way every
 // value in internal/parityfixture does. What can be checked is that the three
-// sources carry the same sentence — the same technique the repository already
-// uses for `no case branch matched`, and honest about proving the wording
-// rather than the behaviour.
+// sources carry the same sentence.
 func TestTheRefusalIsWordedTheSameInAllThreeRuntimes(t *testing.T) {
 	for _, f := range []struct{ label, path string }{
 		{"browser", "../jsserve/runtime.js"},
@@ -88,9 +52,9 @@ func TestTheRefusalIsWordedTheSameInAllThreeRuntimes(t *testing.T) {
 			t.Fatalf("%s: %v", f.label, err)
 		}
 		for _, fragment := range []string{
-			"Int out of range: ",
-			" seconds from ",
-			" is outside the range of Int",
+			"Duration out of range: ",
+			" is outside the range of a Duration",
+			" milliseconds)",
 		} {
 			if !strings.Contains(b, fragment) {
 				t.Errorf("the %s runtime's refusal is missing %q; the three wordings have drifted",

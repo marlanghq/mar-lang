@@ -481,8 +481,9 @@ final class PageRuntime {
                 guard case .ctor(let itag, let a) = item else { continue }
                 switch itag {
                 case "__SubEvery":
-                    guard a.count == 2, case .duration(let seconds) = a[0] else { continue }
-                    let key = "every:\(seconds)"
+                    guard a.count == 2, case .duration(let ms) = a[0] else { continue }
+                    let key = "every:\(ms)"
+                    let seconds = Double(ms) / 1000
                     want(key, a[1]) { [weak self] in self?.makeTimer(key, seconds) ?? LiveSub(taggers: []) {} }
                 case "__SubKeyboard":
                     want("keyboard", a.first) { [weak self] in self?.makeKeyboard() ?? LiveSub(taggers: []) {} }

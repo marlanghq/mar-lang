@@ -202,6 +202,8 @@ func wireShapeOf(t Type, depth int, path *shapePath, tags CtorLookup) ast.WireSh
 			}
 		case "Angle":
 			return ast.WireShape{Kind: ast.WireAngle}
+		case "Duration":
+			return ast.WireShape{Kind: ast.WireDuration}
 		default:
 			// A union has a finite, known set of legal wire values: the
 			// constructors it declares, each with the arguments it carries.

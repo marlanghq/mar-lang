@@ -480,13 +480,10 @@ func equalValues(a, b Value) bool {
 		bv, ok := b.(VAngle)
 		return ok && av.Deci == bv.Deci
 	case VDuration:
-		// Durations normalize to seconds at construction, so
-		// Time.seconds 60 and Time.minutes 1 ARE the same interval and
-		// compare equal. Without this arm a Duration fell through to
-		// the `return false` below: `Time.seconds 1 == Time.seconds 1`
-		// answered False, and so did a record holding one.
+		// A Duration is milliseconds, so Time.seconds 60 and
+		// Time.minutes 1 ARE the same interval and compare equal.
 		bv, ok := b.(VDuration)
-		return ok && av.Seconds == bv.Seconds
+		return ok && av.Millis == bv.Millis
 	case VTime:
 		// Same moment = same Unix millisecond. A Time sits in models
 		// and in entity rows (Entity.time), so this arm is reached by

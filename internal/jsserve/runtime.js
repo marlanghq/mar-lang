@@ -24,10 +24,23 @@
   // ---------- Value constructors ----------
 
   const VInt    = (n)        => ({ k: 'I', n });
-  // VDuration: time interval normalized to seconds. Constructed
-  // only via Time.seconds / .minutes / .hours / .days / .weeks so
-  // unit confusion is impossible at the call site.
-  const VDuration = (seconds) => ({ k: 'D', seconds });
+  // VDuration: time interval, a whole number of milliseconds inside the
+  // range of Int. Constructed only via Time.millis / .seconds / .minutes /
+  // .hours / .days / .weeks and Time.diff, so unit confusion is impossible
+  // at the call site.
+  const VDuration = (ms) => ({ k: 'D', ms });
+
+  // durationSecondsText writes milliseconds as seconds, exactly, with no
+  // trailing zeros: 90000 is "90", 1500 is "1.5", -1 is "-0.001". Go's
+  // DurationSecondsText is the same function.
+  function durationSecondsText(ms) {
+    const sign = ms < 0 ? '-' : '';
+    const abs = Math.abs(ms);
+    const frac = abs % 1000;
+    const whole = String((abs - frac) / 1000);
+    if (frac === 0) return sign + whole;
+    return sign + whole + '.' + String(frac).padStart(3, '0').replace(/0+$/, '');
+  }
   // VTime: absolute moment, Unix milliseconds. Constructed via
   // Time.now (effect) or Time.fromIso. Wire format is ISO 8601.
   const VTime = (millis) => ({ k: 'TM', millis });
@@ -598,6 +611,15 @@
     return undefined;
   }
 
+  // numberLiteralOf is a JSON number's own text: the lifted literal after
+  // parseJSONExact, or the shortest text of a plain double from JSON.parse.
+  // undefined for anything that is not a number.
+  function numberLiteralOf(v) {
+    if (typeof v === 'number') return String(v);
+    if (v && typeof v === 'object' && typeof v.__num === 'string' && Object.keys(v).length === 1) return v.__num;
+    return undefined;
+  }
+
   function parseJSONExact(text) {
     return JSON.parse(liftNumberLiterals(text));
   }
@@ -774,6 +796,21 @@
         }
         return VAngle(posMod(angleRaw, DECI_FULL));
       }
+      // Duration round-trip, `{__duration: 1500}`, whole milliseconds inside
+      // the range of Int: an integer literal, read from its own text, by the
+      // rules and sentences of Go's durationFromWire.
+      if ('__duration' in v && Object.keys(v).length === 1) {
+        const lit = numberLiteralOf(v.__duration);
+        if (lit === undefined) throw new Error('the value should be a whole number of milliseconds');
+        if (!/^-?[0-9]+$/.test(lit)) {
+          throw new Error('the value should be a whole number of milliseconds, got ' + lit);
+        }
+        const ms = Number(lit);
+        if (!Number.isSafeInteger(ms)) {
+          throw durationOutOfRange('a duration of ' + lit + ' milliseconds');
+        }
+        return VDuration(ms);
+      }
       // Char round-trip, `{__char: "x"}` from the Go encoder, and
       // exactly one Unicode scalar or nothing.
       //
@@ -900,7 +937,9 @@
         // them notices.
         if (!v.args || v.args.length === 0) return { __ctor: v.tag };
         return { __args: v.args.map(marToJs), __ctor: v.tag };
-      case 'D': return v.seconds;
+      // `{"__duration": 1500}`, whole milliseconds; every decoder rebuilds
+      // a Duration from it.
+      case 'D': return { __duration: v.ms };
       case 'A': return { __angle: v.deci };
       case 'TM': return { __time: new Date(v.millis).toISOString() };
       case 'Ch': return { __char: String.fromCodePoint(v.c) };
@@ -1549,7 +1588,7 @@
       case 'Fn': return 'Fn arity=' + v.arity;
       case 'V': return 'View<' + v.tag + '>';
       case 'E': return 'Effect<' + (v.tag || '?') + '>';
-      case 'D': return 'Duration ' + v.seconds + 's';
+      case 'D': return 'Duration ' + durationSecondsText(v.ms) + 's';
       case 'A': return 'Angle ' + (v.deci / 10) + '°';
       case 'TM': return 'Time ' + v.millis + 'ms';
     }
@@ -1642,6 +1681,7 @@
       case 'L': return 'a list';
       case 'U': return 'nothing';
       case 'TM': return 'a time';
+      case 'D': return 'a duration';
       case 'C': return '`' + v.tag + '`';
       case 'R': return v.order.length === 0
         ? 'an empty object'
@@ -1780,6 +1820,8 @@
       }
       case 'Angle':
         return v.k === 'A' ? null : bad('an angle');
+      case 'Duration':
+        return v.k === 'D' ? null : bad('a duration (whole milliseconds under "__duration")');
       case 'Tuple': {
         // A tuple travels as a JSON array and comes back as a LIST: an array
         // is all the wire has. Both forms arrive here, and the arity is what
@@ -2252,12 +2294,10 @@
       // lives in models, and models go through time travel, App.shared and
       // (in lendas) a rules engine replayed on both sides.
       case 'A': return a.deci === b.deci;
-      // Durations normalize to seconds at construction, so Time.seconds 60
-      // and Time.minutes 1 ARE the same interval. A Time is the same moment
-      // when it is the same Unix millisecond. Both were missing and fell
-      // through to `return false` below, in all three runtimes at once:
-      // which is why the drift tests never saw it: they agreed on the lie.
-      case 'D': return a.seconds === b.seconds;
+      // A Duration is milliseconds, so Time.seconds 60 and Time.minutes 1
+      // ARE the same interval. A Time is the same moment when it is the
+      // same Unix millisecond.
+      case 'D': return a.ms === b.ms;
       case 'TM': return a.millis === b.millis;
       case 'B': return a.b === b.b;
       case 'U': return true;
@@ -3949,6 +3989,14 @@
   // +/-(2^53-1). It is reliable even for a product that overflowed into the
   // inexact range, because rounding a double is relatively tiny: a value
   // past 2^53 never rounds back under it.
+  // durationOutOfRange is what building a Duration raises when the interval
+  // does not fit in Int milliseconds. The same sentence as Go's
+  // durationOutOfRange (internal/runtime/intrange.go) and MarInt's.
+  function durationOutOfRange(source) {
+    return new Error('Duration out of range: ' + source + ' is outside the range of a Duration' +
+      ' (-9007199254740991 to 9007199254740991 milliseconds)');
+  }
+
   function checkedInt(a, op, b, c) {
     if (!Number.isSafeInteger(c)) {
       throw new Error('Int overflow: ' + a + ' ' + op + ' ' + b +
@@ -6540,34 +6588,28 @@
     def('mathAtan2', atan2Impl);        def('Math.atan2', atan2Impl);
     def('mathIsqrt', isqrtImpl);        def('Math.isqrt', isqrtImpl);
 
-    // Time: Duration-typed unit smart constructors. Mirrors the Go
-    // runtime's timeBuiltins (internal/runtime/time.go). Each
-    // constructor multiplies by its unit's seconds-count at build
-    // time so the framework + user code only ever deals with
-    // pre-normalized seconds.
-    const mkDuration = (mult) => native(1, ([n]) => VDuration(n.n * mult));
-    // millis divides (not multiplies) so `Time.millis 1500` is exactly 1.5s
-    // with no float drift; the Duration is normalized to (fractional) seconds.
-    const timeMillisImpl = native(1, ([n]) => VDuration(n.n / 1000));
-    def('timeMillis', timeMillisImpl);         def('Time.millis', timeMillisImpl);
-    def('timeSeconds', mkDuration(1));         def('Time.seconds', mkDuration(1));
-    def('timeMinutes', mkDuration(60));        def('Time.minutes', mkDuration(60));
-    def('timeHours',   mkDuration(60*60));     def('Time.hours',   mkDuration(60*60));
-    def('timeDays',    mkDuration(24*60*60));  def('Time.days',    mkDuration(24*60*60));
-    def('timeWeeks',   mkDuration(7*24*60*60));def('Time.weeks',   mkDuration(7*24*60*60));
-    // A Duration is a float and holds far more than Int does: `Time.weeks` of
-    // a legal Int is about 5e21 seconds. Refusing is the only answer the three
-    // runtimes can share; before this the browser handed back a float that is
-    // not an Int, the server saturated, and the phone trapped.
-    def('timeToSeconds', native(1, ([d]) => {
-      const whole = Math.trunc(d.seconds || 0);
-      if (!Number.isSafeInteger(whole)) {
-        throw new Error('Int out of range: ' + (d.seconds || 0).toFixed(0) +
-          ' seconds from Time.toSeconds is outside the range of Int' +
-          ' (-9007199254740991 to 9007199254740991)');
-      }
-      return VInt(whole);
-    }));
+    // Time: Duration-typed unit smart constructors, as the Go runtime's
+    // timeBuiltins (internal/runtime/time.go). Each is n of its unit in
+    // milliseconds, exactly, or a refusal when that is past Int.
+    const mkDuration = (name, unitMs) => native(1, ([n]) => {
+      const ms = n.n * unitMs;
+      if (!Number.isSafeInteger(ms)) throw durationOutOfRange(name + ' ' + n.n);
+      return VDuration(ms);
+    });
+    const timeMillisImpl = mkDuration('Time.millis', 1);
+    def('timeMillis', timeMillisImpl);    def('Time.millis', timeMillisImpl);
+    const timeSecondsImpl = mkDuration('Time.seconds', 1000);
+    def('timeSeconds', timeSecondsImpl);  def('Time.seconds', timeSecondsImpl);
+    const timeMinutesImpl = mkDuration('Time.minutes', 60 * 1000);
+    def('timeMinutes', timeMinutesImpl);  def('Time.minutes', timeMinutesImpl);
+    const timeHoursImpl = mkDuration('Time.hours', 60 * 60 * 1000);
+    def('timeHours', timeHoursImpl);      def('Time.hours', timeHoursImpl);
+    const timeDaysImpl = mkDuration('Time.days', 24 * 60 * 60 * 1000);
+    def('timeDays', timeDaysImpl);        def('Time.days', timeDaysImpl);
+    const timeWeeksImpl = mkDuration('Time.weeks', 7 * 24 * 60 * 60 * 1000);
+    def('timeWeeks', timeWeeksImpl);      def('Time.weeks', timeWeeksImpl);
+    // Whole seconds, toward zero: 1.5s is 1 and -1.5s is -1.
+    def('timeToSeconds', native(1, ([d]) => VInt((d.ms - d.ms % 1000) / 1000)));
     def('Time.toSeconds', envLookup(env, 'timeToSeconds'));
 
     // Time.now: Task Time. Reads the wall clock; same shape as
@@ -6581,8 +6623,8 @@
     // current Time each tick. Fires first AFTER one interval (Elm's Time.every);
     // seed the immediate value with `Cmd.perform GotNow Time.now` in init.
     const timeEveryImpl = native(2, ([dur, tagger]) => {
-      const seconds = (dur && typeof dur.seconds === 'number') ? dur.seconds : 0;
-      return { k: 'SUB', items: [{ src: 'timeEvery', key: 'timeEvery:' + seconds, intervalMs: seconds * 1000, tagger }] };
+      const ms = (dur && typeof dur.ms === 'number') ? dur.ms : 0;
+      return { k: 'SUB', items: [{ src: 'timeEvery', key: 'timeEvery:' + ms, intervalMs: ms, tagger }] };
     });
     def('timeEvery', timeEveryImpl);
     def('Time.every', timeEveryImpl);
@@ -6900,13 +6942,17 @@
     const pAs = mkPitch(10); def('soundPitch_as_', pAs); def('Sound.as_', pAs);
     const pB = mkPitch(11);  def('soundPitch_b', pB);    def('Sound.b', pB);
 
-    // Time arithmetic: durations are seconds, times are millis;
-    // multiply by 1000 to align units when shifting.
-    def('timeAdd', native(2, ([t, d]) => VTime((t.millis || 0) + (d.seconds || 0) * 1000)));
+    // Time arithmetic: a Duration and a Time are both milliseconds, so a
+    // shift is exact and Time.diff is to the millisecond.
+    def('timeAdd', native(2, ([t, d]) => VTime((t.millis || 0) + d.ms)));
     def('Time.add', envLookup(env, 'timeAdd'));
-    def('timeSub', native(2, ([t, d]) => VTime((t.millis || 0) - (d.seconds || 0) * 1000)));
+    def('timeSub', native(2, ([t, d]) => VTime((t.millis || 0) - d.ms)));
     def('Time.sub', envLookup(env, 'timeSub'));
-    def('timeDiff', native(2, ([a, b]) => VDuration(Math.floor(((b.millis || 0) - (a.millis || 0)) / 1000))));
+    def('timeDiff', native(2, ([a, b]) => {
+      const ms = (b.millis || 0) - (a.millis || 0);
+      if (!Number.isSafeInteger(ms)) throw durationOutOfRange('Time.diff');
+      return VDuration(ms);
+    }));
     def('Time.diff', envLookup(env, 'timeDiff'));
 
     def('timeBefore', native(2, ([a, b]) => VBool((a.millis || 0) < (b.millis || 0))));
@@ -15573,6 +15619,7 @@
       case 'B': return v.b ? 'True' : 'False';
       case 'U': return '()';
       case 'TM': return new Date(v.millis).toISOString();
+      case 'D': return durationSecondsText(v.ms) + 's';
       case 'L': return '[' + v.xs.map(function (x) { return displayValue(x, depth + 1); }).join(', ') + ']';
       case 'T': return '(' + v.xs.map(function (x) { return displayValue(x, depth + 1); }).join(', ') + ')';
       case 'R': {

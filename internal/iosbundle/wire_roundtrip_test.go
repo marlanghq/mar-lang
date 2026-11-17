@@ -81,9 +81,6 @@ func TestEveryWireValueSurvivesThePhoneAndTheServer(t *testing.T) {
 	serverBody := map[string]string{}
 	for _, c := range parityfixture.WireCases {
 		plan.Values = append(plan.Values, "v"+c.Name, "enc"+c.Name)
-		if c.NoContract {
-			continue
-		}
 		plan.Values = append(plan.Values, "dec"+c.Name)
 		for _, leg := range parityfixture.WireLegs {
 			plan.Requests = append(plan.Requests, reqPlan{
@@ -134,9 +131,6 @@ func TestEveryWireValueSurvivesThePhoneAndTheServer(t *testing.T) {
 		want := wireparity.Dump(srv.Value(t, "v"+c.Name))
 		m.Check(c.Name, "value", want, out.Values["v"+c.Name])
 		m.Check(c.Name, "encode", wireparity.Dump(srv.Value(t, "enc"+c.Name)), out.Values["enc"+c.Name])
-		if c.NoContract {
-			continue
-		}
 		m.Check(c.Name, "dec/srv", "KOk["+want+"]", wireparity.Dump(srv.Value(t, "dec"+c.Name)))
 		m.Check(c.Name, "dec/ios", "KOk["+want+"]", out.Values["dec"+c.Name])
 		for _, leg := range parityfixture.WireLegs {

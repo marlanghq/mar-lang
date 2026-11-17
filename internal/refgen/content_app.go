@@ -351,7 +351,7 @@ var appDescriptions = map[string]string{
 	"Time.hours":     "A duration of that many hours.",
 	"Time.days":      "A duration of that many days.",
 	"Time.weeks":     "A duration of that many weeks.",
-	"Time.toSeconds": "How many whole seconds a duration is.",
+	"Time.toSeconds": "How many whole seconds a duration is, counted toward zero.",
 	"Time.add":       "Moves a time forward by a duration.",
 	"Time.sub":       "Moves a time backward by a duration.",
 	"Time.addDays":   "Moves a time by whole days. Negative counts move backward.",

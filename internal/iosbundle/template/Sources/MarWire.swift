@@ -228,6 +228,10 @@ enum MarWire {
             if case .angle = v { return nil }
             return bad("an angle")
 
+        case "Duration":
+            if case .duration = v { return nil }
+            return bad("a duration (whole milliseconds under \"__duration\")")
+
         case "Tuple":
             // A tuple travels as a JSON array and comes back as a LIST: an
             // array is all the wire has. Both forms arrive here, and the
@@ -507,6 +511,7 @@ enum MarWire {
         case .list: return "a list"
         case .unit: return "nothing"
         case .time: return "a time"
+        case .duration: return "a duration"
         case .ctor(let tag, _): return "`\(tag)`"
         case .record(_, let order):
             return order.isEmpty ? "an empty object" : "an object with \(order.joined(separator: ", "))"

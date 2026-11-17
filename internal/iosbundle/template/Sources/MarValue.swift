@@ -35,10 +35,11 @@ enum MarValue: @unchecked Sendable {
     case string(String)
     case bool(Bool)
     case unit
-    /// Time interval normalized to (fractional) seconds. Built only via
-    /// Time.* smart constructors (Time.millis gives sub-second); user
-    /// code never coerces a number into one directly.
-    case duration(Double)
+    /// Time interval, a whole number of milliseconds inside the range of
+    /// Int. Built only via the Time.* smart constructors and Time.diff;
+    /// user code never coerces a number into one directly. Wire format is
+    /// `{"__duration": ms}`.
+    case duration(Int)
     /// Absolute moment, Unix milliseconds. Built via Time.now or
     /// Time.fromIso. Wire format is `{"__time": "ISO 8601"}`.
     case time(Int)
@@ -268,12 +269,9 @@ extension MarValue {
         // Angle lives in models, and models go through time travel,
         // App.shared and a rules engine replayed on both sides.
         case (.angle(let a),  .angle(let b)):  return a == b
-        // Durations normalize to seconds at construction, so
-        // Time.seconds 60 and Time.minutes 1 ARE the same interval. A
-        // Time is the same moment when it is the same Unix
-        // millisecond. Both fell through to `default: return false`
-        // here, in Go and in JS too: the three runtimes agreed on the
-        // wrong answer, which is exactly what a drift test cannot see.
+        // A Duration is milliseconds, so Time.seconds 60 and Time.minutes 1
+        // ARE the same interval. A Time is the same moment when it is the
+        // same Unix millisecond.
         case (.duration(let a), .duration(let b)): return a == b
         case (.time(let a),   .time(let b)):   return a == b
         case (.bool(let a),   .bool(let b)):   return a == b

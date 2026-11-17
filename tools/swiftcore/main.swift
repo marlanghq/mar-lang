@@ -160,7 +160,7 @@ func wireDump(_ v: MarValue) -> String {
     case .char(let c): return "Ch\(c.value)"
     case .time(let ms): return "Tm\(ms)"
     case .angle(let d): return "A\(d)"
-    case .duration(let s): return "Du\(Int((s * 1000).rounded()))"
+    case .duration(let ms): return "Du\(ms)"
     case .list(let xs): return "L" + all(xs)
     case .tuple(let xs): return "Tu" + all(xs)
     case .record(let fs, _):

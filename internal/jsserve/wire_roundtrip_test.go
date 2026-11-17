@@ -60,9 +60,6 @@ func TestEveryWireValueSurvivesTheBrowserAndTheServer(t *testing.T) {
 	serverBody := map[string]string{}
 	for _, c := range parityfixture.WireCases {
 		plan.Values = append(plan.Values, "v"+c.Name, "enc"+c.Name)
-		if c.NoContract {
-			continue
-		}
 		plan.Values = append(plan.Values, "dec"+c.Name)
 		for _, leg := range parityfixture.WireLegs {
 			plan.Requests = append(plan.Requests, "call"+upper(leg.Prefix)+c.Name)
@@ -85,9 +82,6 @@ func TestEveryWireValueSurvivesTheBrowserAndTheServer(t *testing.T) {
 		// sent, or every failure below would be blamed on the wire.
 		m.Check(c.Name, "value", want, out.Values["v"+c.Name])
 		m.Check(c.Name, "encode", wireparity.Dump(srv.Value(t, "enc"+c.Name)), out.Values["enc"+c.Name])
-		if c.NoContract {
-			continue
-		}
 		m.Check(c.Name, "dec/srv", "KOk["+want+"]", wireparity.Dump(srv.Value(t, "dec"+c.Name)))
 		m.Check(c.Name, "dec/web", "KOk["+want+"]", out.Values["dec"+c.Name])
 		for _, leg := range parityfixture.WireLegs {
@@ -172,7 +166,7 @@ function dump(v) {
     case 'Ch': return 'Ch' + v.c;
     case 'TM': return 'Tm' + v.millis;
     case 'A':  return 'A' + v.deci;
-    case 'D':  return 'Du' + Math.round(v.seconds * 1000);
+    case 'D':  return 'Du' + v.ms;
     case 'L':  return 'L' + all(v.xs);
     case 'T':  return 'Tu' + all(v.xs);
     case 'R':  return 'R{' + Object.keys(v.fields).sort().map(k => k + '=' + dump(v.fields[k])).join(',') + '}';

@@ -2054,33 +2054,34 @@ enum MarBuiltins {
         env.define("Cmd.perform", .fn(cmdPerform))
 
         // MARK: Time, Duration type + unit smart constructors
-        let mkDuration: (Double) -> MarFn = { mult in
+        // Each is n of its unit in milliseconds, exactly, or a refusal when
+        // that is past Int (MarInt.duration).
+        let mkDuration: (String, Int) -> MarFn = { name, unitMs in
             MarFn.native(1) { args in
                 guard case .int(let n) = args[0] else {
                     throw MarRuntimeError.typeMismatch(expected: "Int", got: Eval.typeOf(args[0]))
                 }
-                return .duration(Double(n) * mult)
+                return .duration(try MarInt.duration(name, n, unitMs))
             }
         }
-        // millis divides (not multiplies) so `Time.millis 1500` is exactly
-        // 1.5s; Duration is normalized to (fractional) seconds.
-        let timeMillis = MarFn.native(1) { args in
-            guard case .int(let n) = args[0] else {
-                throw MarRuntimeError.typeMismatch(expected: "Int", got: Eval.typeOf(args[0]))
-            }
-            return .duration(Double(n) / 1000)
-        }
-        env.define("timeMillis",  .fn(timeMillis));            env.define("Time.millis",  .fn(timeMillis))
-        env.define("timeSeconds", .fn(mkDuration(1)));         env.define("Time.seconds", .fn(mkDuration(1)))
-        env.define("timeMinutes", .fn(mkDuration(60)));        env.define("Time.minutes", .fn(mkDuration(60)))
-        env.define("timeHours",   .fn(mkDuration(60*60)));     env.define("Time.hours",   .fn(mkDuration(60*60)))
-        env.define("timeDays",    .fn(mkDuration(24*60*60)));  env.define("Time.days",    .fn(mkDuration(24*60*60)))
-        env.define("timeWeeks",   .fn(mkDuration(7*24*60*60)));env.define("Time.weeks",   .fn(mkDuration(7*24*60*60)))
+        let timeMillis = mkDuration("Time.millis", 1)
+        env.define("timeMillis", .fn(timeMillis));   env.define("Time.millis", .fn(timeMillis))
+        let timeSeconds = mkDuration("Time.seconds", 1000)
+        env.define("timeSeconds", .fn(timeSeconds)); env.define("Time.seconds", .fn(timeSeconds))
+        let timeMinutes = mkDuration("Time.minutes", 60 * 1000)
+        env.define("timeMinutes", .fn(timeMinutes)); env.define("Time.minutes", .fn(timeMinutes))
+        let timeHours = mkDuration("Time.hours", 60 * 60 * 1000)
+        env.define("timeHours", .fn(timeHours));     env.define("Time.hours", .fn(timeHours))
+        let timeDays = mkDuration("Time.days", 24 * 60 * 60 * 1000)
+        env.define("timeDays", .fn(timeDays));       env.define("Time.days", .fn(timeDays))
+        let timeWeeks = mkDuration("Time.weeks", 7 * 24 * 60 * 60 * 1000)
+        env.define("timeWeeks", .fn(timeWeeks));     env.define("Time.weeks", .fn(timeWeeks))
+        // Whole seconds, toward zero: 1.5s is 1 and -1.5s is -1.
         let timeToSeconds = MarFn.native(1) { args in
-            guard case .duration(let s) = args[0] else {
+            guard case .duration(let ms) = args[0] else {
                 throw MarRuntimeError.typeMismatch(expected: "Duration", got: Eval.typeOf(args[0]))
             }
-            return .int(try MarInt.fromSeconds("Time.toSeconds", s))
+            return .int(ms / 1000)
         }
         env.define("timeToSeconds",  .fn(timeToSeconds))
         env.define("Time.toSeconds", .fn(timeToSeconds))
@@ -2116,7 +2117,7 @@ enum MarBuiltins {
                     expected: "(Time, Duration)",
                     got: "(\(Eval.typeOf(args[0])), \(Eval.typeOf(args[1])))")
             }
-            return .time(t + Int(d * 1000))
+            return .time(t + d)
         }
         env.define("timeAdd",  .fn(timeAdd))
         env.define("Time.add", .fn(timeAdd))
@@ -2128,7 +2129,7 @@ enum MarBuiltins {
                     expected: "(Time, Duration)",
                     got: "(\(Eval.typeOf(args[0])), \(Eval.typeOf(args[1])))")
             }
-            return .time(t - Int(d * 1000))
+            return .time(t - d)
         }
         env.define("timeSub",  .fn(timeSub))
         env.define("Time.sub", .fn(timeSub))
@@ -2140,7 +2141,9 @@ enum MarBuiltins {
                     expected: "(Time, Time)",
                     got: "(\(Eval.typeOf(args[0])), \(Eval.typeOf(args[1])))")
             }
-            return .duration(Double(b - a) / 1000)
+            let (ms, didOverflow) = b.subtractingReportingOverflow(a)
+            guard !didOverflow, MarInt.inRange(ms) else { throw MarInt.durationOutOfRange("Time.diff") }
+            return .duration(ms)
         }
         env.define("timeDiff",  .fn(timeDiff))
         env.define("Time.diff", .fn(timeDiff))

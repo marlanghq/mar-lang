@@ -237,10 +237,12 @@ func appendValue(dst []byte, v Value) ([]byte, error) {
 	case VUnit:
 		return append(dst, "null"...), nil
 	case VDuration:
-		// -1 precision drops trailing zeros, so whole-second durations
-		// still serialize as integers ("2"): only sub-second ones carry
-		// a fraction ("1.5"). Keeps the wire format stable for existing data.
-		return strconv.AppendFloat(dst, x.Seconds, 'f', -1, 64), nil
+		// Wire format is `{"__duration": 1500}`, whole milliseconds, the
+		// marker-object shape of __angle, so every decoder rebuilds a
+		// Duration rather than a plain Int.
+		dst = append(dst, `{"__duration":`...)
+		dst = strconv.AppendInt(dst, x.Millis, 10)
+		return append(dst, '}'), nil
 	case VAngle:
 		// Wire format is `{"__angle": 450}`, deci-degrees, the same
 		// marker-object shape as __char / __time / __dec, so the client
@@ -428,20 +430,55 @@ func EncodeValueJSON(v Value) (string, error) {
 // wholeNumber reads a deci-degree payload. Deci-degrees are integral by
 // construction and no Mar encoder writes a fraction, so a fractional one is
 // refused rather than truncated — the same rule the `__char` payload follows.
-func wholeNumber(raw any) (int64, error) {
+func wholeNumber(raw any, unit string) (int64, error) {
 	switch n := raw.(type) {
 	case json.Number:
 		if i, err := n.Int64(); err == nil {
 			return i, nil
 		}
-		return 0, fmt.Errorf("the value should be a whole number of deci-degrees, got %s", n.String())
+		return 0, fmt.Errorf("the value should be a whole number of %s, got %s", unit, n.String())
 	case float64:
 		if n == math.Trunc(n) {
 			return int64(n), nil
 		}
-		return 0, fmt.Errorf("the value should be a whole number of deci-degrees, got %v", n)
+		return 0, fmt.Errorf("the value should be a whole number of %s, got %v", unit, n)
 	}
-	return 0, fmt.Errorf("the value should be a whole number of deci-degrees, got %v", raw)
+	return 0, fmt.Errorf("the value should be a whole number of %s, got %v", unit, raw)
+}
+
+// durationFromWire reads the payload of `{"__duration": ms}`: an integer
+// literal (no fraction, no exponent) inside the range of Int. The browser and
+// the phone read the same literal text by the same rules, with the same
+// sentences.
+func durationFromWire(raw any) (Value, error) {
+	n, ok := raw.(json.Number)
+	if !ok {
+		return nil, fmt.Errorf("the value should be a whole number of milliseconds")
+	}
+	lit := n.String()
+	if !integerLiteral(lit) {
+		return nil, fmt.Errorf("the value should be a whole number of milliseconds, got %s", lit)
+	}
+	ms, err := n.Int64()
+	if err != nil || !inIntRange(ms) {
+		return nil, durationOutOfRange("a duration of " + lit + " milliseconds")
+	}
+	return VDuration{Millis: ms}, nil
+}
+
+// integerLiteral reports whether a JSON number's text is a whole number
+// written as one: digits and an optional minus sign.
+func integerLiteral(lit string) bool {
+	digits := strings.TrimPrefix(lit, "-")
+	if digits == "" {
+		return false
+	}
+	for _, c := range digits {
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 // isoMillis is the wire form of a Time: RFC 3339 in UTC with exactly three
@@ -695,11 +732,16 @@ func convertJSON(raw any) (Value, error) {
 		// Angle from the same bytes. A rules engine replayed on both sides
 		// is exactly what the encoder's comment says this marker is for.
 		if raw, present := x["__angle"]; present && len(x) == 1 {
-			d, err := wholeNumber(raw)
+			d, err := wholeNumber(raw, "deci-degrees")
 			if err != nil {
 				return nil, err
 			}
 			return VAngle{Deci: posMod(d, deciFull)}, nil
+		}
+		// Tagged duration, `{"__duration": 1500}`, whole milliseconds inside
+		// the range of Int. Counterpart to the VDuration encoder.
+		if raw, present := x["__duration"]; present && len(x) == 1 {
+			return durationFromWire(raw)
 		}
 		// Tagged time, `{"__time": "ISO 8601"}`. Counterpart to the
 		// VTime encoder; reconstructing a VTime here keeps round-trip
