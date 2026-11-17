@@ -1,10 +1,12 @@
 package typecheck
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
 	"mar/internal/ast"
+	"mar/internal/parityfixture"
 	"mar/internal/parser"
 )
 
@@ -444,5 +446,62 @@ func TestAuthConfigStillTakesItsOptionalFields(t *testing.T) {
 `
 	if _, err := checkSource(t, src); err != nil {
 		t.Fatalf("the optional fields are optional: %v", err)
+	}
+}
+
+// A GET or DELETE request has no body: it travels in the URL, so its type is a
+// record (path parameters plus the `q` object of the other fields) or `()`.
+// Every kind of value the wire carries is tried on every verb.
+func TestABodilessRequestIsARecord(t *testing.T) {
+	for _, c := range parityfixture.WireCases {
+		if c.NoContract {
+			continue
+		}
+		recordOrUnit := strings.HasPrefix(c.Type, "{") || c.Type == "()"
+		for _, verb := range []string{"GET", "DELETE", "POST", "PUT", "PATCH"} {
+			src := parityfixture.WireTypesSource() + fmt.Sprintf(
+				"\n\nsvc : Service (%s) ()\nsvc =\n    Service.declare %s \"/svc\"\n", c.Type, verb)
+			_, err := checkSource(t, src)
+			if recordOrUnit || !ast.BodilessVerb(verb) {
+				if err != nil {
+					t.Errorf("%s with a %s request (%s) is an ordinary contract: %v", verb, c.Type, c.Name, err)
+				}
+				continue
+			}
+			if err == nil {
+				t.Errorf("%s with a %s request (%s) type-checked; no client can send it", verb, c.Type, c.Name)
+				continue
+			}
+			for _, want := range []string{"`svc`", "declared " + verb, "not a record", "Service { value : "} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("%s / %s: the message must mention %q, got:\n%v", verb, c.Name, want, err)
+				}
+			}
+		}
+	}
+}
+
+// The rule reads the type after aliases are expanded.
+func TestABodilessRequestSeesThroughAliases(t *testing.T) {
+	cases := []struct {
+		name, decls, req string
+		refused          bool
+	}{
+		{"an alias of Int", "type alias Id = Int", "Id", true},
+		{"an alias of a record", "type alias Query = { term : String }", "Query", false},
+		{"a Maybe of a record alias", "type alias Query = { term : String }", "(Maybe Query)", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			src := "module M exposing (..)\n\n\n" + tc.decls + "\n\n\nsvc : Service " + tc.req +
+				" ()\nsvc =\n    Service.declare GET \"/svc\"\n"
+			_, err := checkSource(t, src)
+			if tc.refused && (err == nil || !strings.Contains(err.Error(), "not a record")) {
+				t.Fatalf("refused for being no record, got: %v", err)
+			}
+			if !tc.refused && err != nil {
+				t.Fatalf("a record request is fine: %v", err)
+			}
+		})
 	}
 }

@@ -3,6 +3,7 @@ package typecheck
 import (
 	"fmt"
 	"sort"
+	"strings"
 
 	"mar/internal/ast"
 )
@@ -100,20 +101,53 @@ func checkServiceContracts(mod *ast.Module, types map[string]Type, tags CtorLook
 				"  Give it a type annotation, for example `%s : Service %s`",
 				v.Name, side, Pretty(t), v.Name, exampleServiceArgs(con))
 		}
+		if err := checkBodilessRequest(v, con); err != nil {
+			return err
+		}
 	}
 	return nil
+}
+
+// checkBodilessRequest refuses a GET or DELETE contract whose request is not a
+// record (or `()`).
+//
+// A request without a body travels in the URL: path parameters in their
+// slots, and every other field of the record in the query string. A value
+// that is not a record has no fields to put there, so no client could send
+// it. The verb is read from the declaration's syntax here, where the error can
+// point at the line; apphost refuses the same contract at boot whatever way
+// the verb was written.
+func checkBodilessRequest(v *ast.ValueDecl, con TCon) error {
+	verb, ok := serviceDeclareVerb(v.Body)
+	if !ok || !ast.BodilessVerb(verb) {
+		return nil
+	}
+	switch StripForall(con.Args[0]).(type) {
+	case TRecord, TUnit:
+		return nil
+	}
+	example := TCon{Name: "Service", Args: []Type{
+		TRecord{Fields: map[string]Type{"value": con.Args[0]}, Order: []string{"value"}},
+		con.Args[1],
+	}}
+	return errorf(v.Pos, "the contract `%s` is declared %s, and its request type `%s` is not a record.\n"+
+		"  A %s request has no body: path parameters travel in their slots and the other fields of "+
+		"a record in the query string. A value that is not a record has no fields to put there.\n"+
+		"  Make the request a record, for example `%s : %s`",
+		v.Name, verb, Pretty(con.Args[0]), verb, v.Name, Pretty(example))
 }
 
 // exampleServiceArgs spells the annotation to write, keeping whichever side
 // is already concrete.
 func exampleServiceArgs(con TCon) string {
-	name := func(t Type, fallback string) string {
+	side := func(t Type, placeholder string) Type {
 		if hasTypeVar(t) {
-			return fallback
+			return TCon{Name: placeholder}
 		}
-		return Pretty(t)
+		return t
 	}
-	return fmt.Sprintf("%s %s", name(con.Args[0], "YourRequest"), name(con.Args[1], "YourResponse"))
+	full := Pretty(TCon{Name: "Service", Args: []Type{side(con.Args[0], "YourRequest"), side(con.Args[1], "YourResponse")}})
+	return strings.TrimPrefix(full, "Service ")
 }
 
 // hasTypeVar reports whether a type still contains a variable anywhere.

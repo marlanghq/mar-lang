@@ -5,6 +5,8 @@ import (
 	"net/url"
 	"os"
 	"strings"
+
+	"mar/internal/ast"
 )
 
 // VService is the typed RPC contract. `Service.declare VERB "path"`
@@ -273,12 +275,10 @@ func stringField(rec VRecord, name string) string {
 // payloadName says where the duplicate came from, so the 422 tells the
 // caller which half of their request to edit rather than making them guess.
 func payloadName(verb string) string {
-	switch verb {
-	case "GET", "DELETE":
+	if ast.BodilessVerb(verb) {
 		return "query string"
-	default:
-		return "request body"
 	}
+	return "request body"
 }
 
 // assembleServiceInput reconstructs a service handler's typed request
@@ -351,32 +351,47 @@ func assembleServiceInput(svc VService, reqPath, query, body string) (Value, err
 		}
 	}
 
-	switch svc.Verb {
-	case "GET", "DELETE":
-		if q := queryValue(query); q != "" {
+	if ast.BodilessVerb(svc.Verb) {
+		// The request is a record or (), so `q` carries the record's
+		// fields as one JSON object (typecheck refuses any other request
+		// type on these verbs).
+		q, err := queryValue(query)
+		if err != nil {
+			return nil, err
+		}
+		if q != "" {
 			v, err := decodeJSON(q)
 			if err != nil {
 				return nil, err
+			}
+			if _, ok := v.(VRecord); !ok {
+				return nil, fmt.Errorf("the `q` query parameter should be an object of the request's fields")
 			}
 			if err := mergeBody(v); err != nil {
 				return nil, err
 			}
 		}
-	default: // POST, PUT, PATCH
+	} else {
 		trimmed := strings.TrimSpace(body)
 		if trimmed != "" && trimmed != "null" {
 			v, err := decodeJSON(body)
 			if err != nil {
 				return nil, err
 			}
-			if _, ok := v.(VRecord); ok {
+			_, isRecord := v.(VRecord)
+			switch {
+			case isRecord:
 				if err := mergeBody(v); err != nil {
 					return nil, err
 				}
-			} else if len(order) == 0 {
-				// A non-record body with no path params is the request
-				// value itself (rare; services normally use records or ()).
+			case len(order) == 0:
+				// A body that is not a record, with no path params, is the
+				// request value itself.
 				return v, nil
+			default:
+				// Path params make the request a record, whose other fields
+				// the body has to carry.
+				return nil, fmt.Errorf("the request body should be an object of the request's fields")
 			}
 		}
 	}
@@ -388,16 +403,17 @@ func assembleServiceInput(svc VService, reqPath, query, body string) (Value, err
 }
 
 // queryValue pulls the single `q` parameter (a JSON blob of the non-path
-// request fields) out of a raw query string.
-func queryValue(raw string) string {
+// request fields) out of a raw query string. A query that does not parse is
+// an error, not an empty one.
+func queryValue(raw string) (string, error) {
 	if raw == "" {
-		return ""
+		return "", nil
 	}
 	vals, err := url.ParseQuery(raw)
 	if err != nil {
-		return ""
+		return "", fmt.Errorf("the query string does not parse: %v", err)
 	}
-	return vals.Get("q")
+	return vals.Get("q"), nil
 }
 
 // makeResp builds a Response record { status, body }. Every place a

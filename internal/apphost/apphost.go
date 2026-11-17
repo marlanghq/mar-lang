@@ -246,6 +246,20 @@ func extractServices(rec runtime.VRecord, who string) ([]runtime.Value, []runtim
 						"  because that is where the compiler can attach the declared request type to it.",
 					who, i, es.Service.Verb, es.Service.Path)
 			}
+			// The checker refuses this where it can read the verb off the
+			// declaration; this is the same rule for every other spelling
+			// of it (a verb passed through a variable or a pipe).
+			if ast.BodilessVerb(es.Service.Verb) {
+				switch es.Service.InputShape.Kind {
+				case runtime.WireRecord, runtime.WireUnit:
+				default:
+					return nil, nil, fmt.Errorf(
+						"%s: services[%d] (%s %s) takes a request that is not a record, so no client can send it.\n"+
+							"  A %s request has no body: path parameters travel in their slots and the other fields of\n"+
+							"  a record in the query string. Make the request a record, for example `{ value : ... }`.",
+						who, i, es.Service.Verb, es.Service.Path, es.Service.Verb)
+				}
+			}
 			exposed = append(exposed, es)
 			out = append(out, runtime.ExposedServiceToRoute(es))
 		}

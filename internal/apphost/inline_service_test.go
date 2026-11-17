@@ -59,3 +59,43 @@ func TestTopLevelServiceStillMounts(t *testing.T) {
 		t.Fatalf("expected one route, got %d", len(routes))
 	}
 }
+
+// A GET or DELETE contract whose request is not a record is refused at boot
+// too, which covers a verb the checker cannot read off the declaration (a
+// verb passed through a variable or a pipe): here only the verb and the
+// stamped shape count.
+func TestABodilessServiceThatTakesNoRecordIsRefusedAtBoot(t *testing.T) {
+	mount := func(verb string, kind runtime.WireKind) error {
+		shape := runtime.WireShape{Kind: kind}
+		svc := runtime.VService{Verb: verb, Path: "/api/notes", InputShape: &shape}
+		_, err := ExtractServices(runtime.VRecord{
+			Fields: map[string]runtime.Value{"services": runtime.VList{Elements: []runtime.Value{
+				runtime.VExposedService{Service: svc},
+			}}},
+			Order: []string{"services"},
+		}, "App.backend")
+		return err
+	}
+	for _, verb := range []string{"GET", "DELETE"} {
+		for _, kind := range []runtime.WireKind{runtime.WireInt, runtime.WireMaybe, runtime.WireList, runtime.WireCtor} {
+			err := mount(verb, kind)
+			if err == nil {
+				t.Errorf("%s with a %s request mounted; no client can send it", verb, kind)
+				continue
+			}
+			for _, want := range []string{verb, "/api/notes", "not a record"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("the message must mention %q, got:\n%s", want, err)
+				}
+			}
+		}
+		for _, kind := range []runtime.WireKind{runtime.WireRecord, runtime.WireUnit} {
+			if err := mount(verb, kind); err != nil {
+				t.Errorf("%s with a %s request is an ordinary contract: %v", verb, kind, err)
+			}
+		}
+	}
+	if err := mount("POST", runtime.WireInt); err != nil {
+		t.Errorf("a POST carries any value in its body: %v", err)
+	}
+}

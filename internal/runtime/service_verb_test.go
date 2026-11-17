@@ -191,3 +191,42 @@ func TestAssembleRejectsPathParamRepeatedInPayload(t *testing.T) {
 		})
 	}
 }
+
+// What arrives in the place of the request's fields has to be their object.
+// Anything else is refused with a sentence, rather than dropped and the
+// request built without it (a Maybe field would read Nothing, and the caller
+// would never learn its value was ignored).
+func TestAssembleRefusesWhatIsNotTheRequestsFields(t *testing.T) {
+	cases := []struct {
+		name               string
+		svc                VService
+		reqPath, query, by string
+		want               string
+	}{
+		{"a GET q that is a number", VService{Verb: "GET", Path: "/search"},
+			"/search", "q=5", "", "should be an object"},
+		{"a DELETE q that is a list", VService{Verb: "DELETE", Path: "/things"},
+			"/things", "q=%5B1%5D", "", "should be an object"},
+		{"a query that does not parse", VService{Verb: "GET", Path: "/search"},
+			"/search", "q=%zz", "", "does not parse"},
+		{"a body that is not a record beside path params", VService{Verb: "PUT", Path: "/things/{id:Int}"},
+			"/things/7", "", "5", "should be an object"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := assembleServiceInput(tc.svc, tc.reqPath, tc.query, tc.by)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("want an error saying %q, got %v", tc.want, err)
+			}
+		})
+	}
+	// A body that is not a record is still the whole request when the URL
+	// supplies nothing.
+	v, err := assembleServiceInput(VService{Verb: "POST", Path: "/count"}, "/count", "", "5")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n, ok := v.(VInt); !ok || n.V != 5 {
+		t.Fatalf("want the Int 5, got %#v", v)
+	}
+}

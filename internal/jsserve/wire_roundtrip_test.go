@@ -78,7 +78,7 @@ func TestEveryWireValueSurvivesTheBrowserAndTheServer(t *testing.T) {
 	out := runWireDriver(t, node, pj, plan)
 
 	m := wireparity.NewMatrix("value", "encode", "dec/srv", "dec/web",
-		"post", "get", "postWhole", "getWhole", "response")
+		"post", "get", "delete", "postWhole", "response")
 	for _, c := range parityfixture.WireCases {
 		want := wireparity.Dump(srv.Value(t, "v"+c.Name))
 		// Control: the browser computes the same value before anything is

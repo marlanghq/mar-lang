@@ -16,7 +16,8 @@ import (
 // every direction a Mar program can send one:
 //
 //	client -> server   Service request: a field of a POST body, a field of a
-//	                   GET `?q=`, and the whole request value (POST and GET)
+//	                   GET or DELETE `?q=`, and the whole request value as a
+//	                   POST body (a GET or DELETE request is always a record)
 //	server -> client   Service response, decoded with the shape the call
 //	                   site's Service.call carries
 //	in-runtime         JSON.encode bytes (must agree across runtimes), and
@@ -149,16 +150,14 @@ var WireLegs = []struct {
 }{
 	{"post", "POST", false},
 	{"get", "GET", false},
+	{"delete", "DELETE", false},
 	{"postWhole", "POST", true},
-	{"getWhole", "GET", true},
 }
 
-// WireRoundTripSource generates the program. Types for the unions the table
-// uses come first; then, per case, the value, its four request contracts, its
-// response contract, the client calls, and its JSON.encode / JSON.decode.
-func WireRoundTripSource() string {
-	var b strings.Builder
-	b.WriteString(`module Main exposing (..)
+// WireTypesSource is the module header and the unions the table's types
+// name, for a test that builds its own declarations around WireCases.
+func WireTypesSource() string {
+	return `module Main exposing (..)
 
 
 type Color
@@ -190,7 +189,15 @@ type Outcome
 type Chain
     = End
     | Link ( Int, Int ) Chain
-`)
+`
+}
+
+// WireRoundTripSource generates the program. Types for the unions the table
+// uses come first; then, per case, the value, its four request contracts, its
+// response contract, the client calls, and its JSON.encode / JSON.decode.
+func WireRoundTripSource() string {
+	var b strings.Builder
+	b.WriteString(WireTypesSource())
 	decl := func(name, typ, body string) {
 		fmt.Fprintf(&b, "\n\n%s : %s\n%s =\n    %s\n", name, typ, name, body)
 	}
@@ -233,23 +240,10 @@ func upperFirst(s string) string {
 // instead of failing on it, and fail when it passes, so this list cannot
 // outlive the bug it describes.
 func WireOpen(name, col string) string {
-	c, ok := wireCase(name)
-	if !ok {
+	if _, ok := wireCase(name); !ok {
 		return ""
 	}
 	switch col {
-	case "getWhole":
-		// Unit and Nothing are the two that arrive right, and only because
-		// nothing is sent and nothing is what the server builds.
-		if strings.HasPrefix(c.Type, "{") || name == "Unit" || name == "MaybeNothing" {
-			return ""
-		}
-		return "a GET Service whose request is not a record: the server builds the request from " +
-			"the query's FIELDS, and a value that is not a record has none. The phone sends nothing; " +
-			"the browser sends a value spelled as a JSON object as ?q=, which the server does not " +
-			"read, and nothing for the rest. All of them get a 422, except a Maybe, which arrives " +
-			"as Nothing with a 200. To decide: the checker refuses a non-record GET request, or " +
-			"the clients always send the whole value as ?q= and the server reads it."
 	case "encode":
 		if name == "StrHTML" || name == "StrQuery" {
 			return "JSON.encode spells <, >, & and / three ways: the server escapes <, > and & " +

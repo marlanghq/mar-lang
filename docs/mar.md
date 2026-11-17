@@ -560,6 +560,7 @@ Service.errorToString : Service.Error -> String
 The verb determines how the request travels and what the handler may do:
 
 - **Wire transport.** Path params fill their `{name:Type}` slots in the URL. For `GET` and `DELETE` the remaining request fields ride in a query param; for `POST`, `PUT`, and `PATCH` they ride in the JSON body. The response is always the JSON-encoded `resp`.
+- **A `GET` or `DELETE` request is a record, or `()`.** It has no body, so it travels as fields; the compiler rejects any other request type on these verbs. A `POST`, `PUT` or `PATCH` request can be any value with a wire form.
 - **`GET` is read-only.** The compiler rejects a `GET` whose handler reaches `Repo.create`, `Repo.update`, or `Repo.deleteById`. A call that mutates must be `POST` / `PUT` / `PATCH` / `DELETE`.
 
 A handler is `req -> Task resp`, so it can only produce the declared response. Most calls should be authenticated, which is what `Auth.protect` is for:

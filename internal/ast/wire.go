@@ -111,3 +111,11 @@ type WireField struct {
 	Name  string
 	Shape WireShape
 }
+
+// BodilessVerb reports whether a request with this HTTP verb carries no body.
+// Its request value travels in the URL: path parameters in their slots, and
+// the record's other fields as one JSON object in the `q` query parameter.
+// The checker, the boot and the server's request assembly all ask here.
+func BodilessVerb(verb string) bool {
+	return verb == "GET" || verb == "DELETE"
+}

@@ -925,10 +925,12 @@
   // request value into a concrete URL and (optionally) a JSON body. Typed
   // `{name:Type}` params are substituted into the URL; the remaining
   // fields ride in the query (`q` JSON param, for GET / DELETE) or the
-  // JSON body (POST / PUT / PATCH). A `()` request yields no body.
+  // JSON body (POST / PUT / PATCH). A `()` request yields no body. Whether
+  // the request is a record is read off the Mar value: a constructor, a
+  // Decimal or a Time also encode as JSON objects, and are sent whole.
   function buildServiceRequest(verb, pattern, req) {
     const obj = marToJs(req);
-    const isObj = obj && typeof obj === 'object' && !Array.isArray(obj);
+    const isObj = !!req && req.k === 'R';
     const fields = isObj ? Object.assign({}, obj) : {};
     let hadParam = false;
     const segs = pattern.split('/').filter(s => s.length).map(s => {

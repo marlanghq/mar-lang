@@ -3591,7 +3591,9 @@ func stdlibBindings() map[string]Type {
 		// fields of req. GET handlers are held to read-only by the
 		// compiler; the verb also drives where req travels on the wire
 		// (path params in the URL, the rest in the query for GET/DELETE
-		// or the JSON body for POST/PUT/PATCH).
+		// or the JSON body for POST/PUT/PATCH). A GET or DELETE req is a
+		// record or (): it has no body, so it travels as fields
+		// (checkBodilessRequest).
 		"serviceDeclare": TForall{
 			Vars: []int{a.ID, b.ID},
 			Body: TArrow{From: TMethod, To: TArrow{From: TString, To: TService(a, b)}},

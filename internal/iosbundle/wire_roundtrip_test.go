@@ -129,7 +129,7 @@ func TestEveryWireValueSurvivesThePhoneAndTheServer(t *testing.T) {
 	}
 
 	m := wireparity.NewMatrix("value", "encode", "dec/srv", "dec/ios",
-		"post", "get", "postWhole", "getWhole", "response")
+		"post", "get", "delete", "postWhole", "response")
 	for _, c := range parityfixture.WireCases {
 		want := wireparity.Dump(srv.Value(t, "v"+c.Name))
 		m.Check(c.Name, "value", want, out.Values["v"+c.Name])
