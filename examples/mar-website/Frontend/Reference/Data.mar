@@ -1232,7 +1232,7 @@ sectionsFor m =
         "JSON" ->
             [ { category = "Convert"
               , entries =
-                    [ { moduleName = "JSON", name = "encode", signature = "a -> String", side = "both", description = "Turns a value into JSON text.", examples = [ [ "JSON.encode { name = \"Ada\", born = 1815 }" ] ] }
+                    [ { moduleName = "JSON", name = "encode", signature = "a -> String", side = "both", description = "Turns a value into JSON text. The text is the same on the server, in the browser and on the phone: keys in order, and strings written as JavaScript's JSON.stringify writes them.", examples = [ [ "JSON.encode { name = \"Ada\", born = 1815 }" ] ] }
                     , { moduleName = "JSON", name = "decode", signature = "String -> Result String a", side = "both", description = "Reads JSON text into a value, giving Err with a reason when it does not fit the type expected of it.", examples = [ [ "Result.withDefault 0 (JSON.decode \"1\")" ] ] }
                     ]
               }

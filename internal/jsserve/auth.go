@@ -233,18 +233,29 @@ func readJSON(r *http.Request) (map[string]any, error) {
 	return m, nil
 }
 
-// writeJSON answers with v as JSON. The body is encoded before the status
-// goes out: encoding after it left a value that would not encode as the
-// status with an empty body, usually a 200, and a panic there could no
-// longer become a 500. The bytes are json.Encoder's, newline included.
+// writeJSON answers with v as JSON, followed by a newline. The body is
+// encoded before the status goes out, so a value that does not encode is a
+// 500 rather than a status with an empty body.
+//
+// A json.RawMessage is bytes the Mar wire encoder already wrote (the signed-in
+// user, runtime.LoadUserJSON): they go out as they are, spelled like every
+// other value on the wire. json.Marshal would re-encode them with its own
+// escaping.
 func writeJSON(w http.ResponseWriter, status int, v any) {
-	body, err := json.Marshal(v)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "[mar] cannot encode a %d JSON answer: %v\n", status, err)
-		http.Error(w, "internal server error", http.StatusInternalServerError)
-		return
+	var body []byte
+	if raw, ok := v.(json.RawMessage); ok && len(raw) > 0 {
+		body = raw
+	} else {
+		b, err := json.Marshal(v)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "[mar] cannot encode a %d JSON answer: %v\n", status, err)
+			http.Error(w, "internal server error", http.StatusInternalServerError)
+			return
+		}
+		body = b
 	}
 	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.WriteHeader(status)
 	_, _ = w.Write(append(body, '\n'))
 }

@@ -159,7 +159,7 @@ enum MarHTTP {
                 }
                 return nil
             }
-            let any = (try? JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed]))
+            let any = try? MarJSONCodec.parse(data)
             // A body that will not decode is "no user", which is the
             // failure this function already has a shape for.
             if let any, !(any is NSNull), let user = try? MarJSONCodec.jsonToMar(any) {
@@ -198,9 +198,7 @@ enum MarHTTP {
                     outcome = .err(body.isEmpty ? "HTTP \(http.statusCode)" : body)
                 } else {
                     let raw = data ?? Data()
-                    let any = (try? JSONSerialization.jsonObject(
-                        with: raw, options: [.fragmentsAllowed])
-                    )
+                    let any = try? MarJSONCodec.parse(raw)
                     // `null` is a signed-out answer. Anything else is supposed
                     // to be the app's own user, and used to become `Nothing`
                     // when it was not — so a server that had moved on made the
@@ -327,11 +325,7 @@ enum MarHTTP {
             var req = URLRequest(url: url)
             req.httpMethod = "POST"
             if let body {
-                let bodyAny = MarJSONCodec.marToJSON(body)
-                req.httpBody = try? JSONSerialization.data(
-                    withJSONObject: bodyAny,
-                    options: [.fragmentsAllowed]
-                )
+                req.httpBody = (try? MarJSONCodec.jsonText(body)).map { Data($0.utf8) }
                 req.setValue("application/json", forHTTPHeaderField: "Content-Type")
             }
             attachBearer(&req)
@@ -378,7 +372,7 @@ enum MarHTTP {
         // Before the auth port had a shape, a body that would not parse became
         // `()` and `Auth.SignedIn ()` reached code typed as a user record; a
         // body of the WRONG shape reached it just as intact.
-        guard let any = (try? JSONSerialization.jsonObject(with: bodyData, options: [.fragmentsAllowed])),
+        guard let any = try? MarJSONCodec.parse(bodyData),
               let decoded = try? MarJSONCodec.jsonToMar(any) else {
             return .ctor(tag: "Err",
                          args: [.ctor(tag: "ServerError", args: [.string(notJSONMessage)])])
@@ -525,7 +519,7 @@ enum MarHTTP {
         // once already in MarWire; it was alive here too.
         let any: Any
         do {
-            any = try JSONSerialization.jsonObject(with: bodyData, options: [.fragmentsAllowed])
+            any = try MarJSONCodec.parse(bodyData)
         } catch {
             let se: MarValue = .ctor(tag: "ServerError",
                 args: [.string(notJSONMessage)])

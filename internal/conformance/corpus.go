@@ -819,6 +819,16 @@ dse r =
             e
 
 
+dcodes : Result String String -> String
+dcodes r =
+    case r of
+        Ok s ->
+            String.join "," (List.map (\c -> String.fromInt (Char.toCode c)) (String.toList s))
+
+        Err e ->
+            e
+
+
 dch : Result String Char -> String
 dch r =
     case r of
@@ -1176,6 +1186,16 @@ decodeCases =
         , "charTooMany=" ++ dch (JSON.decode "{\"__char\":\"abc\"}")
         , "charEmpty=" ++ dch (JSON.decode "{\"__char\":\"\"}")
         , "charAstral=" ++ dch (JSON.decode "{\"__char\":\"\\ud83d\\ude00\"}")
+
+        -- A String is a sequence of Unicode scalars, so an escape of a
+        -- surrogate that is not half of a pair reads as U+FFFD. The last
+        -- case is an escaped backslash followed by text, not an escape.
+        , "loneHigh=" ++ dcodes (JSON.decode "\"x\\ud800y\"")
+        , "loneLow=" ++ dcodes (JSON.decode "\"x\\udc00y\"")
+        , "pairKept=" ++ dcodes (JSON.decode "\"\\ud83d\\ude00\"")
+        , "loneThenPair=" ++ dcodes (JSON.decode "\"\\ud800\\ud83d\\ude00\"")
+        , "loneInChar=" ++ dch (JSON.decode "{\"__char\":\"\\udfff\"}")
+        , "escapedBackslash=" ++ dcodes (JSON.decode "\"\\\\ud800\"")
         ]
 
 
@@ -2104,6 +2124,12 @@ const decodeExpectations = "Decode.ok=ok:ana:3\n" +
 	"Decode.charTooMany=the value should be a single character, got 3" + "\n" +
 	"Decode.charEmpty=the value should be a single character, got 0" + "\n" +
 	"Decode.charAstral=ok:\U0001F600" + "\n" +
+	"Decode.loneHigh=120,65533,121" + "\n" +
+	"Decode.loneLow=120,65533,121" + "\n" +
+	"Decode.pairKept=128512" + "\n" +
+	"Decode.loneThenPair=65533,128512" + "\n" +
+	"Decode.loneInChar=ok:\uFFFD" + "\n" +
+	"Decode.escapedBackslash=92,117,100,56,48,48" + "\n" +
 	"Decode.tupleOk=ok:7:abc" + "\n" +
 	"Decode.tupleShort=the value should be a list of 2 values, got 1" + "\n" +
 	"Decode.tupleWrongType=`[0]` should be a whole number, got a string" + "\n" +

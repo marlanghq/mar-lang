@@ -87,11 +87,11 @@ if args.count >= 4, args[1] == "--auth-verify" {
             if case .ctor(let otag, let oargs) = ok, oargs.isEmpty {
                 print("Ok " + otag)
             } else if given != nil, case .ctor("SignedIn", let uargs) = ok, let user = uargs.first,
-                      let json = try? JSONSerialization.data(withJSONObject: MarJSONCodec.marToJSON(user), options: [.sortedKeys]) {
+                      let json = try? MarJSONCodec.jsonText(user) {
                 // With a program's shape, the user the app is handed, written
                 // back in the wire format, so it can be compared with the body
                 // it was read from field by field.
-                print("SignedIn " + String(decoding: json, as: UTF8.self))
+                print("SignedIn " + json)
             } else {
                 print("Ok " + String(describing: ok))
             }

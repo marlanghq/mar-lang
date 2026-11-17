@@ -25,7 +25,6 @@ import (
 	"strings"
 	"testing"
 
-	"mar/internal/parityfixture"
 	"mar/internal/project"
 	"mar/internal/runtime"
 )
@@ -328,10 +327,6 @@ func findCallWire(n any) any {
 // whole table rather than stopping at the first broken kind: the point is to
 // see WHICH kinds fail in WHICH directions, and the shape of that table is
 // usually the diagnosis.
-//
-// A cell parityfixture.WireOpen names is a known failure waiting for a
-// decision: it shows as "open" and does not fail the run. When it PASSES, the
-// run fails, so the list cannot outlive the bug it describes.
 type Matrix struct {
 	cols    []string
 	rows    []string
@@ -367,8 +362,7 @@ func (m *Matrix) set(row, col, v string) {
 	m.cells[[2]string{row, col}] = v
 }
 
-// Report logs the table and fails the test once per failing cell that is not
-// open, and once per open cell that passes.
+// Report logs the table and fails the test once per failing cell.
 func (m *Matrix) Report(t testing.TB) {
 	t.Helper()
 	var b strings.Builder
@@ -377,30 +371,24 @@ func (m *Matrix) Report(t testing.TB) {
 		fmt.Fprintf(&b, " %-10s", c)
 	}
 	b.WriteString("\n")
-	failing, open := 0, 0
+	failing := 0
 	var errs []string
 	for _, r := range m.rows {
 		fmt.Fprintf(&b, "%-20s", r)
 		for _, c := range m.cols {
 			v := m.cells[[2]string{r, c}]
-			reason := parityfixture.WireOpen(r, c)
-			switch {
-			case v == "":
+			switch v {
+			case "":
 				v = "-"
-			case v == "FAIL" && reason != "":
-				v = "open"
-				open++
-			case v == "FAIL":
+			case "FAIL":
 				failing++
 				errs = append(errs, fmt.Sprintf("%s / %s\n      %s", r, c, m.details[[2]string{r, c}]))
-			case reason != "":
-				errs = append(errs, fmt.Sprintf("%s / %s passes now: take it out of parityfixture.WireOpen, whose reason was\n      %s", r, c, reason))
 			}
 			fmt.Fprintf(&b, " %-10s", v)
 		}
 		b.WriteString("\n")
 	}
-	t.Logf("wire round trip, %d failing cells, %d open (parityfixture.WireOpen):\n%s", failing, open, b.String())
+	t.Logf("wire round trip, %d failing cells:\n%s", failing, b.String())
 	for _, e := range errs {
 		t.Errorf("%s", e)
 	}

@@ -2299,20 +2299,8 @@ enum MarBuiltins {
             if let bad = MarJSONCodec.unencodable(args[0]) {
                 throw MarRuntimeError.message(MarJSONCodec.noJSONFormMessage(bad))
             }
-            let any = MarJSONCodec.marToJSON(args[0])
             do {
-                // `.sortedKeys` is not cosmetic. marToJSON hands back Swift
-                // Dictionaries, whose iteration order is unspecified and
-                // reseeded per process, so without it the SAME value encodes
-                // differently on different runs of the same app, and
-                // differently from the Go and JS runtimes, which emit their
-                // keys sorted. JSON.encode is a pure function; equal values
-                // have to give equal strings.
-                let data = try JSONSerialization.data(
-                    withJSONObject: any,
-                    options: [.fragmentsAllowed, .sortedKeys]
-                )
-                return .string(String(data: data, encoding: .utf8) ?? "")
+                return .string(try MarJSONCodec.jsonText(args[0]))
             } catch {
                 // Not the host's message: `localizedDescription` here is
                 // Foundation's, and it changes with the phone's language, so
@@ -3419,12 +3407,7 @@ enum MarBuiltins {
     }
 
     private static func jsonStringWhole(_ v: MarValue) -> String {
-        let any = MarJSONCodec.marToJSON(v)
-        guard let data = try? JSONSerialization.data(withJSONObject: any, options: [.fragmentsAllowed]),
-              let s = String(data: data, encoding: .utf8) else {
-            return "null"
-        }
-        return s
+        (try? MarJSONCodec.jsonText(v)) ?? "null"
     }
 
     /// encodeURIComponent for a path segment. URLComponents would

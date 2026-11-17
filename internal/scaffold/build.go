@@ -817,10 +817,11 @@ func buildIndexHTML(locale, title string, programJSON []byte) string {
 	if title == "" {
 		title = "mar app"
 	}
-	// </script> inside JSON would prematurely close the script tag.
-	// Escape the < as <: JSON.parse ignores it, no other char
-	// classes need escaping in <script type="application/json">.
-	safeProgram := strings.ReplaceAll(string(programJSON), "</", `</`)
+	// The program sits in a <script> element, which the HTML parser ends at
+	// the first `</script` and treats `<!--` specially. In JSON text a `<`
+	// can only appear inside a string, where `\u003c` is the same character,
+	// so every `<` is written that way and the element holds no markup.
+	safeProgram := strings.ReplaceAll(string(programJSON), "<", `\u003c`)
 	// BootFailureHead(false): a deployed app shows the plain message only;
 	// the cause goes to the console.
 	return fmt.Sprintf(productionPageHTML, locale, title, jsserve.BootFailureHead(false), safeProgram)

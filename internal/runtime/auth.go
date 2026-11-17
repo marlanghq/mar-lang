@@ -533,16 +533,12 @@ func LookupUserID(cfg VAuth, email string) (int64, error) {
 }
 
 // LoadUserJSON returns the user record for `id` in the wire format, as
-// /_auth/whoami and /_auth/verify-code send it to the client.
+// /_auth/whoami and /_auth/verify-code send it to the client, who write these
+// bytes as they are.
 //
-// It is the wire encoder (appendValue, what encodeValue writes with), the one
-// every Service response goes through, and not one of its own. The sign-in answer used to have its own (valueToAny),
-// a subset that had drifted from the wire: it knew no Decimal, so an app
-// whose User had an `Entity.decimal` column created the column, read and
-// wrote it through Repo, and could not sign anyone in (the field went out as
-// null, and both clients refuse a user of the wrong shape); and it wrote a
-// Time without its milliseconds. One encoder means a column type the wire
-// learns is one the sign-in answer knows.
+// It is the wire encoder (appendValue), the one every Service response goes
+// through, so every column type the wire knows (a Decimal, a Time with its
+// milliseconds) reaches the sign-in answer in the same form.
 func LoadUserJSON(cfg VAuth, id int64) (json.RawMessage, error) {
 	v, err := loadUserValue(cfg, id)
 	if err != nil {

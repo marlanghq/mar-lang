@@ -57,11 +57,14 @@ var WireCases = []WireCase{
 
 	{Name: "StrEmpty", Type: "String", Expr: `""`},
 	{Name: "StrUnicode", Type: "String", Expr: `"héllo 日本 🎉 🇧🇷"`},
-	// Two rows, so the one open spelling (WireOpen) cannot hide the other:
-	// the JSON escapes every runtime must write alike, and the characters
-	// an HTML-safe encoder escapes and the others do not.
+	// JSON.encode writes a string as JavaScript's JSON.stringify does: the
+	// escapes by name, the other controls as \u00xx, everything else as
+	// itself. These rows hold every class of character that rule treats
+	// apart.
 	{Name: "StrEscapes", Type: "String", Expr: `"q\" b\\ n\n t\t r\r"`},
 	{Name: "StrHTML", Type: "String", Expr: `"</script> &amp; <b>"`},
+	{Name: "StrControls", Type: "String", Expr: "String.fromList (List.map Char.fromCode [ 0, 1, 8, 12, 27, 31, 127 ])"},
+	{Name: "StrSeparators", Type: "String", Expr: "String.fromList (List.map Char.fromCode [ 8232, 8233, 47, 133, 160, 65279, 65535 ])"},
 	{Name: "StrQuery", Type: "String", Expr: `"a+b c&d=e%f?g#h/i"`},
 
 	{Name: "BoolTrue", Type: "Bool", Expr: "True"},
@@ -232,34 +235,4 @@ func upperFirst(s string) string {
 		return s
 	}
 	return strings.ToUpper(s[:1]) + s[1:]
-}
-
-// WireOpen is the reason a cell of the round trip is a KNOWN failure, or "".
-// Each one waits for a decision, not for a fix: the reason says what is
-// wrong and what has to be decided. The tests show such a cell as "open"
-// instead of failing on it, and fail when it passes, so this list cannot
-// outlive the bug it describes.
-func WireOpen(name, col string) string {
-	if _, ok := wireCase(name); !ok {
-		return ""
-	}
-	switch col {
-	case "encode":
-		if name == "StrHTML" || name == "StrQuery" {
-			return "JSON.encode spells <, >, & and / three ways: the server escapes <, > and & " +
-				"(\\u003c), the browser writes all four as they are, the phone writes / as \\/. The " +
-				"three documents decode to the same value, but the bytes differ. To decide: which " +
-				"spelling, pinned by a corpus case."
-		}
-	}
-	return ""
-}
-
-func wireCase(name string) (WireCase, bool) {
-	for _, c := range WireCases {
-		if c.Name == name {
-			return c, true
-		}
-	}
-	return WireCase{}, false
 }

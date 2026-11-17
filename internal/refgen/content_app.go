@@ -494,7 +494,7 @@ var appDescriptions = map[string]string{
 	"Http.post": "Posts a body to a URL from the frontend, handing back the response or a failure message. Client only, like get.",
 
 	// JSON
-	"JSON.encode": "Turns a value into JSON text.",
+	"JSON.encode": "Turns a value into JSON text. The text is the same on the server, in the browser and on the phone: keys in order, and strings written as JavaScript's JSON.stringify writes them.",
 	"JSON.decode": "Reads JSON text into a value, giving Err with a reason when it does not fit the type expected of it.",
 
 	// App

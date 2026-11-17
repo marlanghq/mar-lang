@@ -677,6 +677,29 @@
       ' an Int is at most 9007199254740991 and a Decimal at most 34 significant digits and 34 decimal places');
   }
 
+  // wellFormed replaces each surrogate that is not half of a pair with
+  // U+FFFD. A Mar String is a sequence of Unicode scalars on every runtime:
+  // a JSON document can still spell a lone surrogate (`"\ud800"`), and the
+  // server's decoder and the phone's (MarJSONCodec.parse) replace it the
+  // same way.
+  function wellFormed(s) {
+    if (!/[\uD800-\uDFFF]/.test(s)) return s;
+    let out = '';
+    for (let i = 0; i < s.length; i++) {
+      const c = s.charCodeAt(i);
+      if (c >= 0xD800 && c <= 0xDBFF && i + 1 < s.length) {
+        const d = s.charCodeAt(i + 1);
+        if (d >= 0xDC00 && d <= 0xDFFF) {
+          out += s[i] + s[i + 1];
+          i++;
+          continue;
+        }
+      }
+      out += (c >= 0xD800 && c <= 0xDFFF) ? '\uFFFD' : s[i];
+    }
+    return out;
+  }
+
   function jsToMar(v) {
     // null → VUnit. Previously null → VCtor('Nothing'), but that
     // collided with VUnit's wire encoding (Go encodes () as null):
@@ -703,7 +726,7 @@
       throw new Error('JSON: ' + v + ' is not a number Mar can hold exactly:' +
         ' an Int is at most 9007199254740991 and a Decimal at most 34 significant digits and 34 decimal places');
     }
-    if (typeof v === 'string') return VString(v);
+    if (typeof v === 'string') return VString(wellFormed(v));
     if (typeof v === 'boolean') return VBool(v);
     if (Array.isArray(v)) return VList(v.map(jsToMar));
     if (typeof v === 'object') {
@@ -761,7 +784,7 @@
       // phone while the server errored. Three runtimes, three answers to
       // one JSON document. Pinned by the Decode block of the corpus.
       if (typeof v.__char === 'string') {
-        const scalars = Array.from(v.__char);
+        const scalars = Array.from(wellFormed(v.__char));
         if (scalars.length !== 1) {
           throw new Error('the value should be a single character, got ' + scalars.length);
         }

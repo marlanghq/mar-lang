@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 // jsonBuiltins returns runtime functions for JSON encode/decode of
@@ -139,21 +140,62 @@ func encodeValue(v Value) (string, error) {
 	return string(buf), nil
 }
 
-// appendJSONString writes s as a JSON string, byte for byte what json.Marshal
-// writes. Printable ASCII other than the five characters json.Marshal escapes
-// (`"`, `\`, and the HTML three) is emitted as itself, which is every field
-// name and most text; anything else takes json.Marshal's own path, so the
-// escaping rules live in one place and are not restated here.
+// appendJSONString writes s as a JSON string, byte for byte what JavaScript's
+// JSON.stringify writes (ECMA-262 QuoteJSONString), which is what the browser
+// writes and what the phone is configured to write: `"` and `\` escaped,
+// backspace, form feed, newline, carriage return and tab by name, every other
+// code point below U+0020 as \u00xx in lowercase hex, and everything else as
+// itself, `/`, `<`, `>`, `&`, U+2028 and U+2029 included. A byte that is not
+// part of valid UTF-8 is written as U+FFFD, one per byte.
+//
+// It is written out rather than left to encoding/json, which escapes `<`,
+// `>`, `&`, U+2028 and U+2029 and whose handling of invalid UTF-8 depends on
+// the toolchain's JSON implementation.
 func appendJSONString(dst []byte, s string) []byte {
-	for i := 0; i < len(s); i++ {
-		c := s[i]
-		if c < 0x20 || c > 0x7e || c == '"' || c == '\\' || c == '<' || c == '>' || c == '&' {
-			b, _ := json.Marshal(s)
-			return append(dst, b...)
-		}
-	}
+	const hex = "0123456789abcdef"
 	dst = append(dst, '"')
-	dst = append(dst, s...)
+	start := 0 // the run of bytes copied as they are
+	for i := 0; i < len(s); {
+		c := s[i]
+		if c >= 0x20 && c != '"' && c != '\\' && c < utf8.RuneSelf {
+			i++
+			continue
+		}
+		if c >= utf8.RuneSelf {
+			r, size := utf8.DecodeRuneInString(s[i:])
+			if r != utf8.RuneError || size != 1 {
+				i += size
+				continue
+			}
+			dst = append(dst, s[start:i]...)
+			dst = utf8.AppendRune(dst, utf8.RuneError)
+			i++
+			start = i
+			continue
+		}
+		dst = append(dst, s[start:i]...)
+		switch c {
+		case '"':
+			dst = append(dst, '\\', '"')
+		case '\\':
+			dst = append(dst, '\\', '\\')
+		case '\b':
+			dst = append(dst, '\\', 'b')
+		case '\f':
+			dst = append(dst, '\\', 'f')
+		case '\n':
+			dst = append(dst, '\\', 'n')
+		case '\r':
+			dst = append(dst, '\\', 'r')
+		case '\t':
+			dst = append(dst, '\\', 't')
+		default:
+			dst = append(dst, '\\', 'u', '0', '0', hex[c>>4], hex[c&0xf])
+		}
+		i++
+		start = i
+	}
+	dst = append(dst, s[start:]...)
 	return append(dst, '"')
 }
 

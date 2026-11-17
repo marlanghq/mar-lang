@@ -327,6 +327,28 @@ enum MarJSONCodec {
             + "  Encode the data it was built FROM, and build it on the side that uses it"
     }
 
+    /// The JSON text of a value, byte for byte what the other two runtimes
+    /// write: JavaScript's JSON.stringify, and appendJSONString in
+    /// internal/runtime/json.go. Every place the phone turns a value into JSON
+    /// text goes through here.
+    ///
+    /// `.sortedKeys` because marToJSON hands back Swift Dictionaries, whose
+    /// iteration order is unspecified and reseeded per process: the other two
+    /// write keys sorted, and equal values have to give equal text.
+    /// `.withoutEscapingSlashes` because JSONSerialization otherwise writes
+    /// `/` as `\/`; with it, every scalar is written as JSON.stringify writes
+    /// it.
+    static func jsonText(_ v: MarValue) throws -> String {
+        let data = try JSONSerialization.data(
+            withJSONObject: marToJSON(v),
+            options: [.fragmentsAllowed, .sortedKeys, .withoutEscapingSlashes]
+        )
+        guard let text = String(bytes: data, encoding: .utf8) else {
+            throw MarRuntimeError.message("JSON.encode failed: the value cannot be written as JSON")
+        }
+        return text
+    }
+
     /// MarValue → Foundation JSON value. Mirrors `marToJs` in runtime.js
     /// and `appendValue` in internal/runtime/json.go: every constructor,
     /// Maybe and Result included, as `{"__args": [...], "__ctor": "Tag"}`.
@@ -455,10 +477,49 @@ enum MarJSONCodec {
     }
 
     static func parseJSONExact(_ text: String) throws -> Any {
-        return try JSONSerialization.jsonObject(
-            with: Data(liftNumberLiterals(text).utf8),
-            options: [.fragmentsAllowed]
-        )
+        try parse(Data(liftNumberLiterals(text).utf8))
+    }
+
+    /// Parses JSON text into Foundation values the way every runtime reads a
+    /// document: an escape of a surrogate that is not half of a pair
+    /// (`\ud800` alone) stands for U+FFFD, as it does in the server's decoder
+    /// and in the browser's (wellFormed in runtime.js). JSONSerialization
+    /// refuses the whole document instead, so the escapes are rewritten first.
+    /// Every place the phone reads a value from JSON goes through here.
+    static func parse(_ data: Data) throws -> Any {
+        try JSONSerialization.jsonObject(with: wellFormedEscapes(data), options: [.fragmentsAllowed])
+    }
+
+    /// The JSON text with each `\uXXXX` escape of an unpaired surrogate
+    /// replaced by `\ufffd`, the same length. Valid UTF-8 cannot carry a raw
+    /// surrogate, so an escape is the only way a document spells one.
+    static func wellFormedEscapes(_ data: Data) -> Data {
+        var b = [UInt8](data)
+        func hex4(_ at: Int) -> Int? {
+            guard at + 6 <= b.count, b[at] == 0x5C, b[at + 1] == 0x75 else { return nil }
+            var v = 0
+            for k in (at + 2)..<(at + 6) {
+                guard let d = Int(String(UnicodeScalar(b[k])), radix: 16) else { return nil }
+                v = v * 16 + d
+            }
+            return v
+        }
+        var changed = false
+        var i = 0
+        while i + 1 < b.count {
+            guard b[i] == 0x5C else { i += 1; continue }
+            guard let u = hex4(i) else { i += 2; continue }  // \" \\ \n and the like
+            if (0xD800...0xDBFF).contains(u), let low = hex4(i + 6), (0xDC00...0xDFFF).contains(low) {
+                i += 12
+                continue
+            }
+            if (0xD800...0xDFFF).contains(u) {
+                b.replaceSubrange((i + 2)..<(i + 6), with: Array("fffd".utf8))
+                changed = true
+            }
+            i += 6
+        }
+        return changed ? Data(b) : data
     }
 
     /// Turns a JSON number's own text into the Mar value it names: an Int when
