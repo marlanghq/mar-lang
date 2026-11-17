@@ -34,7 +34,7 @@ type alias Expense =
     , amount   : Decimal
     , note     : String
     , petId    : Int
-    , spentAt  : Time
+    , spentAt  : Date
     }
 
 
@@ -78,9 +78,9 @@ type AddExpenseOutcome
 -- `petId` rides in the body like the other fields (allPetsId for a
 -- shared expense). The frontend has already parsed `amount` and guards
 -- amount > 0; the backend re-checks it as a typed outcome. `spentAt` is
--- `Nothing` when the user didn't touch the date picker (the backend
--- stamps "now"); `Just t` carries a date they chose.
-addExpense : Service { petId : Int, category : String, amount : Decimal, note : String, spentAt : Maybe Time } AddExpenseOutcome
+-- the day the money was spent, the one the date picker shows: the form
+-- starts it at today on the device and sends nothing until it has one.
+addExpense : Service { petId : Int, category : String, amount : Decimal, note : String, spentAt : Date } AddExpenseOutcome
 addExpense = Service.declare POST "/expenses"
 
 
@@ -163,9 +163,9 @@ petLabel petId pets =
 
 -- ===== Dates =====
 --
--- An expense is stamped with `spentAt` (a Time) when it's logged. These
--- turn that Time into the strings the UI shows. Time.year/month/day are
--- pure, so this works the same on the backend, web, and iOS.
+-- An expense carries `spentAt`, the day the money was spent (a Date).
+-- These turn that day into the strings the UI shows. Date.year/month/day
+-- are pure, so this works the same on the backend, web, and iOS.
 
 
 monthNames : List String
@@ -175,23 +175,23 @@ monthNames =
     ]
 
 
--- 1..12 -> "January".."December" (anything else -> "—").
+-- 1..12 -> "January".."December" (Date.month is always in that range).
 monthName : Int -> String
 monthName m =
-    Maybe.withDefault "—" (List.head (List.drop (m - 1) monthNames))
+    Maybe.withDefault "" (List.head (List.drop (m - 1) monthNames))
 
 
 -- "May 5, 2026": for an expense row.
-formatDate : Time -> String
-formatDate t =
-    monthName (Time.month t)
+formatDate : Date -> String
+formatDate d =
+    monthName (Date.month d)
         ++ " "
-        ++ String.fromInt (Time.day t)
+        ++ String.fromInt (Date.day d)
         ++ ", "
-        ++ String.fromInt (Time.year t)
+        ++ String.fromInt (Date.year d)
 
 
 -- "May 2026": for a month's report header.
-formatMonth : Time -> String
-formatMonth t =
-    monthName (Time.month t) ++ " " ++ String.fromInt (Time.year t)
+formatMonth : Date -> String
+formatMonth d =
+    monthName (Date.month d) ++ " " ++ String.fromInt (Date.year d)

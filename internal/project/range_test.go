@@ -10,11 +10,11 @@ import (
 	"mar/internal/runtime"
 )
 
-// The server's half of parityfixture.TimeRangeCases: each expression is a
+// The server's half of parityfixture.RangeCases: each expression is a
 // top-level value, computed when the program loads, so a refusal is the
 // load's error.
-func TestTheServerKeepsATimeInsideItsRange(t *testing.T) {
-	for _, c := range parityfixture.TimeRangeCases {
+func TestTheServerKeepsATimeAndADateInsideTheirRanges(t *testing.T) {
+	for _, c := range parityfixture.RangeCases {
 		dir := t.TempDir()
 		entry := filepath.Join(dir, "Main.mar")
 		src := "module Main exposing (..)\n\n\nwrapped : String\nwrapped =\n    " + c.Expr + "\n"
@@ -23,7 +23,7 @@ func TestTheServerKeepsATimeInsideItsRange(t *testing.T) {
 		}
 		env, _, err := LoadIntoEnvForRuntime(entry, nil)
 		if c.Refused {
-			if err == nil || !strings.Contains(err.Error(), c.Says+parityfixture.TimeRangeTail) {
+			if err == nil || !strings.Contains(err.Error(), c.Says+c.Tail) {
 				t.Errorf("%s\n  want the refusal %q\n  got  %v", c.Expr, c.Says, err)
 			}
 			continue

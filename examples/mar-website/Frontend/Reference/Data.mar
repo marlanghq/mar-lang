@@ -37,12 +37,12 @@ type alias Section =
 
 modules : List String
 modules =
-    [ "Basics", "List", "String", "Maybe", "Result", "Tuple", "Char", "Dict", "Set", "Decimal", "Math", "Time", "Random", "App", "Page", "Nav", "UI", "Canvas", "Sound", "Keyboard", "Gamepad", "Device", "Cmd", "Sub", "Task", "Service", "Entity", "Repo", "Auth", "Http", "JSON" ]
+    [ "Basics", "List", "String", "Maybe", "Result", "Tuple", "Char", "Dict", "Set", "Decimal", "Math", "Time", "Date", "Random", "App", "Page", "Nav", "UI", "Canvas", "Sound", "Keyboard", "Gamepad", "Device", "Cmd", "Sub", "Task", "Service", "Entity", "Repo", "Auth", "Http", "JSON" ]
 
 
 moduleGroups : List Group
 moduleGroups =
-    [ { title = "Data", modules = [ "Basics", "List", "String", "Maybe", "Result", "Tuple", "Char", "Dict", "Set", "Decimal", "Math", "Time", "Random" ] }
+    [ { title = "Data", modules = [ "Basics", "List", "String", "Maybe", "Result", "Tuple", "Char", "Dict", "Set", "Decimal", "Math", "Time", "Date", "Random" ] }
     , { title = "Screens", modules = [ "App", "Page", "Nav", "UI" ] }
     , { title = "Games and media", modules = [ "Canvas", "Sound", "Keyboard", "Gamepad", "Device" ] }
     , { title = "Effects", modules = [ "Cmd", "Sub", "Task" ] }
@@ -457,10 +457,10 @@ sectionsFor m =
               }
             , { category = "Read the parts"
               , entries =
-                    [ { moduleName = "Time", name = "year", signature = "Time -> Int", side = "both", description = "The year.", examples = [ [ "Time.year (Time.fromYMD 2026 7 22)    -- 2026" ] ] }
-                    , { moduleName = "Time", name = "month", signature = "Time -> Int", side = "both", description = "The month, 1 for January through 12 for December.", examples = [ [ "Time.month (Time.fromYMD 2026 7 22)    -- 7" ] ] }
-                    , { moduleName = "Time", name = "day", signature = "Time -> Int", side = "both", description = "The day of the month, starting at 1.", examples = [ [ "Time.day (Time.fromYMD 2026 7 22)    -- 22" ] ] }
-                    , { moduleName = "Time", name = "hour", signature = "Time -> Int", side = "both", description = "The hour, 0 to 23.", examples = [ [ "Time.hour (Time.fromYMD 2026 7 22)    -- 0" ] ] }
+                    [ { moduleName = "Time", name = "year", signature = "Time -> Int", side = "both", description = "The year, in UTC.", examples = [ [ "Time.year (Time.fromYMD 2026 7 22)    -- 2026" ] ] }
+                    , { moduleName = "Time", name = "month", signature = "Time -> Int", side = "both", description = "The month in UTC, 1 for January through 12 for December.", examples = [ [ "Time.month (Time.fromYMD 2026 7 22)    -- 7" ] ] }
+                    , { moduleName = "Time", name = "day", signature = "Time -> Int", side = "both", description = "The day of the month in UTC, starting at 1. For the day where the person is, read Date.today.", examples = [ [ "Time.day (Time.fromYMD 2026 7 22)    -- 22" ] ] }
+                    , { moduleName = "Time", name = "hour", signature = "Time -> Int", side = "both", description = "The hour in UTC, 0 to 23.", examples = [ [ "Time.hour (Time.fromYMD 2026 7 22)    -- 0" ] ] }
                     , { moduleName = "Time", name = "minute", signature = "Time -> Int", side = "both", description = "The minute, 0 to 59.", examples = [ [ "Time.minute (Time.fromYMD 2026 7 22)    -- 0" ] ] }
                     , { moduleName = "Time", name = "second", signature = "Time -> Int", side = "both", description = "The second, 0 to 59.", examples = [ [ "Time.second (Time.fromYMD 2026 7 22)    -- 0" ] ] }
                     ]
@@ -501,6 +501,45 @@ sectionsFor m =
             , { category = "Subscribe"
               , entries =
                     [ { moduleName = "Time", name = "every", signature = "Duration -> (Time -> a) -> Sub a", side = "both", description = "Fires on an interval for as long as the subscription is returned, handing over the current time. This is the heartbeat of an animation or a clock.", examples = [ [ "type Msg = Tick Time", "subscriptions model = Time.every (Time.seconds 1) Tick" ] ] }
+                    ]
+              }
+            ]
+
+        "Date" ->
+            [ { category = "Create"
+              , entries =
+                    [ { moduleName = "Date", name = "fromYMD", signature = "Int -> Int -> Int -> Date", side = "both", description = "The day with the given year, month, and day. A month or day past its end carries over (month 13 is January of the next year). Raises \"Date out of range\" for a day outside the years 0000 to 9999.", examples = [ [ "Date.toIso (Date.fromYMD 2026 7 22)    -- \"2026-07-22\"" ] ] }
+                    , { moduleName = "Date", name = "fromIso", signature = "String -> Maybe Date", side = "both", description = "Reads a day written as YYYY-MM-DD, such as \"2026-11-17\", giving Nothing for anything else.", examples = [ [ "Maybe.map Date.day (Date.fromIso \"2026-07-22\")    -- Just 22" ] ] }
+                    , { moduleName = "Date", name = "fromTime", signature = "Time -> Date", side = "both", description = "The day a time falls on in UTC, the day Time.year, Time.month, and Time.day read.", examples = [ [ "Date.fromTime (Time.fromYMD 2026 7 22)    -- Date.fromYMD 2026 7 22" ] ] }
+                    , { moduleName = "Date", name = "today", signature = "Task Date", side = "frontend", description = "Today's date where the person is, as a task: the device's clock read in the device's time zone. Frontend only; the server has no time zone to read a date in.", examples = [ [ "type Msg = TodayKnown Date", "askToday = Cmd.perform TodayKnown Date.today" ] ] }
+                    ]
+              }
+            , { category = "Read the parts"
+              , entries =
+                    [ { moduleName = "Date", name = "year", signature = "Date -> Int", side = "both", description = "The year.", examples = [ [ "Date.year (Date.fromYMD 2026 7 22)    -- 2026" ] ] }
+                    , { moduleName = "Date", name = "month", signature = "Date -> Int", side = "both", description = "The month, 1 for January through 12 for December.", examples = [ [ "Date.month (Date.fromYMD 2026 7 22)    -- 7" ] ] }
+                    , { moduleName = "Date", name = "day", signature = "Date -> Int", side = "both", description = "The day of the month, starting at 1.", examples = [ [ "Date.day (Date.fromYMD 2026 7 22)    -- 22" ] ] }
+                    , { moduleName = "Date", name = "weekday", signature = "Date -> Int", side = "both", description = "The day of the week, 1 for Monday through 7 for Sunday.", examples = [ [ "Date.weekday (Date.fromYMD 2026 7 22)    -- 3" ] ] }
+                    ]
+              }
+            , { category = "Shift a day"
+              , entries =
+                    [ { moduleName = "Date", name = "addDays", signature = "Date -> Int -> Date", side = "both", description = "Moves a day by whole days. Negative counts move backward.", examples = [ [ "Date.addDays (Date.fromYMD 2026 7 30) 3    -- Date.fromYMD 2026 8 2" ] ] }
+                    , { moduleName = "Date", name = "addMonths", signature = "Date -> Int -> Date", side = "both", description = "Moves a day by whole months, keeping the day of the month where the target month has one. Adding a month to the 31st lands on the last day of a shorter month.", examples = [ [ "Date.addMonths (Date.fromYMD 2026 1 31) 1    -- Date.fromYMD 2026 2 28" ] ] }
+                    , { moduleName = "Date", name = "addYears", signature = "Date -> Int -> Date", side = "both", description = "Moves a day by whole years. The 29th of February lands on the 28th in a year that has none.", examples = [ [ "Date.addYears (Date.fromYMD 2024 2 29) 1    -- Date.fromYMD 2025 2 28" ] ] }
+                    ]
+              }
+            , { category = "Compare"
+              , entries =
+                    [ { moduleName = "Date", name = "before", signature = "Date -> Date -> Bool", side = "both", description = "True when the first day is earlier than the second.", examples = [ [ "Date.before (Date.fromYMD 2026 1 1) (Date.fromYMD 2026 7 22)    -- True" ] ] }
+                    , { moduleName = "Date", name = "after", signature = "Date -> Date -> Bool", side = "both", description = "True when the first day is later than the second.", examples = [ [ "Date.after (Date.fromYMD 2026 7 22) (Date.fromYMD 2026 1 1)    -- True" ] ] }
+                    , { moduleName = "Date", name = "diffDays", signature = "Date -> Date -> Int", side = "both", description = "How many days it is from the first day to the second. Counting backwards gives a negative number.", examples = [ [ "Date.diffDays (Date.fromYMD 2026 7 22) (Date.fromYMD 2026 8 1)    -- 10" ] ] }
+                    ]
+              }
+            , { category = "Convert"
+              , entries =
+                    [ { moduleName = "Date", name = "toIso", signature = "Date -> String", side = "both", description = "Writes a day as YYYY-MM-DD, the text Date.fromIso reads back. It sorts in calendar order, so it is the key to sort days by.", examples = [ [ "Date.toIso (Date.fromYMD 2026 7 22)    -- \"2026-07-22\"" ] ] }
+                    , { moduleName = "Date", name = "toTime", signature = "Date -> Time", side = "both", description = "Midnight UTC at the start of a day, the time Time.fromYMD gives for it.", examples = [ [ "Date.toTime (Date.fromYMD 2026 7 22)    -- Time.fromYMD 2026 7 22" ] ] }
                     ]
               }
             ]
@@ -631,7 +670,7 @@ sectionsFor m =
                     , { moduleName = "UI", name = "textField", signature = "List (Attr Input) -> String -> String -> (String -> a) -> View a", side = "frontend", description = "A single-line text input, given a placeholder, its current value, and what to send when it changes.", examples = [ [ "type Msg = EmailTyped String", "emailField = UI.textField [] \"Email\" \"\" (\\s -> EmailTyped s)" ] ] }
                     , { moduleName = "UI", name = "textArea", signature = "List (Attr Input) -> String -> String -> (String -> a) -> View a", side = "frontend", description = "A multi-line text input. Give it a height in lines to control how tall it starts.", examples = [ [ "type Msg = NotesTyped String", "notesField = UI.textArea [ UI.height (UI.lines 4) ] \"Notes\" \"\" (\\s -> NotesTyped s)" ] ] }
                     , { moduleName = "UI", name = "picker", signature = "List (Attr Input) -> a -> List a -> (a -> String) -> (a -> b) -> View b", side = "frontend", description = "A chooser over a list of options, given the current one, how to label each, and what to send on a change. The options are your own values, not strings, so nothing has to be parsed back.", examples = [ [ "type Msg = ServingsPicked Int", "servings = UI.picker [] 1 [ 1, 2, 3 ] (\\n -> String.fromInt n) (\\n -> ServingsPicked n)" ] ] }
-                    , { moduleName = "UI", name = "datePicker", signature = "List (Attr Input) -> Time -> (Time -> a) -> View a", side = "frontend", description = "A date chooser, given the current date and what to send when it changes.", examples = [ [ "type Msg = DuePicked Time", "dueField = UI.datePicker [] (Time.fromYMD 2026 7 22) (\\t -> DuePicked t)" ] ] }
+                    , { moduleName = "UI", name = "datePicker", signature = "List (Attr Input) -> Date -> (Date -> a) -> View a", side = "frontend", description = "A date chooser, given the day it shows and what to send when another day is picked.", examples = [ [ "type Msg = DuePicked Date", "dueField = UI.datePicker [] (Date.fromYMD 2026 7 22) (\\d -> DuePicked d)" ] ] }
                     ]
               }
             , { category = "Input attributes"
@@ -1150,6 +1189,7 @@ sectionsFor m =
                     , { moduleName = "Entity", name = "bool", signature = "Constraint -> Column Bool", side = "backend", description = "A true-or-false column.", examples = [ [ "Entity.bool Entity.notNull" ] ] }
                     , { moduleName = "Entity", name = "decimal", signature = "Int -> Constraint -> Column Decimal", side = "backend", description = "An exact decimal column, given how many digits to keep after the point. This is the one for money, where the small errors of a floating-point number are not acceptable.", examples = [ [ "Entity.decimal 2 Entity.notNull" ] ] }
                     , { moduleName = "Entity", name = "timestamp", signature = "Constraint -> Column Time", side = "backend", description = "A point-in-time column.", examples = [ [ "Entity.timestamp Entity.notNull" ] ] }
+                    , { moduleName = "Entity", name = "date", signature = "Constraint -> Column Date", side = "backend", description = "A column holding a day of the calendar, with no time of day.", examples = [ [ "Entity.date Entity.notNull" ] ] }
                     , { moduleName = "Entity", name = "enum", signature = "List a -> Constraint -> Column a", side = "backend", description = "A column limited to one of a fixed set of values.", examples = [ [ "Entity.enum [ \"todo\", \"doing\", \"done\" ] Entity.notNull" ] ] }
                     ]
               }
@@ -1281,6 +1321,9 @@ blurbFor m =
         "Time" ->
             "Points in time and the distances between them."
 
+        "Date" ->
+            "Days of the calendar, the same day wherever it is read."
+
         "Random" ->
             "Generators of random values, run only when you say so."
 
@@ -1379,6 +1422,9 @@ sideFor m =
             "both"
 
         "Time" ->
+            "both"
+
+        "Date" ->
             "both"
 
         "Random" ->

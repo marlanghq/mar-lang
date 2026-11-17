@@ -19,15 +19,16 @@ import UI exposing ( navigationStack, navigationTitle, topBarTrailing
 -- the class id.
 --
 -- On entry it fires three calls at once: the class row (for the
--- title), the roster, and, after reading the clock, today's marks
--- for the summary line. The clock read is a Cmd (Time.now) because
--- "today" is only knowable at runtime.
+-- title), the roster, and, after reading today's date, today's marks
+-- for the summary line. Today is a Task (Date.today), run with
+-- Cmd.perform, because it is the device's date, read in the device's
+-- time zone, the way the attendance sheet reads it.
 
 
 type alias Model =
     { klass            : Maybe (Maybe Shared.SchoolClass)  -- outer: fetched? inner: found?
     , students         : Maybe (List Shared.Student)
-    , today            : Maybe Time
+    , today            : Maybe Date
     , todayMarks       : List Shared.AttendanceMark
     , error            : Maybe String
     , editing          : Bool
@@ -41,7 +42,7 @@ type alias Model =
 type Msg
     = ClassFetched (Result Service.Error (Maybe Shared.SchoolClass))
     | StudentsFetched (Result Service.Error (List Shared.Student))
-    | GotToday Time
+    | GotToday Date
     | TodayMarksFetched (Result Service.Error (List Shared.AttendanceMark))
     | EditClicked
     | DoneEditingClicked
@@ -75,7 +76,7 @@ init _ params =
     , Cmd.batch
         [ Service.call Shared.getClass { id = params.id } ClassFetched
         , Service.call Shared.listStudents { classId = params.id } StudentsFetched
-        , Cmd.perform GotToday Time.now
+        , Cmd.perform GotToday Date.today
         ]
     )
 
@@ -95,13 +96,12 @@ update _ params msg model =
         StudentsFetched (Err why) ->
             ( { model | error = Just (Service.errorToString why) }, Cmd.none )
 
-        GotToday now ->
-            -- Clock read landed: remember today and ask the server for
-            -- this class's marks on that day (dayKey computed by the
-            -- SAME Shared.dayKeyOf the backend stores with).
-            ( { model | today = Just now }
+        GotToday today ->
+            -- Today landed: remember it and ask the server for this
+            -- class's marks on that day.
+            ( { model | today = Just today }
             , Service.call Shared.listMarks
-                { classId = params.id, dayKey = Shared.dayKeyOf now }
+                { classId = params.id, day = today }
                 TodayMarksFetched
             )
 

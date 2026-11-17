@@ -34,7 +34,10 @@ work happens:
 - **`Backend/Log.mar` is thin.** Four tables and six handlers. It stores
   rows, keeps them the caller's own, and enforces the two rules only a
   server can: one entry per day, and no rewriting a day older than the edit
-  window.
+  window. The day itself always comes from the phone or the browser, the
+  only side that knows what day it is where the person is; the server
+  measures the window from its own day in UTC and allows one day either
+  way, because time zones run from UTC-12 to UTC+14.
 - **The frontend does the reporting.** One request fetches a window of raw
   rows; every screen computes its numbers from that window with the shared
   functions, so navigating between reports costs nothing.
@@ -71,7 +74,7 @@ more than the data supports" checkable rather than promised.
 | `/` | today's log, and the week underneath it |
 | `/month` | the month as a grid, one square a day, coloured by mood |
 | `/patterns` | the series, the findings, and what is still missing |
-| `/day/{dayKey}` | one day, presented over the calendar; editable for three days |
+| `/day/{day}` | one day, as in `/day/2026-11-17`, presented over the calendar; editable for three days |
 | `/settings` | what you track, sign out, delete everything |
 
 ## The tap strip

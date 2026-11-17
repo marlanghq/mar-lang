@@ -42,7 +42,7 @@ import UI exposing
 type alias Model =
     { window  : Shared.Window
     , factors : List String
-    , today   : Maybe Int
+    , today   : Maybe Date
     , span    : Int          -- how many days the series shows
     , dark    : Bool
     , w       : Int
@@ -52,7 +52,7 @@ type alias Model =
 
 
 type Msg
-    = GotNow Time
+    = GotToday Date
     | GotSetup (Result Service.Error Shared.SetupState)
     | GotWindow (Result Service.Error Shared.Window)
     | DeviceChanged Device
@@ -77,7 +77,7 @@ init _ =
       , error = Nothing
       }
     , Cmd.batch
-        [ Cmd.perform GotNow Time.now
+        [ Cmd.perform GotToday Date.today
         , Service.call Shared.getSetup () GotSetup
         ]
     )
@@ -86,13 +86,10 @@ init _ =
 update : Shared.User -> Msg -> Model -> (Model, Cmd Msg)
 update _ msg model =
     case msg of
-        GotNow now ->
-            let
-                key = Shared.dayKeyOf now
-            in
-            ( { model | today = Just key }
+        GotToday today ->
+            ( { model | today = Just today }
             , Service.call Shared.loadWindow
-                { sinceDayKey = key - windowDays * Shared.dayMillis }
+                { since = Date.addDays today (0 - windowDays) }
                 GotWindow
             )
 
@@ -133,14 +130,14 @@ seriesLines =
     7
 
 
-series : Model -> Int -> View Msg
-series model todayKey =
+series : Model -> Date -> View Msg
+series model today =
     let
         h        = seriesLines * 24
         base     = h - 16
         top      = 14
         step     = (base - top) // 4
-        first    = todayKey - (model.span - 1) * Shared.dayMillis
+        first    = Date.addDays today (1 - model.span)
         days     = Shared.daysOf model.window
         barW     = max 2 ((model.w - (model.span - 1) * 2) // model.span)
         pitch    = barW + 2
@@ -166,7 +163,7 @@ series model todayKey =
                                     (rgba 130 134 148 70)
                                 ]
                         )
-                        (Shared.dayAt (first + i * Shared.dayMillis) days)
+                        (Shared.dayAt (Date.addDays first i) days)
                 )
                 (List.range 0 (model.span - 1))
             ]
@@ -358,12 +355,12 @@ cycleSection model =
 view : Shared.User -> Model -> View Msg
 view _ model =
     case model.today of
-        Just todayKey ->
+        Just today ->
             if model.loading then
                 waitingView
 
             else
-                loaded model todayKey
+                loaded model today
 
         Nothing ->
             waitingView
@@ -375,8 +372,8 @@ waitingView =
         [ centered (text [] "Reading your log.") ]
 
 
-loaded : Model -> Int -> View Msg
-loaded model todayKey =
+loaded : Model -> Date -> View Msg
+loaded model today =
     let
         all     = readings model
         found   = List.filter (\item -> isDifference item.reading) all
@@ -387,7 +384,7 @@ loaded model todayKey =
     navigationStack [ navigationTitle "Reports" ]
         [ list []
             (List.concat
-                [ [ seriesSection model todayKey (List.length days) ]
+                [ [ seriesSection model today (List.length days) ]
                 , [ foundHeader found days ]
                 , List.map findingCard found
                 , [ levelSection level ]
@@ -400,13 +397,13 @@ loaded model todayKey =
         ]
 
 
-seriesSection : Model -> Int -> Int -> View Msg
-seriesSection model todayKey logged =
+seriesSection : Model -> Date -> Int -> View Msg
+seriesSection model today logged =
     section
         [ header "The last few weeks"
         , footer "Bars are mood, in the calendar's colours. The grey dot on each bar is that day's energy."
         ]
-        [ series model todayKey
+        [ series model today
         , hstack []
             [ button [] (SpanPicked 30) "30 days"
             , spacer

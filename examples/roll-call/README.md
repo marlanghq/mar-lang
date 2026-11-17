@@ -42,8 +42,14 @@ production, set the mailer under `mail` in `mar.json`.
   live under `/api` so they never collide with the page routes.
 - **`Decimal`.** Attendance rates are exact base-10 percentages, rounded
   once at the edge with an explicit mode — no float drift.
+- **`Date`.** A mark belongs to a day of the calendar, not a moment: its
+  `day` is a `Date`, with no time of day and no time zone, so the day a
+  teacher marks is the same day on the server, in the browser and on the
+  phone. The class screen and the attendance sheet both read today from
+  the device (`Date.today`), in the device's time zone, so today is the
+  teacher's day rather than the server's.
 - **A shared vocabulary.** The `Status` union (Present / Late / Absent)
-  and the day-normalization live in `Shared.mar` and are used by both the
+  and the service contracts live in `Shared.mar` and are used by both the
   frontend and the backend, so the two halves can't disagree.
 - **The UI kit.** Navigation stack + typed routes, bottom sheets, confirm
   dialogs, drag-to-reorder + swipe-to-delete lists, a date picker, and
@@ -52,7 +58,7 @@ production, set the mailer under `mail` in `mar.json`.
 ## Layout
 
 ```
-Shared.mar            types, Status vocabulary, shared date math, Service contracts
+Shared.mar            types, Status vocabulary, Service contracts
 Backend/Users.mar     users entity (backs Auth)
 Backend/Classes.mar   classes entity + services + the roster-count projection
 Backend/Students.mar  students entity + services + cascades

@@ -122,6 +122,8 @@ func marKindOf(v Value) string {
 		return "a Set"
 	case VTime:
 		return "a Time"
+	case VDate:
+		return "a Date"
 	case VDuration:
 		return "a Duration"
 	}
@@ -271,6 +273,12 @@ func appendValue(dst []byte, v Value) ([]byte, error) {
 		// JSON escapes.
 		dst = append(dst, `{"__time":"`...)
 		dst = time.UnixMilli(x.Millis).UTC().AppendFormat(dst, isoMillis)
+		return append(dst, `"}`...), nil
+	case VDate:
+		// Wire format is `{"__date": "2026-11-17"}`, the marker-object shape
+		// of __time, so every decoder rebuilds a Date rather than a String.
+		dst = append(dst, `{"__date":"`...)
+		dst = append(dst, formatDateISO(x)...)
 		return append(dst, `"}`...), nil
 	case VList:
 		var err error
@@ -758,6 +766,16 @@ func convertJSON(raw any) (Value, error) {
 				return nil, fmt.Errorf("the value should be a date and time, got `%s`", iso)
 			}
 			return timeOf("`"+iso+"`", ms)
+		}
+		// Tagged date, `{"__date": "2026-11-17"}`, counterpart to the VDate
+		// encoder, read by parseDateISO, the one form the three runtimes
+		// accept.
+		if text, ok := x["__date"].(string); ok && len(x) == 1 {
+			days, ok := parseDateISO(text)
+			if !ok {
+				return nil, fmt.Errorf("the value should be a date, got `%s`", text)
+			}
+			return dateOf("`"+text+"`", days)
 		}
 		// A decoded object has no declared field order to inherit: the
 		// JSON text's order is gone by the time it is a Go map, and map

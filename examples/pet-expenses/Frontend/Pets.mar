@@ -211,7 +211,7 @@ petsSection model pets =
     else
         [ keyedList
             [ header "Pets"
-            , footer "Deleting a pet keeps its expenses — they move to \"all pets\"."
+            , footer "Deleting a pet keeps its expenses: they move to \"all pets\"."
             , onDelete model.editing DeletePetRowAt
             ]
             (List.map petRow pets)

@@ -23,7 +23,7 @@ expenses =
             , amount   = Entity.decimal 2 Entity.notNull
             , note     = Entity.text Entity.notNull
             , petId    = Entity.int Entity.notNull
-            , spentAt  = Entity.timestamp Entity.notNull
+            , spentAt  = Entity.date Entity.notNull
             }
         , uniques = []
         }
@@ -40,13 +40,20 @@ listExpensesImpl _ user =
         |> Task.map sortByNewest
 
 
+-- Latest day first. Several expenses share a day, so within one the
+-- last logged (the largest id) comes first, and the order never shifts
+-- between two loads.
 sortByNewest : List Shared.Expense -> List Shared.Expense
 sortByNewest items =
     List.sortWith
         (\a b ->
-            if Time.toMillis a.spentAt > Time.toMillis b.spentAt then
+            if Date.after a.spentAt b.spentAt then
                 LT
-            else if Time.toMillis a.spentAt < Time.toMillis b.spentAt then
+            else if Date.before a.spentAt b.spentAt then
+                GT
+            else if a.id > b.id then
+                LT
+            else if a.id < b.id then
                 GT
             else
                 EQ
@@ -57,12 +64,14 @@ sortByNewest items =
 -- ===== Create =====
 
 
-addExpenseImpl : { petId : Int, category : String, amount : Decimal, note : String, spentAt : Maybe Time } -> Shared.User -> Task Shared.AddExpenseOutcome
+addExpenseImpl : { petId : Int, category : String, amount : Decimal, note : String, spentAt : Date } -> Shared.User -> Task Shared.AddExpenseOutcome
 addExpenseImpl input user =
     -- The row is always stamped with the caller's id. `petId` is taken
     -- as given (a tag); we don't verify pet ownership here to avoid a
     -- module cycle with Backend.Pets: a forged petId only mislabels
-    -- the caller's OWN expense, never leaks anything.
+    -- the caller's OWN expense, never leaks anything. `spentAt` is the
+    -- day the client sent: the day is the person's, in their time zone,
+    -- and the server has none of its own.
     -- The column is scale 2, so the write below normalizes first:
     -- "12.5" pads exactly to 12.50, and a finer value rounds to cents
     -- HERE, visibly: Repo.create would abort on a scale-3 Decimal
@@ -71,32 +80,15 @@ addExpenseImpl input user =
         Task.succeed Shared.AmountNotPositive
 
     else
-        resolveSpentAt input.spentAt
-            |> Task.andThen
-                (\when ->
-                    Repo.create expenses
-                        { userId   = user.id
-                        , category = input.category
-                        , amount   = Decimal.toScale Decimal.HalfEven 2 input.amount
-                        , note     = input.note
-                        , petId    = input.petId
-                        , spentAt  = when
-                        }
-                        |> Task.map Shared.ExpenseAdded
-                )
-
-
--- The date the user picked, or "now" if they left the picker untouched.
--- Time.now reads the server clock; the client only sends a date when the
--- user actually changed it.
-resolveSpentAt : Maybe Time -> Task Time
-resolveSpentAt chosen =
-    case chosen of
-        Just when ->
-            Task.succeed when
-
-        Nothing ->
-            Time.now
+        Repo.create expenses
+            { userId   = user.id
+            , category = input.category
+            , amount   = Decimal.toScale Decimal.HalfEven 2 input.amount
+            , note     = input.note
+            , petId    = input.petId
+            , spentAt  = input.spentAt
+            }
+            |> Task.map Shared.ExpenseAdded
 
 
 -- ===== Delete =====

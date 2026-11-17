@@ -346,6 +346,9 @@ func kindMismatchReason(k Kind, t Type) string {
 		if c, ok := t.(TCon); ok && c.Name == "Time" {
 			return "a Time has no order of its own; sort or compare by Time.toMillis instead"
 		}
+		if c, ok := t.(TCon); ok && c.Name == "Date" {
+			return "a Date has no order of its own; sort by Date.toIso, or compare with Date.before, Date.after or Date.diffDays"
+		}
 		// Phrasing stays neutral: "key types" was Dict-specific
 		// jargon; this message also fires for the ordering operators
 		// (`<`, `>`, `<=`, `>=`), where "key" makes no sense.

@@ -197,6 +197,8 @@ func entityBuiltins() map[string]Value {
 		// based on this column type, so handlers see Time, never
 		// raw integers.
 		"entityTimestamp": nativeFn(1, makeColumnConstructor("TIMESTAMP")),
+		// Stored as INTEGER days since 1970-01-01, read back as a Date.
+		"entityDate": nativeFn(1, makeColumnConstructor("DATE")),
 
 		// Entity.decimal <scale> <constraint>: fixed-scale exact
 		// decimal, stored as an INTEGER coefficient at the column's
@@ -239,7 +241,7 @@ func entityBuiltins() map[string]Value {
 //
 // Every column declaration must be a VColumn (produced by
 // Entity.serial / Entity.int / Entity.text / Entity.bool /
-// Entity.enum / Entity.timestamp). Anything else fails fast with the
+// Entity.enum / Entity.timestamp / Entity.date). Anything else fails fast with the
 // offending field name.
 //
 // Validation:

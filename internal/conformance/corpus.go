@@ -493,6 +493,9 @@ jsonCases =
         , "roundTripErr=" ++ showNested (decodeNested (JSON.encode errBad))
         , "encodeTime1500=" ++ q (JSON.encode (Time.fromYMD 1500 3 1))
         , "encodeTimeYearZero=" ++ q (JSON.encode (Time.fromYMD 0 1 1))
+        , "encodeDate=" ++ q (JSON.encode (Date.fromYMD 2026 11 17))
+        , "encodeDateYearZero=" ++ q (JSON.encode (Date.fromYMD 0 1 1))
+        , "encodeDateInRecord=" ++ q (JSON.encode { due = Date.fromYMD 2026 11 17 })
         , "encodeDuration=" ++ q (JSON.encode (Time.millis 100))
         , "encodeDurationNeg=" ++ q (JSON.encode (Time.millis (-2500)))
 
@@ -828,6 +831,16 @@ dse r =
             e
 
 
+ddate : Result String Date -> String
+ddate r =
+    case r of
+        Ok d ->
+            Date.toIso d
+
+        Err e ->
+            e
+
+
 ddu : Result String Duration -> String
 ddu r =
     case r of
@@ -1081,6 +1094,80 @@ maybeIso m =
             Time.toIso t
 
 
+-- A Date is a day of the calendar and nothing else: a label, read the same on
+-- every runtime whatever its time zone, 0000-01-01 to 9999-12-31 in the
+-- proleptic Gregorian calendar, with its own text form, YYYY-MM-DD.
+dateCases : String
+dateCases =
+    String.join ";"
+        [ "fromYMD=" ++ Date.toIso (Date.fromYMD 2026 11 17)
+        , "year=" ++ String.fromInt (Date.year day)
+        , "month=" ++ String.fromInt (Date.month day)
+        , "day=" ++ String.fromInt (Date.day day)
+        , "weekday=" ++ String.fromInt (Date.weekday day)
+        , "weekdaySunday=" ++ String.fromInt (Date.weekday (Date.fromYMD 2026 11 22))
+        , "weekdayEpoch=" ++ String.fromInt (Date.weekday (Date.fromYMD 1970 1 1))
+        , "weekdayYearZero=" ++ String.fromInt (Date.weekday (Date.fromYMD 0 1 1))
+        , "addDays=" ++ Date.toIso (Date.addDays day 20)
+        , "addDaysBack=" ++ Date.toIso (Date.addDays day (-400))
+        , "addMonths=" ++ Date.toIso (Date.addMonths day 3)
+        , "addMonthsClamps=" ++ Date.toIso (Date.addMonths (Date.fromYMD 2024 1 31) 1)
+        , "addMonthsBack=" ++ Date.toIso (Date.addMonths (Date.fromYMD 2024 3 31) (-1))
+        , "addYears=" ++ Date.toIso (Date.addYears day 1)
+        , "addYearsLeap=" ++ Date.toIso (Date.addYears (Date.fromYMD 2024 2 29) 1)
+        , "diffDays=" ++ String.fromInt (Date.diffDays day (Date.fromYMD 2027 1 1))
+        , "diffDaysBackwards=" ++ String.fromInt (Date.diffDays (Date.fromYMD 2027 1 1) day)
+        , "before=" ++ yn (Date.before day (Date.addDays day 1))
+        , "beforeSame=" ++ yn (Date.before day day)
+        , "after=" ++ yn (Date.after day (Date.addDays day 1))
+        , "toIsoYearZero=" ++ Date.toIso (Date.fromYMD 0 1 1)
+        , "toIsoYearFifty=" ++ Date.toIso (Date.fromYMD 50 6 15)
+        , "toIsoLast=" ++ Date.toIso (Date.fromYMD 9999 12 31)
+        , "carryMonth=" ++ Date.toIso (Date.fromYMD 2026 13 1)
+        , "carryDay=" ++ Date.toIso (Date.fromYMD 2026 3 0)
+        , "carryBackIn=" ++ Date.toIso (Date.fromYMD 10000 0 1)
+        , "leap1500=" ++ Date.toIso (Date.fromYMD 1500 2 29)
+        , "leapYearZero=" ++ Date.toIso (Date.addDays (Date.fromYMD 0 2 28) 1)
+        , "fromIso=" ++ maybeDate (Date.fromIso "2026-11-17")
+        , "fromIsoYearZero=" ++ maybeDate (Date.fromIso "0000-01-01")
+        , "fromIsoLeap=" ++ maybeDate (Date.fromIso "2024-02-29")
+        , "fromIsoFeb29=" ++ maybeDate (Date.fromIso "2023-02-29")
+        , "fromIsoMonth13=" ++ maybeDate (Date.fromIso "2026-13-01")
+        , "fromIsoDayZero=" ++ maybeDate (Date.fromIso "2026-11-00")
+        , "fromIsoShortYear=" ++ maybeDate (Date.fromIso "226-11-17")
+        , "fromIsoExtendedYear=" ++ maybeDate (Date.fromIso "+02026-11-17")
+        , "fromIsoWithTime=" ++ maybeDate (Date.fromIso "2026-11-17T00:00:00Z")
+        , "fromIsoSlashes=" ++ maybeDate (Date.fromIso "2026/11/17")
+        , "fromIsoOneDigit=" ++ maybeDate (Date.fromIso "2026-1-17")
+        , "fromIsoSpace=" ++ maybeDate (Date.fromIso " 2026-11-17")
+        , "fromIsoWideDigit=" ++ maybeDate (Date.fromIso (String.cons '\u{FF12}' "026-11-17"))
+        , "fromTime=" ++ Date.toIso (Date.fromTime (instant "2026-11-17T23:59:59.999Z"))
+        , "fromTimeBeforeEpoch=" ++ Date.toIso (Date.fromTime (instant "1969-12-31T23:59:59.999Z"))
+        , "fromTimeOffset=" ++ Date.toIso (Date.fromTime (instant "2026-11-17T22:00:00-03:00"))
+        , "fromTimeFirst=" ++ Date.toIso (Date.fromTime (instant "0000-01-01T00:00:00.000Z"))
+        , "fromTimeLast=" ++ Date.toIso (Date.fromTime (instant "9999-12-31T23:59:59.999Z"))
+        , "toTime=" ++ Time.toIso (Date.toTime day)
+        , "toTimeYearZero=" ++ Time.toIso (Date.toTime (Date.fromYMD 0 1 1))
+        , "toTimeIsFromYMD=" ++ yn (Date.toTime day == Time.fromYMD 2026 11 17)
+        , "roundTrip=" ++ yn (Date.fromTime (Date.toTime day) == day)
+        ]
+
+
+day : Date
+day =
+    Date.fromYMD 2026 11 17
+
+
+maybeDate : Maybe Date -> String
+maybeDate m =
+    case m of
+        Nothing ->
+            "Nothing"
+
+        Just d ->
+            Date.toIso d
+
+
 -- Random has a seedable half, Random.initialSeed and Random.step, so
 -- the generators ARE comparable as values, and nothing was comparing them.
 -- A shuffled deck, a level layout, an enemy roll: same seed, and the phone
@@ -1307,6 +1394,20 @@ decodeCases =
         , "unpinnedAngle=" ++ unpinned "{\"__angle\":1.5}"
         , "unpinnedChar=" ++ unpinned "{\"__char\":\"abc\"}"
         , "unpinnedNotJSON=" ++ unpinned "{\"a\":"
+
+        -- A Date travels as {"__date": "YYYY-MM-DD"}, that text and nothing
+        -- else, alone in its object.
+        , "dateTagged=" ++ ddate (JSON.decode "{\"__date\":\"2026-11-17\"}")
+        , "dateYearZero=" ++ ddate (JSON.decode "{\"__date\":\"0000-01-01\"}")
+        , "dateFeb30=" ++ ddate (JSON.decode "{\"__date\":\"2026-02-30\"}")
+        , "dateWithTime=" ++ ddate (JSON.decode "{\"__date\":\"2026-11-17T00:00:00Z\"}")
+        , "dateLoneSurrogate=" ++ ddate (JSON.decode "{\"__date\":\"\\ud800\"}")
+        , "dateExtraKey=" ++ q (ddate (JSON.decode "{\"__date\":\"2026-11-17\",\"x\":1}"))
+        , "dateNotAString=" ++ q (ddate (JSON.decode "{\"__date\":5}"))
+        , "dateNotADate=" ++ q (ddate (JSON.decode "\"2026-11-17\""))
+        , "dateIsATime=" ++ q (ddate (JSON.decode "{\"__time\":\"2023-11-14T22:13:20Z\"}"))
+        , "timeIsADate=" ++ q (dtm (JSON.decode "{\"__date\":\"2026-11-17\"}"))
+        , "unpinnedDate=" ++ unpinned "{\"__date\":\"2026-02-30\"}"
         ]
 
 
@@ -1396,11 +1497,16 @@ equalityCases =
         , "setOrder=" ++ yn (Set.fromList [ 3, 1, 2 ] == Set.fromList [ 1, 2, 3 ])
         , "setDiffer=" ++ yn (Set.fromList [ 1 ] == Set.fromList [ 2 ])
         , "setInRecord=" ++ yn ({ s = Set.fromList [ 1, 2 ] } == { s = Set.fromList [ 2, 1 ] })
+        , "dateSame=" ++ yn (Date.fromYMD 2026 8 11 == Date.fromYMD 2026 8 11)
+        , "dateDiffer=" ++ yn (Date.fromYMD 2026 8 11 == Date.fromYMD 2026 8 12)
+        , "dateInRecord=" ++ yn ({ on = Date.fromYMD 2026 8 11 } == { on = Date.fromYMD 2026 8 11 })
+        , "dateInList=" ++ yn (List.member (Date.fromYMD 2026 8 11) [ Date.fromYMD 2026 8 12, Date.fromYMD 2026 8 11 ])
+        , "dateCarried=" ++ yn (Date.fromYMD 2026 13 1 == Date.fromYMD 2027 1 1)
         ]
 
 
 results =
-    String.join "\n" [ basicsCases, stringCases, textCases, listCases, maybeCases, resultCases, tupleCases, charCases, dictCases, setCases, jsonCases, mathCases, shortCircuitCases, orderingCases, decodeCases, decimalCases, timeCases, randomCases, linkCases, equalityCases ]
+    String.join "\n" [ basicsCases, stringCases, textCases, listCases, maybeCases, resultCases, tupleCases, charCases, dictCases, setCases, jsonCases, mathCases, shortCircuitCases, orderingCases, decodeCases, decimalCases, timeCases, dateCases, randomCases, linkCases, equalityCases ]
 `
 
 // Entry is the value each runtime is asked to evaluate.
@@ -1438,6 +1544,7 @@ var Blocks = []string{
 	"Decimal",
 	// Time was outside it, and that is where the milliseconds went.
 	"Time",
+	"Date",
 	// Random has a seedable half, so its generators are comparable as
 	// values. A shuffled deck has to deal the same cards on the phone.
 	"Random",
@@ -1466,6 +1573,7 @@ var Scope = map[string]bool{
 	// in the browser with nothing noticing.
 	"Decimal": true,
 	"Time":    true,
+	"Date":    true,
 	"Random":  true,
 }
 
@@ -1488,6 +1596,7 @@ var OutOfScopeBare = map[string]string{}
 var OutOfScopeFunc = map[string]string{
 	"Time.now":        "reads the wall clock; there is no answer two runtimes could agree on",
 	"Time.every":      "a subscription; its ticking is pinned by the vsync tests",
+	"Date.today":      "reads the device's clock and time zone; held to Go's time package by the today tests",
 	"Random.seed":     "a Task that reads entropy; the generators it feeds are covered",
 	"Random.generate": "a Cmd; Random.step is the same algorithm with the seed in hand",
 }
@@ -1614,6 +1723,11 @@ Equality.timeSame=T
 Equality.timeDiffer=F
 Equality.timeInRecord=T
 Equality.timeInList=T
+Equality.dateSame=T
+Equality.dateDiffer=F
+Equality.dateInRecord=T
+Equality.dateInList=T
+Equality.dateCarried=T
 Equality.dictOrder=T
 Equality.dictValue=F
 Equality.dictSize=F
@@ -1900,6 +2014,9 @@ JSON.roundTripOk=Ok 1
 JSON.roundTripErr=Err bad
 JSON.encodeTime1500={'__time':'1500-03-01T00:00:00.000Z'}
 JSON.encodeTimeYearZero={'__time':'0000-01-01T00:00:00.000Z'}
+JSON.encodeDate={'__date':'2026-11-17'}
+JSON.encodeDateYearZero={'__date':'0000-01-01'}
+JSON.encodeDateInRecord={'due':{'__date':'2026-11-17'}}
 JSON.encodeDuration={'__duration':100}
 JSON.encodeDurationNeg={'__duration':-2500}
 JSON.encodeKeyOrder={'a10':1,'a2':2,'endTime':3,'ends':4,'posX':5,'position':6}
@@ -1963,7 +2080,7 @@ ShortCircuit.andSkips=F
 ShortCircuit.orSkips=T
 ShortCircuit.andEvaluates=T
 ShortCircuit.orEvaluates=T
-` + decodeExpectations + decimalExpectations + timeExpectations + randomExpectations + linkExpectations
+` + decodeExpectations + decimalExpectations + timeExpectations + dateExpectations + randomExpectations + linkExpectations
 
 // Expectations parses the hand-written answers. Blank lines only group them for
 // reading.
@@ -2114,6 +2231,59 @@ const randomExpectations = "" +
 	"Random.pair=3/6" + "\n" +
 	"Random.sequence=95,20,60" + "\n" +
 	"Random.uniform=30" + "\n" +
+	""
+
+const dateExpectations = "" +
+	"Date.fromYMD=2026-11-17" + "\n" +
+	"Date.year=2026" + "\n" +
+	"Date.month=11" + "\n" +
+	"Date.day=17" + "\n" +
+	"Date.weekday=2" + "\n" +
+	"Date.weekdaySunday=7" + "\n" +
+	"Date.weekdayEpoch=4" + "\n" +
+	"Date.weekdayYearZero=6" + "\n" +
+	"Date.addDays=2026-12-07" + "\n" +
+	"Date.addDaysBack=2025-10-13" + "\n" +
+	"Date.addMonths=2027-02-17" + "\n" +
+	"Date.addMonthsClamps=2024-02-29" + "\n" +
+	"Date.addMonthsBack=2024-02-29" + "\n" +
+	"Date.addYears=2027-11-17" + "\n" +
+	"Date.addYearsLeap=2025-02-28" + "\n" +
+	"Date.diffDays=45" + "\n" +
+	"Date.diffDaysBackwards=-45" + "\n" +
+	"Date.before=T" + "\n" +
+	"Date.beforeSame=F" + "\n" +
+	"Date.after=F" + "\n" +
+	"Date.toIsoYearZero=0000-01-01" + "\n" +
+	"Date.toIsoYearFifty=0050-06-15" + "\n" +
+	"Date.toIsoLast=9999-12-31" + "\n" +
+	"Date.carryMonth=2027-01-01" + "\n" +
+	"Date.carryDay=2026-02-28" + "\n" +
+	"Date.carryBackIn=9999-12-01" + "\n" +
+	"Date.leap1500=1500-03-01" + "\n" +
+	"Date.leapYearZero=0000-02-29" + "\n" +
+	"Date.fromIso=2026-11-17" + "\n" +
+	"Date.fromIsoYearZero=0000-01-01" + "\n" +
+	"Date.fromIsoLeap=2024-02-29" + "\n" +
+	"Date.fromIsoFeb29=Nothing" + "\n" +
+	"Date.fromIsoMonth13=Nothing" + "\n" +
+	"Date.fromIsoDayZero=Nothing" + "\n" +
+	"Date.fromIsoShortYear=Nothing" + "\n" +
+	"Date.fromIsoExtendedYear=Nothing" + "\n" +
+	"Date.fromIsoWithTime=Nothing" + "\n" +
+	"Date.fromIsoSlashes=Nothing" + "\n" +
+	"Date.fromIsoOneDigit=Nothing" + "\n" +
+	"Date.fromIsoSpace=Nothing" + "\n" +
+	"Date.fromIsoWideDigit=Nothing" + "\n" +
+	"Date.fromTime=2026-11-17" + "\n" +
+	"Date.fromTimeBeforeEpoch=1969-12-31" + "\n" +
+	"Date.fromTimeOffset=2026-11-18" + "\n" +
+	"Date.fromTimeFirst=0000-01-01" + "\n" +
+	"Date.fromTimeLast=9999-12-31" + "\n" +
+	"Date.toTime=2026-11-17T00:00:00.000Z" + "\n" +
+	"Date.toTimeYearZero=0000-01-01T00:00:00.000Z" + "\n" +
+	"Date.toTimeIsFromYMD=T" + "\n" +
+	"Date.roundTrip=T" + "\n" +
 	""
 
 const timeExpectations = "" +
@@ -2302,6 +2472,17 @@ const decodeExpectations = "Decode.ok=ok:ana:3\n" +
 	"Decode.unpinnedAngle=the value should be a whole number of deci-degrees, got 1.5" + "\n" +
 	"Decode.unpinnedChar=the value should be a single character, got 3" + "\n" +
 	"Decode.unpinnedNotJSON=the document is not valid JSON" + "\n" +
+	"Decode.dateTagged=2026-11-17" + "\n" +
+	"Decode.dateYearZero=0000-01-01" + "\n" +
+	"Decode.dateFeb30=the value should be a date, got `2026-02-30`" + "\n" +
+	"Decode.dateWithTime=the value should be a date, got `2026-11-17T00:00:00Z`" + "\n" +
+	"Decode.dateLoneSurrogate=the value should be a date, got `\uFFFD`" + "\n" +
+	"Decode.dateExtraKey=the value should be a date (a YYYY-MM-DD string under '__date'), got an object with __date, x" + "\n" +
+	"Decode.dateNotAString=the value should be a date (a YYYY-MM-DD string under '__date'), got an object with __date" + "\n" +
+	"Decode.dateNotADate=the value should be a date (a YYYY-MM-DD string under '__date'), got a string" + "\n" +
+	"Decode.dateIsATime=the value should be a date (a YYYY-MM-DD string under '__date'), got a time" + "\n" +
+	"Decode.timeIsADate=the value should be a time (an ISO-8601 string under '__time'), got a date" + "\n" +
+	"Decode.unpinnedDate=the value should be a date, got `2026-02-30`" + "\n" +
 	"Decode.tupleOk=ok:7:abc" + "\n" +
 	"Decode.tupleShort=the value should be a list of 2 values, got 1" + "\n" +
 	"Decode.tupleWrongType=`[0]` should be a whole number, got a string" + "\n" +

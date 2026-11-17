@@ -137,9 +137,10 @@ currentStreak sortedDesc =
                 0
 
 
+-- Date.toIso is the sort key: `YYYY-MM-DD` text sorts chronologically.
 sortByDayDesc : List Shared.AttendanceMark -> List Shared.AttendanceMark
 sortByDayDesc marks =
-    List.reverse (List.sortBy (\m -> m.dayKey) marks)
+    List.reverse (List.sortBy (\m -> Date.toIso m.day) marks)
 
 
 -- ===== VIEW =====
@@ -272,24 +273,10 @@ recentSection history =
 dayRow : Shared.AttendanceMark -> View Msg
 dayRow mark =
     hstack []
-        [ text [] (formatDay mark.day)
+        [ text [] (Date.toIso mark.day)
         , spacer
         , text [] (Shared.statusLabel (Shared.statusFromInt mark.status))
         ]
-
-
-formatDay : Time -> String
-formatDay t =
-    String.fromInt (Time.year t)
-        ++ "-"
-        ++ pad2 (Time.month t)
-        ++ "-"
-        ++ pad2 (Time.day t)
-
-
-pad2 : Int -> String
-pad2 n =
-    String.padLeft 2 '0' (String.fromInt n)
 
 
 renameSheet : Model -> View Msg

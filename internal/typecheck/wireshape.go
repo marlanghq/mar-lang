@@ -178,6 +178,8 @@ func wireShapeOf(t Type, depth int, path *shapePath, tags CtorLookup) ast.WireSh
 			return ast.WireShape{Kind: ast.WireDecimal}
 		case "Time":
 			return ast.WireShape{Kind: ast.WireTime}
+		case "Date":
+			return ast.WireShape{Kind: ast.WireDate}
 		case "List":
 			if len(n.Args) == 1 {
 				elem := wireShapeOf(n.Args[0], depth+1, path, tags)

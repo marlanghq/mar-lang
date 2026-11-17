@@ -146,6 +146,15 @@ func (v VTime) Display() string {
 	return fmt.Sprintf("<time:%dms>", v.Millis)
 }
 
+// VDate is a day of the calendar, with no time of day and no time zone: the
+// number of days from 1970-01-01, from 0000-01-01 to 9999-12-31 in the
+// proleptic Gregorian calendar. Built through dateOf (date.go). Wire format
+// is `{"__date": "2026-11-17"}`.
+type VDate struct{ Days int64 }
+
+func (VDate) isValue()          {}
+func (v VDate) Display() string { return formatDateISO(v) }
+
 // VFn is a function value: either a closure (user lambda) or a built-in.
 type VFn struct {
 	// For closures:

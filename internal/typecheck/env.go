@@ -1824,6 +1824,40 @@ func stdlibBindings() map[string]Type {
 		"timeMinute": TArrow{From: TTime, To: TInt},
 		"timeSecond": TArrow{From: TTime, To: TInt},
 
+		// Date: a day of the calendar, with no time of day and no time zone.
+		// The same label on every runtime; the device's time zone enters
+		// only through Date.today, which runs on the frontend (sides.go).
+		//
+		//   Date.fromYMD   : Int -> Int -> Int -> Date  -- carried over like Time.fromYMD
+		//   Date.year / month / day / weekday : Date -> Int  -- weekday 1 = Monday .. 7 = Sunday
+		//   Date.addDays / addMonths / addYears : Date -> Int -> Date
+		//   Date.diffDays  : Date -> Date -> Int        -- days from the first to the second
+		//   Date.before / after : Date -> Date -> Bool
+		//   Date.toIso     : Date -> String             -- "2026-11-17"
+		//   Date.fromIso   : String -> Maybe Date
+		//   Date.fromTime  : Time -> Date               -- the day in UTC
+		//   Date.toTime    : Date -> Time               -- midnight UTC
+		//   Date.today     : Task Date                  -- the device's date
+		"dateFromYMD":   TArrow{From: TInt, To: TArrow{From: TInt, To: TArrow{From: TInt, To: TDate}}},
+		"dateYear":      TArrow{From: TDate, To: TInt},
+		"dateMonth":     TArrow{From: TDate, To: TInt},
+		"dateDay":       TArrow{From: TDate, To: TInt},
+		"dateWeekday":   TArrow{From: TDate, To: TInt},
+		"dateAddDays":   TArrow{From: TDate, To: TArrow{From: TInt, To: TDate}},
+		"dateAddMonths": TArrow{From: TDate, To: TArrow{From: TInt, To: TDate}},
+		"dateAddYears":  TArrow{From: TDate, To: TArrow{From: TInt, To: TDate}},
+		"dateDiffDays":  TArrow{From: TDate, To: TArrow{From: TDate, To: TInt}},
+		"dateBefore":    TArrow{From: TDate, To: TArrow{From: TDate, To: TBool}},
+		"dateAfter":     TArrow{From: TDate, To: TArrow{From: TDate, To: TBool}},
+		"dateToIso":     TArrow{From: TDate, To: TString},
+		"dateFromIso":   TArrow{From: TString, To: TMaybe(TDate)},
+		"dateFromTime":  TArrow{From: TTime, To: TDate},
+		"dateToTime":    TArrow{From: TDate, To: TTime},
+		"dateToday": TForall{
+			Vars: []int{a.ID, b.ID},
+			Body: TTask(TDate),
+		},
+
 		// Dict k v / Set k: Elm-style polymorphic containers with a
 		// Comparable constraint on the key. The constraint lives on
 		// the TVar itself (KindComparable); the unifier rejects any
@@ -2029,6 +2063,10 @@ func stdlibBindings() map[string]Type {
 		// Time values via the repo encode/decode path so handlers
 		// only ever see Time, never raw integers.
 		"entityTimestamp": TArrow{From: TConstraint(), To: TColumn(TTime)},
+
+		// Entity.date : Constraint -> Column Date
+		// Stored as INTEGER days since 1970-01-01, read back as a Date.
+		"entityDate": TArrow{From: TConstraint(), To: TColumn(TDate)},
 
 		// JSON (untyped: encode any value, decode produces "any" record/list/etc)
 		"jsonEncode": TForall{
@@ -2452,22 +2490,22 @@ func stdlibBindings() map[string]Type {
 			},
 		},
 
-		// UI.datePicker : List Attr -> Time -> (Time -> msg) -> View msg
-		// Date-only field, and PURE: it shows exactly the Time you pass and
-		// fires `(Time -> msg)` with the chosen day at local midnight. The
-		// program owns the value: there is no renderer-invented default.
-		// Seed "today" on the frontend with `Cmd.perform GotToday Time.now`
-		// (hold the field as `Maybe Time`, render the picker once seeded).
-		// iOS: SwiftUI DatePicker(.date). Web: <input type="date">. Use
-		// textField for free text, picker for an enum, datePicker for a date.
+		// UI.datePicker : List Attr -> Date -> (Date -> msg) -> View msg
+		// Date-only field, and PURE: it shows exactly the Date you pass and
+		// fires `(Date -> msg)` with the chosen day. The program owns the
+		// value: there is no renderer-invented default. Seed "today" on the
+		// frontend with `Cmd.perform GotToday Date.today` (hold the field as
+		// `Maybe Date`, render the picker once seeded). iOS: SwiftUI
+		// DatePicker(.date). Web: <input type="date">. Use textField for free
+		// text, picker for an enum, datePicker for a date.
 		"datePicker": TForall{
 			Vars: []int{a.ID},
 			Body: TArrow{
 				From: TList(TAttr(TAttrInputHost())),
 				To: TArrow{
-					From: TTime,
+					From: TDate,
 					To: TArrow{
-						From: TArrow{From: TTime, To: a},
+						From: TArrow{From: TDate, To: a},
 						To:   TView(a),
 					},
 				},

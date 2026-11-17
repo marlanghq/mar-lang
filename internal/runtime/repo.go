@@ -517,6 +517,13 @@ func marValueToSQLForField(field *EntityField, v Value) (any, error) {
 		}
 		return t.Millis, nil
 	}
+	if field != nil && field.SQLType == "DATE" {
+		dt, ok := v.(VDate)
+		if !ok {
+			return nil, fmt.Errorf("date column %q: expected Date (got %T)", field.Name, v)
+		}
+		return dt.Days, nil
+	}
 	if field != nil && field.SQLType == "DECIMAL" {
 		d, ok := v.(VDecimal)
 		if !ok {
@@ -592,8 +599,9 @@ func scanRow(rows *sql.Rows, entity VEntity) (VRecord, error) {
 // from another tool, or an external 64-bit id, so it raises rather than
 // rounding.
 //
-// A TIMESTAMP is bounded by the range of a Time instead, and a DECIMAL
-// decodes to an arbitrary-precision coefficient, which is not an Int.
+// A TIMESTAMP is bounded by the range of a Time instead, a DATE by the range
+// of a Date, and a DECIMAL decodes to an arbitrary-precision coefficient,
+// which is not an Int.
 func decodeColumn(table string, f EntityField, raw any) (Value, error) {
 	if raw == nil {
 		// All declared columns are NOT NULL today, so NULL shouldn't
@@ -627,6 +635,15 @@ func decodeColumn(table string, f EntityField, raw any) (Value, error) {
 			return nil, err
 		}
 		return timeOf(fmt.Sprintf("%d milliseconds from the database", n), n)
+
+	case "DATE":
+		// Stored as an INTEGER count of days from 1970-01-01; rehydrate to
+		// a Date so `due : Date` reads back as a Date.
+		n, err := storedInt(table, f, raw)
+		if err != nil {
+			return nil, err
+		}
+		return dateOf(fmt.Sprintf("%d days from the database", n), n)
 
 	case "DECIMAL":
 		// Stored as an INTEGER coefficient at the column's fixed
@@ -769,7 +786,7 @@ func storableAs(f EntityField, v Value) (any, error) {
 		}
 		return nil, writeWrong(f, v, "true or false")
 	}
-	// TIMESTAMP, DECIMAL and enum columns are handled above, before this is
+	// TIMESTAMP, DATE, DECIMAL and enum columns are handled above, before this is
 	// reached; anything else is a column kind this function has not been
 	// taught, and guessing is what it exists to stop.
 	return nil, writeWrong(f, v, "a value of its declared type")
@@ -795,6 +812,8 @@ func describeValueKind(v Value) string {
 		return fmt.Sprintf("%t", x.V)
 	case VTime:
 		return "a Time"
+	case VDate:
+		return "a Date"
 	case VDecimal:
 		return "a Decimal"
 	case VCtor:
@@ -819,7 +838,7 @@ func describeValueKind(v Value) string {
 // program that uses that kind, which is why the census exists.
 func ColumnIsCheckedBothWays(f EntityField) bool {
 	switch f.SQLType {
-	case "INTEGER", "TEXT", "BOOLEAN", "TIMESTAMP", "DECIMAL":
+	case "INTEGER", "TEXT", "BOOLEAN", "TIMESTAMP", "DATE", "DECIMAL":
 		return true
 	}
 	return false

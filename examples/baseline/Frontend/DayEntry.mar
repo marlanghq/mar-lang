@@ -42,9 +42,10 @@ type Screen
 
 
 type alias Model =
-    { window  : Shared.Window
+    { day     : Maybe Date     -- the day the path names, if it names one
+    , window  : Shared.Window
     , factors : List String
-    , today   : Maybe Int
+    , today   : Maybe Date
     , screen  : Screen
     , mood    : Maybe Int
     , energy  : Maybe Int
@@ -58,7 +59,7 @@ type alias Model =
 
 
 type Msg
-    = GotNow Time
+    = GotToday Date
     | GotSetup (Result Service.Error Shared.SetupState)
     | GotWindow (Result Service.Error Shared.Window)
     | AskFor Int
@@ -71,9 +72,18 @@ type Msg
     | Dismissed
 
 
-init : Shared.User -> { dayKey : Int } -> (Model, Cmd Msg)
+init : Shared.User -> { day : String } -> (Model, Cmd Msg)
 init _ params =
-    ( { window = Shared.emptyWindow
+    let
+        day = Date.fromIso params.day
+
+        load =
+            case day of
+                Just d  -> Service.call Shared.loadWindow { since = d } GotWindow
+                Nothing -> Cmd.none
+    in
+    ( { day = day
+      , window = Shared.emptyWindow
       , factors = []
       , today = Nothing
       , screen = Listing
@@ -87,18 +97,18 @@ init _ params =
       , error = Nothing
       }
     , Cmd.batch
-        [ Cmd.perform GotNow Time.now
+        [ Cmd.perform GotToday Date.today
         , Service.call Shared.getSetup () GotSetup
-        , Service.call Shared.loadWindow { sinceDayKey = params.dayKey } GotWindow
+        , load
         ]
     )
 
 
-update : Shared.User -> { dayKey : Int } -> Msg -> Model -> (Model, Cmd Msg)
-update _ params msg model =
+update : Shared.User -> { day : String } -> Msg -> Model -> (Model, Cmd Msg)
+update _ _ msg model =
     case msg of
-        GotNow now ->
-            ( { model | today = Just (Shared.dayKeyOf now) }, Cmd.none )
+        GotToday today ->
+            ( { model | today = Just today }, Cmd.none )
 
         GotSetup (Ok state) ->
             ( { model | factors = state.factors }, Cmd.none )
@@ -107,7 +117,7 @@ update _ params msg model =
             ( { model | error = Just (Service.errorToString why) }, Cmd.none )
 
         GotWindow (Ok window) ->
-            ( seed params { model | window = window, loading = False }, Cmd.none )
+            ( seed { model | window = window, loading = False }, Cmd.none )
 
         GotWindow (Err why) ->
             ( { model | loading = False, error = Just (Service.errorToString why) }, Cmd.none )
@@ -119,7 +129,7 @@ update _ params msg model =
             ( { model | screen = Listing }, Cmd.none )
 
         Answered value ->
-            save params (record value { model | screen = Listing })
+            save (record value { model | screen = Listing })
 
         Cleared ->
             ( { model | screen = Listing }, Cmd.none )
@@ -128,7 +138,7 @@ update _ params msg model =
             ( { model | note = value }, Cmd.none )
 
         SaveClicked ->
-            save params model
+            save model
 
         DaySaved (Ok Shared.DaySaved) ->
             ( { model | saving = False, saved = model.note }, Cmd.none )
@@ -187,9 +197,9 @@ answerOf question model =
         Shared.AskFactor f -> pickValue f.key model.picks
 
 
-seed : { dayKey : Int } -> Model -> Model
-seed params model =
-    case Shared.dayAt params.dayKey (Shared.daysOf model.window) of
+seed : Model -> Model
+seed model =
+    case Maybe.andThen (\day -> Shared.dayAt day (Shared.daysOf model.window)) model.day of
         Nothing ->
             model
 
@@ -203,27 +213,26 @@ seed params model =
             }
 
 
-canEdit : { dayKey : Int } -> Model -> Bool
-canEdit params model =
-    case model.today of
-        Nothing  -> False
-        Just key -> Shared.editable key params.dayKey
+canEdit : Model -> Bool
+canEdit model =
+    case ( model.today, model.day ) of
+        ( Just today, Just day ) -> Shared.editable today day
+        _                        -> False
 
 
 -- Both axes are required, so nothing is written until both exist. A day
 -- being filled in for the first time therefore saves on the second
 -- answer, and every answer after that.
-save : { dayKey : Int } -> Model -> (Model, Cmd Msg)
-save params model =
-    case ( model.mood, model.energy ) of
-        ( Just mood, Just energy ) ->
+save : Model -> (Model, Cmd Msg)
+save model =
+    case ( model.day, model.mood, model.energy ) of
+        ( Just day, Just mood, Just energy ) ->
             if model.saving then
                 ( model, Cmd.none )
             else
                 ( { model | saving = True, error = Nothing }
                 , Service.call Shared.saveDay
-                    { dayKey = params.dayKey
-                    , day    = Shared.timeOfDayKey params.dayKey
+                    { day    = day
                     , mood   = mood
                     , energy = energy
                     , note   = model.note
@@ -239,21 +248,26 @@ save params model =
 -- ===== View =====
 
 
-view : Shared.User -> { dayKey : Int } -> Model -> View Msg
-view _ params model =
-    if model.loading then
-        navigationStack [ navigationTitle (Shared.longDate params.dayKey) ]
-            [ centered (text [] "One moment.") ]
+view : Shared.User -> { day : String } -> Model -> View Msg
+view _ _ model =
+    case model.day of
+        Nothing ->
+            noDayView
 
-    else
-        case model.screen of
-            Asking index ->
-                case Shared.questionAt index model.factors of
-                    Just question -> askView model question
-                    Nothing       -> dayView params model
+        Just day ->
+            if model.loading then
+                navigationStack [ navigationTitle (Shared.longDate day) ]
+                    [ centered (text [] "One moment.") ]
 
-            Listing ->
-                dayView params model
+            else
+                case model.screen of
+                    Asking index ->
+                        case Shared.questionAt index model.factors of
+                            Just question -> askView model question
+                            Nothing       -> dayView day model
+
+                    Listing ->
+                        dayView day model
 
 
 -- The sheet's own chrome: a presented route has no navigation bar, so
@@ -293,45 +307,60 @@ askView model question =
         ]
 
 
-dayView : { dayKey : Int } -> Model -> View Msg
-dayView params model =
-    navigationStack [ navigationTitle (Shared.longDate params.dayKey) ]
+-- A path that does not name a day, typed by hand or cut short. There
+-- is nothing to read, only the way out.
+noDayView : View Msg
+noDayView =
+    navigationStack [ navigationTitle "A day" ]
+        [ list []
+            [ sheetHeader "Done" Dismissed
+            , section []
+                [ title "Not a day"
+                , subtitle "This link does not point to a day in your log."
+                ]
+            ]
+        ]
+
+
+dayView : Date -> Model -> View Msg
+dayView day model =
+    navigationStack [ navigationTitle (Shared.longDate day) ]
         [ list []
             (List.concat
                 [ [ sheetHeader "Done" Dismissed
                   , section []
-                        [ title (Shared.longDate params.dayKey)
-                        , subtitle (dayStatus params model)
+                        [ title (Shared.longDate day)
+                        , subtitle (dayStatus model)
                         ]
-                  , answersSection params model
+                  , answersSection model
                   ]
-                , noteBlock params model
+                , noteBlock model
                 , [ section [] [ errorView model.error ] ]
                 ]
             )
         ]
 
 
-dayStatus : { dayKey : Int } -> Model -> String
-dayStatus params model =
+dayStatus : Model -> String
+dayStatus model =
     if model.mood == Nothing then
-        if canEdit params model then
+        if canEdit model then
             "Nothing logged. You can still fill it in."
 
         else
             "Nothing was logged, and it is too old to fill in now."
 
-    else if canEdit params model then
+    else if canEdit model then
         "Tap a line to change it."
 
     else
         "Too old to change. Here to be read."
 
 
-answersSection : { dayKey : Int } -> Model -> View Msg
-answersSection params model =
+answersSection : Model -> View Msg
+answersSection model =
     let
-        editable = canEdit params model
+        editable = canEdit model
     in
     if model.mood == Nothing && not editable then
         section []
@@ -376,9 +405,9 @@ answerRow editable model index question =
         paragraph [ span [ bold ] (Shared.questionName question ++ ": "), span [] said ]
 
 
-noteBlock : { dayKey : Int } -> Model -> List (View Msg)
-noteBlock params model =
-    if canEdit params model then
+noteBlock : Model -> List (View Msg)
+noteBlock model =
+    if canEdit model then
         section
             [ header "Anything worth remembering?" ]
             (List.concat

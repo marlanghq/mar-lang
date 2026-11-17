@@ -1,7 +1,6 @@
 module Shared exposing
     ( User, Quality(..), Night
     , qualityLabel, qualityScore, scale
-    , startOfDay
     , listNights, logNight, clearNight
     )
 
@@ -78,22 +77,14 @@ scale =
 -- ===== the record =====
 
 
+-- `date` is the calendar day the night belongs to, with no time of day, so a
+-- morning entry and an evening entry for the same night are the same key.
 type alias Night =
     { id : Int
-    , date : Time
+    , date : Date
     , quality : Quality
     , userId : Int
     }
-
-
--- Midnight of the day a Time falls on. A date crosses the wire as a full
--- timestamp, so this is what turns "some moment on the 3rd" into "the 3rd":
--- without it a morning entry and an evening entry are two different days.
--- Both halves need the same answer, which is why it lives here: the server
--- keys its unique index on it, the screen groups the log by it.
-startOfDay : Time -> Time
-startOfDay t =
-    Time.fromYMD (Time.year t) (Time.month t) (Time.day t)
 
 
 -- ===== service contracts =====
@@ -108,7 +99,7 @@ listNights =
     Service.declare GET "/nights"
 
 
-logNight : Service { date : Time, quality : Quality } Night
+logNight : Service { date : Date, quality : Quality } Night
 logNight =
     Service.declare POST "/nights"
 
@@ -117,6 +108,6 @@ logNight =
 -- index is: the date is what identifies a night, and it is the only handle the
 -- screen has ever needed. It also means a client cannot name a row it does not
 -- own, because the id never crosses the wire.
-clearNight : Service { date : Time } ()
+clearNight : Service { date : Date } ()
 clearNight =
     Service.declare DELETE "/nights"

@@ -29,7 +29,7 @@ import UI exposing
 
 type alias Model =
     { window  : Shared.Window
-    , today   : Maybe Int
+    , today   : Maybe Date
     , year    : Int
     , month   : Int
     , dark    : Bool
@@ -40,7 +40,7 @@ type alias Model =
 
 
 type Msg
-    = GotNow Time
+    = GotToday Date
     | GotWindow (Result Service.Error Shared.Window)
     | DeviceChanged Device
     | Resized { w : Int, h : Int, top : Int, right : Int, bottom : Int, left : Int }
@@ -67,20 +67,17 @@ init _ =
       , loading = True
       , error = Nothing
       }
-    , Cmd.perform GotNow Time.now
+    , Cmd.perform GotToday Date.today
     )
 
 
 update : Shared.User -> Msg -> Model -> (Model, Cmd Msg)
 update _ msg model =
     case msg of
-        GotNow now ->
-            let
-                key = Shared.dayKeyOf now
-            in
-            ( { model | today = Just key, year = Time.year now, month = Time.month now }
+        GotToday today ->
+            ( { model | today = Just today, year = Date.year today, month = Date.month today }
             , Service.call Shared.loadWindow
-                { sinceDayKey = key - windowDays * Shared.dayMillis }
+                { since = Date.addDays today (0 - windowDays) }
                 GotWindow
             )
 
@@ -103,22 +100,22 @@ update _ msg model =
             ( shiftMonth 1 model, Cmd.none )
 
         Tapped x y ->
-            case cellDayKey model x y of
-                Just key ->
-                    ( model, Nav.pushTo Frontend.Routes.day { dayKey = key } )
+            case cellDay model x y of
+                Just day ->
+                    ( model, Nav.pushTo Frontend.Routes.day { day = Date.toIso day } )
 
                 Nothing ->
                     ( model, Cmd.none )
 
 
--- Month arithmetic through Time rather than by hand, so December to
+-- Month arithmetic through Date rather than by hand, so December to
 -- January rolls the year over without a special case here.
 shiftMonth : Int -> Model -> Model
 shiftMonth delta model =
     let
-        moved = Time.addMonths (Time.fromYMD model.year model.month 1) delta
+        moved = Date.addMonths (firstDay model) delta
     in
-    { model | year = Time.year moved, month = Time.month moved }
+    { model | year = Date.year moved, month = Date.month moved }
 
 
 -- ===== Grid geometry =====
@@ -152,24 +149,24 @@ gridLeft model =
     max 0 ((model.w - gridWidth model) // 2)
 
 
-firstKey : Model -> Int
-firstKey model =
-    Shared.dayKeyOf (Time.fromYMD model.year model.month 1)
+firstDay : Model -> Date
+firstDay model =
+    Date.fromYMD model.year model.month 1
 
 
 daysInMonth : Model -> Int
 daysInMonth model =
     let
-        first = Time.fromYMD model.year model.month 1
+        first = firstDay model
     in
-    Shared.daysBetween (Shared.dayKeyOf first) (Shared.dayKeyOf (Time.addMonths first 1))
+    Date.diffDays first (Date.addMonths first 1)
 
 
 -- Which square holds day N of the month: the weekday of the 1st decides
 -- the offset, and the rest is division.
 slotOf : Model -> Int -> Int
 slotOf model index =
-    Shared.weekdayOf (firstKey model) + index
+    Shared.weekdayOf (firstDay model) + index
 
 
 rowCount : Model -> Int
@@ -182,19 +179,19 @@ canvasLines model =
     (headerHeight + rowCount model * (cellSize model + gridGap) + 23) // 24
 
 
-cellDayKey : Model -> Int -> Int -> Maybe Int
-cellDayKey model x y =
+cellDay : Model -> Int -> Int -> Maybe Date
+cellDay model x y =
     let
         size = cellSize model
         col  = (x - gridLeft model) // (size + gridGap)
         row  = (y - headerHeight) // (size + gridGap)
         slot = row * 7 + col
-        index = slot - Shared.weekdayOf (firstKey model)
+        index = slot - Shared.weekdayOf (firstDay model)
     in
     if col < 0 || col > 6 || row < 0 || index < 0 || index >= daysInMonth model then
         Nothing
     else
-        Just (firstKey model + index * Shared.dayMillis)
+        Just (Date.addDays (firstDay model) index)
 
 
 -- ===== Drawing =====
@@ -227,9 +224,9 @@ daySquare model days size left index =
         slot = slotOf model index
         x    = left + modBy 7 slot * (size + gridGap)
         y    = headerHeight + slot // 7 * (size + gridGap)
-        key  = firstKey model + index * Shared.dayMillis
+        date = Date.addDays (firstDay model) index
     in
-    case Shared.dayAt key days of
+    case Shared.dayAt date days of
         Just day ->
             Canvas.group []
                 [ rect x y size size (Frontend.Ink.levelColor day.mood)
@@ -303,8 +300,8 @@ view _ model =
 summarySection : Model -> View Msg
 summarySection model =
     let
-        first = firstKey model
-        last  = first + (daysInMonth model - 1) * Shared.dayMillis
+        first = firstDay model
+        last  = Date.addDays first (daysInMonth model - 1)
         days  = Shared.inRange first last (Shared.daysOf model.window)
     in
     if List.isEmpty days then

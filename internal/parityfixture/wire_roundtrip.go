@@ -73,6 +73,13 @@ var WireCases = []WireCase{
 	{Name: "TimeMillis", Type: "Time", Expr: "Time.add (Time.fromYMD 2023 11 14) (Time.millis 123)"},
 	{Name: "TimeBeforeEpoch", Type: "Time", Expr: "Time.sub (Time.fromYMD 1970 1 1) (Time.millis 1)"},
 
+	{Name: "DateToday", Type: "Date", Expr: "Date.fromYMD 2026 11 17"},
+	{Name: "DateYearZero", Type: "Date", Expr: "Date.fromYMD 0 1 1"},
+	{Name: "DateLast", Type: "Date", Expr: "Date.fromYMD 9999 12 31"},
+	{Name: "DateInRecord", Type: "{ due : Date, title : String }", Expr: `{ due = Date.fromYMD 2026 2 28, title = "rent" }`},
+	{Name: "DateMaybe", Type: "Maybe Date", Expr: "Just (Date.fromYMD 1969 12 31)"},
+	{Name: "DateList", Type: "List Date", Expr: "[ Date.fromYMD 2024 2 29, Date.fromYMD 1582 10 15 ]"},
+
 	{Name: "AngleDeg", Type: "Angle", Expr: "Math.degrees 45"},
 	{Name: "AngleDeci", Type: "Angle", Expr: "Math.deciDegrees 3599"},
 

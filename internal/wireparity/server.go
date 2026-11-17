@@ -215,6 +215,8 @@ func Dump(v runtime.Value) string {
 		return "Ch" + strconv.Itoa(int(x.V))
 	case runtime.VTime:
 		return "Tm" + strconv.FormatInt(x.Millis, 10)
+	case runtime.VDate:
+		return "Dt" + strconv.FormatInt(x.Days, 10)
 	case runtime.VAngle:
 		return "A" + strconv.FormatInt(x.Deci, 10)
 	case runtime.VDuration:

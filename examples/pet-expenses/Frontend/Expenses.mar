@@ -35,7 +35,7 @@ type alias Model =
     , draftAmount       : String
     , draftNote         : String
     , draftPetId        : Int
-    , draftDate         : Maybe Time
+    , draftDate         : Maybe Date
     , busy              : Bool
     , confirmingExpense : Maybe Shared.Expense
     }
@@ -50,7 +50,8 @@ type Msg
     | AmountChanged String
     | NoteChanged String
     | PetPicked Int
-    | DatePicked Time
+    | GotToday Date
+    | DatePicked Date
     | SubmitExpense
     | ExpenseSubmitted (Result Service.Error Shared.AddExpenseOutcome)
     | DeleteExpenseRowAt Int
@@ -78,7 +79,6 @@ init _ =
     , Cmd.batch
         [ Service.call Shared.listExpenses () ExpensesFetched
         , Service.call Shared.listPets () PetsFetched
-        , Cmd.perform DatePicked Time.now
         ]
     )
 
@@ -110,7 +110,7 @@ update _ msg model =
             , Cmd.batch
                 [ Service.call Shared.listPets () PetsFetched
                 , Service.call Shared.listExpenses () ExpensesFetched
-                , Cmd.perform DatePicked Time.now
+                , Cmd.perform GotToday Date.today
                 ]
             )
 
@@ -129,34 +129,24 @@ update _ msg model =
         PetPicked petId ->
             ( { model | draftPetId = petId }, Cmd.none )
 
-        DatePicked when ->
-            ( { model | draftDate = Just when }, Cmd.none )
+        GotToday today ->
+            ( { model | draftDate = Just today }, Cmd.none )
+
+        DatePicked day ->
+            ( { model | draftDate = Just day }, Cmd.none )
 
         SubmitExpense ->
-            -- Decimal.fromString accepts "12", "12.5", "12.50": exact
-            -- digits, no floats anywhere. The backend re-checks > 0 and
-            -- normalizes to two places before writing.
-            if model.busy then
-                ( model, Cmd.none )
-            else
-                case Decimal.fromString (String.trim model.draftAmount) of
-                    Just amount ->
-                        if amount > 0 then
-                            ( { model | busy = True, error = Nothing }
-                            , Service.call Shared.addExpense
-                                { petId = model.draftPetId
-                                , category = model.draftCategory
-                                , amount = amount
-                                , note = String.trim model.draftNote
-                                , spentAt = model.draftDate
-                                }
-                                ExpenseSubmitted
-                            )
-                        else
-                            ( { model | error = Just "Amount must be greater than zero." }, Cmd.none )
+            -- Nothing goes out while a save is in flight, or before
+            -- Date.today has given the form its day.
+            case model.draftDate of
+                Just day ->
+                    if model.busy then
+                        ( model, Cmd.none )
+                    else
+                        submitDraft day model
 
-                    Nothing ->
-                        ( { model | error = Just "Enter the amount like 12.50." }, Cmd.none )
+                Nothing ->
+                    ( model, Cmd.none )
 
         ExpenseSubmitted (Ok (Shared.ExpenseAdded _)) ->
             ( { model | busy = False, adding = False, draftAmount = "", draftNote = "", draftDate = Nothing }
@@ -206,6 +196,31 @@ update _ msg model =
 
         OpenSettings ->
             ( model, Nav.pushTo Frontend.Routes.settings {} )
+
+
+-- Decimal.fromString accepts "12", "12.5", "12.50": exact digits, no
+-- floats anywhere. The backend re-checks > 0 and normalizes to two
+-- places before writing.
+submitDraft : Date -> Model -> (Model, Cmd Msg)
+submitDraft day model =
+    case Decimal.fromString (String.trim model.draftAmount) of
+        Just amount ->
+            if amount > 0 then
+                ( { model | busy = True, error = Nothing }
+                , Service.call Shared.addExpense
+                    { petId = model.draftPetId
+                    , category = model.draftCategory
+                    , amount = amount
+                    , note = String.trim model.draftNote
+                    , spentAt = day
+                    }
+                    ExpenseSubmitted
+                )
+            else
+                ( { model | error = Just "Amount must be greater than zero." }, Cmd.none )
+
+        Nothing ->
+            ( { model | error = Just "Enter the amount like 12.50." }, Cmd.none )
 
 
 currentExpenses : Model -> List Shared.Expense
@@ -260,9 +275,10 @@ errorSection model =
             []
 
 
--- datePicker is pure: it shows exactly the Time it's given. The model
--- seeds "today" with `Cmd.perform DatePicked Time.now`; for the brief
--- moment before that arrives (draftDate = Nothing) the field is empty.
+-- datePicker is pure: it shows exactly the Date it's given. Opening the
+-- form seeds today with `Cmd.perform GotToday Date.today`; for the brief
+-- moment before that arrives (draftDate = Nothing) the field is empty
+-- and Save is off.
 dateField : Model -> View Msg
 dateField model =
     case model.draftDate of
@@ -285,7 +301,7 @@ addBlock model =
             , textField [ submit SubmitExpense, disabled model.busy ]
                 "Note (optional)" model.draftNote NoteChanged
             , hstack []
-                [ button [ disabled model.busy ] SubmitExpense
+                [ button [ disabled (model.busy || model.draftDate == Nothing) ] SubmitExpense
                     (if model.busy then "Saving…" else "Save")
                 , spacer
                 , button [] CancelAdd "Cancel"
@@ -424,7 +440,7 @@ byMonth items =
 
 monthKeyOf : Shared.Expense -> Int
 monthKeyOf e =
-    Time.year e.spentAt * 100 + Time.month e.spentAt
+    Date.year e.spentAt * 100 + Date.month e.spentAt
 
 
 -- Distinct month keys in first-seen order. `items` arrives newest-first
@@ -451,7 +467,7 @@ monthLabel key items =
             Shared.formatMonth e.spentAt
 
         Nothing ->
-            "—"
+            ""
 
 
 expenseConfirmDialog : Model -> View Msg

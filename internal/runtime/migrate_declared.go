@@ -5,9 +5,9 @@ import (
 	"strings"
 )
 
-// The migrator diffs the SQLite STORAGE type, and INTEGER covers `Int`, `Time`
-// and `Decimal` at any scale. So a change that stays inside a storage class is
-// invisible to it, and it reports the schema up to date — correctly by its own
+// The migrator diffs the SQLite STORAGE type, and INTEGER covers `Int`,
+// `Time`, `Date` and `Decimal` at any scale. So a change that stays inside a
+// storage class is invisible to it, and it reports the schema up to date — correctly by its own
 // standard, wrongly by the program's.
 //
 // The enum half of this was closable without help: the old constructor set is
@@ -78,6 +78,8 @@ func declaredTypeOf(f EntityField) declaredType {
 		return declaredType{Kind: "Decimal", Scale: f.DecimalScale}
 	case "TIMESTAMP":
 		return declaredType{Kind: "Time"}
+	case "DATE":
+		return declaredType{Kind: "Date"}
 	case "INTEGER":
 		return declaredType{Kind: "Int"}
 	case "BOOLEAN":
@@ -172,11 +174,29 @@ func (m *Migrator) planDeclaredTypeChanges(ent VEntity) ([]MigrationStep, error)
 }
 
 func (m *Migrator) planOneTypeChange(ent VEntity, f EntityField, was, now declaredType) (*MigrationStep, error) {
-	// A Decimal that only changed scale is the one case with a mechanical
-	// answer: the stored coefficient is the same number at a different
-	// scale, so multiplying by the difference is exact.
+	// A Decimal that only changed scale has a mechanical answer: the stored
+	// coefficient is the same number at a different scale, so multiplying by
+	// the difference is exact.
 	if was.Kind == "Decimal" && now.Kind == "Decimal" {
 		return m.planScaleChange(ent, f, was.Scale, now.Scale)
+	}
+	// A Date and the Time at its midnight UTC are the same day, so a column
+	// can move between the two when no row loses anything (Date.toTime and
+	// Date.fromTime).
+	if was.Kind == "Time" && now.Kind == "Date" {
+		return m.planTimeToDate(ent, f)
+	}
+	if was.Kind == "Date" && now.Kind == "Time" {
+		return &MigrationStep{
+			Kind:  StepRestateColumn,
+			Table: ent.Table,
+			SQLs: []string{
+				fmt.Sprintf("UPDATE %s SET %s = %s * %d", quoteIdent(ent.Table), quoteIdent(f.Name), quoteIdent(f.Name), msPerDay),
+			},
+			Description: fmt.Sprintf(
+				"restate %s.%s from Date to Time (every day becomes its midnight UTC)",
+				ent.Table, f.Name),
+		}, nil
 	}
 	// Everything else means the numbers in the column stand for something
 	// different than they did. What a count should become in milliseconds is
@@ -256,6 +276,53 @@ func (m *Migrator) planScaleChange(ent VEntity, f EntityField, from, to int) (*M
 		Description: fmt.Sprintf(
 			"restate %s.%s from scale %d to scale %d (every value keeps its amount)",
 			ent.Table, f.Name, from, to),
+	}, nil
+}
+
+// planTimeToDate turns a Time column into a Date column when every Time in it
+// is a midnight UTC, the Time Date.toTime gives for a day. A Time with a time
+// of day blocks: which day it stands for depends on where its person was,
+// and the database does not know that.
+func (m *Migrator) planTimeToDate(ent VEntity, f EntityField) (*MigrationStep, error) {
+	col := quoteIdent(f.Name)
+	table := quoteIdent(ent.Table)
+	var timed int
+	err := m.db.QueryRow(
+		fmt.Sprintf("SELECT count(*) FROM %s WHERE %s %% %d <> 0", table, col, msPerDay),
+	).Scan(&timed)
+	if err != nil && !isNoSuchTable(err) {
+		return nil, err
+	}
+	if timed > 0 {
+		verb := "have"
+		if timed == 1 {
+			verb = "has"
+		}
+		return &MigrationStep{
+			Kind:  StepBlocked,
+			Table: ent.Table,
+			Error: &BlockedMigrationError{
+				Summary: fmt.Sprintf(
+					"migration blocked for entity `%s.%s`: the column was declared as Time and is now Date, and %s %s a time of day",
+					ent.Table, f.Name, plural(timed, "row"), verb),
+				Hint: "A Date is a day with no time of day. A Time at midnight UTC becomes its day,\n" +
+					"but which day a later Time stands for depends on where its person was.\n\n" +
+					"If the day in UTC is the right one, move those rows to midnight and restart:\n\n" +
+					fmt.Sprintf("    UPDATE %s SET %s = %s - (%s %% %d + %d) %% %d WHERE %s %% %d <> 0;\n\n",
+						table, col, col, col, msPerDay, msPerDay, msPerDay, col, msPerDay) +
+					"Or keep the column as a Time.",
+			},
+		}, nil
+	}
+	return &MigrationStep{
+		Kind:  StepRestateColumn,
+		Table: ent.Table,
+		SQLs: []string{
+			fmt.Sprintf("UPDATE %s SET %s = %s / %d", table, col, col, msPerDay),
+		},
+		Description: fmt.Sprintf(
+			"restate %s.%s from Time to Date (every midnight UTC becomes its day)",
+			ent.Table, f.Name),
 	}, nil
 }
 

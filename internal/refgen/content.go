@@ -504,7 +504,7 @@ var blurbs = map[string]string{
 // coverage test below requires every module in Modules to appear in exactly one
 // group, so a module cannot be added and then silently belong to no section.
 var moduleGroups = []ModuleGroup{
-	{"Data", []string{"Basics", "List", "String", "Maybe", "Result", "Tuple", "Char", "Dict", "Set", "Decimal", "Math", "Time", "Random"}},
+	{"Data", []string{"Basics", "List", "String", "Maybe", "Result", "Tuple", "Char", "Dict", "Set", "Decimal", "Math", "Time", "Date", "Random"}},
 	{"Screens", []string{"App", "Page", "Nav", "UI"}},
 	{"Games and media", []string{"Canvas", "Sound", "Keyboard", "Gamepad", "Device"}},
 	{"Effects", []string{"Cmd", "Sub", "Task"}},

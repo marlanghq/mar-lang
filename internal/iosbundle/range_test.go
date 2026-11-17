@@ -14,8 +14,8 @@ import (
 	"mar/internal/typecheck"
 )
 
-// The phone's half of parityfixture.TimeRangeCases, run, not scanned.
-func TestThePhoneKeepsATimeInsideItsRange(t *testing.T) {
+// The phone's half of parityfixture.RangeCases, run, not scanned.
+func TestThePhoneKeepsATimeAndADateInsideTheirRanges(t *testing.T) {
 	swiftc, err := exec.LookPath("swiftc")
 	if err != nil {
 		t.Skip("swiftc is not installed")
@@ -35,7 +35,7 @@ func TestThePhoneKeepsATimeInsideItsRange(t *testing.T) {
 	if out, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("swiftc: %v\n%s", err, out)
 	}
-	for _, c := range parityfixture.TimeRangeCases {
+	for _, c := range parityfixture.RangeCases {
 		src := "module Main exposing (..)\n\n\nwrapped : String\nwrapped =\n    " + c.Expr + "\n"
 		mod, err := parser.Parse(src)
 		if err != nil {
@@ -56,9 +56,9 @@ func TestThePhoneKeepsATimeInsideItsRange(t *testing.T) {
 		got := strings.TrimSpace(string(out))
 		want := c.Says
 		if c.Refused {
-			want += parityfixture.TimeRangeTail
+			want += c.Tail
 			if err == nil {
-				t.Errorf("%s: the phone built the Time instead of refusing it: %s", c.Expr, got)
+				t.Errorf("%s: the phone built the value instead of refusing it: %s", c.Expr, got)
 				continue
 			}
 		} else if err != nil {

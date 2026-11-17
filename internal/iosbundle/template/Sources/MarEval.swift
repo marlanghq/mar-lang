@@ -501,6 +501,7 @@ enum Eval {
         case .duration: return "Duration"
         case .angle: return "Angle"
         case .time: return "Time"
+        case .date: return "Date"
         case .list: return "List"
         case .tuple: return "Tuple"
         case .record: return "Record"

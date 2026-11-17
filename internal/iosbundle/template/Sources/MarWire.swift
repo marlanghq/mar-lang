@@ -156,6 +156,10 @@ enum MarWire {
             if case .time = v { return nil }
             return bad("a time (an ISO-8601 string under \"__time\")")
 
+        case "Date":
+            if case .date = v { return nil }
+            return bad("a date (a YYYY-MM-DD string under \"__date\")")
+
         case "()":
             // Records ignore what they do not declare, so `()` does too: it is
             // one rule, and the two halves used to disagree.
@@ -511,6 +515,7 @@ enum MarWire {
         case .list: return "a list"
         case .unit: return "nothing"
         case .time: return "a time"
+        case .date: return "a date"
         case .duration: return "a duration"
         case .ctor(let tag, _): return "`\(tag)`"
         case .record(_, let order):

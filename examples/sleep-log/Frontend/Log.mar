@@ -23,16 +23,16 @@ type Nights
 
 type alias Model =
     { nights : Nights
-    , today : Maybe Time    -- the clock, read once on mount
-    , date : Maybe Time     -- the night being rated; starts at today
+    , today : Maybe Date    -- the device's day, read once on mount
+    , date : Maybe Date     -- the night being rated; starts at today
     , error : Maybe String  -- save failures, kept away from the loaded list
     }
 
 
 type Msg
     = NightsFetched (Result Service.Error (List Shared.Night))
-    | ClockRead Time
-    | DatePicked Time
+    | GotToday Date
+    | DatePicked Date
     | QualityPicked Shared.Quality
     | NightLogged (Result Service.Error Shared.Night)
     | ClearClicked
@@ -46,7 +46,7 @@ init _ =
     ( { nights = Loading, today = Nothing, date = Nothing, error = Nothing }
     , Cmd.batch
         [ Service.call Shared.listNights () NightsFetched
-        , Cmd.perform ClockRead Time.now
+        , Cmd.perform GotToday Date.today
         ]
     )
 
@@ -60,10 +60,10 @@ update _ msg model =
         NightsFetched (Err why) ->
             ( { model | nights = Failed (Service.errorToString why) }, Cmd.none )
 
-        ClockRead now ->
+        GotToday today ->
             -- Seeds both the report window and the date field, so the form
             -- opens on today without the user choosing anything.
-            ( { model | today = Just now, date = Just now }, Cmd.none )
+            ( { model | today = Just today, date = Just today }, Cmd.none )
 
         DatePicked picked ->
             ( { model | date = Just picked }, Cmd.none )
@@ -113,14 +113,9 @@ update _ msg model =
 -- ===== reading the log =====
 
 
-dayKey : Time -> Int
-dayKey t =
-    Time.toMillis (Shared.startOfDay t)
-
-
-ratingFor : List Shared.Night -> Time -> Maybe Shared.Quality
+ratingFor : List Shared.Night -> Date -> Maybe Shared.Quality
 ratingFor logged when =
-    case List.head (List.filter (\n -> dayKey n.date == dayKey when) logged) of
+    case List.head (List.filter (\n -> n.date == when) logged) of
         Just night ->
             Just night.quality
 
@@ -131,13 +126,13 @@ ratingFor logged when =
 -- 30 nights ending today, so "the last 30 days" is a fixed frame. Taking the
 -- last 30 ROWS instead would quietly stretch across a gap and call a month of
 -- silence a good month.
-inWindow : Time -> List Shared.Night -> List Shared.Night
+inWindow : Date -> List Shared.Night -> List Shared.Night
 inWindow today logged =
     let
         first =
-            Time.toMillis (Time.addDays (Shared.startOfDay today) (0 - 29))
+            Date.addDays today (0 - 29)
     in
-    List.filter (\n -> Time.toMillis n.date >= first) logged
+    List.filter (\n -> not (Date.before n.date first)) logged
 
 
 countOf : Shared.Quality -> List Shared.Night -> Int
@@ -183,7 +178,7 @@ rateSection model =
 -- Only offered for a date that HAS a rating: a clear button on an empty night
 -- is a control that cannot do anything, and an app this small should not have
 -- one.
-clearRow : Model -> Time -> List (View Msg)
+clearRow : Model -> Date -> List (View Msg)
 clearRow model when =
     case model.nights of
         Loaded items ->
@@ -201,7 +196,7 @@ clearRow model when =
             []
 
 
-ratingRow : Model -> Time -> Shared.Quality -> View Msg
+ratingRow : Model -> Date -> Shared.Quality -> View Msg
 ratingRow model when quality =
     let
         logged =
@@ -265,7 +260,7 @@ reportSections model =
                 ]
 
 
-summarySection : Time -> List Shared.Night -> View Msg
+summarySection : Date -> List Shared.Night -> View Msg
 summarySection today recent =
     let
         counted =
@@ -288,7 +283,7 @@ summarySection today recent =
 -- a week you slept well. And if today has no entry yet it starts from
 -- yesterday, because otherwise every morning would report a broken streak
 -- before you have had the chance to log anything.
-goodRun : Time -> List Shared.Night -> Int
+goodRun : Date -> List Shared.Night -> Int
 goodRun today logged =
     let
         start =
@@ -296,19 +291,19 @@ goodRun today logged =
                 today
 
             else
-                Time.addDays (Shared.startOfDay today) (0 - 1)
+                Date.addDays today (0 - 1)
     in
     countBack logged start 0
 
 
-countBack : List Shared.Night -> Time -> Int -> Int
+countBack : List Shared.Night -> Date -> Int -> Int
 countBack logged day acc =
     -- 30 is the report window, and also a hard floor on the recursion.
     if acc >= 30 then
         acc
 
     else if isGood (ratingFor logged day) then
-        countBack logged (Time.addDays (Shared.startOfDay day) (0 - 1)) (acc + 1)
+        countBack logged (Date.addDays day (0 - 1)) (acc + 1)
 
     else
         acc
@@ -393,30 +388,16 @@ nightlySection recent =
         [ header "Night by night"
         , footer "Newest first."
         ]
-        (List.map nightRow (List.reverse (List.sortBy (\n -> Time.toMillis n.date) recent)))
+        (List.map nightRow (List.reverse (List.sortBy (\n -> Date.toIso n.date) recent)))
 
 
 nightRow : Shared.Night -> View Msg
 nightRow night =
     hstack []
-        [ text [] (formatDay night.date)
+        [ text [] (Date.toIso night.date)
         , spacer
         , text [] (Shared.qualityLabel night.quality)
         ]
-
-
-formatDay : Time -> String
-formatDay t =
-    String.fromInt (Time.year t)
-        ++ "-"
-        ++ pad2 (Time.month t)
-        ++ "-"
-        ++ pad2 (Time.day t)
-
-
-pad2 : Int -> String
-pad2 n =
-    String.padLeft 2 '0' (String.fromInt n)
 
 
 page : Page

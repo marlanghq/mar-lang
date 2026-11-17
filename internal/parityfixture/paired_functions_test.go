@@ -24,8 +24,8 @@ import (
 // test and asks what covers it, which is the moment the question is cheap to
 // answer.
 func TestEveryFunctionImplementedTwiceIsAccountedFor(t *testing.T) {
-	// Two numbers, because one is not enough. Measured: 99 names carry a second
-	// implementation, and 233 implementations exist across them.
+	// Two numbers, because one is not enough. Measured: 106 names carry a
+	// second implementation, and 253 implementations exist across them.
 	//
 	// The calendar of a Time is written out on all three runtimes, because
 	// no host library is proleptic Gregorian everywhere: daysFromCivil,
@@ -34,14 +34,19 @@ func TestEveryFunctionImplementedTwiceIsAccountedFor(t *testing.T) {
 	// parseTimeISO on all three, timeFields and formatTimeISO on the server
 	// and the phone (the browser reads Date's UTC getters and toISOString,
 	// which agree in the range). What compares them: the Time, JSON and Decode
-	// blocks of the corpus on all three, parityfixture.TimeRangeCases run to
+	// blocks of the corpus on all three, parityfixture.RangeCases run to
 	// completion or refusal on all three, and the server's calendar against
 	// Go's time package in internal/runtime timerange_test.go.
 	//
-	// `localMidnight` (the two clients) is the Time a date picker hands back
-	// for a day; the datepicker tests of internal/jsserve and
-	// internal/iosbundle compare the two clients' picks and hold each to
-	// LocalMidnight, worked out from Go's time package.
+	// A Date is a day of the same calendar, written out on all three too:
+	// dateOf, dateOutOfRange, dateFromYMD, dateAddMonths, formatDateISO and
+	// parseDateISO on all three, and twoDates (the argument check of
+	// Date.before, Date.after and Date.diffDays) on the server and the phone.
+	// The Date, JSON, Decode and Equality blocks of the corpus and
+	// parityfixture.RangeCases compare them. `localDay` (the two clients) is
+	// the day Date.today reads from the device's clock; the datepicker tests
+	// of internal/jsserve and internal/iosbundle hold each to TodayIn, worked
+	// out from Go's time package, in nine time zones.
 	//
 	// `durationOutOfRange` (all three) is the sentence a Duration that does not
 	// fit raises; internal/runtime int_producers_test.go holds the three
@@ -105,8 +110,8 @@ func TestEveryFunctionImplementedTwiceIsAccountedFor(t *testing.T) {
 	// had it, left the name count unmoved and the test silent. Measured, not
 	// reasoned -- the sabotage was supposed to fail and did not.
 	const (
-		pairs           = 99
-		implementations = 233
+		pairs           = 106
+		implementations = 253
 	)
 
 	js := namesIn(t, []string{"../jsserve/runtime.js"},

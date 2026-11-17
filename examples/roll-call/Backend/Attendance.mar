@@ -25,25 +25,24 @@ marks =
             { id        = Entity.serial
             , studentId = Entity.int Entity.notNull
             , classId   = Entity.int Entity.notNull
-            , day       = Entity.timestamp Entity.notNull
-            , dayKey    = Entity.int Entity.notNull
+            , day       = Entity.date Entity.notNull
             , status    = Entity.int Entity.notNull
             , teacherId = Entity.int Entity.notNull
             }
         -- One mark per student per day. This is what makes "mark
         -- today" an upsert instead of an ever-growing pile of rows:
         -- a second mark for the same (student, day) updates the first.
-        , uniques = [ [ "studentId", "dayKey" ] ]
+        , uniques = [ [ "studentId", "day" ] ]
         }
 
 
 -- ===== Read (GET, side-effect free) =====
 
 
-listMarksImpl : { classId : Int, dayKey : Int } -> Shared.User -> Task (List Shared.AttendanceMark)
+listMarksImpl : { classId : Int, day : Date } -> Shared.User -> Task (List Shared.AttendanceMark)
 listMarksImpl input user =
     Repo.findBy marks
-        { teacherId = user.id, classId = input.classId, dayKey = input.dayKey }
+        { teacherId = user.id, classId = input.classId, day = input.day }
 
 
 studentHistoryImpl : { studentId : Int } -> Shared.User -> Task (List Shared.AttendanceMark)
@@ -53,32 +52,26 @@ studentHistoryImpl input user =
 
 -- ===== Upsert =====
 --
--- Mark student X for the day carried by `day`. We normalize the day
--- to its key (Shared.dayKeyOf, the SAME function the frontend used to
--- ask for this day) and look for an existing mark. Found → update its
--- status in place; not found → create. Either way the caller gets the
--- resulting row back so the UI can reconcile without a refetch.
-setMarkImpl : { studentId : Int, classId : Int, day : Time, status : Int } -> Shared.User -> Task (Maybe Shared.AttendanceMark)
+-- Mark student X on `day`, the Date the teacher picked: look for that
+-- student's mark on that day. Found → update its status in place; not
+-- found → create. Either way the caller gets the resulting row back so
+-- the UI can reconcile without a refetch.
+setMarkImpl : { studentId : Int, classId : Int, day : Date, status : Int } -> Shared.User -> Task (Maybe Shared.AttendanceMark)
 setMarkImpl input user =
-    let
-        key =
-            Shared.dayKeyOf input.day
-    in
     Repo.findBy marks
-        { teacherId = user.id, studentId = input.studentId, dayKey = key }
+        { teacherId = user.id, studentId = input.studentId, day = input.day }
         |> Task.andThen
             (\existing ->
                 case List.head existing of
                     Just mark ->
                         Repo.update marks mark.id
-                            { status = input.status, classId = input.classId, day = input.day }
+                            { status = input.status, classId = input.classId }
 
                     Nothing ->
                         Repo.create marks
                             { studentId = input.studentId
                             , classId   = input.classId
                             , day       = input.day
-                            , dayKey    = key
                             , status    = input.status
                             , teacherId = user.id
                             }

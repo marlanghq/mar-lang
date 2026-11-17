@@ -40,9 +40,10 @@ patterns = "/patterns"
 
 
 -- One day, presented over whatever screen opened it. The day is in the
--- path, so a particular day is linkable and reloadable.
-day : Path { dayKey : Int }
-day = "/day/{dayKey:Int}"
+-- path as its ISO text, `/day/2026-11-17`, so a particular day is
+-- linkable and reloadable.
+day : Path { day : String }
+day = "/day/{day:String}"
 
 
 settings : Path {}

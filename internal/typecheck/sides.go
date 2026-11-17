@@ -42,10 +42,11 @@ const (
 	// Before adding a `SideFrontend` name, check it against ADR-0023: a
 	// function that answers a question about the machine: viewport size,
 	// pointers, held keys, colour scheme, must be a `Sub`, never a getter
-	// that returns the value. A bare getter is reachable from a service
-	// handler, typechecks there, and fails at runtime on a server with no
-	// window. `Device.touchOnly` is a pure `Device -> Bool` and is safe only
-	// because the `Device` it needs comes from `Device.watch`.
+	// that returns the value, because the machine changes while the page is
+	// open and a Sub hears it. A call from a service handler is a compile
+	// error either way (side_check.go). `Device.touchOnly` is a pure
+	// `Device -> Bool` that needs the `Device` from `Device.watch`.
+	// `Date.today` is the one Task: a clock read, like `Time.now` (ADR 0040).
 	//
 	// This is the moment that rule gets enforced: TestEveryBuiltinHasASide
 	// fails the build until a new builtin is classified, and classifying it
@@ -74,10 +75,9 @@ func (s Side) String() string {
 	}
 }
 
-// sideByName holds the names whose side disagrees with their module's. These
-// are the two modules that are one idea with parts on different sides; keeping
-// them whole and splitting them here was the decision (see the proposal's
-// "Not a rename").
+// sideByName holds the names whose side disagrees with their module's: modules
+// that are one idea with parts on different sides. Keeping them whole and
+// splitting them here was the decision (see the proposal's "Not a rename").
 var sideByName = map[string]Side{
 	// Auth: the client asks for a code and verifies it; the server
 	// configures the feature and guards routes.
@@ -112,6 +112,15 @@ var sideByName = map[string]Side{
 	// service that formats a message and a page that picks a string
 	// table both want it.
 	"App.locale": SideBoth,
+
+	// Date.today reads the date where the person is: the device's clock
+	// in the device's time zone. The server has no person and no time
+	// zone of its own, so a handler that needs a day takes it from the
+	// request, or names the UTC day of the clock with Date.fromTime. It is
+	// a Task like Time.now, a clock read, and not a Sub (ADR-0023): the
+	// side check makes a call from a handler a compile error, which is
+	// the failure that rule exists to prevent.
+	"Date.today": SideFrontend,
 }
 
 // sideByModule covers every other qualified builtin, by its module. Every
@@ -131,6 +140,7 @@ var sideByModule = map[string]Side{
 	"Decimal": SideBoth,
 	"Math":    SideBoth,
 	"Time":    SideBoth,
+	"Date":    SideBoth,
 	"Random":  SideBoth,
 	"JSON":    SideBoth,
 	"Task":    SideBoth, // measured both-sided; see the proposal

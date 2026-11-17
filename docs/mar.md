@@ -319,6 +319,10 @@ The internal resolution is a tenth of a degree: a program can tell 45.0° from 4
 
 **A `Duration` is a whole number of milliseconds**, the unit a `Time` is counted in, so `Time.add`, `Time.sub` and `Time.diff` are exact: `Time.add t (Time.millis 1001)` moves `t` by exactly 1001 ms, and `Time.diff a b` is what separates them to the millisecond. It is built only by a constructor that names the unit (`Time.millis`, `Time.seconds`, `Time.minutes`, `Time.hours`, `Time.days`, `Time.weeks`) or by `Time.diff`, and it holds the range of `Int` in milliseconds: an interval past that, such as `Time.weeks` of a very large number, raises "Duration out of range" rather than wrapping. `Time.toSeconds` gives whole seconds, toward zero. On the wire a Duration is `{"__duration": 1500}`, and it can be part of a service contract or a pinned `JSON.decode` like any other value.
 
+**A `Date` is a day of the calendar**, with no time of day and no time zone: `2026-11-17` is the same day on the server, in the browser and on the phone, wherever each of them is. A Date is for what people write as a day (a birthday, a due date, the night a sleep log is about) and a Time for a moment (when a row was written). Its days are the days of a Time, `0000-01-01` to `9999-12-31`, so `Date.toTime` (midnight UTC) and `Date.fromTime` (the day in UTC, the one `Time.year`, `Time.month` and `Time.day` read) always succeed; `Date.fromYMD`, `Date.addDays`, `Date.addMonths` and `Date.addYears` raise "Date out of range" rather than leave it, and `Date.fromYMD` carries an out-of-range month or day over as `Time.fromYMD` does. Its text is `YYYY-MM-DD`, which `Date.toIso` writes and `Date.fromIso` reads, nothing else; on the wire a Date is `{"__date": "2026-11-17"}`. Like a Time, a Date has no order of its own: compare with `Date.before`, `Date.after` or `Date.diffDays`, and sort by `Date.toIso`.
+
+`Date.today : Task Date` is today where the person is: the device's clock, read in the device's time zone. It is the one place a time zone enters a program, and it exists on the frontend only, a compile error in a handler: the server has no person and no time zone of its own. A handler takes the day from the request, and a check against the server's clock allows a day either way of `Date.fromTime now`, because the time zones people live in run from UTC-12 to UTC+14.
+
 ### 3.5 Nominal IDs
 
 Every entity ID is a nominal wrap of a primitive:
@@ -335,7 +339,7 @@ This prevents mixing IDs of different entities at compile time. Mar's auto-deriv
 
 Side effects are values of two distinct types, one per side of the app.
 
-**`Task a`** is the backend's value-monad: "a computation that, when run, produces an `a` (or aborts)." Read it as an "await". Service handlers return `Task resp`, `Repo.*` return `Task`, and `Time.now : Task Time`. You chain Tasks to compute a value.
+**`Task a`** is the backend's value-monad: "a computation that, when run, produces an `a` (or aborts)." Read it as an "await". Service handlers return `Task resp`, `Repo.*` return `Task`, and `Time.now : Task Time`. You chain Tasks to compute a value. One Task reads something only the device has and exists on the frontend alone: `Date.today`.
 
 ```elm
 type Task a
@@ -358,7 +362,7 @@ Cmd.batch   : List (Cmd msg) -> Cmd msg
 Cmd.perform : (a -> msg) -> Task a -> Cmd msg   -- run a Task, deliver its value as a Msg
 ```
 
-`Cmd.perform` is the bridge from a backend `Task` to the frontend loop (Elm's `Task.perform`): it runs the `Task` and hands the produced value to `update` as a `Msg`. It is the only way a Task's result reaches the frontend. `Time.now` is the same `Task Time` on both sides; the frontend reaches the loop with `Cmd.perform GotNow Time.now`.
+`Cmd.perform` is the bridge from a `Task` to the frontend loop (Elm's `Task.perform`): it runs the `Task` and hands the produced value to `update` as a `Msg`. It is the only way a Task's result reaches the frontend. `Time.now` is the same `Task Time` on both sides; the frontend reaches the loop with `Cmd.perform GotNow Time.now`, and reads the person's day with `Cmd.perform GotToday Date.today`.
 
 The two types stay separate on purpose. They used to be one `Effect a` that carried both algebras, and the overlap let a real bug compile: a value-producing effect like `Time.now` returned straight from a frontend `update` silently did nothing, because the loop only delivers messages. Now `Task` is a value and `Cmd` is a message: returning a `Task` where a `Cmd Msg` is expected is a compile error, so the footgun is gone.
 
@@ -483,6 +487,7 @@ Each column is one of:
 - `Entity.text Entity.notNull`
 - `Entity.bool Entity.notNull`
 - `Entity.timestamp Entity.notNull`: a `Time` column.
+- `Entity.date Entity.notNull`: a `Date` column. A `Time` column declared again as a `Date` becomes one when every row holds a midnight UTC (a row with a time of day blocks the migration, since which day it stands for depends on where its person was), and a `Date` column declared again as a `Time` becomes the midnight UTC of each day.
 - `Entity.enum [Open, InProgress, Done] Entity.notNull`: a tags-only union, stored as a CHECKed text column so only those values can be written.
 
 `Entity.notNull` marks a column as required. Because `Entity.serial` is filled by the runtime, `Repo.create` takes the record without that field.
@@ -507,7 +512,7 @@ Computed defaults (a slug from a title, a creation time) belong in the handler, 
 - Sum types with payload → `{ "tag": "constructorName", ...payload }`.
 - `Maybe a` → value or `null`. Optional fields on decode.
 - `List a` → JSON array.
-- Primitives: `Int`, `String`, `Bool`, `Char`, `Time` (RFC 3339, UTC, years 0000 to 9999), `()`.
+- Primitives: `Int`, `String`, `Bool`, `Char`, `Time` (RFC 3339, UTC, years 0000 to 9999), `Date` (`YYYY-MM-DD` under `__date`), `()`.
 
 Mar uses these codecs at the HTTP boundary (request body, response body, path params, query params) and at the DB boundary. User code never sees JSON or constructs codecs manually.
 
@@ -757,7 +762,7 @@ navigationStack [ navigationTitle "Sign in" ]
     ]
 ```
 
-The building blocks: `navigationStack` / `navigationTitle`, `form` / `section`, `row` / `column` / `spacer`, `text` / `title` / `subtitle` / `paragraph`, `textField`, `picker`, `datePicker`, `button`, `link` / `navigationLink`, `list` / `keyedList`, `toggle`, `image`, `sheet` / `confirm`, `errorText`, `centered`, and `empty` (renders nothing). `button [] Submitted "Verify"` takes its message and label directly; `textField` takes its label, the current value, and an on-change message. `datePicker [] day DatePicked` is a date-only field, and it is pure: it shows exactly the `Time` you pass and picking fires `(Time -> msg)` with the chosen day. It does not read the clock; to start on "today", seed the field with `Cmd.perform GotToday Time.now` (hold it as `Maybe Time`, render the picker once seeded). Web renders `<input type="date">`, iOS a SwiftUI `DatePicker`; both offer the days from 1582-10-15, the first day of the Gregorian calendar, to 9999-12-31, show a `Time` as its day in the device's time zone, and hand back local midnight of the picked day, the same `Time` on both. A `Time` on another day shows as an empty field on the web and as the nearer end of that range on iOS.
+The building blocks: `navigationStack` / `navigationTitle`, `form` / `section`, `row` / `column` / `spacer`, `text` / `title` / `subtitle` / `paragraph`, `textField`, `picker`, `datePicker`, `button`, `link` / `navigationLink`, `list` / `keyedList`, `toggle`, `image`, `sheet` / `confirm`, `errorText`, `centered`, and `empty` (renders nothing). `button [] Submitted "Verify"` takes its message and label directly; `textField` takes its label, the current value, and an on-change message. `datePicker [] day DatePicked` is a date-only field, and it is pure: it shows exactly the `Date` you pass and picking fires `(Date -> msg)` with the chosen day. It does not read the clock; to start on "today", seed the field with `Cmd.perform GotToday Date.today` (hold it as `Maybe Date`, render the picker once seeded). Web renders `<input type="date">`, iOS a SwiftUI `DatePicker`; both offer the days from 1582-10-15, the first day of the Gregorian calendar, to 9999-12-31, and the day picked is the `Date` handed back, the same on both and in every time zone. A `Date` before 1582-10-15 shows as that first day on both, and nothing is sent until a day is picked.
 
 ### 5.4 Navigation
 

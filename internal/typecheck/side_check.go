@@ -64,8 +64,10 @@ func RunSideCheck(mods []*ast.Module) []ShapeIssue {
 		if hit == nil {
 			continue
 		}
+		// The position is where the name is written, which can be in
+		// another module than the root's (a Shared helper a handler calls).
 		issues = append(issues, ShapeIssue{
-			Module:  root.module,
+			Module:  hit.module,
 			Pos:     hit.pos,
 			Message: leakMessage(root, hit),
 		})
@@ -93,7 +95,7 @@ func spread(g *sideGraph, seed func(*sideDecl) *sideRef) map[string]*sideRef {
 			}
 			for _, callee := range d.calls {
 				if hit := reaches[callee]; hit != nil {
-					reaches[name] = &sideRef{name: hit.name, pos: hit.pos, via: callee}
+					reaches[name] = &sideRef{name: hit.name, module: hit.module, pos: hit.pos, via: callee}
 					changed = true
 					break
 				}
@@ -103,12 +105,14 @@ func spread(g *sideGraph, seed func(*sideDecl) *sideRef) map[string]*sideRef {
 	return reaches
 }
 
-// sideRef is one backend name and where it was found. `via` names the callee
-// that led here, so a leak three helpers deep can say which hop to look at.
+// sideRef is one sided name and where it was written: the module and the
+// position. `via` names the callee that led here, so a leak three helpers deep
+// can say which hop to look at.
 type sideRef struct {
-	name string
-	pos  ast.Pos
-	via  string
+	name   string
+	module string
+	pos    ast.Pos
+	via    string
 }
 
 type sideDecl struct {
@@ -146,12 +150,19 @@ var pageBuilders = map[string]bool{
 // serviceBuilders are the names whose application makes a declaration a
 // service handler, and therefore a root of the server bundle.
 //
+// `Auth.authorize` and `Auth.requireOwner` are here because the loader and the
+// policy they take run on the server for every request, and a declaration that
+// wraps a protected service with them need not be the one that applies
+// `Auth.protect`.
+//
 // `App.backend` and `App.fullstack` are deliberately NOT here. A fullstack
 // `main` names the pages as well as the services, so rooting the server walk
 // there would follow it straight into `UI` and report every page in the app.
 var serviceBuilders = map[string]bool{
 	"Service.implement": true,
 	"Auth.protect":      true,
+	"Auth.authorize":    true,
+	"Auth.requireOwner": true,
 }
 
 func buildSideGraph(mods []*ast.Module) *sideGraph {
@@ -250,10 +261,10 @@ func buildSideGraph(mods []*ast.Module) *sideGraph {
 				}
 				if s, ok := SideOf(ref); ok {
 					if s == SideBackend && sd.backend == nil {
-						sd.backend = &sideRef{name: ref, pos: pos}
+						sd.backend = &sideRef{name: ref, module: info.name, pos: pos}
 					}
 					if s == SideFrontend && sd.frontend == nil {
-						sd.frontend = &sideRef{name: ref, pos: pos}
+						sd.frontend = &sideRef{name: ref, module: info.name, pos: pos}
 					}
 					return
 				}
@@ -282,14 +293,23 @@ func buildSideGraph(mods []*ast.Module) *sideGraph {
 	return g
 }
 
+// leakHints replaces the general advice for a name whose fix is different.
+var leakHints = map[string]string{
+	"Date.today": "  The server has no time zone of its own: take the day from the request, " +
+		"or use Date.fromTime on Time.now for the day in UTC.",
+}
+
 func leakMessage(root sideRoot, hit *sideRef) string {
 	where, absent, fix := "runs in the browser", "only exists on the server",
 		"  Move the call into a service handler and reach it from the page with Service.call."
 	kind := "page"
 	if root.server {
-		where, absent, fix = "runs on the server", "only exists in the browser",
+		where, absent, fix = "runs on the server", "only exists in the browser and on the phone",
 			"  Return the data from the handler and let the page do the drawing."
 		kind = "service handler"
+	}
+	if hint, ok := leakHints[hit.name]; ok {
+		fix = hint
 	}
 	if hit.via == "" {
 		return fmt.Sprintf("the %s `%s` %s and calls `%s`, which %s.\n%s",

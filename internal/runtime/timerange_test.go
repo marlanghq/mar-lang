@@ -172,3 +172,25 @@ func TestEveryTimeIsBuiltInsideTheRange(t *testing.T) {
 		}
 	}
 }
+
+// The same for a Date: every one is built by dateOf in date.go.
+var dateLiteral = regexp.MustCompile(`VDate\{[^}]`)
+
+func TestEveryDateIsBuiltInsideTheRange(t *testing.T) {
+	files, err := filepath.Glob("*.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range files {
+		if strings.HasSuffix(f, "_test.go") || f == "date.go" {
+			continue
+		}
+		b, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if m := dateLiteral.FindString(string(b)); m != "" {
+			t.Errorf("%s builds a Date directly (%s); build it with dateOf so the range holds", f, m)
+		}
+	}
+}

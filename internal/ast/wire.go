@@ -46,6 +46,7 @@ const (
 	WireBool    WireKind = "Bool"
 	WireDecimal WireKind = "Decimal"
 	WireTime    WireKind = "Time"
+	WireDate    WireKind = "Date"
 	WireChar    WireKind = "Char"
 	WireUnit    WireKind = "()"
 	WireList    WireKind = "List"

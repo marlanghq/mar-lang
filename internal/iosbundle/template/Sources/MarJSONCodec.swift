@@ -53,6 +53,7 @@ enum MarJSONCodec {
         case .char:    return "char"
         case .decimal: return "decimal"
         case .time:    return "time"
+        case .date:    return "date"
         case .angle:   return "angle"
         case .list:    return "list"
         case .tuple:   return "tuple"
@@ -217,6 +218,14 @@ enum MarJSONCodec {
                 }
                 return try MarCivil.timeOf("`\(iso)`", ms)
             }
+            // Date round-trip, `{__date: "2026-11-17"}`, read by
+            // MarCivil.parseDateISO, the one form the three runtimes accept.
+            if let text = dict["__date"] as? String, dict.count == 1 {
+                guard let days = MarCivil.parseDateISO(text) else {
+                    throw MarRuntimeError.message("the value should be a date, got `\(text)`")
+                }
+                return try MarCivil.dateOf("`\(text)`", days)
+            }
             // Dict / Set round-trip. Wire format mirrors the Go and JS
             // sides exactly: `{__dict: [[k, v], ...]}` and
             // `{__set: [k, ...]}`. We rebuild via the runtime's
@@ -343,6 +352,8 @@ enum MarJSONCodec {
         case .angle(let d): return ["__angle": d] as [String: Any]
         case .time(let ms):
             return ["__time": MarCivil.formatTimeISO(ms)] as [String: Any]
+        case .date(let days):
+            return ["__date": MarCivil.formatDateISO(days)] as [String: Any]
         case .list(let xs): return xs.map(marToJSON)
         case .tuple(let xs): return xs.map(marToJSON)
         case .record(let fs, let order):

@@ -67,12 +67,11 @@ type alias Student =
 
 -- One attendance record: student X on day D had status S.
 --
--- `day` is the Time for display; `dayKey` is that day normalized to
--- midnight-millis (see dayKeyOf) and is what the database matches on.
--- Storing both means the query key is a plain Int (fast, exact) while
--- the screen can still print a real date. The (studentId, dayKey)
--- pair is UNIQUE, so "mark today" is an upsert, not an ever-growing
--- pile of duplicate rows for the same day.
+-- `day` is a Date: a day of the calendar, with no time of day and no
+-- time zone, so the day a teacher marks is the same day on the server,
+-- in the browser and on the phone. It is what the database matches on,
+-- and the (studentId, day) pair is UNIQUE, so "mark today" is an
+-- upsert, not an ever-growing pile of duplicate rows for the same day.
 --
 -- `status` is the wire/storage form of the Status union below: 0
 -- present, 1 late, 2 absent. Entities store scalars, so the union
@@ -81,8 +80,7 @@ type alias AttendanceMark =
     { id        : Int
     , studentId : Int
     , classId   : Int
-    , day       : Time
-    , dayKey    : Int
+    , day       : Date
     , status    : Int
     , teacherId : Int
     }
@@ -171,26 +169,6 @@ tally marks =
         marks
 
 
--- ===== Shared date math =====
---
--- Both halves must agree on what "a day" is, or the unique index and
--- the day-lookup would drift apart. So the normalization lives here
--- and is called from BOTH sides: the frontend computes `dayKeyOf` to
--- ask for a given day's marks, and the backend computes the same key
--- when it stores one. Same code, same answer, no timezone surprises
--- sneaking between client and server.
-
-
-startOfDay : Time -> Time
-startOfDay t =
-    Time.fromYMD (Time.year t) (Time.month t) (Time.day t)
-
-
-dayKeyOf : Time -> Int
-dayKeyOf t =
-    Time.toMillis (startOfDay t)
-
-
 -- ===== Typed outcomes =====
 --
 -- The one domain rule on create (no blank names) is a typed case the
@@ -269,16 +247,16 @@ reorderStudents = Service.declare POST "/api/classes/{classId:Int}/students/reor
 
 -- Attendance
 --
--- listMarks reads one class's marks for one day (dayKey in the path,
--- an Int, so the whole request is addressable and cache-friendly).
+-- listMarks reads one class's marks for one day (the day rides in the
+-- query string, so the whole request is one addressable URL).
 -- setMark is the upsert: mark student X for day D, replacing any prior
 -- mark for that same day. studentHistory returns every mark for one
 -- student, newest-first work happens on the client.
-listMarks : Service { classId : Int, dayKey : Int } (List AttendanceMark)
-listMarks = Service.declare GET "/api/classes/{classId:Int}/attendance/{dayKey:Int}"
+listMarks : Service { classId : Int, day : Date } (List AttendanceMark)
+listMarks = Service.declare GET "/api/classes/{classId:Int}/attendance"
 
 
-setMark : Service { studentId : Int, classId : Int, day : Time, status : Int } (Maybe AttendanceMark)
+setMark : Service { studentId : Int, classId : Int, day : Date, status : Int } (Maybe AttendanceMark)
 setMark = Service.declare POST "/api/attendance"
 
 

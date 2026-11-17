@@ -165,6 +165,7 @@ function dump(v) {
     case 'U':  return 'U';
     case 'Ch': return 'Ch' + v.c;
     case 'TM': return 'Tm' + v.millis;
+    case 'DT': return 'Dt' + v.days;
     case 'A':  return 'A' + v.deci;
     case 'D':  return 'Du' + v.ms;
     case 'L':  return 'L' + all(v.xs);

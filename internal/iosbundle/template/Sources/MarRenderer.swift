@@ -1021,33 +1021,32 @@ private struct MarUIPicker: View {
     }
 }
 
-/// Mar's UI.datePicker: a date-only field. The builtin stashes the
-/// current Time as the `value` attr; the `(Time -> msg)` onChange rides
-/// on `view.msg`. The picker shows the Time's local day and a pick hands back
-/// local midnight of the picked day, the same Time the web renderer hands
-/// back (MarCivil.pickerDate / pickedTime).
+/// Mar's UI.datePicker: a date-only field. The builtin stashes the Date it
+/// shows as the `value` attr; the `(Date -> msg)` onChange rides on
+/// `view.msg`. The day crosses the picker as its label, so a pick hands back
+/// the Date whose label was picked, the Date the web renderer hands back
+/// (MarCivil.pickerDate / pickedDay).
 private struct MarUIDatePicker: View {
     let view: MarView
     let dispatch: (MarValue) -> Void
 
-    private var timeZone: TimeZone { .current }
-
-    private var current: Date {
-        // value is a concrete Time: datePicker is pure; the program owns
-        // the value and seeds "today" via `Cmd.perform GotToday Time.now`.
-        if case .time(let ms)? = attrValue(view, "value") {
-            return MarCivil.pickerDate(ms, timeZone)
+    private func current(_ tz: TimeZone) -> Date {
+        // value is a concrete Date: datePicker is pure; the program owns
+        // the value and seeds "today" via `Cmd.perform GotToday Date.today`.
+        if case .date(let days)? = attrValue(view, "value") {
+            return MarCivil.pickerDate(days, tz)
         }
-        return MarCivil.pickerRange(timeZone).lowerBound
+        return MarCivil.pickerRange(tz).lowerBound
     }
 
     var body: some View {
-        let tz = timeZone
+        let tz = MarCivil.pickerZone()
         DatePicker("", selection: Binding<Date>(
-            get: { current },
+            get: { current(tz) },
             set: { newDate in
-                guard let onChange = view.msg, let ms = MarCivil.pickedTime(newDate, tz) else { return }
-                if let msg = try? Eval.apply(onChange, .time(ms)) {
+                guard let onChange = view.msg, let days = MarCivil.pickedDay(newDate, tz),
+                      let picked = try? MarCivil.dateOf("the picked day", days) else { return }
+                if let msg = try? Eval.apply(onChange, picked) {
                     dispatch(msg)
                 }
             }

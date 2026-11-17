@@ -77,7 +77,7 @@ A `Task` produces a value; the frontend loop only consumes messages. `Cmd.perfor
 Cmd.perform : (a -> msg) -> Task a -> Cmd msg
 ```
 
-It runs the `Task` and delivers the produced value to `update` as a `Msg`. This is the only way a Task's result reaches the frontend. For example, `Time.now : Task Time` is the same name on both sides; the frontend reaches the loop with `Cmd.perform GotNow Time.now`.
+It runs the `Task` and delivers the produced value to `update` as a `Msg`. This is the only way a Task's result reaches the frontend. For example, `Time.now : Task Time` is the same name on both sides; the frontend reaches the loop with `Cmd.perform GotNow Time.now`. `Date.today : Task Date` is a Task the frontend alone has: the day on the device, in its time zone, read with `Cmd.perform GotToday Date.today`.
 
 Example:
 

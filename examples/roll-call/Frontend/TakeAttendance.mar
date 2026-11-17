@@ -18,11 +18,11 @@ import UI exposing
 -- place you browse into. It is still a real route: the URL works as a
 -- deep link, and opened cold it renders as a full screen.
 --
--- The chosen day starts at today (read from the clock on entry) and
--- is editable with a datePicker; changing it refetches that day's
--- marks. Each tap on a status is optimistic: it updates the local
--- `picks` immediately and fires an upsert (Shared.setMark) in the
--- background, so marking a full class feels instant.
+-- The chosen day starts at today (Date.today, the device's date, read
+-- on entry) and is editable with a datePicker; changing it refetches
+-- that day's marks. Each tap on a status is optimistic: it updates
+-- the local `picks` immediately and fires an upsert (Shared.setMark)
+-- in the background, so marking a full class feels instant.
 --
 -- `picks` is the single source of truth the row controls read: one
 -- entry per student that's been marked, seeded from the server and
@@ -40,7 +40,7 @@ type alias Pick =
 
 type alias Model =
     { students : Maybe (List Shared.Student)
-    , day      : Maybe Time
+    , day      : Maybe Date
     , picks    : List Pick
     , error    : Maybe String
     }
@@ -48,8 +48,8 @@ type alias Model =
 
 type Msg
     = StudentsFetched (Result Service.Error (List Shared.Student))
-    | GotToday Time
-    | DayPicked Time
+    | GotToday Date
+    | DayPicked Date
     | MarksFetched (Result Service.Error (List Shared.AttendanceMark))
     | SetStatus Int Shared.Status
     | MarkSaved Int (Result Service.Error (Maybe Shared.AttendanceMark))
@@ -61,7 +61,7 @@ init _ params =
     ( { students = Nothing, day = Nothing, picks = [], error = Nothing }
     , Cmd.batch
         [ Service.call Shared.listStudents { classId = params.id } StudentsFetched
-        , Cmd.perform GotToday Time.now
+        , Cmd.perform GotToday Date.today
         ]
     )
 
@@ -75,10 +75,10 @@ update _ params msg model =
         StudentsFetched (Err why) ->
             ( { model | error = Just (Service.errorToString why) }, Cmd.none )
 
-        GotToday now ->
-            -- The clock read seeds the day the sheet opens on; after
-            -- that, DayPicked is the only thing that refetches.
-            ( { model | day = Just now }, fetchMarks params.id now )
+        GotToday today ->
+            -- Today seeds the day the sheet opens on; after that,
+            -- DayPicked is the only thing that refetches.
+            ( { model | day = Just today }, fetchMarks params.id today )
 
         DayPicked picked ->
             -- New day: clear the picks so we don't show yesterday's
@@ -127,10 +127,10 @@ update _ params msg model =
             ( model, Nav.dismiss )
 
 
-fetchMarks : Int -> Time -> Cmd Msg
+fetchMarks : Int -> Date -> Cmd Msg
 fetchMarks classId day =
     Service.call Shared.listMarks
-        { classId = classId, dayKey = Shared.dayKeyOf day }
+        { classId = classId, day = day }
         MarksFetched
 
 
@@ -201,7 +201,7 @@ errorSection model =
             []
 
 
-daySection : Time -> List Shared.Student -> List Pick -> View Msg
+daySection : Date -> List Shared.Student -> List Pick -> View Msg
 daySection day students picks =
     section
         [ header "Day"

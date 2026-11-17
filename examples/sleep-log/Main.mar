@@ -13,8 +13,8 @@ import Frontend.Log
 -- Sign in with a one-time code sent by email, then pick a date (today is
 -- already filled in) and tap how you slept. Tapping a different rating for the
 -- same date CORRECTS that night instead of adding a second one: the date is the
--- identity of a night, which is why every date is rounded to midnight before it
--- is stored or matched.
+-- identity of a night, a calendar day with no time of day, so the same night
+-- always finds the same row.
 --
 -- The log is PRIVATE. Every read filters by the signed-in user, every write
 -- stamps them, and the unique index is (userId, date) rather than date alone,

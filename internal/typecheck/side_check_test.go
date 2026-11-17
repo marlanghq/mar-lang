@@ -262,3 +262,91 @@ main = App.fullstack { services = [ handler ], pages = [ home ] }
 		t.Fatalf("a legitimate fullstack app was rejected: %s", issues[0].Message)
 	}
 }
+
+// Date.today reads the device's clock in the device's time zone. Server code
+// that reaches it, directly, through a helper, through a Shared module or
+// through the loader an Auth.authorize declared on its own runs, is a compile
+// error naming the name and saying what to do instead; a page may use it.
+func TestDateTodayInServerCodeIsRejected(t *testing.T) {
+	shared := `
+module Shared exposing (stamp, clear)
+
+stamp = Date.today
+
+clear = Service.declare DELETE "/api/day"
+`
+	for _, c := range []struct{ name, main, module string }{
+		{"in a handler", `
+module Main exposing (main)
+
+import Shared
+
+handler = Service.implement Shared.clear (\_ -> Date.today |> Task.map (\_ -> ()))
+
+main = App.backend { services = [ handler ] }
+`, "Main"},
+		{"through a helper", `
+module Main exposing (main)
+
+import Shared
+
+today = Date.today
+
+handler = Service.implement Shared.clear (\_ -> today |> Task.map (\_ -> ()))
+
+main = App.backend { services = [ handler ] }
+`, "Main"},
+		{"through a Shared helper", `
+module Main exposing (main)
+
+import Shared
+
+handler = Service.implement Shared.clear (\_ -> Shared.stamp |> Task.map (\_ -> ()))
+
+main = App.backend { services = [ handler ] }
+`, "Shared"},
+		{"in an Auth.authorize loader declared apart", `
+module Main exposing (main)
+
+import Shared
+
+loadDay input user = Date.today |> Task.map Just
+
+protected = Auth.protect Shared.clear (\_ _ -> Task.succeed ())
+
+guarded = Auth.authorize loadDay (\input user day -> True) protected
+
+main = App.backend { services = [ guarded ] }
+`, "Main"},
+	} {
+		issues := RunSideCheck(parseModules(t, shared, c.main))
+		if len(issues) == 0 {
+			t.Errorf("%s: Date.today on the server was accepted", c.name)
+			continue
+		}
+		m := issues[0].Message
+		if !strings.Contains(m, "Date.today") || !strings.Contains(m, "no time zone of its own") {
+			t.Errorf("%s: wrong message: %s", c.name, m)
+		}
+		if issues[0].Module != c.module {
+			t.Errorf("%s: reported in %s, where it is written is %s", c.name, issues[0].Module, c.module)
+		}
+	}
+
+	page := parseModules(t, `
+module Main exposing (main)
+
+init = ( 0, Cmd.perform (\d -> GotToday d) Date.today )
+
+home =
+    Page.create
+        { path = "/", title = "t", init = init, update = update
+        , view = view, subscriptions = always Sub.none
+        }
+
+main = App.frontend [ home ]
+`)
+	if issues := RunSideCheck(page); len(issues) > 0 {
+		t.Fatalf("a page reading Date.today was rejected: %s", issues[0].Message)
+	}
+}

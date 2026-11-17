@@ -2253,6 +2253,112 @@ enum MarBuiltins {
         env.define("timeMinute",  .fn(timeMinute));  env.define("Time.minute", .fn(timeMinute))
         env.define("timeSecond",  .fn(timeSecond));  env.define("Time.second", .fn(timeSecond))
 
+        // Date: a day of the calendar, by MarCivil (as Go's date.go).
+        let dateFromYMD = MarFn.native(3) { args in
+            guard case .int(let y) = args[0],
+                  case .int(let m) = args[1],
+                  case .int(let d) = args[2] else {
+                throw MarRuntimeError.typeMismatch(
+                    expected: "(Int, Int, Int)",
+                    got: "(\(Eval.typeOf(args[0])), \(Eval.typeOf(args[1])), \(Eval.typeOf(args[2])))")
+            }
+            return try MarCivil.dateFromYMD(y, m, d)
+        }
+        env.define("dateFromYMD",  .fn(dateFromYMD))
+        env.define("Date.fromYMD", .fn(dateFromYMD))
+
+        func oneDate(_ v: MarValue) throws -> Int {
+            guard case .date(let days) = v else {
+                throw MarRuntimeError.typeMismatch(expected: "Date", got: Eval.typeOf(v))
+            }
+            return days
+        }
+        func twoDates(_ args: [MarValue]) throws -> (Int, Int) {
+            guard case .date(let a) = args[0], case .date(let b) = args[1] else {
+                throw MarRuntimeError.typeMismatch(
+                    expected: "(Date, Date)",
+                    got: "(\(Eval.typeOf(args[0])), \(Eval.typeOf(args[1])))")
+            }
+            return (a, b)
+        }
+        let mkDateField: (@escaping (Int) -> Int) -> MarFn = { get in
+            MarFn.native(1) { args in .int(get(try oneDate(args[0]))) }
+        }
+        let dateYear = mkDateField { MarCivil.civilFromDays($0).y }
+        let dateMonth = mkDateField { MarCivil.civilFromDays($0).m }
+        let dateDay = mkDateField { MarCivil.civilFromDays($0).d }
+        let dateWeekday = mkDateField { MarCivil.weekday($0) }
+        env.define("dateYear",    .fn(dateYear));    env.define("Date.year",    .fn(dateYear))
+        env.define("dateMonth",   .fn(dateMonth));   env.define("Date.month",   .fn(dateMonth))
+        env.define("dateDay",     .fn(dateDay));     env.define("Date.day",     .fn(dateDay))
+        env.define("dateWeekday", .fn(dateWeekday)); env.define("Date.weekday", .fn(dateWeekday))
+
+        let mkDateShift: (@escaping (Int, Int) throws -> MarValue) -> MarFn = { shift in
+            MarFn.native(2) { args in
+                guard case .date(let days) = args[0], case .int(let n) = args[1] else {
+                    throw MarRuntimeError.typeMismatch(
+                        expected: "(Date, Int)",
+                        got: "(\(Eval.typeOf(args[0])), \(Eval.typeOf(args[1])))")
+                }
+                return try shift(days, n)
+            }
+        }
+        let dateAddDays = mkDateShift { days, n in try MarCivil.dateOf("Date.addDays \(n)", days + n) }
+        let dateAddMonths = mkDateShift { days, n in try MarCivil.dateAddMonths(days, n, "Date.addMonths \(n)") }
+        let dateAddYears = mkDateShift { days, n in try MarCivil.dateAddMonths(days, n * 12, "Date.addYears \(n)") }
+        env.define("dateAddDays",    .fn(dateAddDays));    env.define("Date.addDays",    .fn(dateAddDays))
+        env.define("dateAddMonths",  .fn(dateAddMonths));  env.define("Date.addMonths",  .fn(dateAddMonths))
+        env.define("dateAddYears",   .fn(dateAddYears));   env.define("Date.addYears",   .fn(dateAddYears))
+
+        // Date.diffDays a b: the days FROM a TO b.
+        let dateDiffDays = MarFn.native(2) { args in
+            let (a, b) = try twoDates(args)
+            return .int(b - a)
+        }
+        let dateBefore = MarFn.native(2) { args in
+            let (a, b) = try twoDates(args)
+            return .bool(a < b)
+        }
+        let dateAfter = MarFn.native(2) { args in
+            let (a, b) = try twoDates(args)
+            return .bool(a > b)
+        }
+        env.define("dateDiffDays", .fn(dateDiffDays)); env.define("Date.diffDays", .fn(dateDiffDays))
+        env.define("dateBefore",   .fn(dateBefore));   env.define("Date.before",   .fn(dateBefore))
+        env.define("dateAfter",    .fn(dateAfter));    env.define("Date.after",    .fn(dateAfter))
+
+        let dateToIso = MarFn.native(1) { args in .string(MarCivil.formatDateISO(try oneDate(args[0]))) }
+        let dateFromIso = MarFn.native(1) { args in
+            guard case .string(let s) = args[0] else {
+                throw MarRuntimeError.typeMismatch(expected: "String", got: Eval.typeOf(args[0]))
+            }
+            guard let days = MarCivil.parseDateISO(s) else { return .ctor(tag: "Nothing", args: []) }
+            return .ctor(tag: "Just", args: [try MarCivil.dateOf(s, days)])
+        }
+        env.define("dateToIso",   .fn(dateToIso));   env.define("Date.toIso",   .fn(dateToIso))
+        env.define("dateFromIso", .fn(dateFromIso)); env.define("Date.fromIso", .fn(dateFromIso))
+
+        // The day a Time falls on in UTC, and midnight UTC of a Date.
+        let dateFromTime = MarFn.native(1) { args in
+            guard case .time(let ms) = args[0] else {
+                throw MarRuntimeError.typeMismatch(expected: "Time", got: Eval.typeOf(args[0]))
+            }
+            return try MarCivil.dateOf("Date.fromTime", MarCivil.fdiv(ms, MarCivil.msPerDay))
+        }
+        let dateToTime = MarFn.native(1) { args in
+            try MarCivil.timeOf("Date.toTime", try oneDate(args[0]) * MarCivil.msPerDay)
+        }
+        env.define("dateFromTime", .fn(dateFromTime)); env.define("Date.fromTime", .fn(dateFromTime))
+        env.define("dateToTime",   .fn(dateToTime));   env.define("Date.toTime",   .fn(dateToTime))
+
+        // Date.today: the device's clock read in the device's time zone.
+        let dateToday = MarEffect(tag: "dateToday") {
+            let ms = Int((Date().timeIntervalSince1970 * 1000).rounded(.down))
+            return try MarCivil.dateOf("Date.today", MarCivil.localDay(ms, .autoupdatingCurrent))
+        }
+        env.define("dateToday",  .effect(dateToday))
+        env.define("Date.today", .effect(dateToday))
+
         // MARK: JSON encode / decode
         env.define("jsonDecode", .fn(MarFn.native(1) { args in
             guard case .string(let raw) = args[0] else {
@@ -2326,6 +2432,7 @@ enum MarBuiltins {
         env.define("entityText",      .fn(colCtor)); env.define("Entity.text",      .fn(colCtor))
         env.define("entityBool",      .fn(colCtor)); env.define("Entity.bool",      .fn(colCtor))
         env.define("entityTimestamp", .fn(colCtor)); env.define("Entity.timestamp", .fn(colCtor))
+        env.define("entityDate",      .fn(colCtor)); env.define("Entity.date",      .fn(colCtor))
         let decimalColCtor = MarFn.native(2) { _ in .ctor(tag: "__Column", args: [.string("?")]) }
         env.define("entityDecimal", .fn(decimalColCtor)); env.define("Entity.decimal", .fn(decimalColCtor))
         // enum takes the allowed constructors plus the constraint. Missing here
@@ -2778,11 +2885,10 @@ enum MarBuiltins {
         env.define("picker",    .fn(uiPicker))
         env.define("UI.picker", .fn(uiPicker))
 
-        // datePicker : List Attr -> Maybe Time -> (Time -> msg) -> View msg
-        // Date-only field. The `Maybe Time` value rides along as the
-        // `value` attr (Nothing -> today, Just t -> that day); the
+        // datePicker : List Attr -> Date -> (Date -> msg) -> View msg
+        // Date-only field. The Date rides along as the `value` attr; the
         // renderer shows a SwiftUI DatePicker (date only) and hands the
-        // picked day back through `(Time -> msg)`.
+        // picked day back as a Date through `(Date -> msg)`.
         let uiDatePicker = MarFn.native(3) { args in
             var attrs = collectAttrs(args[0])
             attrs.append(MarView.Attr(name: "value", value: args[1]))

@@ -3,7 +3,21 @@ import Foundation
 // A command-line driver for the iOS interpreter CORE: decode a program.json,
 // evaluate a named top-level value, print it. The Swift equivalent of the
 // browser's __marEvalValue, without a simulator.
-let args = CommandLine.arguments
+//
+// Foundation reads `-AppleLocale <id>` anywhere on the command line as the
+// device's locale (and its calendar, `ja_JP@calendar=japanese`), which is how
+// a test runs the core as a phone set to another locale. The pair is taken out
+// of the arguments every mode below reads.
+let args: [String] = {
+    var out: [String] = []
+    var skip = false
+    for a in CommandLine.arguments {
+        if skip { skip = false; continue }
+        if a == "-AppleLocale" { skip = true; continue }
+        out.append(a)
+    }
+    return out
+}()
 
 // Second mode: the failure wording a service call surfaces. It has no Go
 // counterpart -- the server is what fails, the two CLIENTS are what have to
@@ -109,50 +123,92 @@ if args.count >= 5, args[1] == "--auth-expiry" {
     exit(0)
 }
 
-// The date picker: each label is picked in the given time zone (noon of that
-// day, as the picker's calendar names it), turned into the Time the program
-// receives, and shown back. Prints "label ms shownLabel" per label, or
-// "label refused -" for a day the picker has no such label for or does not
-// hand back.
-if args.count >= 4, args[1] == "--picker" {
-    guard let tz = TimeZone(identifier: args[2]) else {
-        print("unknown time zone \(args[2])")
+// The date picker: each label is picked in the picker's zone for a device in
+// the given time zone (noon of that day, as the picker's calendar names it),
+// turned into the Date the program receives, and shown back. Prints
+// "label days shownLabel" per label, or "label refused -" for a day the
+// picker has no such label for or does not hand back.
+func pickerZone(_ name: String) -> TimeZone {
+    guard let device = TimeZone(identifier: name) else {
+        print("unknown time zone \(name)")
         exit(1)
     }
+    return MarCivil.pickerZone(device)
+}
+
+func pickerLabel(_ d: Date, _ cal: Calendar) -> String {
+    let c = cal.dateComponents([.year, .month, .day], from: d)
+    return String(format: "%04d-%02d-%02d", c.year ?? 0, c.month ?? 0, c.day ?? 0)
+}
+
+if args.count >= 4, args[1] == "--picker" {
+    let tz = pickerZone(args[2])
     let cal = MarCivil.pickerCalendar(tz)
-    func label(_ d: Date) -> String {
-        let c = cal.dateComponents([.year, .month, .day], from: d)
-        return String(format: "%04d-%02d-%02d", c.year ?? 0, c.month ?? 0, c.day ?? 0)
-    }
     for text in args[3...] {
         let p = text.split(separator: "-").compactMap { Int($0) }
         guard p.count == 3,
               let picked = cal.date(from: DateComponents(year: p[0], month: p[1], day: p[2], hour: 12)),
-              label(picked) == text,
-              let ms = MarCivil.pickedTime(picked, tz) else {
+              pickerLabel(picked, cal) == text,
+              let days = MarCivil.pickedDay(picked, tz) else {
             print("\(text) refused -")
             continue
         }
-        print("\(text) \(ms) \(label(MarCivil.pickerDate(ms, tz)))")
+        print("\(text) \(days) \(pickerLabel(MarCivil.pickerDate(days, tz), cal))")
     }
     exit(0)
 }
 
-// The date picker's display: the label the picker shows for each Time (ms),
-// in the given time zone. Prints "ms shownLabel" per Time.
+// The date picker's display: the label the picker shows for each Date (a day
+// count), for a device in the given time zone. Prints "days shownLabel".
 if args.count >= 4, args[1] == "--picker-show" {
+    let tz = pickerZone(args[2])
+    let cal = MarCivil.pickerCalendar(tz)
+    for text in args[3...] {
+        guard let days = Int(text) else {
+            print("\(text) not-a-day")
+            continue
+        }
+        print("\(text) \(pickerLabel(MarCivil.pickerDate(days, tz), cal))")
+    }
+    exit(0)
+}
+
+// Date.today itself, the effect a program runs, in the process's time zone
+// (TZ). Prints "beforeMs days afterMs".
+if args.count >= 2, args[1] == "--today-now" {
+    MainActor.assumeIsolated {
+        let before = Int((Date().timeIntervalSince1970 * 1000).rounded(.down))
+        guard case .effect(let today)? = MarBuiltins.makeEnv().lookup("Date.today"),
+              case .date(let days)? = try? today.run() else {
+            print("Date.today is not an effect that gives a Date")
+            exit(1)
+        }
+        let after = Int((Date().timeIntervalSince1970 * 1000).rounded(.down))
+        print("\(before) \(days) \(after)")
+    }
+    exit(0)
+}
+
+// The first day of the week in the picker's calendar, for a device in the
+// given time zone and the process's locale: 1 is Sunday, 2 Monday.
+if args.count >= 3, args[1] == "--picker-week" {
+    print(MarCivil.pickerCalendar(pickerZone(args[2])).firstWeekday)
+    exit(0)
+}
+
+// Date.today: the day the device's wall clock shows at each instant (ms), in
+// the given time zone. Prints "ms days".
+if args.count >= 4, args[1] == "--today" {
     guard let tz = TimeZone(identifier: args[2]) else {
         print("unknown time zone \(args[2])")
         exit(1)
     }
-    let cal = MarCivil.pickerCalendar(tz)
     for text in args[3...] {
         guard let ms = Int(text) else {
             print("\(text) not-a-millisecond")
             continue
         }
-        let c = cal.dateComponents([.year, .month, .day], from: MarCivil.pickerDate(ms, tz))
-        print(String(format: "%@ %04d-%02d-%02d", text, c.year ?? 0, c.month ?? 0, c.day ?? 0))
+        print("\(text) \(MarCivil.localDay(ms, tz))")
     }
     exit(0)
 }
@@ -207,6 +263,7 @@ func wireDump(_ v: MarValue) -> String {
     case .unit: return "U"
     case .char(let c): return "Ch\(c.value)"
     case .time(let ms): return "Tm\(ms)"
+    case .date(let days): return "Dt\(days)"
     case .angle(let d): return "A\(d)"
     case .duration(let ms): return "Du\(ms)"
     case .list(let xs): return "L" + all(xs)

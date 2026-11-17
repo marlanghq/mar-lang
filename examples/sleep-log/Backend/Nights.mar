@@ -18,7 +18,7 @@ nights =
         { name = "nights"
         , columns =
             { id = Entity.serial
-            , date = Entity.timestamp Entity.notNull
+            , date = Entity.date Entity.notNull
             , quality =
                 Entity.enum
                     [ Shared.VeryBad, Shared.Bad, Shared.Normal, Shared.Good, Shared.VeryGood ]
@@ -43,13 +43,9 @@ listNightsImpl _ user =
 -- Upsert, scoped to the caller. The unique index would reject a second row for
 -- the same person and day anyway; looking first turns that rejection into the
 -- behaviour we actually want, which is correcting the night you already rated.
-logNightImpl : { date : Time, quality : Shared.Quality } -> Shared.User -> Task Shared.Night
+logNightImpl : { date : Date, quality : Shared.Quality } -> Shared.User -> Task Shared.Night
 logNightImpl input user =
-    let
-        day =
-            Shared.startOfDay input.date
-    in
-    Repo.findBy nights { userId = user.id, date = day }
+    Repo.findBy nights { userId = user.id, date = input.date }
         |> Task.andThen
             (\existing ->
                 case List.head existing of
@@ -64,16 +60,16 @@ logNightImpl input user =
 
                     Nothing ->
                         Repo.create nights
-                            { date = day, quality = input.quality, userId = user.id }
+                            { date = input.date, quality = input.quality, userId = user.id }
             )
 
 
 -- Undo a rating. Scoped the same way as everything else: the lookup carries the
 -- caller, so a day belonging to someone else simply is not found, and deleting
 -- a night that was never logged is a no-op rather than an error.
-clearNightImpl : { date : Time } -> Shared.User -> Task ()
+clearNightImpl : { date : Date } -> Shared.User -> Task ()
 clearNightImpl input user =
-    Repo.findBy nights { userId = user.id, date = Shared.startOfDay input.date }
+    Repo.findBy nights { userId = user.id, date = input.date }
         |> Task.andThen
             (\existing ->
                 case List.head existing of

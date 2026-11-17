@@ -1255,11 +1255,11 @@ func buildRecreateEmptySQL(e VEntity) []string {
 }
 
 // sqlTypeForDDL returns the storage type to write into the CREATE /
-// ALTER statement. TIMESTAMP and DECIMAL are conceptual: both stored
-// as INTEGER (Unix ms / scaled coefficient) so SQLite can compare and
-// sort numerically.
+// ALTER statement. TIMESTAMP, DATE and DECIMAL are conceptual: all three
+// stored as INTEGER (Unix ms / days since 1970-01-01 / scaled coefficient)
+// so SQLite can compare and sort numerically.
 func sqlTypeForDDL(marType string) string {
-	if strings.EqualFold(marType, "TIMESTAMP") || strings.EqualFold(marType, "DECIMAL") {
+	if strings.EqualFold(marType, "TIMESTAMP") || strings.EqualFold(marType, "DATE") || strings.EqualFold(marType, "DECIMAL") {
 		return "INTEGER"
 	}
 	return marType

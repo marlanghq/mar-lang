@@ -60,6 +60,9 @@ func BaseEnv() *Env {
 	for name, v := range timeBuiltins() {
 		env.Define(name, v)
 	}
+	for name, v := range dateBuiltins() {
+		env.Define(name, v)
+	}
 	for name, v := range decimalBuiltins() {
 		env.Define(name, v)
 	}
@@ -490,6 +493,9 @@ func equalValues(a, b Value) bool {
 		// `==`, by List.member, and by every container case below.
 		bv, ok := b.(VTime)
 		return ok && av.Millis == bv.Millis
+	case VDate:
+		bv, ok := b.(VDate)
+		return ok && av.Days == bv.Days
 	case VBool:
 		bv, ok := b.(VBool)
 		return ok && av.V == bv.V

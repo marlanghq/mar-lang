@@ -40,19 +40,18 @@ type alias User =
 -- boundary: reads filter by it, writes stamp it, and the server never
 -- returns a row it did not filter.
 --
--- `dayKey` is a day normalized to midnight (see dayKeyOf) and stored
--- as an Int. It is what the unique indexes match on, what the reports
--- join by, and, because every day is exactly `dayMillis` apart, what
--- makes "the day after" a plain addition.
+-- Every day is a Date: a day of the calendar, with no time of day and
+-- no time zone, so the Tuesday somebody logged is the same Tuesday on
+-- the phone, in the browser and on the server. It is what the unique
+-- indexes match on and what the reports join by.
 
 
--- One day's log. Unique on (userId, dayKey), so saving twice corrects
--- the same row instead of piling up a second opinion about Tuesday.
+-- One day's log. Unique on (userId, day), so saving twice corrects the
+-- same row instead of piling up a second opinion about Tuesday.
 type alias Entry =
     { id     : Int
     , userId : Int
-    , dayKey : Int
-    , day    : Time
+    , day    : Date
     , mood   : Int
     , energy : Int
     , note   : String
@@ -60,12 +59,13 @@ type alias Entry =
 
 
 -- One factor's answer on one day: `key` names the factor, `value` is
--- the index of the chosen option in that factor's option list.
--- Unique on (userId, dayKey, key).
+-- the index of the chosen option in that factor's option list, and
+-- `day` is the day of the entry it belongs to.
+-- Unique on (userId, day, key).
 type alias Choice =
     { id     : Int
     , userId : Int
-    , dayKey : Int
+    , day    : Date
     , key    : String
     , value  : Int
     }
@@ -87,8 +87,7 @@ type alias Tracked =
 type alias CycleStart =
     { id     : Int
     , userId : Int
-    , dayKey : Int
-    , day    : Time
+    , day    : Date
     }
 
 
@@ -396,47 +395,17 @@ questionOptions question =
 
 -- ===== Day math =====
 --
--- Both halves have to agree on what a day is, or the unique index and
--- the day lookup drift apart, so the normalization lives here and is
--- called from both sides. Every key is a whole number of days from the
--- epoch, which is what makes `nextDay` addition and what lets the
--- weekday come out of arithmetic instead of a calendar library.
+-- Days are Dates, so the arithmetic is the calendar's own: the day
+-- after is `Date.addDays day 1`, the distance between two days is
+-- `Date.diffDays`. What lives here is how a day is named on screen and
+-- which days can still be changed.
 
 
-dayMillis : Int
-dayMillis =
-    86400000
-
-
-startOfDay : Time -> Time
-startOfDay t =
-    Time.fromYMD (Time.year t) (Time.month t) (Time.day t)
-
-
-dayKeyOf : Time -> Int
-dayKeyOf t =
-    Time.toMillis (startOfDay t)
-
-
-timeOfDayKey : Int -> Time
-timeOfDayKey key =
-    Time.addDays (Time.fromYMD 1970 1 1) (key // dayMillis)
-
-
-nextDay : Int -> Int
-nextDay key =
-    key + dayMillis
-
-
-daysBetween : Int -> Int -> Int
-daysBetween from to =
-    (to - from) // dayMillis
-
-
--- 0 = Sunday. 1970-01-01 was a Thursday, which is the +4.
-weekdayOf : Int -> Int
-weekdayOf key =
-    modBy 7 (key // dayMillis + 4)
+-- 0 = Sunday, the first column of the month. Date.weekday counts
+-- Monday as 1 and Sunday as 7, and the 7 folds to 0.
+weekdayOf : Date -> Int
+weekdayOf day =
+    modBy 7 (Date.weekday day)
 
 
 weekdayNames : List String
@@ -480,24 +449,18 @@ weekdayName d =
 
 
 -- "Sunday 3 August": the header on the entry screen.
-longDate : Int -> String
-longDate key =
-    let
-        t = timeOfDayKey key
-    in
-    weekdayName (weekdayOf key)
+longDate : Date -> String
+longDate day =
+    weekdayName (weekdayOf day)
         ++ " "
-        ++ String.fromInt (Time.day t)
+        ++ String.fromInt (Date.day day)
         ++ " "
-        ++ monthName (Time.month t)
+        ++ monthName (Date.month day)
 
 
-shortDate : Int -> String
-shortDate key =
-    let
-        t = timeOfDayKey key
-    in
-    String.fromInt (Time.day t) ++ " " ++ shortMonthName (Time.month t)
+shortDate : Date -> String
+shortDate day =
+    String.fromInt (Date.day day) ++ " " ++ shortMonthName (Date.month day)
 
 
 -- How far back a day can still be filled in. Three days, because
@@ -511,9 +474,9 @@ editWindowDays =
     3
 
 
-editable : Int -> Int -> Bool
-editable todayKey key =
-    key <= todayKey && daysBetween key todayKey < editWindowDays
+editable : Date -> Date -> Bool
+editable today day =
+    not (Date.after day today) && Date.diffDays day today < editWindowDays
 
 
 -- ===== Tenths =====
@@ -550,7 +513,7 @@ formatTenths tenths =
 
 
 type alias DayRow =
-    { dayKey : Int
+    { day    : Date
     , mood   : Int
     , energy : Int
     , note   : String
@@ -571,26 +534,27 @@ emptyWindow =
 
 
 -- Join the two lists into days, oldest first. Sorting here once means
--- every report below can assume chronological order.
+-- every report below can assume chronological order. A day's ISO text
+-- sorts in calendar order, so it is the sort key.
 daysOf : Window -> List DayRow
 daysOf window =
-    List.sortBy (\d -> d.dayKey)
+    List.sortBy (\d -> Date.toIso d.day)
         (List.map
             (\e ->
-                { dayKey = e.dayKey
+                { day    = e.day
                 , mood   = e.mood
                 , energy = e.energy
                 , note   = e.note
-                , picks  = List.filter (\c -> c.dayKey == e.dayKey) window.choices
+                , picks  = List.filter (\c -> c.day == e.day) window.choices
                 }
             )
             window.entries
         )
 
 
-dayAt : Int -> List DayRow -> Maybe DayRow
-dayAt key days =
-    List.head (List.filter (\d -> d.dayKey == key) days)
+dayAt : Date -> List DayRow -> Maybe DayRow
+dayAt day days =
+    List.head (List.filter (\d -> d.day == day) days)
 
 
 pickOf : String -> DayRow -> Maybe Int
@@ -680,7 +644,7 @@ outcomesFor days lag subset =
             if lag == 0 then
                 Just d.mood
             else
-                Maybe.map (\o -> o.mood) (dayAt (nextDay d.dayKey) days)
+                Maybe.map (\o -> o.mood) (dayAt (Date.addDays d.day 1) days)
         )
         subset
 
@@ -770,19 +734,20 @@ type alias WeekSummary =
     }
 
 
-inRange : Int -> Int -> List DayRow -> List DayRow
-inRange fromKey toKey days =
-    List.filter (\d -> d.dayKey >= fromKey && d.dayKey <= toKey) days
+-- The days from `first` to `last`, both included.
+inRange : Date -> Date -> List DayRow -> List DayRow
+inRange first last days =
+    List.filter (\d -> not (Date.before d.day first) && not (Date.after d.day last)) days
 
 
-weekSummary : Int -> List DayRow -> WeekSummary
-weekSummary todayKey days =
+weekSummary : Date -> List DayRow -> WeekSummary
+weekSummary today days =
     let
-        weekStart  = todayKey - 6 * dayMillis
-        priorStart = todayKey - 34 * dayMillis
+        weekStart  = Date.addDays today (-6)
+        priorStart = Date.addDays today (-34)
 
-        week  = inRange weekStart todayKey days
-        prior = inRange priorStart (weekStart - dayMillis) days
+        week  = inRange weekStart today days
+        prior = inRange priorStart (Date.addDays weekStart (-1)) days
 
         ranked = List.sortBy (\d -> d.mood) week
     in
@@ -827,11 +792,11 @@ phaseOfDay dayOfCycle =
 
 -- The most recent start on or before this day, if it is recent enough
 -- to be believable.
-cycleDayOf : List Int -> Int -> Maybe Int
-cycleDayOf startKeys key =
+cycleDayOf : List Date -> Date -> Maybe Int
+cycleDayOf starts day =
     let
-        before = List.filter (\s -> s <= key) startKeys
-        latest = List.head (List.reverse (List.sort before))
+        before = List.filter (\s -> not (Date.after s day)) starts
+        latest = List.head (List.reverse (List.sortBy Date.toIso before))
     in
     case latest of
         Nothing ->
@@ -839,7 +804,7 @@ cycleDayOf startKeys key =
 
         Just start ->
             let
-                offset = daysBetween start key + 1
+                offset = Date.diffDays start day + 1
             in
             if offset <= cycleMaxDays then Just offset else Nothing
 
@@ -855,11 +820,11 @@ type alias PhaseStat =
 phaseStats : List CycleStart -> List DayRow -> List PhaseStat
 phaseStats starts days =
     let
-        keys = List.map (\s -> s.dayKey) starts
+        startDays = List.map (\s -> s.day) starts
 
         tagged =
             List.filterMap
-                (\d -> Maybe.map (\c -> { day = d, phase = phaseOfDay c }) (cycleDayOf keys d.dayKey))
+                (\d -> Maybe.map (\c -> { day = d, phase = phaseOfDay c }) (cycleDayOf startDays d.day))
                 days
     in
     List.map
@@ -911,8 +876,8 @@ saveSetup = Service.declare PUT "/api/setup"
 -- logging is a few hundred small rows, so paging it would buy nothing
 -- and cost the app its most useful property: once loaded, every screen
 -- is instant and works from the same numbers.
-loadWindow : Service { sinceDayKey : Int } Window
-loadWindow = Service.declare GET "/api/days/{sinceDayKey:Int}"
+loadWindow : Service { since : Date } Window
+loadWindow = Service.declare GET "/api/days"
 
 
 type alias Pick =
@@ -922,8 +887,7 @@ type alias Pick =
 
 
 saveDay : Service
-    { dayKey : Int
-    , day    : Time
+    { day    : Date
     , mood   : Int
     , energy : Int
     , note   : String
@@ -933,12 +897,12 @@ saveDay : Service
 saveDay = Service.declare POST "/api/days"
 
 
-markPeriod : Service { dayKey : Int, day : Time } ()
+markPeriod : Service { day : Date } ()
 markPeriod = Service.declare POST "/api/cycle"
 
 
-clearPeriod : Service { dayKey : Int } ()
-clearPeriod = Service.declare DELETE "/api/cycle/{dayKey:Int}"
+clearPeriod : Service { day : Date } ()
+clearPeriod = Service.declare DELETE "/api/cycle"
 
 
 -- Irreversible account deletion (App Store guideline 5.1.1(v): an app

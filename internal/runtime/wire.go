@@ -39,6 +39,7 @@ const (
 	WireBool     = ast.WireBool
 	WireDecimal  = ast.WireDecimal
 	WireTime     = ast.WireTime
+	WireDate     = ast.WireDate
 	WireChar     = ast.WireChar
 	WireUnit     = ast.WireUnit
 	WireList     = ast.WireList
@@ -120,6 +121,12 @@ func checkWireIn(v Value, s WireShape, path string, seen map[string]WireShape) e
 		// turned a well-formed one into a VTime.
 		if _, ok := v.(VTime); !ok {
 			return bad("a time (an ISO-8601 string under \"__time\")")
+		}
+	case WireDate:
+		// Dates travel as {"__date": "YYYY-MM-DD"}; decodeJSON has already
+		// turned a well-formed one into a VDate.
+		if _, ok := v.(VDate); !ok {
+			return bad("a date (a YYYY-MM-DD string under \"__date\")")
 		}
 	case WireUnit:
 		// Anything that carries no declared field satisfies a `()` request,
@@ -397,6 +404,8 @@ func wireDescribe(v Value) string {
 		return "nothing"
 	case VTime:
 		return "a time"
+	case VDate:
+		return "a date"
 	case VDuration:
 		return "a duration"
 	case VCtor:

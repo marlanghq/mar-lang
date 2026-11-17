@@ -52,13 +52,14 @@ stamps them.
 
 **The unique index is composite, and it has to be.** `(userId, date)`, not
 `date`. A unique index on the date alone would mean the first person to log the
-20th locks that date for everyone else — a bug that only appears once the app
+20th locks that date for everyone else: a bug that only appears once the app
 has a second user, which is exactly the kind that ships unnoticed.
 
-**The date is the identity of a night.** That only works if every date agrees on
-what a day is, which is why `startOfDay` rounds to midnight before storing or
-matching. Without it, a morning entry and an evening entry on the same day are
-two different keys, and the index cannot help.
+**The date is the identity of a night.** A night's `date` is a `Date`, a day of
+the calendar with no time of day and no time zone, so a morning entry and an
+evening entry for the same night are the same key and the index does the rest.
+Today is the day on your device (`Date.today`), and the server stores the day it
+is sent rather than working one out from its own clock.
 
 One more, smaller: the report window is 30 **days**, not 30 rows. `inWindow`
 filters by date from today. Taking the most recent 30 records instead would

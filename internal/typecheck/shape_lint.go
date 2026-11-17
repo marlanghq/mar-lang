@@ -74,6 +74,7 @@ const (
 	kindString
 	kindBool
 	kindTime
+	kindDate
 	kindEnum
 	kindDecimal
 )
@@ -88,6 +89,8 @@ func (k columnKind) String() string {
 		return "Bool"
 	case kindTime:
 		return "Time"
+	case kindDate:
+		return "Date"
 	case kindEnum:
 		return "enum"
 	case kindDecimal:
@@ -487,6 +490,9 @@ func parseColumnType(e ast.Expr) (columnInfo, bool) {
 	}
 	if isQualified(app.Fn, "Entity", "timestamp") {
 		return columnInfo{kind: kindTime}, true
+	}
+	if isQualified(app.Fn, "Entity", "date") {
+		return columnInfo{kind: kindDate}, true
 	}
 	// Entity.enum [A, B] constraint / Entity.decimal scale constraint
 	//   →  EApp { EApp { Entity.X, arg }, constraint }
@@ -985,7 +991,7 @@ func definitelyNotARecord(t Type) string {
 			return shape.Name
 		}
 		switch shape.Name {
-		case "Int", "String", "Bool", "Time", "Decimal", "Char", "Angle", "Duration":
+		case "Int", "String", "Bool", "Time", "Date", "Decimal", "Char", "Angle", "Duration":
 			return shape.Name
 		}
 		// A user's own union or an opaque builtin: naming it would be
@@ -1030,6 +1036,8 @@ func checkInferredAgainstKind(t Type, kind columnKind) string {
 			return ""
 		case kindTime:
 			return "got Int — timestamps require a Time value (e.g. Time.now)"
+		case kindDate:
+			return "got Int: date columns take a Date (e.g. Date.fromYMD 2026 7 22)"
 		case kindDecimal:
 			return "got Int — decimal columns take a Decimal (write 12 as 12.0, or Decimal.fromInt)"
 		case kindString, kindBool, kindEnum:
@@ -1052,6 +1060,11 @@ func checkInferredAgainstKind(t Type, kind columnKind) string {
 			return ""
 		}
 		return "got Time"
+	case "Date":
+		if kind == kindDate {
+			return ""
+		}
+		return "got Date"
 	case "Decimal":
 		if kind == kindDecimal {
 			return ""
@@ -1085,6 +1098,8 @@ func checkLiteralAgainstKind(e ast.Expr, kind columnKind) string {
 			return ""
 		case kindTime:
 			return fmt.Sprintf("got Int literal %d — timestamps require a Time value (Time.now or similar)", v.Value)
+		case kindDate:
+			return fmt.Sprintf("got Int literal %d: date columns take a Date (Date.fromYMD or similar)", v.Value)
 		case kindString, kindBool:
 			return fmt.Sprintf("got Int literal %d", v.Value)
 		}

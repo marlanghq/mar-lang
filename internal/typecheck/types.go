@@ -340,6 +340,7 @@ var (
 	TChar     = TCon{Name: "Char"}
 	TDuration = TCon{Name: "Duration"}
 	TTime     = TCon{Name: "Time"}
+	TDate     = TCon{Name: "Date"}
 	// TAngle: a rotation. The third quantity in the language that carries a
 	// unit and therefore has a type (ADR 0029, after Duration and
 	// Width/Height): the constructor names the unit (Math.degrees,

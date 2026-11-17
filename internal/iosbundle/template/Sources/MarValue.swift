@@ -43,6 +43,10 @@ enum MarValue: @unchecked Sendable {
     /// Absolute moment, Unix milliseconds. Built via Time.now or
     /// Time.fromIso. Wire format is `{"__time": "ISO 8601"}`.
     case time(Int)
+    /// A day of the calendar, with no time of day and no time zone: days
+    /// from 1970-01-01, 0000-01-01 to 9999-12-31. Built through
+    /// MarCivil.dateOf. Wire format is `{"__date": "2026-11-17"}`.
+    case date(Int)
     /// A rotation, carried as deci-degrees in 0..3599. Built only via
     /// Math.degrees / .deciDegrees / .turns, so the unit is named at
     /// construction and nowhere else (ADR 0029). The representation is
@@ -274,6 +278,7 @@ extension MarValue {
         // same Unix millisecond.
         case (.duration(let a), .duration(let b)): return a == b
         case (.time(let a),   .time(let b)):   return a == b
+        case (.date(let a),   .date(let b)):   return a == b
         case (.bool(let a),   .bool(let b)):   return a == b
         case (.unit, .unit):                   return true
         case (.list(let a),   .list(let b)),
