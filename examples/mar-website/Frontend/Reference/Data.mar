@@ -450,8 +450,8 @@ sectionsFor m =
         "Time" ->
             [ { category = "Create"
               , entries =
-                    [ { moduleName = "Time", name = "fromYMD", signature = "Int -> Int -> Int -> Time", side = "both", description = "A time at midnight on the given year, month, and day.", examples = [ [ "Time.year (Time.fromYMD 2026 7 22)    -- 2026" ] ] }
-                    , { moduleName = "Time", name = "fromIso", signature = "String -> Maybe Time", side = "both", description = "Reads an ISO 8601 string, giving Nothing when it is not one.", examples = [ [ "Maybe.map Time.year (Time.fromIso \"2026-07-22T00:00:00Z\")    -- Just 2026" ] ] }
+                    [ { moduleName = "Time", name = "fromYMD", signature = "Int -> Int -> Int -> Time", side = "both", description = "A time at midnight UTC on the given year, month, and day. A month or day past its end carries over (month 13 is January of the next year). Raises \"Time out of range\" for a date outside the years 0000 to 9999.", examples = [ [ "Time.year (Time.fromYMD 2026 7 22)    -- 2026" ] ] }
+                    , { moduleName = "Time", name = "fromIso", signature = "String -> Maybe Time", side = "both", description = "Reads an RFC 3339 string such as \"2023-11-14T22:13:20.000Z\" (a Z or an offset is required), giving Nothing when it is not one or names a moment outside the years 0000 to 9999.", examples = [ [ "Maybe.map Time.year (Time.fromIso \"2026-07-22T00:00:00Z\")    -- Just 2026" ] ] }
                     , { moduleName = "Time", name = "now", signature = "Task Time", side = "both", description = "The current time, as a task. It is a task rather than a value because reading the clock is an effect: two calls can disagree.", examples = [ [ "type Msg = YearKnown Int", "askYear = Cmd.perform (\\t -> YearKnown (Time.year t)) Time.now" ] ] }
                     ]
               }
@@ -478,11 +478,11 @@ sectionsFor m =
               }
             , { category = "Shift a time"
               , entries =
-                    [ { moduleName = "Time", name = "add", signature = "Time -> Duration -> Time", side = "both", description = "Moves a time forward by a duration.", examples = [ [ "Time.day (Time.add (Time.fromYMD 2026 7 22) (Time.days 3))    -- 25" ] ] }
-                    , { moduleName = "Time", name = "sub", signature = "Time -> Duration -> Time", side = "both", description = "Moves a time backward by a duration.", examples = [ [ "Time.day (Time.sub (Time.fromYMD 2026 7 22) (Time.days 1))    -- 21" ] ] }
-                    , { moduleName = "Time", name = "addDays", signature = "Time -> Int -> Time", side = "both", description = "Moves a time by whole days. Negative counts move backward.", examples = [ [ "Time.month (Time.addDays (Time.fromYMD 2026 7 30) 3)    -- 8" ] ] }
+                    [ { moduleName = "Time", name = "add", signature = "Time -> Duration -> Time", side = "both", description = "Moves a time forward by a duration. Raises \"Time out of range\" past 9999-12-31T23:59:59.999Z.", examples = [ [ "Time.day (Time.add (Time.fromYMD 2026 7 22) (Time.days 3))    -- 25" ] ] }
+                    , { moduleName = "Time", name = "sub", signature = "Time -> Duration -> Time", side = "both", description = "Moves a time backward by a duration. Raises \"Time out of range\" before 0000-01-01T00:00:00.000Z.", examples = [ [ "Time.day (Time.sub (Time.fromYMD 2026 7 22) (Time.days 1))    -- 21" ] ] }
+                    , { moduleName = "Time", name = "addDays", signature = "Time -> Int -> Time", side = "both", description = "Moves a time by whole days. Negative counts move backward. Raises \"Time out of range\" outside the years 0000 to 9999.", examples = [ [ "Time.month (Time.addDays (Time.fromYMD 2026 7 30) 3)    -- 8" ] ] }
                     , { moduleName = "Time", name = "addMonths", signature = "Time -> Int -> Time", side = "both", description = "Moves a time by whole months, keeping the day of the month where the target month has one. Adding a month to the 31st lands on the last day of a shorter month.", examples = [ [ "Time.month (Time.addMonths (Time.fromYMD 2026 7 22) 1)    -- 8" ] ] }
-                    , { moduleName = "Time", name = "addYears", signature = "Time -> Int -> Time", side = "both", description = "Moves a time by whole years.", examples = [ [ "Time.year (Time.addYears (Time.fromYMD 2026 7 22) 4)    -- 2030" ] ] }
+                    , { moduleName = "Time", name = "addYears", signature = "Time -> Int -> Time", side = "both", description = "Moves a time by whole years. The 29th of February lands on the 28th in a year that has none.", examples = [ [ "Time.year (Time.addYears (Time.fromYMD 2026 7 22) 4)    -- 2030" ] ] }
                     ]
               }
             , { category = "Compare"

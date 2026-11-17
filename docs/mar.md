@@ -315,6 +315,8 @@ Two things follow from the type. The first is that a unit mix-up is a compile er
 
 The internal resolution is a tenth of a degree: a program can tell 45.0° from 45.1° and nothing finer. That number is not observable: no function hands it back.
 
+**A `Time` is a millisecond from `0000-01-01T00:00:00.000Z` to `9999-12-31T23:59:59.999Z`**, in the Gregorian calendar extended back before 1582 (proleptic) and in UTC, the same on the server, in the browser and on the phone: one instant has one date everywhere. Its text is RFC 3339 with a four-digit year, `2023-11-14T22:13:20.000Z`, which is how `Time.toIso` writes it and how it crosses the wire. `Time.fromIso` reads that form only (a `Z` or a `±HH:MM` offset is required, and a fraction past the milliseconds is dropped) and gives `Nothing` for anything else or for a moment outside the range. Every operation that builds a Time (`Time.add`, `Time.sub`, `Time.fromYMD`, `Time.addDays`, `Time.addMonths`, `Time.addYears`) raises "Time out of range" rather than leave it; `Time.fromYMD` carries an out-of-range month or day over first, so `Time.fromYMD 10000 0 1` is `9999-12-01`.
+
 **A `Duration` is a whole number of milliseconds**, the unit a `Time` is counted in, so `Time.add`, `Time.sub` and `Time.diff` are exact: `Time.add t (Time.millis 1001)` moves `t` by exactly 1001 ms, and `Time.diff a b` is what separates them to the millisecond. It is built only by a constructor that names the unit (`Time.millis`, `Time.seconds`, `Time.minutes`, `Time.hours`, `Time.days`, `Time.weeks`) or by `Time.diff`, and it holds the range of `Int` in milliseconds: an interval past that, such as `Time.weeks` of a very large number, raises "Duration out of range" rather than wrapping. `Time.toSeconds` gives whole seconds, toward zero. On the wire a Duration is `{"__duration": 1500}`, and it can be part of a service contract or a pinned `JSON.decode` like any other value.
 
 ### 3.5 Nominal IDs
@@ -505,7 +507,7 @@ Computed defaults (a slug from a title, a creation time) belong in the handler, 
 - Sum types with payload → `{ "tag": "constructorName", ...payload }`.
 - `Maybe a` → value or `null`. Optional fields on decode.
 - `List a` → JSON array.
-- Primitives: `Int`, `String`, `Bool`, `Char`, `Time` (ISO 8601 UTC), `()`.
+- Primitives: `Int`, `String`, `Bool`, `Char`, `Time` (RFC 3339, UTC, years 0000 to 9999), `()`.
 
 Mar uses these codecs at the HTTP boundary (request body, response body, path params, query params) and at the DB boundary. User code never sees JSON or constructs codecs manually.
 
@@ -755,7 +757,7 @@ navigationStack [ navigationTitle "Sign in" ]
     ]
 ```
 
-The building blocks: `navigationStack` / `navigationTitle`, `form` / `section`, `row` / `column` / `spacer`, `text` / `title` / `subtitle` / `paragraph`, `textField`, `picker`, `datePicker`, `button`, `link` / `navigationLink`, `list` / `keyedList`, `toggle`, `image`, `sheet` / `confirm`, `errorText`, `centered`, and `empty` (renders nothing). `button [] Submitted "Verify"` takes its message and label directly; `textField` takes its label, the current value, and an on-change message. `datePicker [] day DatePicked` is a date-only field, and it is pure: it shows exactly the `Time` you pass and picking fires `(Time -> msg)` with the chosen day. It does not read the clock; to start on "today", seed the field with `Cmd.perform GotToday Time.now` (hold it as `Maybe Time`, render the picker once seeded). Web renders `<input type="date">`, iOS a SwiftUI `DatePicker`.
+The building blocks: `navigationStack` / `navigationTitle`, `form` / `section`, `row` / `column` / `spacer`, `text` / `title` / `subtitle` / `paragraph`, `textField`, `picker`, `datePicker`, `button`, `link` / `navigationLink`, `list` / `keyedList`, `toggle`, `image`, `sheet` / `confirm`, `errorText`, `centered`, and `empty` (renders nothing). `button [] Submitted "Verify"` takes its message and label directly; `textField` takes its label, the current value, and an on-change message. `datePicker [] day DatePicked` is a date-only field, and it is pure: it shows exactly the `Time` you pass and picking fires `(Time -> msg)` with the chosen day. It does not read the clock; to start on "today", seed the field with `Cmd.perform GotToday Time.now` (hold it as `Maybe Time`, render the picker once seeded). Web renders `<input type="date">`, iOS a SwiftUI `DatePicker`; both offer the days from 1582-10-15, the first day of the Gregorian calendar, to 9999-12-31, show a `Time` as its day in the device's time zone, and hand back local midnight of the picked day, the same `Time` on both. A `Time` on another day shows as an empty field on the web and as the nearer end of that range on iOS.
 
 ### 5.4 Navigation
 

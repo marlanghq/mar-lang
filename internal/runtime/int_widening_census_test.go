@@ -25,19 +25,18 @@ func TestNoIntIsNarrowedByGoInsteadOfByMarsBound(t *testing.T) {
 	// Each entry is the expression as it appears, and why it cannot leave the
 	// range. Anything not here fails the test.
 	safe := map[string]string{
-		"int64(len(l.Elements))":                     "a list's length is bounded by memory, far under 2^53",
-		"int64(len(d.Pairs))":                        "a dict's size is bounded by memory",
-		"int64(len(s.Items))":                        "a set's size is bounded by memory",
-		"int64(len([]rune(s.V)))":                    "a string's length is bounded by memory",
-		"int64(i)":                                   "an index into a list already in memory",
-		"int64(runesBefore)":                         "a count of scalar values in a string already in memory",
-		"int64(c.V)":                                 "a Char is a scalar value, at most 0x10FFFF",
-		"int64(status)":                              "an HTTP status code",
-		"int64(ttlMinutes)":                          "a configured TTL in minutes, from the app's own source",
-		"int64(state >> 32)":                         "the high half of a 64-bit seed: 32 bits",
-		"int64(state & 0xFFFFFFFF)":                  "the low half of a 64-bit seed: 32 bits",
-		"int64(get(time.UnixMilli(t.Millis).UTC()))": "a calendar field: year, month, day, hour, minute, second",
-		"r.Coef.Int64()":                             "guarded by inIntRange on the line above; see decToInt",
+		"int64(len(l.Elements))":    "a list's length is bounded by memory, far under 2^53",
+		"int64(len(d.Pairs))":       "a dict's size is bounded by memory",
+		"int64(len(s.Items))":       "a set's size is bounded by memory",
+		"int64(len([]rune(s.V)))":   "a string's length is bounded by memory",
+		"int64(i)":                  "an index into a list already in memory",
+		"int64(runesBefore)":        "a count of scalar values in a string already in memory",
+		"int64(c.V)":                "a Char is a scalar value, at most 0x10FFFF",
+		"int64(status)":             "an HTTP status code",
+		"int64(ttlMinutes)":         "a configured TTL in minutes, from the app's own source",
+		"int64(state >> 32)":        "the high half of a 64-bit seed: 32 bits",
+		"int64(state & 0xFFFFFFFF)": "the low half of a 64-bit seed: 32 bits",
+		"r.Coef.Int64()":            "guarded by inIntRange on the line above; see decToInt",
 	}
 
 	widening := regexp.MustCompile(`VInt\{V?:? *((?:int64\(|[A-Za-z_.]*\.Int64\(\))[^}]*)\}`)

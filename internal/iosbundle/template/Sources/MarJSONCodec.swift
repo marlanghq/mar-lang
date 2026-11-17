@@ -27,27 +27,6 @@ enum MarJSONCodec {
     /// (null maps to unit, NOT to Nothing: Nothing tags uniformly
     /// via {"__ctor":"Nothing"} so it doesn\'t collide with VUnit\'s
     /// null encoding.)
-    /// parseISO reads an ISO 8601 instant with OR without fractional
-    /// seconds. `.withFractionalSeconds` REQUIRES them, so asking for it
-    /// alone would refuse every value written before the wire form carried
-    /// milliseconds — which is everything already stored or in flight.
-    static func parseISO(_ iso: String) -> Date? {
-        let withFraction = ISO8601DateFormatter()
-        withFraction.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        if let d = withFraction.date(from: iso) { return d }
-        let plain = ISO8601DateFormatter()
-        plain.formatOptions = [.withInternetDateTime]
-        return plain.date(from: iso)
-    }
-
-    /// formatISO writes one, always with three decimal places, matching the
-    /// Go encoder and JavaScript's toISOString.
-    static func formatISO(_ millis: Int) -> String {
-        let f = ISO8601DateFormatter()
-        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        return f.string(from: Date(timeIntervalSince1970: Double(millis) / 1000))
-    }
-
     /// sameKindAsExisting reports whether a new key or item can share a
     /// collection with what is already there.
     ///
@@ -226,27 +205,24 @@ enum MarJSONCodec {
                 }
                 return .duration(ms)
             }
-            // Time round-trip, `{__time: "ISO 8601"}` rebuilds a
-            // VTime so user code typed as `createdAt : Time`
-            // actually receives a Time, not a String.
-            // A tagged value that will not rebuild is a decode failure, not
-            // a record. Falling through left `{"__time":"nope"}` as a plain
-            // record here and in the browser while the server errored — and
-            // a Set or Dict that fell through CRASHED the first operation on
-            // it, because the shape reduction has no kind for either.
-            if dict["__time"] != nil {
-                guard let iso = dict["__time"] as? String, let d = parseISO(iso) else {
-                    throw MarRuntimeError.message(
-                        "the value should be a date and time, got `\(plainWire(dict["__time"]))`")
+            // Time round-trip, `{__time: "ISO 8601"}`, so user code typed as
+            // `createdAt : Time` receives a Time, not a String. The text is
+            // read by MarCivil.parseTimeISO, the one form the three runtimes
+            // accept, and the moment it names has to be in the range of a
+            // Time; a tagged value that will not rebuild is a decode failure,
+            // not a record.
+            if let iso = dict["__time"] as? String, dict.count == 1 {
+                guard let ms = MarCivil.parseTimeISO(iso) else {
+                    throw MarRuntimeError.message("the value should be a date and time, got `\(iso)`")
                 }
-                return .time(Int(d.timeIntervalSince1970 * 1000))
+                return try MarCivil.timeOf("`\(iso)`", ms)
             }
             // Dict / Set round-trip. Wire format mirrors the Go and JS
             // sides exactly: `{__dict: [[k, v], ...]}` and
             // `{__set: [k, ...]}`. We rebuild via the runtime's
             // insert helpers so the sorted invariant survives even
             // when the payload arrives out of order.
-            if dict["__dict"] != nil {
+            if dict["__dict"] != nil, dict.count == 1 {
                 guard let pairs = dict["__dict"] as? [Any] else {
                     throw MarRuntimeError.message("the value should be a list of key/value pairs")
                 }
@@ -267,7 +243,7 @@ enum MarJSONCodec {
                 }
                 return d
             }
-            if dict["__set"] != nil {
+            if dict["__set"] != nil, dict.count == 1 {
                 guard let items = dict["__set"] as? [Any] else {
                     throw MarRuntimeError.message("the value should be a list of items")
                 }
@@ -366,7 +342,7 @@ enum MarJSONCodec {
         case .duration(let ms): return ["__duration": ms] as [String: Any]
         case .angle(let d): return ["__angle": d] as [String: Any]
         case .time(let ms):
-            return ["__time": formatISO(ms)] as [String: Any]
+            return ["__time": MarCivil.formatTimeISO(ms)] as [String: Any]
         case .list(let xs): return xs.map(marToJSON)
         case .tuple(let xs): return xs.map(marToJSON)
         case .record(let fs, let order):

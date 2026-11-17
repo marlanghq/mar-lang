@@ -592,8 +592,8 @@ func scanRow(rows *sql.Rows, entity VEntity) (VRecord, error) {
 // from another tool, or an external 64-bit id, so it raises rather than
 // rounding.
 //
-// TIMESTAMP and DECIMAL are deliberately not bounded: they decode to VTime
-// and to an arbitrary-precision coefficient, neither of which is an Int.
+// A TIMESTAMP is bounded by the range of a Time instead, and a DECIMAL
+// decodes to an arbitrary-precision coefficient, which is not an Int.
 func decodeColumn(table string, f EntityField, raw any) (Value, error) {
 	if raw == nil {
 		// All declared columns are NOT NULL today, so NULL shouldn't
@@ -626,7 +626,7 @@ func decodeColumn(table string, f EntityField, raw any) (Value, error) {
 		if err != nil {
 			return nil, err
 		}
-		return VTime{Millis: n}, nil
+		return timeOf(fmt.Sprintf("%d milliseconds from the database", n), n)
 
 	case "DECIMAL":
 		// Stored as an INTEGER coefficient at the column's fixed

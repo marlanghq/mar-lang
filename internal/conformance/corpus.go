@@ -491,6 +491,8 @@ jsonCases =
         , "encodeJustOk=" ++ q (JSON.encode (Just okOne))
         , "roundTripOk=" ++ showNested (decodeNested (JSON.encode okOne))
         , "roundTripErr=" ++ showNested (decodeNested (JSON.encode errBad))
+        , "encodeTime1500=" ++ q (JSON.encode (Time.fromYMD 1500 3 1))
+        , "encodeTimeYearZero=" ++ q (JSON.encode (Time.fromYMD 0 1 1))
         , "encodeDuration=" ++ q (JSON.encode (Time.millis 100))
         , "encodeDurationNeg=" ++ q (JSON.encode (Time.millis (-2500)))
 
@@ -1032,6 +1034,35 @@ timeCases =
         , "before=" ++ yn (Time.before base (Time.addDays base 1))
         , "after=" ++ yn (Time.after base (Time.addDays base 1))
         , "epochRoundTrip=" ++ Time.toIso (Time.fromYMD 1970 1 1)
+
+        -- A Time is a millisecond of 0000-01-01 to 9999-12-31, proleptic
+        -- Gregorian, UTC: one instant has one date on every runtime, before
+        -- 1582 and in the years 0 to 99 too.
+        , "edgeFirst=" ++ Time.toIso (Time.fromYMD 0 1 1)
+        , "edgeLast=" ++ Time.toIso (instant "9999-12-31T23:59:59.999Z")
+        , "yearZero=" ++ String.fromInt (Time.year (Time.fromYMD 0 1 1))
+        , "yearFifty=" ++ Time.toIso (Time.fromYMD 50 6 15)
+        , "carryBackIn=" ++ Time.toIso (Time.fromYMD 10000 0 1)
+        , "millis1500=" ++ String.fromInt (Time.toMillis (Time.fromYMD 1500 3 1))
+        , "iso1500=" ++ Time.toIso (instant "1500-03-01T12:00:00Z")
+        , "day1500=" ++ String.fromInt (Time.day (instant "1500-03-01T00:00:00Z"))
+        , "dayBeforeCutover=" ++ Time.toIso (Time.sub (instant "1582-10-15T00:00:00Z") (Time.days 1))
+        , "addMonths1500=" ++ Time.toIso (Time.addMonths (instant "1500-01-31T00:00:00Z") 1)
+        , "leapYearZero=" ++ Time.toIso (Time.addDays (Time.fromYMD 0 2 28) 1)
+        , "fromIsoMillis=" ++ String.fromInt (Time.toMillis (instant "1970-01-01T00:00:00.001Z"))
+        , "fromIsoMillisExact=" ++ String.fromInt (Time.toMillis (instant "1970-01-02T19:49:26.407Z"))
+        , "fromIsoTruncates=" ++ String.fromInt (Time.toMillis (instant "1969-12-31T23:59:59.9995Z"))
+        , "fromIsoOffset=" ++ Time.toIso (instant "2023-11-14T19:13:20-03:00")
+
+        -- One text form: RFC 3339 with its optional parts, and nothing else.
+        , "isoPastLast=" ++ maybeIso (Time.fromIso "9999-12-31T23:59:59-01:00")
+        , "isoDateOnly=" ++ maybeIso (Time.fromIso "2023-11-14")
+        , "isoNoZone=" ++ maybeIso (Time.fromIso "2023-11-14T22:13:20")
+        , "isoOneDigitHour=" ++ maybeIso (Time.fromIso "2023-11-14T1:13:20Z")
+        , "isoComma=" ++ maybeIso (Time.fromIso "2023-11-14T22:13:20,5Z")
+        , "isoExtendedYear=" ++ maybeIso (Time.fromIso "+010000-01-01T00:00:00Z")
+        , "isoFeb29=" ++ maybeIso (Time.fromIso "2023-02-29T00:00:00Z")
+        , "isoLowercase=" ++ maybeIso (Time.fromIso "2023-11-14t22:13:20z")
         ]
 
 
@@ -1199,6 +1230,19 @@ decodeCases =
         -- branch was DEAD in one runtime and nothing was comparing them.
         , "timeTagged=" ++ dtm (JSON.decode "{\"__time\":\"2023-11-14T22:13:20Z\"}")
         , "timeNotATime=" ++ dtm (JSON.decode "{\"__time\":\"nope\"}")
+        , "timePastLast=" ++ dtm (JSON.decode "{\"__time\":\"9999-12-31T23:59:59-01:00\"}")
+        , "timeExtendedYear=" ++ dtm (JSON.decode "{\"__time\":\"+010000-01-01T00:00:00Z\"}")
+        , "timeNoZone=" ++ dtm (JSON.decode "{\"__time\":\"2023-11-14T22:13:20\"}")
+        , "timeExtraKey=" ++ q (dtm (JSON.decode "{\"__time\":\"2023-11-14T22:13:20Z\",\"x\":1}"))
+        , "time1500=" ++ dtm (JSON.decode "{\"__time\":\"1500-03-01T00:00:00Z\"}")
+        , "timeMillisExact=" ++ dtm (JSON.decode "{\"__time\":\"1970-01-02T19:49:26.407Z\"}")
+        , "timeLoneSurrogate=" ++ dtm (JSON.decode "{\"__time\":\"\\ud800\"}")
+        , "twoMarkers=" ++ q (dtm (JSON.decode "{\"__time\":\"2023-11-14T22:13:20Z\",\"__dec\":\"1\"}"))
+        , "timeNotAString=" ++ q (dtm (JSON.decode "{\"__time\":5}"))
+        , "angleExtraKey=" ++ q (dan (JSON.decode "{\"__angle\":900,\"x\":1}"))
+        , "charExtraKey=" ++ q (dch (JSON.decode "{\"__char\":\"a\",\"x\":1}"))
+        , "dictExtraKey=" ++ q (ddi (JSON.decode "{\"__dict\":[[1,2]],\"x\":1}"))
+        , "setExtraKey=" ++ q (dse (JSON.decode "{\"__set\":[1],\"x\":1}"))
         , "decTagged=" ++ dde (JSON.decode "{\"__dec\":\"1.50\"}")
         , "decNotADec=" ++ dde (JSON.decode "{\"__dec\":\"x\"}")
         , "dictTagged=" ++ ddi (JSON.decode "{\"__dict\":[[1,2]]}")
@@ -1854,6 +1898,8 @@ JSON.encodeErr={'__args':['bad'],'__ctor':'Err'}
 JSON.encodeJustOk={'__args':[{'__args':[1],'__ctor':'Ok'}],'__ctor':'Just'}
 JSON.roundTripOk=Ok 1
 JSON.roundTripErr=Err bad
+JSON.encodeTime1500={'__time':'1500-03-01T00:00:00.000Z'}
+JSON.encodeTimeYearZero={'__time':'0000-01-01T00:00:00.000Z'}
 JSON.encodeDuration={'__duration':100}
 JSON.encodeDurationNeg={'__duration':-2500}
 JSON.encodeKeyOrder={'a10':1,'a2':2,'endTime':3,'ends':4,'posX':5,'position':6}
@@ -2092,6 +2138,29 @@ const timeExpectations = "" +
 	"Time.toSecondsTowardZero=-1" + "\n" +
 	"Time.durToSeconds=180" + "\n" +
 	"Time.epochRoundTrip=1970-01-01T00:00:00.000Z" + "\n" +
+	"Time.edgeFirst=0000-01-01T00:00:00.000Z" + "\n" +
+	"Time.edgeLast=9999-12-31T23:59:59.999Z" + "\n" +
+	"Time.yearZero=0" + "\n" +
+	"Time.yearFifty=0050-06-15T00:00:00.000Z" + "\n" +
+	"Time.carryBackIn=9999-12-01T00:00:00.000Z" + "\n" +
+	"Time.millis1500=-14826672000000" + "\n" +
+	"Time.iso1500=1500-03-01T12:00:00.000Z" + "\n" +
+	"Time.day1500=1" + "\n" +
+	"Time.dayBeforeCutover=1582-10-14T00:00:00.000Z" + "\n" +
+	"Time.addMonths1500=1500-02-28T00:00:00.000Z" + "\n" +
+	"Time.leapYearZero=0000-02-29T00:00:00.000Z" + "\n" +
+	"Time.fromIsoMillis=1" + "\n" +
+	"Time.fromIsoMillisExact=157766407" + "\n" +
+	"Time.fromIsoTruncates=-1" + "\n" +
+	"Time.fromIsoOffset=2023-11-14T22:13:20.000Z" + "\n" +
+	"Time.isoPastLast=Nothing" + "\n" +
+	"Time.isoDateOnly=Nothing" + "\n" +
+	"Time.isoNoZone=Nothing" + "\n" +
+	"Time.isoOneDigitHour=Nothing" + "\n" +
+	"Time.isoComma=Nothing" + "\n" +
+	"Time.isoExtendedYear=Nothing" + "\n" +
+	"Time.isoFeb29=Nothing" + "\n" +
+	"Time.isoLowercase=Nothing" + "\n" +
 	"Time.fromIsoBad=Nothing" + "\n" +
 	"Time.fromIsoNoFraction=2023-11-14T22:13:20.000Z" + "\n" +
 	"Time.fromYMD=2023-11-14T00:00:00.000Z" + "\n" +
@@ -2184,6 +2253,19 @@ const decodeExpectations = "Decode.ok=ok:ana:3\n" +
 	"Decode.isoRoundTrip=1700000000123" + "\n" +
 	"Decode.timeTagged=1700000000000" + "\n" +
 	"Decode.timeNotATime=the value should be a date and time, got `nope`" + "\n" +
+	"Decode.timePastLast=Time out of range: `9999-12-31T23:59:59-01:00` is outside the range of a Time (0000-01-01T00:00:00.000Z to 9999-12-31T23:59:59.999Z)" + "\n" +
+	"Decode.timeExtendedYear=the value should be a date and time, got `+010000-01-01T00:00:00Z`" + "\n" +
+	"Decode.timeNoZone=the value should be a date and time, got `2023-11-14T22:13:20`" + "\n" +
+	"Decode.timeExtraKey=the value should be a time (an ISO-8601 string under '__time'), got an object with __time, x" + "\n" +
+	"Decode.time1500=-14826672000000" + "\n" +
+	"Decode.timeMillisExact=157766407" + "\n" +
+	"Decode.timeLoneSurrogate=the value should be a date and time, got `\uFFFD`" + "\n" +
+	"Decode.twoMarkers=the value should be a time (an ISO-8601 string under '__time'), got an object with __dec, __time" + "\n" +
+	"Decode.timeNotAString=the value should be a time (an ISO-8601 string under '__time'), got an object with __time" + "\n" +
+	"Decode.angleExtraKey=the value should be an angle, got an object with __angle, x" + "\n" +
+	"Decode.charExtraKey=the value should be a single character, got an object with __char, x" + "\n" +
+	"Decode.dictExtraKey=the value should be a dictionary, got an object with __dict, x" + "\n" +
+	"Decode.setExtraKey=the value should be a set, got an object with __set, x" + "\n" +
 	"Decode.decTagged=1.50" + "\n" +
 	"Decode.decNotADec=the value should be a decimal number, got `x`" + "\n" +
 	"Decode.dictTagged=2" + "\n" +

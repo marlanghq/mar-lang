@@ -560,7 +560,7 @@ final class PageRuntime {
     }
     private func fireTime(_ key: String) {
         guard let live = activeSubs[key] else { return }
-        let now = MarValue.time(Int(Date().timeIntervalSince1970 * 1000))
+        guard let now = MarCivil.everyTick() else { return }
         for t in live.taggers { if let m = applyTagger(t, now, "a Time.every subscription") { dispatch(m) } }
     }
 

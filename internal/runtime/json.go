@@ -266,9 +266,9 @@ func appendValue(dst []byte, v Value) ([]byte, error) {
 		// encoder (toISOString) kept it. The loss was one-directional and
 		// silent.
 		//
-		// Written straight into the buffer: the layout produces only digits
-		// and `-T:.Z` (a year past 9999 is just more digits, a year before
-		// 0 a leading `-`), none of which JSON escapes.
+		// Written straight into the buffer: every Time is in 0000..9999,
+		// so the layout produces only digits and `-T:.Z`, none of which
+		// JSON escapes.
 		dst = append(dst, `{"__time":"`...)
 		dst = time.UnixMilli(x.Millis).UTC().AppendFormat(dst, isoMillis)
 		return append(dst, `"}`...), nil
@@ -749,16 +749,15 @@ func convertJSON(raw any) (Value, error) {
 		// call (rather than degrading to a VString that no longer
 		// pattern-matches against Time-shaped APIs).
 		//
-		// The message carries no host detail. It used to quote Go's own
-		// `time.Parse` error, which no other runtime can produce — and the
-		// other two did not fail at all: a payload that would not parse
-		// fell through to a plain RECORD there.
+		// The text is read by parseTimeISO, the one form the three
+		// runtimes accept, and the moment it names has to be in the range
+		// of a Time.
 		if iso, ok := x["__time"].(string); ok && len(x) == 1 {
-			t, err := time.Parse(time.RFC3339, iso)
-			if err != nil {
+			ms, ok := parseTimeISO(iso)
+			if !ok {
 				return nil, fmt.Errorf("the value should be a date and time, got `%s`", iso)
 			}
-			return VTime{Millis: t.UnixMilli()}, nil
+			return timeOf("`"+iso+"`", ms)
 		}
 		// A decoded object has no declared field order to inherit: the
 		// JSON text's order is gone by the time it is a Go map, and map

@@ -2090,7 +2090,7 @@ enum MarBuiltins {
         // Effect; arithmetic shifts moments by Durations; .diff
         // produces a Duration between two moments.
         let timeNow = MarEffect(tag: "timeNow") {
-            .time(Int(Date().timeIntervalSince1970 * 1000))
+            try MarCivil.timeOf("Time.now", Int((Date().timeIntervalSince1970 * 1000).rounded(.down)))
         }
         env.define("timeNow",  .effect(timeNow))
         env.define("Time.now", .effect(timeNow))
@@ -2117,7 +2117,7 @@ enum MarBuiltins {
                     expected: "(Time, Duration)",
                     got: "(\(Eval.typeOf(args[0])), \(Eval.typeOf(args[1])))")
             }
-            return .time(t + d)
+            return try MarCivil.timeOf("Time.add", t + d)
         }
         env.define("timeAdd",  .fn(timeAdd))
         env.define("Time.add", .fn(timeAdd))
@@ -2129,7 +2129,7 @@ enum MarBuiltins {
                     expected: "(Time, Duration)",
                     got: "(\(Eval.typeOf(args[0])), \(Eval.typeOf(args[1])))")
             }
-            return .time(t - d)
+            return try MarCivil.timeOf("Time.sub", t - d)
         }
         env.define("timeSub",  .fn(timeSub))
         env.define("Time.sub", .fn(timeSub))
@@ -2163,14 +2163,13 @@ enum MarBuiltins {
         env.define("timeAfter",   .fn(mkCompare(>)))
         env.define("Time.after",  .fn(mkCompare(>)))
 
-        // One pair of helpers for reading and writing an instant, shared
-        // with the JSON codec: three decimal places out, with or without
-        // them in. See MarJSONCodec.parseISO.
+        // One pair of functions for writing and reading the text of a Time,
+        // shared with the JSON codec: MarCivil.formatTimeISO and parseTimeISO.
         let timeToIso = MarFn.native(1) { args in
             guard case .time(let ms) = args[0] else {
                 throw MarRuntimeError.typeMismatch(expected: "Time", got: Eval.typeOf(args[0]))
             }
-            return .string(MarJSONCodec.formatISO(ms))
+            return .string(MarCivil.formatTimeISO(ms))
         }
         env.define("timeToIso",  .fn(timeToIso))
         env.define("Time.toIso", .fn(timeToIso))
@@ -2179,9 +2178,8 @@ enum MarBuiltins {
             guard case .string(let s) = args[0] else {
                 throw MarRuntimeError.typeMismatch(expected: "String", got: Eval.typeOf(args[0]))
             }
-            if let d = MarJSONCodec.parseISO(s) {
-                return .ctor(tag: "Just",
-                             args: [.time(Int(d.timeIntervalSince1970 * 1000))])
+            if let ms = MarCivil.parseTimeISO(s), MarCivil.inTimeRange(ms) {
+                return .ctor(tag: "Just", args: [.time(ms)])
             }
             return .ctor(tag: "Nothing", args: [])
         }
@@ -2197,14 +2195,9 @@ enum MarBuiltins {
         env.define("timeToMillis",  .fn(timeToMillis))
         env.define("Time.toMillis", .fn(timeToMillis))
 
-        // Calendar-aware constructors and arithmetic. Uses
-        // Calendar(.gregorian) pinned to UTC so behavior matches
-        // the Go and JS runtimes: months/years normalize the same
-        // way (Jan 31 + 1 month = Mar 3) and there's no DST
-        // weirdness since everything's UTC.
-        var utcCalendar = Calendar(identifier: .gregorian)
-        utcCalendar.timeZone = TimeZone(identifier: "UTC") ?? .current
-
+        // Calendar arithmetic and getters, by MarCivil (proleptic Gregorian,
+        // UTC, integers only). Days are exact; months and years land on the
+        // last day of a shorter month: addMonths(2026-01-31, 1) is 2026-02-28.
         let timeFromYMD = MarFn.native(3) { args in
             guard case .int(let y) = args[0],
                   case .int(let m) = args[1],
@@ -2213,53 +2206,52 @@ enum MarBuiltins {
                     expected: "(Int, Int, Int)",
                     got: "(\(Eval.typeOf(args[0])), \(Eval.typeOf(args[1])), \(Eval.typeOf(args[2])))")
             }
-            var components = DateComponents()
-            components.year = y; components.month = m; components.day = d
-            components.hour = 0; components.minute = 0; components.second = 0
-            components.timeZone = TimeZone(identifier: "UTC")
-            let date = utcCalendar.date(from: components) ?? Date(timeIntervalSince1970: 0)
-            return .time(Int(date.timeIntervalSince1970 * 1000))
+            return try MarCivil.timeFromYMD(y, m, d)
         }
         env.define("timeFromYMD",  .fn(timeFromYMD))
         env.define("Time.fromYMD", .fn(timeFromYMD))
 
-        let mkCalendarShift: (Calendar.Component) -> MarFn = { component in
+        let mkCalendarShift: (@escaping (Int, Int) throws -> MarValue) -> MarFn = { shift in
             MarFn.native(2) { args in
                 guard case .time(let ms) = args[0], case .int(let n) = args[1] else {
                     throw MarRuntimeError.typeMismatch(
                         expected: "(Time, Int)",
                         got: "(\(Eval.typeOf(args[0])), \(Eval.typeOf(args[1])))")
                 }
-                let base = Date(timeIntervalSince1970: TimeInterval(ms) / 1000)
-                let shifted = utcCalendar.date(byAdding: component, value: n, to: base) ?? base
-                return .time(Int(shifted.timeIntervalSince1970 * 1000))
+                return try shift(ms, n)
             }
         }
-        env.define("timeAddDays",    .fn(mkCalendarShift(.day)))
-        env.define("Time.addDays",   .fn(mkCalendarShift(.day)))
-        env.define("timeAddMonths",  .fn(mkCalendarShift(.month)))
-        env.define("Time.addMonths", .fn(mkCalendarShift(.month)))
-        env.define("timeAddYears",   .fn(mkCalendarShift(.year)))
-        env.define("Time.addYears",  .fn(mkCalendarShift(.year)))
+        let timeAddDays = mkCalendarShift { ms, n in try MarCivil.timeAddDays(ms, n) }
+        let timeAddMonths = mkCalendarShift { ms, n in try MarCivil.timeAddMonths(ms, n, "Time.addMonths \(n)") }
+        let timeAddYears = mkCalendarShift { ms, n in try MarCivil.timeAddMonths(ms, n * 12, "Time.addYears \(n)") }
+        env.define("timeAddDays",    .fn(timeAddDays))
+        env.define("Time.addDays",   .fn(timeAddDays))
+        env.define("timeAddMonths",  .fn(timeAddMonths))
+        env.define("Time.addMonths", .fn(timeAddMonths))
+        env.define("timeAddYears",   .fn(timeAddYears))
+        env.define("Time.addYears",  .fn(timeAddYears))
 
-        // Component getters (UTC). Calendar.component returns the
-        // calendar field for a Date: month is 1-indexed natively,
-        // matching what the Go and JS runtimes expose.
-        let mkComponent: (Calendar.Component) -> MarFn = { component in
+        // Component getters, in UTC. Month is 1 for January.
+        let mkComponent: (@escaping (MarCivil.Fields) -> Int) -> MarFn = { get in
             MarFn.native(1) { args in
                 guard case .time(let ms) = args[0] else {
                     throw MarRuntimeError.typeMismatch(expected: "Time", got: Eval.typeOf(args[0]))
                 }
-                let date = Date(timeIntervalSince1970: TimeInterval(ms) / 1000)
-                return .int(utcCalendar.component(component, from: date))
+                return .int(get(MarCivil.timeFields(ms)))
             }
         }
-        env.define("timeYear",    .fn(mkComponent(.year)));    env.define("Time.year",   .fn(mkComponent(.year)))
-        env.define("timeMonth",   .fn(mkComponent(.month)));   env.define("Time.month",  .fn(mkComponent(.month)))
-        env.define("timeDay",     .fn(mkComponent(.day)));     env.define("Time.day",    .fn(mkComponent(.day)))
-        env.define("timeHour",    .fn(mkComponent(.hour)));    env.define("Time.hour",   .fn(mkComponent(.hour)))
-        env.define("timeMinute",  .fn(mkComponent(.minute)));  env.define("Time.minute", .fn(mkComponent(.minute)))
-        env.define("timeSecond",  .fn(mkComponent(.second)));  env.define("Time.second", .fn(mkComponent(.second)))
+        let timeYear = mkComponent { $0.y }
+        let timeMonth = mkComponent { $0.m }
+        let timeDay = mkComponent { $0.d }
+        let timeHour = mkComponent { $0.hour }
+        let timeMinute = mkComponent { $0.minute }
+        let timeSecond = mkComponent { $0.second }
+        env.define("timeYear",    .fn(timeYear));    env.define("Time.year",   .fn(timeYear))
+        env.define("timeMonth",   .fn(timeMonth));   env.define("Time.month",  .fn(timeMonth))
+        env.define("timeDay",     .fn(timeDay));     env.define("Time.day",    .fn(timeDay))
+        env.define("timeHour",    .fn(timeHour));    env.define("Time.hour",   .fn(timeHour))
+        env.define("timeMinute",  .fn(timeMinute));  env.define("Time.minute", .fn(timeMinute))
+        env.define("timeSecond",  .fn(timeSecond));  env.define("Time.second", .fn(timeSecond))
 
         // MARK: JSON encode / decode
         env.define("jsonDecode", .fn(MarFn.native(1) { args in

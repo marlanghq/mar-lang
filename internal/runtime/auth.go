@@ -450,7 +450,10 @@ func EnsureUser(cfg VAuth, email string) (int64, error) {
 	// VTime for. A common pattern is `createdAt = 0` in the hook
 	// record as a sentinel meaning "fill this in for me"; we treat
 	// any non-VTime value (including missing) as that signal.
-	rec = fillTimestampsForSignup(cfg.Entity, rec)
+	rec, err = fillTimestampsForSignup(cfg.Entity, rec)
+	if err != nil {
+		return 0, err
+	}
 	// Pipe through Repo.create. We can re-use the same code path users do.
 	created, err := repoCreateInner(cfg.Entity, rec)
 	if err != nil {
@@ -467,13 +470,16 @@ func EnsureUser(cfg VAuth, email string) (int64, error) {
 	return idInt.V, nil
 }
 
-// fillTimestampsForSignup overlays VTime{now} onto any TIMESTAMP
+// fillTimestampsForSignup overlays the current Time onto any TIMESTAMP
 // column whose value in the signup record isn't already a VTime.
 // Returns a copy with the Fields map cloned so the caller's record
 // isn't mutated. Field order is preserved; if the entity declares a
 // timestamp column the hook omitted, the column name is appended.
-func fillTimestampsForSignup(entity VEntity, rec VRecord) VRecord {
-	now := VTime{Millis: time.Now().UnixMilli()}
+func fillTimestampsForSignup(entity VEntity, rec VRecord) (VRecord, error) {
+	now, err := timeOf("Time.now", time.Now().UnixMilli())
+	if err != nil {
+		return VRecord{}, err
+	}
 	out := VRecord{
 		Fields: make(map[string]Value, len(rec.Fields)+1),
 		Order:  append([]string(nil), rec.Order...),
@@ -502,7 +508,7 @@ func fillTimestampsForSignup(entity VEntity, rec VRecord) VRecord {
 			out.Order = append(out.Order, field.Name)
 		}
 	}
-	return out
+	return out, nil
 }
 
 // LookupUserID returns the id of the user whose `identify` projection

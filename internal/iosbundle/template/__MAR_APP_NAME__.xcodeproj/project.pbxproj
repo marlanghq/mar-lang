@@ -40,6 +40,7 @@
 		CFFC0F50675D399FB5599585 /* MarDispatcher.swift in Sources */ = {isa = PBXBuildFile; fileRef = 232B6AA41600028041EB6429 /* MarDispatcher.swift */; };
 		DF2886C32E7C23599EFB1A1B /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF2E7793FD50D2411F55A093 /* ContentView.swift */; };
 		E6ACB982CD28754600CF3F10 /* AppViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0841188545EE6482E82F797 /* AppViewModel.swift */; };
+		EFD2C8550A50A1B012670A05 /* MarCivil.swift in Sources */ = {isa = PBXBuildFile; fileRef = EF48C62906BD9A5632782D02 /* MarCivil.swift */; };
 		F880A0113972CE9CE5F8602F /* MarBuiltins.swift in Sources */ = {isa = PBXBuildFile; fileRef = 17AA2A49371B78A0E17CA081 /* MarBuiltins.swift */; };
 		FBA266607F60546DB86E7538 /* MarMath.swift in Sources */ = {isa = PBXBuildFile; fileRef = 66B5426D39360C64FA93BDAD /* MarMath.swift */; };
 /* End PBXBuildFile section */
@@ -79,6 +80,7 @@
 		D82563539CB5C35B24C312D6 /* MarEval.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarEval.swift; sourceTree = "<group>"; };
 		E73011F6F0CF37ADFC8EF5DC /* MarValue.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarValue.swift; sourceTree = "<group>"; };
 		E781E4F57603C4ADA03DC036 /* MarWire.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarWire.swift; sourceTree = "<group>"; };
+		EF48C62906BD9A5632782D02 /* MarCivil.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarCivil.swift; sourceTree = "<group>"; };
 		F15A6A6A0C7D7381FC8AD2C4 /* MarInput.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarInput.swift; sourceTree = "<group>"; };
 		F2F47775647F77B2B2DBD640 /* MarKeychain.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarKeychain.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -122,6 +124,7 @@
 				17AA2A49371B78A0E17CA081 /* MarBuiltins.swift */,
 				79EC36D575AEBC3C182AB484 /* MarCanvas.swift */,
 				53E8BF74D256ADD608450FF1 /* MarChar.swift */,
+				EF48C62906BD9A5632782D02 /* MarCivil.swift */,
 				3E6B24402BFE4C86F6628838 /* MarDecimal.swift */,
 				916A3698EA9B7DF18D0A0E32 /* MarDict.swift */,
 				232B6AA41600028041EB6429 /* MarDispatcher.swift */,
@@ -231,6 +234,7 @@
 				F880A0113972CE9CE5F8602F /* MarBuiltins.swift in Sources */,
 				00734AB29E7B4568CD59D2EE /* MarCanvas.swift in Sources */,
 				1A4D72D7511BA7F27300525C /* MarChar.swift in Sources */,
+				EFD2C8550A50A1B012670A05 /* MarCivil.swift in Sources */,
 				2A971678EACB5020F4613019 /* MarDecimal.swift in Sources */,
 				94EFF8C83561284EED6EAF69 /* MarDict.swift in Sources */,
 				CFFC0F50675D399FB5599585 /* MarDispatcher.swift in Sources */,

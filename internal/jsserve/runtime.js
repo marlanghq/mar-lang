@@ -30,6 +30,163 @@
   // at the call site.
   const VDuration = (ms) => ({ k: 'D', ms });
 
+  // A Time is a millisecond from 0000-01-01T00:00:00.000Z to
+  // 9999-12-31T23:59:59.999Z in the proleptic Gregorian calendar, UTC, as on
+  // the server (internal/runtime/timerange.go) and the phone (MarCivil.swift),
+  // and every Time is built in range: through timeOf, or right after a
+  // check with inTimeRange where an out-of-range answer is not an error (a
+  // Nothing, a dropped pick). The calendar arithmetic
+  // is done here rather than with Date, whose Date.UTC reads the years 0-99
+  // as 1900-1999 and whose Date.parse accepts far more than RFC 3339.
+  const MIN_TIME_MS = -62167219200000;
+  const MAX_TIME_MS = 253402300799999;
+  const MS_PER_DAY = 86400000;
+  const MIN_TIME_DAY = Math.floor(MIN_TIME_MS / MS_PER_DAY);
+  const MAX_TIME_DAY = Math.floor(MAX_TIME_MS / MS_PER_DAY);
+
+  function timeOutOfRange(source) {
+    return new Error('Time out of range: ' + source + ' is outside the range of a Time' +
+      ' (0000-01-01T00:00:00.000Z to 9999-12-31T23:59:59.999Z)');
+  }
+
+  // NaN is outside the range too.
+  function inTimeRange(ms) { return ms >= MIN_TIME_MS && ms <= MAX_TIME_MS; }
+
+  function timeOf(source, ms) {
+    if (!inTimeRange(ms)) throw timeOutOfRange(source);
+    return VTime(ms);
+  }
+
+  function isLeapYear(y) { return y % 4 === 0 && (y % 100 !== 0 || y % 400 === 0); }
+
+  function daysInMonth(y, m) {
+    if (m === 2) return isLeapYear(y) ? 29 : 28;
+    return (m === 4 || m === 6 || m === 9 || m === 11) ? 30 : 31;
+  }
+
+  // daysFromCivilBig is the number of days from 1970-01-01 to y-m-1, plus
+  // d-1, in BigInt so it is exact for every Mar Int (Howard Hinnant's
+  // days_from_civil, as Go's daysFromCivil). m is 1n..12n.
+  function daysFromCivilBig(y, m, d) {
+    if (m <= 2n) y -= 1n;
+    const era = (y >= 0n ? y : y - 399n) / 400n;
+    const yoe = y - era * 400n;
+    const doy = (153n * ((m + 9n) % 12n) + 2n) / 5n;
+    const doe = yoe * 365n + yoe / 4n - yoe / 100n + doy;
+    return era * 146097n + doe - 719468n + (d - 1n);
+  }
+
+  function daysFromCivil(y, m, d) {
+    return Number(daysFromCivilBig(BigInt(y), BigInt(m), BigInt(d)));
+  }
+
+  // civilFromDays is the date of a day count from 1970-01-01, for a day of a
+  // Time (small enough that every step is exact).
+  function civilFromDays(days) {
+    const z = days + 719468;
+    const era = Math.floor(z / 146097);
+    const doe = z - era * 146097;
+    const yoe = Math.floor((doe - Math.floor(doe / 1460) + Math.floor(doe / 36524) - Math.floor(doe / 146096)) / 365);
+    const doy = doe - (365 * yoe + Math.floor(yoe / 4) - Math.floor(yoe / 100));
+    const mp = Math.floor((5 * doy + 2) / 153);
+    const d = doy - Math.floor((153 * mp + 2) / 5) + 1;
+    const m = mp < 10 ? mp + 3 : mp - 9;
+    const y = yoe + era * 400;
+    return { y: m <= 2 ? y + 1 : y, m, d };
+  }
+
+  // timeFromYMD is midnight UTC of y-m-d, the month and the day carried over
+  // (month 13 is January of the next year, day 0 the last day of the month
+  // before), as Go's timeFromYMD.
+  function timeFromYMD(y, m, d) {
+    const source = 'Time.fromYMD ' + y + ' ' + m + ' ' + d;
+    const M = BigInt(m) - 1n;
+    const carry = M >= 0n ? M / 12n : (M - 11n) / 12n;
+    const days = daysFromCivilBig(BigInt(y) + carry, M - carry * 12n + 1n, 1n) + (BigInt(d) - 1n);
+    if (days < BigInt(MIN_TIME_DAY) || days > BigInt(MAX_TIME_DAY)) throw timeOutOfRange(source);
+    return timeOf(source, Number(days) * MS_PER_DAY);
+  }
+
+  // timeAddDays moves a Time by n days of 86400000 ms, keeping the time of
+  // day.
+  function timeAddDays(t, n) {
+    const source = 'Time.addDays ' + n;
+    const day = Math.floor(t.millis / MS_PER_DAY);
+    const days = day + n;
+    if (!(days >= MIN_TIME_DAY && days <= MAX_TIME_DAY)) throw timeOutOfRange(source);
+    return timeOf(source, days * MS_PER_DAY + (t.millis - day * MS_PER_DAY));
+  }
+
+  // timeAddMonths moves a Time by n calendar months, keeping the time of day
+  // and landing on the last day of a shorter month.
+  function timeAddMonths(t, n, source) {
+    const day = Math.floor(t.millis / MS_PER_DAY);
+    const c = civilFromDays(day);
+    const total = c.y * 12 + (c.m - 1) + n;
+    const ny = Math.floor(total / 12);
+    const nm = total - ny * 12 + 1;
+    if (!(ny >= 0 && ny <= 9999)) throw timeOutOfRange(source);
+    const nd = Math.min(c.d, daysInMonth(ny, nm));
+    return timeOf(source, daysFromCivil(ny, nm, nd) * MS_PER_DAY + (t.millis - day * MS_PER_DAY));
+  }
+
+  // parseTimeISO reads the one text form of a Time the three runtimes
+  // accept, RFC 3339 with its optional parts and nothing else (Go's
+  // parseTimeISO is the same function):
+  //
+  //   YYYY-MM-DD 'T' HH:MM:SS [ '.' DIGIT+ ] ( 'Z' | ( '+' | '-' ) HH:MM )
+  //
+  // It answers the moment the text names, which can be outside the range
+  // (9999-12-31T23:59:59-01:00), or null when the text is not in that form.
+  function parseTimeISO(s) {
+    let i = 0;
+    const num = (n) => {
+      if (i + n > s.length) return null;
+      let v = 0;
+      for (let k = 0; k < n; k++) {
+        const c = s.charCodeAt(i + k);
+        if (c < 48 || c > 57) return null;
+        v = v * 10 + (c - 48);
+      }
+      i += n;
+      return v;
+    };
+    const lit = (ch) => {
+      if (s[i] === ch) { i++; return true; }
+      return false;
+    };
+    const y = num(4); if (y === null || !lit('-')) return null;
+    const mo = num(2); if (mo === null || !lit('-')) return null;
+    const d = num(2); if (d === null || !lit('T')) return null;
+    const h = num(2); if (h === null || !lit(':')) return null;
+    const mi = num(2); if (mi === null || !lit(':')) return null;
+    const sec = num(2); if (sec === null) return null;
+    let milli = 0;
+    if (lit('.')) {
+      let k = 0;
+      while (i < s.length && s.charCodeAt(i) >= 48 && s.charCodeAt(i) <= 57) {
+        if (k < 3) milli = milli * 10 + (s.charCodeAt(i) - 48);
+        k++; i++;
+      }
+      if (k === 0) return null;
+      for (; k < 3; k++) milli *= 10;
+    }
+    let offset = 0;
+    if (lit('Z')) {
+      // UTC
+    } else if (s[i] === '+' || s[i] === '-') {
+      const sign = s[i] === '-' ? -1 : 1;
+      i++;
+      const oh = num(2); if (oh === null || !lit(':')) return null;
+      const om = num(2); if (om === null || oh > 23 || om > 59) return null;
+      offset = sign * (oh * 3600 + om * 60);
+    } else {
+      return null;
+    }
+    if (i !== s.length || mo < 1 || mo > 12 || d < 1 || d > daysInMonth(y, mo) || h > 23 || mi > 59 || sec > 59) return null;
+    return (daysFromCivil(y, mo, d) * 86400 + h * 3600 + mi * 60 + sec - offset) * 1000 + milli;
+  }
+
   // durationSecondsText writes milliseconds as seconds, exactly, with no
   // trailing zeros: 90000 is "90", 1500 is "1.5", -1 is "-0.001". Go's
   // DurationSecondsText is the same function.
@@ -787,12 +944,15 @@
       // Time round-trip, `{__time: "ISO 8601"}` from the Go
       // encoder rebuilds a VTime so user code typed as
       // `createdAt : Time` actually receives a Time, not a String.
-      if ('__time' in v) {
-        const ms = typeof v.__time === 'string' ? Date.parse(v.__time) : NaN;
-        if (isNaN(ms)) {
-          throw new Error('the value should be a date and time, got `' + v.__time + '`');
+      // The text is read by parseTimeISO, the one form the three runtimes
+      // accept, and the moment it names has to be in the range of a Time.
+      if (typeof v.__time === 'string' && Object.keys(v).length === 1) {
+        const iso = wellFormed(v.__time);
+        const ms = parseTimeISO(iso);
+        if (ms === null) {
+          throw new Error('the value should be a date and time, got `' + iso + '`');
         }
-        return VTime(ms);
+        return timeOf('`' + iso + '`', ms);
       }
       // Angle round-trip, `{__angle: 450}` (deci-degrees) from the Go
       // encoder. Wrapped rather than trusted: the payload crossed a
@@ -808,7 +968,10 @@
       // form whose payload is a number -- __dec, __char and __time are
       // strings, __dict and __set are arrays -- and missing it turned every
       // Angle on the wire into "got an object with __angle".
-      const angleRaw = rawNumberOf(v.__angle);
+      // Every marker is read only alone in its object, as on the server and
+      // the phone; an object with more keys is a record.
+      const alone = Object.keys(v).length === 1;
+      const angleRaw = alone ? rawNumberOf(v.__angle) : undefined;
       if (angleRaw !== undefined) {
         if (!Number.isInteger(angleRaw)) {
           throw new Error('the value should be a whole number of deci-degrees, got ' + angleRaw);
@@ -840,7 +1003,7 @@
       // silently, and an empty payload answered U+FFFD here and on the
       // phone while the server errored. Three runtimes, three answers to
       // one JSON document. Pinned by the Decode block of the corpus.
-      if (typeof v.__char === 'string') {
+      if (alone && typeof v.__char === 'string') {
         const scalars = Array.from(wellFormed(v.__char));
         if (scalars.length !== 1) {
           throw new Error('the value should be a single character, got ' + scalars.length);
@@ -854,7 +1017,7 @@
       // here and on the phone while the server errored — and a Set or Dict
       // that fell through CRASHED the first operation on it, because the
       // shape reduction has no kind for either and checks nothing.
-      if ('__dec' in v) {
+      if (alone && '__dec' in v) {
         if (typeof v.__dec !== 'string') {
           throw new Error('the value should be a decimal number, got `' + v.__dec + '`');
         }
@@ -867,7 +1030,7 @@
       // insert helpers so the sorted invariant survives even when the
       // wire payload arrives out of order (hand-written JSON, network
       // intermediaries, etc).
-      if ('__dict' in v) {
+      if (alone && '__dict' in v) {
         if (!Array.isArray(v.__dict)) {
           throw new Error('the value should be a list of key/value pairs');
         }
@@ -888,7 +1051,7 @@
         }
         return d;
       }
-      if ('__set' in v) {
+      if (alone && '__set' in v) {
         if (!Array.isArray(v.__set)) {
           throw new Error('the value should be a list of items');
         }
@@ -3822,7 +3985,7 @@
         else clearInterval(h);
       },
       fire: (rec) => {
-        const now = VTime(Date.now());
+        const now = timeOf('Time.every', Date.now());
         for (const tg of rec.taggers) deliverSub(tg, now);
       },
     },
@@ -6633,7 +6796,7 @@
 
     // Time.now: Task Time. Reads the wall clock; same shape as
     // Effect.succeed but the value is fresh on each run.
-    def('timeNow', VEffect(() => VTime(Date.now()), 'timeNow'));
+    def('timeNow', VEffect(() => timeOf('Time.now', Date.now()), 'timeNow'));
     def('Time.now', envLookup(env, 'timeNow'));
 
     // Time.every : Duration -> (Time -> msg) -> Sub msg, a recurring
@@ -6963,9 +7126,9 @@
 
     // Time arithmetic: a Duration and a Time are both milliseconds, so a
     // shift is exact and Time.diff is to the millisecond.
-    def('timeAdd', native(2, ([t, d]) => VTime((t.millis || 0) + d.ms)));
+    def('timeAdd', native(2, ([t, d]) => timeOf('Time.add', t.millis + d.ms)));
     def('Time.add', envLookup(env, 'timeAdd'));
-    def('timeSub', native(2, ([t, d]) => VTime((t.millis || 0) - d.ms)));
+    def('timeSub', native(2, ([t, d]) => timeOf('Time.sub', t.millis - d.ms)));
     def('Time.sub', envLookup(env, 'timeSub'));
     def('timeDiff', native(2, ([a, b]) => {
       const ms = (b.millis || 0) - (a.millis || 0);
@@ -6980,65 +7143,38 @@
     def('Time.after', envLookup(env, 'timeAfter'));
 
     // Time.toIso → ISO 8601 UTC. Wire format used by the server.
-    def('timeToIso', native(1, ([t]) => VString(new Date(t.millis || 0).toISOString())));
+    // Every Time is in 0000..9999, so the year has four digits.
+    def('timeToIso', native(1, ([t]) => VString(new Date(t.millis).toISOString())));
     def('Time.toIso', envLookup(env, 'timeToIso'));
-    // Time.fromIso → Maybe Time. Returns Nothing on parse failure.
+    // Time.fromIso → Maybe Time: Nothing when the text is not in the one
+    // form parseTimeISO reads, or names a moment outside the range.
     def('timeFromIso', native(1, ([s]) => {
-      const ms = Date.parse(s.s);
-      if (isNaN(ms)) return VCtor('Nothing', []);
+      const ms = parseTimeISO(s.s);
+      if (ms === null || !inTimeRange(ms)) return VCtor('Nothing', []);
       return VCtor('Just', [VTime(ms)]);
     }));
     def('Time.fromIso', envLookup(env, 'timeFromIso'));
 
-    def('timeToMillis', native(1, ([t]) => VInt(t.millis || 0)));
+    def('timeToMillis', native(1, ([t]) => VInt(t.millis)));
     def('Time.toMillis', envLookup(env, 'timeToMillis'));
 
-    // Calendar-aware constructors and arithmetic. Different from
-    // Time.add (Duration shift) because months/years vary in
-    // length; uses native Date methods so normalization (Jan 31 +
-    // 1 month → Mar 3) matches the Go runtime.
-    def('timeFromYMD', native(3, ([y, m, d]) =>
-      VTime(Date.UTC(y.n, m.n - 1, d.n))));
+    // Calendar arithmetic, by the helpers at the top of this file (as Go's
+    // timerange.go). Days are exact; months and years land on the last day
+    // of a shorter month: addMonths(2026-01-31, 1) is 2026-02-28.
+    def('timeFromYMD', native(3, ([y, m, d]) => timeFromYMD(y.n, m.n, d.n)));
     def('Time.fromYMD', envLookup(env, 'timeFromYMD'));
-
-    // A month or year shift CLAMPS to the last day of a shorter month:
-    // "adding a month to the 31st lands on the last day of a shorter
-    // month", which is what the reference promises and what the phone
-    // already did, because Swift's Calendar clamps.
-    //
-    // setUTCMonth overflows instead — Jan 31 plus one month is March 2,
-    // and Feb 29 plus one year is March 1 — so the server and the browser
-    // agreed with each other and disagreed with the phone and with the
-    // documented contract, on a subscription renewal or a due date.
-    //
-    // Only month and year shifts can overflow. Adding DAYS is exact and
-    // must keep rolling over, which is why the clamp is gated on the day
-    // of the month having moved.
-    const calendarShift = (yMul, mMul, dMul) => native(2, ([t, n]) => {
-      const date = new Date(t.millis || 0);
-      const k = n.n;
-      const dayBefore = date.getUTCDate();
-      date.setUTCFullYear(date.getUTCFullYear() + yMul * k);
-      date.setUTCMonth(date.getUTCMonth() + mMul * k);
-      if ((yMul !== 0 || mMul !== 0) && date.getUTCDate() !== dayBefore) {
-        // Landed in the following month: back up to the last day of the
-        // one that was asked for.
-        date.setUTCDate(0);
-      }
-      date.setUTCDate(date.getUTCDate() + dMul * k);
-      return VTime(date.getTime());
-    });
-    def('timeAddDays',   calendarShift(0, 0, 1));
+    const calendarShift = (shift) => native(2, ([t, n]) => shift(t, n.n));
+    def('timeAddDays',   calendarShift((t, n) => timeAddDays(t, n)));
     def('Time.addDays',  envLookup(env, 'timeAddDays'));
-    def('timeAddMonths', calendarShift(0, 1, 0));
+    def('timeAddMonths', calendarShift((t, n) => timeAddMonths(t, n, 'Time.addMonths ' + n)));
     def('Time.addMonths', envLookup(env, 'timeAddMonths'));
-    def('timeAddYears',  calendarShift(1, 0, 0));
+    def('timeAddYears',  calendarShift((t, n) => timeAddMonths(t, n * 12, 'Time.addYears ' + n)));
     def('Time.addYears', envLookup(env, 'timeAddYears'));
 
     // Component getters (UTC). Month is 1-indexed externally:
     // we add 1 to JS's getUTCMonth (0-indexed) so user code reads
     // the same values it'd see on the Go and iOS sides.
-    const component = (extract) => native(1, ([t]) => VInt(extract(new Date(t.millis || 0))));
+    const component = (extract) => native(1, ([t]) => VInt(extract(new Date(t.millis))));
     def('timeYear',    component(d => d.getUTCFullYear()));
     def('Time.year',   envLookup(env, 'timeYear'));
     def('timeMonth',   component(d => d.getUTCMonth() + 1));
@@ -11041,31 +11177,73 @@
     }
   }
 
-  // datePicker <-> <input type="date">. The native control speaks a
-  // bare "YYYY-MM-DD" calendar date with no timezone, so we read and
-  // write in the LOCAL calendar: the day shown is the day stored.
-  // (Matches iOS DatePicker, which shows the device-local date.) The
-  // bound value is a concrete `Time` (datePicker is pure: the program
-  // owns the value and seeds "today" via `Cmd.perform GotToday Time.now`),
-  // so we read it directly with no clock fallback. Changes parse back to
-  // a VTime at local midnight.
+  // datePicker <-> <input type="date">. The bound value is a concrete
+  // `Time` (datePicker is pure: the program owns the value and seeds "today"
+  // via `Cmd.perform GotToday Time.now`), so it is read with no clock
+  // fallback.
+  //
+  // The control speaks a bare "YYYY-MM-DD" with no time zone. A Time shows
+  // as the label of its day in the device's time zone, and a picked day comes
+  // back as local midnight of that day, the same Time the phone's picker
+  // hands back (MarCivil.swift, pickerDate / pickedTime). Both offer the days
+  // from 1582-10-15, the first day of the Gregorian calendar, to 9999-12-31:
+  // the phone's calendar labels the days before it by the Julian calendar.
+  // The offsets come from Intl rather than Date's local getters and setters,
+  // which V8 answers from a cache that skips a daylight-saving period shorter
+  // than a few weeks (Vienna in April 1945).
+  const PICKER_FIRST_DAY = daysFromCivil(1582, 10, 15);
+  const PICKER_LAST_DAY = daysFromCivil(9999, 12, 31);
+
+  // localOffsets answers the device's offset from UTC, in ms, at any instant,
+  // read from the time zone's name in Intl's longOffset form: "GMT",
+  // "GMT-03:00", or "GMT-03:06:28" for a local mean time.
+  function localOffsets() {
+    const format = new Intl.DateTimeFormat('en-US', { timeZoneName: 'longOffset' });
+    return (ms) => {
+      const name = format.formatToParts(ms).find(p => p.type === 'timeZoneName').value;
+      const m = /^GMT(?:([+\u2212-])(\d{2}):(\d{2})(?::(\d{2}))?)?$/.exec(name);
+      if (!m) throw new Error('datePicker: the time zone offset ' + name + ' is not one Mar reads');
+      if (!m[1]) return 0;
+      const size = ((+m[2] * 60 + +m[3]) * 60 + +(m[4] || 0)) * 1000;
+      return m[1] === '+' ? size : -size;
+    };
+  }
+
+  // localMidnight is the instant whose wall clock reads 00:00 on the given
+  // day: the earlier one when midnight happens twice, the end of the gap when
+  // a daylight-saving gap skips it. A zone's offset changes at most once in
+  // any 30 hours of the time zone database, so the offset at local midnight
+  // is the one 14 hours before or the one 14 hours after the day's UTC
+  // midnight.
+  function localMidnight(day, offset) {
+    const midnightUTC = day * MS_PER_DAY;
+    const before = offset(midnightUTC - 14 * 3600000);
+    const after = offset(midnightUTC + 14 * 3600000);
+    const candidates = [midnightUTC - before, midnightUTC - after].filter(t => t + offset(t) === midnightUTC);
+    return candidates.length ? Math.min(...candidates) : midnightUTC - before;
+  }
+
   function dateInputValue(view) {
     const a = (view.attrs || []).find(x => x.name === 'value');
     const mv = a && a.value;
-    let d;
-    if (mv && typeof mv.millis === 'number') {
-      d = new Date(mv.millis);
-    } else {
-      d = new Date(0); // unset: a pure datePicker always receives a Time
-    }
-    const p = (n) => (n < 10 ? '0' : '') + n;
-    return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate());
+    if (!mv || typeof mv.millis !== 'number') return '';
+    const day = Math.floor((mv.millis + localOffsets()(mv.millis)) / MS_PER_DAY);
+    // A Time on a day the control does not offer shows as an empty field.
+    if (day < PICKER_FIRST_DAY || day > PICKER_LAST_DAY) return '';
+    const c = civilFromDays(day);
+    const p2 = (n) => String(n).padStart(2, '0');
+    return String(c.y).padStart(4, '0') + '-' + p2(c.m) + '-' + p2(c.d);
   }
+
   function parseDateInput(str) {
     const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(str || '');
     if (!m) return null;
-    const ms = new Date(+m[1], +m[2] - 1, +m[3]).getTime(); // local midnight
-    return Number.isFinite(ms) ? VTime(ms) : null;
+    const y = +m[1], mo = +m[2], d = +m[3];
+    if (mo < 1 || mo > 12 || d < 1 || d > daysInMonth(y, mo)) return null;
+    const day = daysFromCivil(y, mo, d);
+    if (day < PICKER_FIRST_DAY || day > PICKER_LAST_DAY) return null;
+    const ms = localMidnight(day, localOffsets());
+    return inTimeRange(ms) ? VTime(ms) : null;
   }
 
   // styleInlineSpan syncs an inline-run element (from `span`) to its view:
@@ -11406,6 +11584,8 @@
         ensureUIStyles();
         e.className = 'mar-textfield mar-datepicker';
         e.type = 'date';
+        e.min = '1582-10-15';
+        e.max = '9999-12-31';
         applySizing(e, view);
         e.value = dateInputValue(view);
         applyDisabledAttr(e, view);
@@ -15700,6 +15880,12 @@
   // (Sound.voice / Sound.glide's held node) against a fake AudioContext, the same way the Cmd
   // half is already driven through Sound.play.
   global.__marStartSub = function (src, sound) { return subSources[src].start({ sound }); };
+  // The date input's two halves, for internal/jsserve/datepicker_test.go: the
+  // text the control shows for a Time, and the Time a picked text stands for.
+  global.__marTestDateInput = {
+    value: (ms) => dateInputValue({ attrs: [{ name: 'value', value: VTime(ms) }] }),
+    parse: (s) => { const t = parseDateInput(s); return t ? t.millis : null; },
+  };
   // Run one Cmd outside a page and hand back whatever it dispatches.
   //
   // The client half of a service call had no test at all, which is a large

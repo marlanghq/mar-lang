@@ -104,9 +104,9 @@ func TestRowHugeFloatIsRefusedRatherThanSaturated(t *testing.T) {
 	// and kept going. A saturated value reads as real data, which is exactly
 	// the failure this function exists to remove.
 	//
-	// TIMESTAMP and DECIMAL go through the same helper and are deliberately
-	// NOT bounded to Mar's 53-bit Int — a Time's milliseconds and a Decimal's
-	// coefficient are not Ints — so the bound that belongs here is int64's
+	// TIMESTAMP and DECIMAL go through the same helper and are not bounded
+	// to Mar's 53-bit Int (a Time has its own range, and a Decimal's
+	// coefficient is not an Int), so the bound that belongs here is int64's
 	// own, and it has to hold for all three column types.
 	for _, sqlType := range []string{"INTEGER", "TIMESTAMP", "DECIMAL"} {
 		f := rowField("v", sqlType, nil)
@@ -122,6 +122,26 @@ func TestRowHugeFloatIsRefusedRatherThanSaturated(t *testing.T) {
 		// And the values that ARE representable still read back.
 		if _, err := decodeColumn("t", f, 42.0); err != nil {
 			t.Errorf("%s: 42.0 is the number 42: %v", sqlType, err)
+		}
+	}
+}
+
+// A TIMESTAMP holds a Time, so a stored millisecond outside the range of a
+// Time is refused like an INTEGER outside Int: the program never holds a
+// Time that no runtime can write or read back.
+func TestRowTimestampOutsideTheRangeOfATimeIsRefused(t *testing.T) {
+	f := rowField("at", "TIMESTAMP", nil)
+	for _, ms := range []int64{MaxTimeMillis + 1, MinTimeMillis - 1, 1 << 62} {
+		_, err := decodeColumn("events", f, ms)
+		if err == nil || !strings.Contains(err.Error(), "Time out of range: ") ||
+			!strings.Contains(err.Error(), "milliseconds from the database") {
+			t.Errorf("%d: want the range refusal, got %v", ms, err)
+		}
+	}
+	for _, ms := range []int64{MinTimeMillis, MaxTimeMillis, 1700000000123} {
+		v, err := decodeColumn("events", f, ms)
+		if err != nil || v.(VTime).Millis != ms {
+			t.Errorf("%d: got %v, %v", ms, v, err)
 		}
 	}
 }

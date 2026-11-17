@@ -1023,35 +1023,37 @@ private struct MarUIPicker: View {
 
 /// Mar's UI.datePicker: a date-only field. The builtin stashes the
 /// current Time as the `value` attr; the `(Time -> msg)` onChange rides
-/// on `view.msg`. SwiftUI's DatePicker shows the device-local calendar
-/// date; on change we normalize to the start of that local day (the web
-/// renderer does the same) and hand back a Mar `.time`.
+/// on `view.msg`. The picker shows the Time's local day and a pick hands back
+/// local midnight of the picked day, the same Time the web renderer hands
+/// back (MarCivil.pickerDate / pickedTime).
 private struct MarUIDatePicker: View {
     let view: MarView
     let dispatch: (MarValue) -> Void
 
+    private var timeZone: TimeZone { .current }
+
     private var current: Date {
         // value is a concrete Time: datePicker is pure; the program owns
         // the value and seeds "today" via `Cmd.perform GotToday Time.now`.
-        // Read it directly, no clock fallback.
         if case .time(let ms)? = attrValue(view, "value") {
-            return Date(timeIntervalSince1970: Double(ms) / 1000.0)
+            return MarCivil.pickerDate(ms, timeZone)
         }
-        return Date(timeIntervalSince1970: 0)
+        return MarCivil.pickerRange(timeZone).lowerBound
     }
 
     var body: some View {
+        let tz = timeZone
         DatePicker("", selection: Binding<Date>(
             get: { current },
             set: { newDate in
-                guard let onChange = view.msg else { return }
-                let day = Calendar.current.startOfDay(for: newDate)
-                let ms = Int((day.timeIntervalSince1970 * 1000).rounded())
+                guard let onChange = view.msg, let ms = MarCivil.pickedTime(newDate, tz) else { return }
                 if let msg = try? Eval.apply(onChange, .time(ms)) {
                     dispatch(msg)
                 }
             }
-        ), displayedComponents: [.date])
+        ), in: MarCivil.pickerRange(tz), displayedComponents: [.date])
+        .environment(\.calendar, MarCivil.pickerCalendar(tz))
+        .environment(\.timeZone, tz)
         .labelsHidden()
         .disabled(isDisabled(view))
     }
