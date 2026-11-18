@@ -228,53 +228,116 @@ func computeWriteReachability(bodiesByName map[string][]ast.Expr) map[string]boo
 // walkAll visits e and every sub-expression, calling visit on each. The
 // node-type coverage mirrors walkChildren in shape_lint.go.
 func walkAll(e ast.Expr, visit func(ast.Expr)) {
+	walkScoped(e, scope{}, func(x ast.Expr, _ scope) { visit(x) })
+}
+
+// scope counts the names bound around an expression: parameters, lambda
+// arguments, let bindings and case patterns. A bound name shadows a top-level
+// declaration and an imported one alike, as it does for the type checker.
+type scope map[string]int
+
+func (s scope) with(names []string, f func()) {
+	for _, n := range names {
+		s[n]++
+	}
+	f()
+	for _, n := range names {
+		if s[n]--; s[n] == 0 {
+			delete(s, n)
+		}
+	}
+}
+
+// patternNames appends the names a pattern binds.
+func patternNames(p ast.Pattern, out []string) []string {
+	switch q := p.(type) {
+	case *ast.PVar:
+		out = append(out, q.Name)
+	case *ast.PCtor:
+		for _, a := range q.Args {
+			out = patternNames(a, out)
+		}
+	case *ast.PTuple:
+		for _, m := range q.Members {
+			out = patternNames(m, out)
+		}
+	case *ast.PRecord:
+		out = append(out, q.Fields...)
+	case *ast.PList:
+		for _, el := range q.Elements {
+			out = patternNames(el, out)
+		}
+	case *ast.PCons:
+		out = patternNames(q.Head, out)
+		out = patternNames(q.Tail, out)
+	}
+	return out
+}
+
+func patternsNames(ps []ast.Pattern) []string {
+	var out []string
+	for _, p := range ps {
+		out = patternNames(p, out)
+	}
+	return out
+}
+
+// walkScoped is walkAll that also says, at each node, which names are bound
+// around it. The one traversal both use, so they cannot cover different
+// nodes.
+func walkScoped(e ast.Expr, s scope, visit func(ast.Expr, scope)) {
 	if e == nil {
 		return
 	}
-	visit(e)
+	visit(e, s)
 	switch n := e.(type) {
 	case *ast.EApp:
-		walkAll(n.Fn, visit)
-		walkAll(n.Arg, visit)
+		walkScoped(n.Fn, s, visit)
+		walkScoped(n.Arg, s, visit)
 	case *ast.EBinop:
-		walkAll(n.Left, visit)
-		walkAll(n.Right, visit)
+		walkScoped(n.Left, s, visit)
+		walkScoped(n.Right, s, visit)
 	case *ast.ELambda:
-		walkAll(n.Body, visit)
+		s.with(patternsNames(n.Params), func() { walkScoped(n.Body, s, visit) })
 	case *ast.EIf:
-		walkAll(n.Cond, visit)
-		walkAll(n.Then, visit)
-		walkAll(n.Else, visit)
+		walkScoped(n.Cond, s, visit)
+		walkScoped(n.Then, s, visit)
+		walkScoped(n.Else, s, visit)
 	case *ast.ELet:
+		// In order, as the type checker reads a let (inferLet): a binding
+		// sees the ones before it and never itself, and the body sees all.
+		// `let today = today` names the today from outside the block.
+		var bound []string
 		for _, b := range n.Bindings {
-			walkAll(b.Body, visit)
+			s.with(bound, func() { walkScoped(b.Body, s, visit) })
+			bound = patternNames(b.Pattern, bound)
 		}
-		walkAll(n.Body, visit)
+		s.with(bound, func() { walkScoped(n.Body, s, visit) })
 	case *ast.ETuple:
 		for _, m := range n.Members {
-			walkAll(m, visit)
+			walkScoped(m, s, visit)
 		}
 	case *ast.EList:
 		for _, el := range n.Elements {
-			walkAll(el, visit)
+			walkScoped(el, s, visit)
 		}
 	case *ast.ERecord:
 		for _, f := range n.Fields {
-			walkAll(f.Value, visit)
+			walkScoped(f.Value, s, visit)
 		}
 	case *ast.ERecordUpdate:
-		walkAll(n.Record, visit)
+		walkScoped(n.Record, s, visit)
 		for _, f := range n.Fields {
-			walkAll(f.Value, visit)
+			walkScoped(f.Value, s, visit)
 		}
 	case *ast.EFieldAccess:
-		walkAll(n.Record, visit)
+		walkScoped(n.Record, s, visit)
 	case *ast.ECase:
-		walkAll(n.Subject, visit)
+		walkScoped(n.Subject, s, visit)
 		for _, b := range n.Branches {
-			walkAll(b.Body, visit)
+			s.with(patternNames(b.Pattern, nil), func() { walkScoped(b.Body, s, visit) })
 		}
 	case *ast.ENegate:
-		walkAll(n.Inner, visit)
+		walkScoped(n.Inner, s, visit)
 	}
 }

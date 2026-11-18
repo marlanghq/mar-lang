@@ -215,6 +215,27 @@ func TestNoFunctionExemptionOutlivesItsFunction(t *testing.T) {
 	}
 }
 
+// Every function excused here for reading the world (the clock, the device,
+// entropy) needs a side decided for it by name, not inherited from its module.
+// A module both sides use gives its reads both sides by default, and that is
+// how Date.today, which only a device can answer, first compiled in a handler
+// and failed there. Whoever adds the next such function has to excuse it here,
+// and this makes them decide where it runs.
+func TestEveryReadOfTheWorldHasAnOwnSide(t *testing.T) {
+	var undecided []string
+	for name := range OutOfScopeFunc {
+		if !typecheck.HasOwnSide(name) {
+			undecided = append(undecided, name)
+		}
+	}
+	if len(undecided) > 0 {
+		sort.Strings(undecided)
+		t.Errorf("%d function(s) read the world and inherit their module's side:\n  %s\n\n"+
+			"Give each a row in sideByName (internal/typecheck/sides.go).",
+			len(undecided), strings.Join(undecided, "\n  "))
+	}
+}
+
 // The gate that keeps the Text block from quietly becoming ASCII again.
 //
 // Every function below answers a question about text whose answer depends on

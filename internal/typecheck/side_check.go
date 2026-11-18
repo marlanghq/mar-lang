@@ -197,6 +197,7 @@ func buildSideGraph(mods []*ast.Module) *sideGraph {
 	// is the simple-name keying trap this check was supposed to avoid,
 	// reintroduced through the resolver. A bare name resolves through the
 	// import that brought it or not at all.
+	builtinExports := map[string]map[string]Type{}
 	for _, m := range mods {
 		info := infos[strings.Join(m.Name, ".")]
 		for _, imp := range m.Imports {
@@ -205,11 +206,25 @@ func buildSideGraph(mods []*ast.Module) *sideGraph {
 				info.bare[item.Name] = dep
 			}
 			if imp.Exposing.All {
-				// `exposing (..)` binds everything that module exports. For
-				// a user module that is its top-level names, which we have;
-				// for a builtin module it is the whole vocabulary, and those
-				// names arrive qualified in SideOf anyway.
-				for n := range locals[dep] {
+				// `exposing (..)` binds everything that module exports, the
+				// same names the type checker binds (check.go): for a user
+				// module its top-level names, for a builtin module its whole
+				// vocabulary. A builtin written bare is the same builtin:
+				// `today` after `import Date exposing (..)` is Date.today, and
+				// `implement` after `import Service exposing (..)` makes a
+				// service handler, so they resolve here as they do there.
+				if local, isUser := locals[dep]; isUser {
+					for n := range local {
+						info.bare[n] = dep
+					}
+					continue
+				}
+				exports, ok := builtinExports[dep]
+				if !ok {
+					exports = BaseEnv().ExportsOf(dep)
+					builtinExports[dep] = exports
+				}
+				for n := range exports {
 					info.bare[n] = dep
 				}
 			}
@@ -228,7 +243,7 @@ func buildSideGraph(mods []*ast.Module) *sideGraph {
 			isPage := false
 			isService := false
 
-			walkAll(v.Body, func(x ast.Expr) {
+			walkScoped(v.Body, scopeOf(v.Params), func(x ast.Expr, bound scope) {
 				var ref, modOf string
 				var pos ast.Pos
 				switch n := x.(type) {
@@ -238,6 +253,11 @@ func buildSideGraph(mods []*ast.Module) *sideGraph {
 				case *ast.EVar:
 					pos = n.Pos
 					switch {
+					case bound[n.Name] > 0:
+						// A parameter or a local binding: it shadows the
+						// module's declarations and its imports, and carries
+						// no side of its own.
+						return
 					case info.local[n.Name]:
 						sd.calls = append(sd.calls, info.name+"."+n.Name)
 						return
@@ -291,6 +311,15 @@ func buildSideGraph(mods []*ast.Module) *sideGraph {
 		}
 	}
 	return g
+}
+
+// scopeOf is the scope a declaration's parameters open over its body.
+func scopeOf(params []ast.Pattern) scope {
+	s := scope{}
+	for _, n := range patternsNames(params) {
+		s[n]++
+	}
+	return s
 }
 
 // leakHints replaces the general advice for a name whose fix is different.

@@ -350,3 +350,219 @@ main = App.frontend [ home ]
 		t.Fatalf("a page reading Date.today was rejected: %s", issues[0].Message)
 	}
 }
+
+// sideCheckProgram type-checks the modules the way the project pipeline does,
+// then runs the side check on them. A case that does not type-check would say
+// nothing about the side check: what it has to agree with is how the type
+// checker resolves each name.
+func sideCheckProgram(t *testing.T, mods ...modSrc) []ShapeIssue {
+	t.Helper()
+	if err := checkProject(t, mods); err != nil {
+		t.Fatalf("the program does not type-check, so it says nothing about the side check: %v", err)
+	}
+	var srcs []string
+	for _, m := range mods {
+		srcs = append(srcs, m.src)
+	}
+	return RunSideCheck(parseModules(t, srcs...))
+}
+
+// The service every handler below implements, and a helper whose parameter is
+// named like a UI builtin.
+var sharedForSides = modSrc{"Shared", `
+module Shared exposing (clear, count)
+
+import UI exposing (..)
+
+clear : Service () ()
+clear = Service.declare GET "/api/day"
+
+count : List a -> Int
+count list = List.length list
+`}
+
+// A builtin written bare, after `import M exposing (..)`, is the same builtin:
+// the type checker binds the module's whole vocabulary, so the side check must
+// resolve the bare name to it too. It used to bind only a user module's names,
+// so every bare builtin was invisible to it: a frontend-only name in a handler,
+// a backend-only one in a page, and even the builders that make a declaration
+// a page or a handler, so the declaration was never checked at all.
+func TestBareNamesFromABuiltinModuleKeepTheirSide(t *testing.T) {
+	page := func(imports, init, builder string) string {
+		return `
+module Main exposing (main)
+` + imports + `
+
+type alias Task1 =
+    { id : Int }
+
+
+type Msg
+    = Loaded (List Task1)
+
+
+tasks : Entity Task1
+tasks = Entity.define { name = "task", columns = { id = Entity.serial }, uniques = [] }
+
+
+init : (Int, Cmd Msg)
+init = ` + init + `
+
+
+update : Msg -> Int -> (Int, Cmd Msg)
+update _ model = ( model, Cmd.none )
+
+
+view : Int -> View Msg
+view _ = UI.text [] ""
+
+
+home : Page
+home =
+    ` + builder + `
+        { path = "/", title = "t", init = init, update = update
+        , view = view, subscriptions = always Sub.none
+        }
+
+
+main : Cmd ()
+main = App.frontend [ home ]
+`
+	}
+	for _, c := range []struct{ name, src, wants string }{
+		{"a frontend-only name in a handler", `
+module Main exposing (main)
+
+import Date exposing (..)
+import Shared
+
+handler : ExposedService
+handler = Service.implement Shared.clear (\_ -> today |> Task.map (\_ -> ()))
+
+main : Cmd ()
+main = App.backend { services = [ handler ] }
+`, "Date.today"},
+		{"a handler built with a bare builder", `
+module Main exposing (main)
+
+import Service exposing (..)
+import Shared
+
+handler : ExposedService
+handler = implement Shared.clear (\_ -> Date.today |> Task.map (\_ -> ()))
+
+main : Cmd ()
+main = App.backend { services = [ handler ] }
+`, "Date.today"},
+		{"a backend-only name in a page",
+			page("\nimport Repo exposing (..)\n", "( 0, Cmd.perform Loaded (all tasks) )", "Page.create"),
+			"Repo.all"},
+		{"a page built with a bare builder",
+			page("\nimport Page exposing (..)\n", "( 0, Cmd.perform Loaded (Repo.all tasks) )", "create"),
+			"Repo.all"},
+	} {
+		issues := sideCheckProgram(t, sharedForSides, modSrc{"Main", c.src})
+		if len(issues) == 0 {
+			t.Errorf("%s: accepted", c.name)
+			continue
+		}
+		if !strings.Contains(issues[0].Message, c.wants) {
+			t.Errorf("%s: the message should name %s, got: %s", c.name, c.wants, issues[0].Message)
+		}
+	}
+
+	// The other half: a bare builtin on its own side is still fine.
+	ok := sideCheckProgram(t, modSrc{"Main", `
+module Main exposing (main)
+
+import Date exposing (..)
+
+
+type Msg
+    = GotToday Date
+
+
+init : (Int, Cmd Msg)
+init = ( 0, Cmd.perform GotToday today )
+
+
+home : Page
+home =
+    Page.create
+        { path = "/", title = "t", init = init, update = \_ model -> ( model, Cmd.none )
+        , view = \_ -> UI.text [] "", subscriptions = always Sub.none
+        }
+
+
+main : Cmd ()
+main = App.frontend [ home ]
+`})
+	if len(ok) > 0 {
+		t.Fatalf("a page reading a bare today was rejected: %s", ok[0].Message)
+	}
+}
+
+// A name bound around an expression, a parameter, a lambda argument, a let
+// binding or a case pattern, shadows a builtin of the same name that an
+// `exposing (..)` brought in, and a top-level declaration too, as it does for
+// the type checker. UI alone exposes list, text, form and header; reading a
+// parameter called `list` as UI.list would turn every helper that counts a
+// list into a leak.
+//
+// A let is read in order: a binding sees the ones before it and never itself.
+// `let today = today` names the today from outside the block, so the cases at
+// the end are leaks.
+func TestALocalNameShadowsTheBuiltinItIsNamedLike(t *testing.T) {
+	handler := func(imports, decls, body string) string {
+		return `
+module Main exposing (main)
+
+import Shared
+` + imports + `
+` + decls + `
+
+handler : ExposedService
+handler = Service.implement Shared.clear (\input -> ` + body + `)
+
+main : Cmd ()
+main = App.backend { services = [ handler ] }
+`
+	}
+	accepted := []struct{ name, src string }{
+		{"a parameter in a helper the handler calls",
+			handler("", "", "Task.succeed (Shared.count [ 1 ]) |> Task.map (\\_ -> ())")},
+		{"a lambda argument",
+			handler("import Date exposing (..)", "", "Task.succeed () |> Task.map (\\today -> today)")},
+		{"a let binding and a case pattern",
+			handler("import UI exposing (..)", "", "let\n        text = \"x\"\n    in\n    case Just text of\n        Just header -> Task.succeed ()\n        Nothing -> Task.succeed ()")},
+		{"a let binding that the next one reads",
+			handler("import Date exposing (..)", "", "let\n        today = ()\n        later = today\n    in\n    Task.succeed later")},
+		{"a parameter named like a leaking top-level declaration",
+			handler("", "stamp : Task Date\nstamp = Date.today\n\nfinish : () -> Task ()\nfinish stamp = Task.succeed stamp\n", "finish ()")},
+	}
+	for _, c := range accepted {
+		if issues := sideCheckProgram(t, sharedForSides, modSrc{"Main", c.src}); len(issues) > 0 {
+			t.Errorf("%s: a local name was read as the builtin or declaration it shadows: %s",
+				c.name, issues[0].Message)
+		}
+	}
+
+	rejected := []struct{ name, src string }{
+		{"a let binding that reads the builtin it is named like",
+			handler("import Date exposing (..)", "", "let\n        today = today\n    in\n    today |> Task.map (\\_ -> ())")},
+		{"a let binding read before it is bound",
+			handler("import Date exposing (..)", "", "let\n        start = today\n        today = ()\n    in\n    start |> Task.map (\\_ -> today)")},
+		{"a let binding that reads the declaration it is named like",
+			handler("", "stamp : Task Date\nstamp = Date.today\n", "let\n        stamp = stamp\n    in\n    stamp |> Task.map (\\_ -> ())")},
+	}
+	for _, c := range rejected {
+		issues := sideCheckProgram(t, sharedForSides, modSrc{"Main", c.src})
+		if len(issues) == 0 {
+			t.Errorf("%s: accepted", c.name)
+			continue
+		}
+		if !strings.Contains(issues[0].Message, "Date.today") {
+			t.Errorf("%s: the message should name Date.today, got: %s", c.name, issues[0].Message)
+		}
+	}
+}

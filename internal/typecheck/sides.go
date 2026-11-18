@@ -75,9 +75,12 @@ func (s Side) String() string {
 	}
 }
 
-// sideByName holds the names whose side disagrees with their module's: modules
-// that are one idea with parts on different sides. Keeping them whole and
-// splitting them here was the decision (see the proposal's "Not a rename").
+// sideByName holds the names whose side is a decision of its own, apart from
+// their module's: modules that are one idea with parts on different sides
+// (keeping them whole and splitting them here was the decision, see the
+// proposal's "Not a rename"), and every function that reads the world from a
+// module both sides use, the clock, the device, entropy, which a test holds to
+// having a row here (conformance.OutOfScopeFunc lists them).
 var sideByName = map[string]Side{
 	// Auth: the client asks for a code and verifies it; the server
 	// configures the feature and guards routes.
@@ -121,6 +124,23 @@ var sideByName = map[string]Side{
 	// side check makes a call from a handler a compile error, which is
 	// the failure that rule exists to prevent.
 	"Date.today": SideFrontend,
+
+	// The other reads of the world in modules both sides use. The server has
+	// a clock and entropy of its own: a handler stamps a row with Time.now
+	// and can seed with Random.seed. Time.every is a Sub and Random.generate
+	// a Cmd, which only a page or a store can hold, like the Sub and Cmd
+	// modules themselves.
+	"Time.now":        SideBoth,
+	"Random.seed":     SideBoth,
+	"Time.every":      SideFrontend,
+	"Random.generate": SideFrontend,
+}
+
+// HasOwnSide reports whether a name's side is written down for it, rather
+// than inherited from its module.
+func HasOwnSide(name string) bool {
+	_, ok := sideByName[name]
+	return ok
 }
 
 // sideByModule covers every other qualified builtin, by its module. Every

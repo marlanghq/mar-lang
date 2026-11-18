@@ -500,7 +500,7 @@ sectionsFor m =
               }
             , { category = "Subscribe"
               , entries =
-                    [ { moduleName = "Time", name = "every", signature = "Duration -> (Time -> a) -> Sub a", side = "both", description = "Fires on an interval for as long as the subscription is returned, handing over the current time. This is the heartbeat of an animation or a clock.", examples = [ [ "type Msg = Tick Time", "subscriptions model = Time.every (Time.seconds 1) Tick" ] ] }
+                    [ { moduleName = "Time", name = "every", signature = "Duration -> (Time -> a) -> Sub a", side = "frontend", description = "Fires on an interval for as long as the subscription is returned, handing over the current time. This is the heartbeat of an animation or a clock.", examples = [ [ "type Msg = Tick Time", "subscriptions model = Time.every (Time.seconds 1) Tick" ] ] }
                     ]
               }
             ]
@@ -564,7 +564,7 @@ sectionsFor m =
               }
             , { category = "Run it"
               , entries =
-                    [ { moduleName = "Random", name = "generate", signature = "(a -> b) -> Random.Generator a -> Cmd b", side = "both", description = "Turns a generator into a command that produces a value and hands it back as a message. Nothing is random until this runs, which is what keeps generators themselves pure and reusable.", examples = [ [ "type Msg = Rolled Int", "roll = Random.generate (\\n -> Rolled n) (Random.int 1 6)" ] ] }
+                    [ { moduleName = "Random", name = "generate", signature = "(a -> b) -> Random.Generator a -> Cmd b", side = "frontend", description = "Turns a generator into a command that produces a value and hands it back as a message. Nothing is random until this runs, which is what keeps generators themselves pure and reusable.", examples = [ [ "type Msg = Rolled Int", "roll = Random.generate (\\n -> Rolled n) (Random.int 1 6)" ] ] }
                     ]
               }
             , { category = "Seeded (pure, runs anywhere)"
