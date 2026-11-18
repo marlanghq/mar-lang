@@ -1,50 +1,68 @@
 // Runtime context shared between the interpreter and async effects.
 //
-// Mirrors the JS `currentDispatch` global pattern: each page mount
-// updates the closure here so HTTP responses (Service.call, Http.get)
-// can post a Msg back into the running update loop. baseURL lets
-// builtins build absolute URLs from the relative paths the user
-// writes (`/services/Foo.bar`).
+// Where an async result goes: to whoever RAN the effect. A page runtime or a
+// shared store opens `issuing` around `eff.run()`; every async builtin calls
+// `replyTo()` synchronously inside its run and keeps that sink until the
+// result arrives. Mirrors the JS effectIssuer, runEffectAs and deliverFrom in
+// internal/jsserve/runtime.js. There is no "current page" slot any more: a slot answers
+// "who is on screen when the response lands", which is the wrong question
+// (a push, a sheet, a SwiftUI re-mount of a covered page all moved it).
 //
-// Singleton because an app has at most one MVU page running at any
-// time. Updated synchronously on the main actor.
+// baseURL lets builtins build absolute URLs from the relative paths the
+// user writes (`/services/Foo.bar`).
 
 import Foundation
+
+/// The destination of one async result. @Sendable because URLSession's
+/// completion handlers carry it; @MainActor because it runs `update`.
+typealias MarReply = @MainActor @Sendable (MarValue) -> Void
 
 @MainActor
 final class MarDispatcher {
     static let shared = MarDispatcher()
 
-    /// The Msg sink for the currently-mounted page. Set on mount,
-    /// cleared on unmount. Async effects check this before firing:
-    /// a stale closure would dispatch into a torn-down page.
-    var current: ((MarValue) -> Void)?
+    /// The owner of the effects running right now, or nil outside any
+    /// page or store (running `main`). Stack discipline: Cmd.toShared runs
+    /// a store's update, and so the store's effects, INSIDE a page's.
+    private var issuer: MarReply?
+    /// True while the effects running belong to a page that is not on screen
+    /// (another is pushed or presented over it). Its model is kept up to date,
+    /// but it does not move the person off the page they are on or play sound
+    /// behind it. Mirrors the JS refusedFromCovered in runtime.js.
+    private var issuerCovered = false
 
-    /// Identity tag for the page that owns `current`. Set together
-    /// with `current` on mount, checked on unmount. Lets the
-    /// outgoing page detect that someone else (the incoming page)
-    /// has already taken over the dispatcher slot: without this
-    /// check, a page-swap whose onAppear fires before the previous
-    /// page's onDisappear would have the outgoing unmount wipe the
-    /// incoming page's freshly-set closure, orphaning every async
-    /// msg (Service.call results, button taps, etc.).
-    var currentOwner: ObjectIdentifier?
-
-    /// Backend URL for service / Http calls. Updated whenever
-    /// AppViewModel resolves a new baseURL (Bonjour pick, manual
-    /// override, baked default).
     var baseURL: URL = URL(string: "http://localhost:3000")!
 
     private init() {}
 
-    /// Convenience: fire `msg` into the live page if there is one.
-    /// Async effects call this from URLSession completion handlers.
-    func dispatch(_ msg: MarValue) {
-        current?(msg)
+    func issuing<T>(_ owner: @escaping MarReply, covered: Bool = false, _ body: () throws -> T) rethrows -> T {
+        let outer = issuer
+        let outerCovered = issuerCovered
+        issuer = owner
+        issuerCovered = covered
+        defer {
+            issuer = outer
+            issuerCovered = outerCovered
+        }
+        return try body()
     }
 
-    /// Resolve a relative path (e.g. "/services/Foo.bar") against
-    /// the current baseURL. Returns nil for malformed inputs.
+    /// For an effect that acts on the screen (navigation, a sound): true, and
+    /// the effect does nothing, when the page running it is covered.
+    func refusedFromCovered(_ what: String) -> Bool {
+        guard issuerCovered else { return false }
+        #if DEBUG
+        print("[mar] ignored \(what) from a page that is not on screen")
+        #endif
+        return true
+    }
+
+    /// Captured by an async effect when it starts, called when it ends.
+    func replyTo() -> MarReply {
+        if let issuer { return issuer }
+        return { _ in print("[mar] a result for an effect no page or store ran was dropped") }
+    }
+
     func resolve(path: String) -> URL? {
         URL(string: path, relativeTo: baseURL)
     }

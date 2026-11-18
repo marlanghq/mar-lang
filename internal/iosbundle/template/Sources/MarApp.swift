@@ -26,11 +26,10 @@ struct MarPageHost: View {
     // rebuild with a freshly-constructed PageRuntime. As a plain
     // `let`, that fresh instance would replace the live one, but
     // .onAppear/.mount() wouldn't fire again (SwiftUI considers
-    // the route's identity stable). MarDispatcher.shared.current
-    // would still reference the now-orphaned old PageRuntime via
-    // `[weak self]` and silently no-op once it deallocates: any
-    // in-flight HTTP response would land on a dead runtime and the
-    // UI would freeze (e.g. "Working…" forever after Auth.verifyCode).
+    // the route's identity stable). The effects the live runtime ran
+    // reply to it through a weak reference, so a replacement instance
+    // would orphan every in-flight result and the UI would freeze
+    // (e.g. "Working…" forever after Auth.verifyCode).
     //
     // With @State, the runtime survives re-renders. Navigation
     // between distinct paths still works because each entry in
@@ -99,6 +98,9 @@ struct MarPageHost: View {
         .navigationBarTitleDisplayMode(.inline)
         .onAppear { runtime.mount() }
         .onDisappear { runtime.unmount() }
+        // A page under a sheet stays mounted, so closing the sheet fires no
+        // onAppear here. The top of the stack moving is what tells it.
+        .onChange(of: AppContext.shared.stack.last?.id) { runtime.stackMoved() }
     }
 
     /// Whether the top-level view tag renders to a SwiftUI primitive

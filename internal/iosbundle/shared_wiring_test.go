@@ -117,7 +117,7 @@ func TestSharedStoreIsWiredNotStubbed(t *testing.T) {
 	// The designated initializer, not the convenience one that forwards to
 	// it: anchoring on the shorter signature matched the wrong two lines and
 	// the sabotage sailed through.
-	const designatedInit = "init(page: DecodedPage, user: MarValue?, params: MarValue?) {"
+	const designatedInit = "init(page: DecodedPage, user: MarValue?, params: MarValue?, entry: Int? = nil) {"
 	i := strings.Index(runtime, designatedInit)
 	if i < 0 {
 		t.Fatalf("could not find %q — this check has gone stale", designatedInit)

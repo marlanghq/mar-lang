@@ -14,7 +14,9 @@
 //    the renderer.
 //
 // Effects are run synchronously; async ones (Service.call,
-// Http.get) start tasks that come back via MarDispatcher.
+// Http.get) start tasks whose result comes back to the runtime that ran
+// them (MarDispatcher.issuing / replyTo), covered or not, and is dropped
+// once its stack entry is gone.
 
 import Foundation
 import Observation
@@ -137,6 +139,17 @@ final class PageRuntime {
     /// For Page.dynamic / Page.dynamicProtected, the Params record
     /// captured from the URL pattern. nil for static pages.
     @ObservationIgnored let params: MarValue?
+
+    /// The navigation entry this page belongs to (AppContext.stack), or nil
+    /// for the one-page shell, which has no stack. A result from an effect
+    /// this page ran is dropped once its entry has left the stack; until then
+    /// it reaches this page's kept model, covered or not (ADR 0009).
+    @ObservationIgnored let entry: Int?
+
+    /// Between mount() and unmount(). A page a push covers may be unmounted
+    /// by SwiftUI while its runtime, and its model, live on: it still takes
+    /// its own results, but starts no subscription until it is shown again.
+    @ObservationIgnored private var mounted = false
 
     private(set) var model: MarValue = .unit
     private(set) var lastError: String?
@@ -261,7 +274,7 @@ final class PageRuntime {
 
     /// Public-page constructor (no User threading, no params).
     convenience init(page: DecodedPage) {
-        self.init(page: page, user: nil, params: nil)
+        self.init(page: page, user: nil, params: nil, entry: nil)
     }
 
     /// Full constructor: covers all four page flavors. When `user`
@@ -269,7 +282,8 @@ final class PageRuntime {
     /// the first argument; when `params` is non-nil, it's applied
     /// next. Order matches the type sigs in env.go: User first, then
     /// Params.
-    init(page: DecodedPage, user: MarValue?, params: MarValue?) {
+    init(page: DecodedPage, user: MarValue?, params: MarValue?, entry: Int? = nil) {
+        self.entry = entry
         self.path = page.path
         self.title = page.title
         self.shared = page.shared
@@ -315,15 +329,12 @@ final class PageRuntime {
         return f
     }
 
-    /// Called once when the page first appears on screen. Fires the
-    /// init Effect and wires the dispatcher so async effects can
-    /// post Msgs back into this runtime.
-    ///
-    /// `currentOwner` is stamped with this instance's identity so
-    /// `unmount` can tell whether the dispatcher slot is still
-    /// ours when SwiftUI eventually tears us down: see the
-    /// comment on MarDispatcher.currentOwner for why that matters.
+    /// Called when the page appears on screen. Fires the init Effect the
+    /// first time and starts the subscriptions. Nothing here decides where
+    /// async results go: each effect carries its issuer (runEffect), so a
+    /// SwiftUI re-mount of a covered page cannot take another page's result.
     func mount() {
+        mounted = true
         // One line per screen that comes up, naming what it drew. "mounted
         // with no view and no error" is the silent failure this catches: the
         // page rendered EmptyView and nobody would ever know.
@@ -331,10 +342,6 @@ final class PageRuntime {
         print("[mar] mount \(path) drew=\(currentView().map { $0.tag } ?? "nothing")")
         MarLiveRuntimes.mounted(self)
         #endif
-        MarDispatcher.shared.currentOwner = ObjectIdentifier(self)
-        MarDispatcher.shared.current = { [weak self] msg in
-            self?.dispatch(msg)
-        }
         // A page built by Page.withShared IS a function of the shared model,
         // so a change there changes what this page is, not merely what it
         // shows. Re-reconcile and let @Observable redraw; the four functions
@@ -358,25 +365,32 @@ final class PageRuntime {
         reconcileSubs()
     }
 
-    /// Called when the page leaves the screen. Detaches the
-    /// dispatcher so a stale closure can't dispatch into a torn-down
-    /// page, but ONLY when the slot is still ours. After a
-    /// navigation, the incoming page's `mount` may have already
-    /// fired before our `unmount` runs (SwiftUI's lifecycle order
-    /// for `.id`-swap views is "onAppear new, then onDisappear
-    /// old"). Without this guard we'd wipe the incoming page's
-    /// freshly-set dispatcher, breaking every async msg that
-    /// page's init effect posted.
+    /// Called when the page leaves the screen, covered or popped. Stops the
+    /// subscriptions; the model stays, and so does delivery of this page's
+    /// own results while its entry is on the stack.
     func unmount() {
+        mounted = false
         #if DEBUG
         MarLiveRuntimes.unmounted(self)
         #endif
         teardownSubs()
         MarSharedRegistry.removeObserver(ObjectIdentifier(self))
-        if MarDispatcher.shared.currentOwner == ObjectIdentifier(self) {
-            MarDispatcher.shared.currentOwner = nil
-            MarDispatcher.shared.current = nil
-        }
+    }
+
+    /// The top of the stack moved. A page that is mounted and now on top,
+    /// as a page under a sheet is when the sheet closes, brings its
+    /// subscriptions up to its model: results that reached it while it was
+    /// covered may have changed what it subscribes to.
+    func stackMoved() {
+        if mounted && isOnTop { reconcileSubs() }
+    }
+
+    /// A result of an effect this page ran. Dropped when the page's entry
+    /// left the stack (Back past it, a replace); otherwise it is this page's
+    /// message, on screen or covered.
+    private func deliver(_ msg: MarValue) {
+        if let entry, !AppContext.shared.holds(entry) { return }
+        dispatch(msg)
     }
 
     func dispatch(_ msg: MarValue) {
@@ -397,15 +411,11 @@ final class PageRuntime {
                 lastErrorSite = nil
             }
             runEffect(eff)
-            reconcileSubs()
-        } catch MarRuntimeError.noMatch {
-            // A stale message: an async effect (a Service.call, Cmd.perform,
-            // or subscription) started by a PREVIOUS page resolved AFTER we
-            // navigated away, so this page received a message it can't match.
-            // Case exhaustiveness is checked at compile time, so a no-match
-            // reaching dispatch can only be a message meant for a torn-down
-            // page: drop it silently instead of surfacing it as an error.
-            // Mirrors the guard in internal/jsserve/runtime.js.
+            // Only the page on top starts or stops subscriptions: a covered
+            // page's result must not start a timer or a sound loop behind the
+            // screen the person is looking at. It catches up when it is on
+            // top again (mount, or stackMoved under a sheet).
+            if mounted && isOnTop { reconcileSubs() }
         } catch {
             record("update", .dispatch, error.localizedDescription)
         }
@@ -701,13 +711,24 @@ final class PageRuntime {
         return (v, .effect(MarEffect(tag: "none") { .unit }))
     }
 
+    /// Whether this page's entry is the top of the stack: on screen, not
+    /// covered by a pushed or presented page.
+    private var isOnTop: Bool {
+        guard let entry else { return true }
+        return AppContext.shared.stack.last?.id == entry
+    }
+
     /// Run an effect, ignoring its synchronous return value (we use
-    /// effects only for side-effect dispatch). Async effects
-    /// (Service.call, Http.get) post Msgs back via MarDispatcher.
+    /// effects only for side-effect dispatch). This page is the issuer for
+    /// the whole run: an async builtin captures it (MarDispatcher.replyTo)
+    /// and its result comes back here through `deliver`. Whether it is
+    /// covered is decided once, here, for the whole run.
     private func runEffect(_ v: MarValue) {
         guard case .effect(let eff) = v else { return }
         do {
-            _ = try eff.run()
+            _ = try MarDispatcher.shared.issuing({ [weak self] msg in self?.deliver(msg) }, covered: !isOnTop) {
+                try eff.run()
+            }
         } catch {
             record("effect [\(eff.tag)]", .dispatch, error.localizedDescription)
         }

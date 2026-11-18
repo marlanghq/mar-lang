@@ -43,12 +43,12 @@ enum MarHTTP {
     /// sent as-is (already JSON-encoded by caller); when nil the request
     /// goes out without a body.
     @MainActor
-    static func fire(method: String, url: String, body: String?, toMsg: MarValue) {
+    static func fire(method: String, url: String, body: String?, toMsg: MarValue, reply: @escaping MarReply) {
         guard let u = URL(string: url) else {
-            dispatchErr(toMsg, message: "invalid URL: \(url)")
+            dispatchErr(toMsg, message: "invalid URL: \(url)", reply: reply)
             return
         }
-        send(method: method, url: u, body: body, toMsg: toMsg)
+        send(method: method, url: u, body: body, toMsg: toMsg, reply: reply)
     }
 
     /// Service.call variant: `method` is the contract's HTTP verb and
@@ -60,13 +60,13 @@ enum MarHTTP {
     /// nothing to send. Response is parsed as JSON before being wrapped
     /// in `Ok` so user code gets a typed value back instead of a raw
     /// string.
-    static func fireService(method: String, path: String, body: String?, toMsg: MarValue, responseShape: MarWireShape? = nil) {
+    static func fireService(method: String, path: String, body: String?, toMsg: MarValue, responseShape: MarWireShape? = nil, reply: @escaping MarReply) {
         Task { @MainActor in
             guard let url = MarDispatcher.shared.resolve(path: path) else {
-                dispatchServiceErr(toMsg, message: "invalid service path: \(path)")
+                dispatchServiceErr(toMsg, message: "invalid service path: \(path)", reply: reply)
                 return
             }
-            sendService(method: method, url: url, body: body, toMsg: toMsg, responseShape: responseShape)
+            sendService(method: method, url: url, body: body, toMsg: toMsg, responseShape: responseShape, reply: reply)
         }
     }
 
@@ -76,7 +76,7 @@ enum MarHTTP {
     /// -- and it is the alternative to claiming the shape is Sendable, which
     /// it is not.
     @MainActor
-    private static func send(method: String, url: URL, body: String?, toMsg: MarValue) {
+    private static func send(method: String, url: URL, body: String?, toMsg: MarValue, reply: @escaping MarReply) {
         var req = URLRequest(url: url)
         req.httpMethod = method
         if let body, method != "GET", method != "DELETE" {
@@ -87,12 +87,12 @@ enum MarHTTP {
         URLSession.shared.dataTask(with: req) { data, response, error in
             let result = makeStringResult(data: data, response: response, error: error)
             Task { @MainActor in
-                deliverMsg(result: result, toMsg: toMsg)
+                deliverMsg(result: result, toMsg: toMsg, reply: reply)
             }
         }.resume()
     }
 
-    private static func sendService(method: String, url: URL, body: String?, toMsg: MarValue, responseShape: MarWireShape?) {
+    private static func sendService(method: String, url: URL, body: String?, toMsg: MarValue, responseShape: MarWireShape?, reply: @escaping MarReply) {
         var req = URLRequest(url: url)
         req.httpMethod = method
         if let body {
@@ -121,13 +121,13 @@ enum MarHTTP {
                     // surface Err Unauthorized so the app at least
                     // sees something.
                     let r = makeServiceResult(data: data, response: response, error: error, responseShape: responseShape)
-                    deliverServiceResult(r, toMsg: toMsg)
+                    deliverServiceResult(r, toMsg: toMsg, reply: reply)
                 }
                 return
             }
             let r = makeServiceResult(data: data, response: response, error: error, responseShape: responseShape)
             Task { @MainActor in
-                deliverServiceResult(r, toMsg: toMsg)
+                deliverServiceResult(r, toMsg: toMsg, reply: reply)
             }
         }.resume()
     }
@@ -180,10 +180,10 @@ enum MarHTTP {
     /// -- and it is the alternative to claiming the shape is Sendable, which
     /// it is not.
     @MainActor
-    static func fireAuthMe(toMsg: MarValue, userShape: MarWireShape? = nil) {
+    static func fireAuthMe(toMsg: MarValue, userShape: MarWireShape? = nil, reply: @escaping MarReply) {
         Task { @MainActor in
             guard let url = MarDispatcher.shared.resolve(path: "/_auth/whoami") else {
-                dispatchErr(toMsg, message: "invalid auth path: /_auth/whoami")
+                dispatchErr(toMsg, message: "invalid auth path: /_auth/whoami", reply: reply)
                 return
             }
             var req = URLRequest(url: url)
@@ -220,7 +220,7 @@ enum MarHTTP {
                     }
                 }
                 Task { @MainActor in
-                    deliverMsg(result: outcome, toMsg: toMsg)
+                    deliverMsg(result: outcome, toMsg: toMsg, reply: reply)
                 }
             }.resume()
         }
@@ -275,7 +275,7 @@ enum MarHTTP {
     }
 
     @MainActor
-    private static func deliverMsg(result: FetchOutcome, toMsg: MarValue) {
+    private static func deliverMsg(result: FetchOutcome, toMsg: MarValue, reply: MarReply) {
         let resultValue: MarValue
         switch result {
         case .ok(let s):
@@ -287,7 +287,7 @@ enum MarHTTP {
         }
         do {
             let msg = try Eval.apply(toMsg, resultValue)
-            MarDispatcher.shared.dispatch(msg)
+            reply(msg)
         } catch {
             // toMsg failed to apply: surface it as a console
             // diagnostic. There's nowhere good to dispatch this since
@@ -315,11 +315,12 @@ enum MarHTTP {
         okOutcome: @escaping @Sendable (MarValue) -> MarValue,
         mapCode: @escaping @Sendable (String) -> MarValue?,
         toMsg: MarValue,
-        userShape: MarWireShape? = nil
+        userShape: MarWireShape? = nil,
+        reply: @escaping MarReply
     ) {
         Task { @MainActor in
             guard let url = MarDispatcher.shared.resolve(path: path) else {
-                dispatchServiceErr(toMsg, message: "invalid auth path: \(path)")
+                dispatchServiceErr(toMsg, message: "invalid auth path: \(path)", reply: reply)
                 return
             }
             var req = URLRequest(url: url)
@@ -341,7 +342,7 @@ enum MarHTTP {
                     okOutcome: okOutcome, mapCode: mapCode, userShape: userShape
                 )
                 Task { @MainActor in
-                    deliverServiceResult(resultValue, toMsg: toMsg)
+                    deliverServiceResult(resultValue, toMsg: toMsg, reply: reply)
                 }
             }.resume()
         }
@@ -548,10 +549,10 @@ enum MarHTTP {
     }
 
     @MainActor
-    private static func deliverServiceResult(_ resultValue: MarValue, toMsg: MarValue) {
+    private static func deliverServiceResult(_ resultValue: MarValue, toMsg: MarValue, reply: MarReply) {
         do {
             let msg = try Eval.apply(toMsg, resultValue)
-            MarDispatcher.shared.dispatch(msg)
+            reply(msg)
         } catch {
             print("[mar] toMsg failed: \(error.localizedDescription)")
         }
@@ -560,23 +561,23 @@ enum MarHTTP {
     /// Service-path variant of dispatchErr: an internal failure (bad path)
     /// surfaces as Err (ServerError msg) so the value matches the
     /// Result Service.Error type user code expects.
-    private static func dispatchServiceErr(_ toMsg: MarValue, message: String) {
+    private static func dispatchServiceErr(_ toMsg: MarValue, message: String, reply: @escaping MarReply) {
         Task { @MainActor in
             let se: MarValue = .ctor(tag: "ServerError", args: [.string(message)])
             do {
                 let msg = try Eval.apply(toMsg, .ctor(tag: "Err", args: [se]))
-                MarDispatcher.shared.dispatch(msg)
+                reply(msg)
             } catch {
                 print("[mar] error dispatch failed: \(error.localizedDescription)")
             }
         }
     }
 
-    private static func dispatchErr(_ toMsg: MarValue, message: String) {
+    private static func dispatchErr(_ toMsg: MarValue, message: String, reply: @escaping MarReply) {
         Task { @MainActor in
             do {
                 let msg = try Eval.apply(toMsg, .ctor(tag: "Err", args: [.string(message)]))
-                MarDispatcher.shared.dispatch(msg)
+                reply(msg)
             } catch {
                 print("[mar] error dispatch failed: \(error.localizedDescription)")
             }

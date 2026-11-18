@@ -113,12 +113,12 @@ private struct LoadedShell: View {
             // What is NOT free is the lifecycle. An all-public, all-static
             // app used to become a TabView here, with an icon guessed from
             // the path, and the problem was not the tab bar: it mounted every
-            // page at once and switched by visibility, so navPath never moved
+            // page at once and switched by visibility, so the stack never moved
             // and ADR-0009 had no push to re-init from. The model an app left
             // behind on a page came back on iOS and did not on the web: the
             // same program behaving two ways.
             //
-            // A tab bar whose selection writes navPath would keep the
+            // A tab bar whose selection writes the stack would keep the
             // lifecycle intact and belongs here just as much. See
             // shell_shape_test.go, which guards the lifecycle and says
             // nothing about the chrome.
@@ -154,20 +154,19 @@ private struct StackShell: View {
 
     var body: some View {
         // Custom binding so SwiftUI's pop gestures update the shared
-        // navPath. Get exposes everything after the root (the
-        // "pushed" portion); set rewrites that suffix while
-        // preserving the root entry. When the user swipes back the
-        // only pushed entry, set is called with [], leaving navPath
-        // with just the root: correct.
+        // stack. Get exposes everything after the root (the "pushed"
+        // portion); set rewrites that suffix while preserving the root
+        // entry. When the user swipes back the only pushed entry, set
+        // is called with [], leaving the stack with just the root.
         // A Page.sheet route at the TOP of the stack is presented, not
         // pushed: it comes off the pushed array and goes to `.sheet`
         // below, so the screen it was reached from stays on screen
         // underneath. As the ROOT it has nothing to present over and
         // mounts normally: the same graceful fallback the web gives a
         // cold load of a sheet route.
-        let presented: String? = {
-            var route: String?
-            if ctx.navPath.count > 1, let top = ctx.navPath.last, isSheetRoute(top) {
+        let presented: NavEntry? = {
+            var route: NavEntry?
+            if ctx.stack.count > 1, let top = ctx.stack.last, isSheetRoute(top.path) {
                 route = top
             }
             #if DEBUG
@@ -178,14 +177,14 @@ private struct StackShell: View {
             // with the screen. A plain box, not observable state, so writing
             // it during a body pass invalidates nothing. Inside the closure
             // because a bare assignment in a ViewBuilder is read as a view.
-            MarPresentation.current = route
+            MarPresentation.current = route?.path
             #endif
             return route
         }()
 
-        let pushedBinding = Binding<[String]>(
+        let pushedBinding = Binding<[NavEntry]>(
             get: {
-                let pushed = Array(ctx.navPath.dropFirst())
+                let pushed = Array(ctx.stack.dropFirst())
                 return presented == nil ? pushed : Array(pushed.dropLast())
             },
             set: { newPushed in
@@ -194,22 +193,26 @@ private struct StackShell: View {
                 // preserved here; `.sheet`'s own binding is what removes
                 // it (swipe down, or a Nav effect from the sheet).
                 let tail = presented.map { [$0] } ?? []
-                if let first = ctx.navPath.first {
-                    ctx.navPath = [first] + newPushed + tail
+                if let first = ctx.stack.first {
+                    ctx.stack = [first] + newPushed + tail
                 } else {
-                    ctx.navPath = newPushed + tail
+                    ctx.stack = newPushed + tail
                 }
             }
         )
 
-        // Dismissal drops the presented entry from navPath, so the route
+        // Dismissal drops the presented entry from the stack, so the route
         // and what is on screen can never disagree: the same rule the
-        // web follows by routing every dismissal through history.
+        // web follows by routing every dismissal through history. Only
+        // while that entry is still on top: when Nav.dismiss or Back has
+        // already taken it off, SwiftUI reports the sheet closing too, and
+        // a second removal would take the page underneath with it.
         let presentedBinding = Binding<Bool>(
             get: { presented != nil },
             set: { showing in
-                if !showing, presented != nil, ctx.navPath.count > 1 {
-                    ctx.navPath.removeLast()
+                if !showing, let shown = presented, ctx.stack.count > 1,
+                   ctx.stack.last?.id == shown.id {
+                    ctx.stack.removeLast()
                 }
             }
         )
@@ -231,14 +234,14 @@ private struct StackShell: View {
         // scattered and we want the animation policy centralized
         // here, in the view that owns the stack.
         NavigationStack(path: pushedBinding) {
-            RouteView(path: rootPath, pages: pages)
-                .navigationDestination(for: String.self) { path in
-                    RouteView(path: path, pages: pages)
+            RouteView(entry: rootEntry, pages: pages)
+                .navigationDestination(for: NavEntry.self) { entry in
+                    RouteView(entry: entry, pages: pages)
                 }
         }
         .sheet(isPresented: presentedBinding) {
-            if let path = presented {
-                RouteView(path: path, pages: pages)
+            if let entry = presented {
+                RouteView(entry: entry, pages: pages)
             }
         }
         .id(ctx.rootGeneration)
@@ -246,13 +249,13 @@ private struct StackShell: View {
         .animation(.easeInOut(duration: 0.25), value: ctx.rootGeneration)
     }
 
-    /// The path SwiftUI renders as the root view of NavigationStack.
-    /// In normal operation this is `navPath.first`; the empty-path
+    /// The entry SwiftUI renders as the root view of NavigationStack.
+    /// In normal operation this is the stack's first entry; the empty-stack
     /// fallback covers the brief window during cold-start before
     /// `seedRoot` runs in AppViewModel: falling back to where the app
     /// opens (`startPath`) keeps the renderer from blanking out.
-    private var rootPath: String {
-        ctx.navPath.first ?? pages.startPath ?? "/"
+    private var rootEntry: NavEntry {
+        ctx.stack.first ?? NavEntry(id: NavEntry.unseated, path: pages.startPath ?? "/")
     }
 
     private func isSheetRoute(_ url: String) -> Bool {
@@ -266,17 +269,20 @@ private struct StackShell: View {
 /// NavigationStack gets its own scope: including its own `.task`
 /// that bootstraps Auth.me when first appearing.
 private struct RouteView: View {
-    let path: String
+    let entry: NavEntry
     let pages: [DecodedPage]
+
+    private var path: String { entry.path }
 
     var body: some View {
         if let match = matchPath(path) {
             if match.page.isProtected {
-                ProtectedRoute(match: match)
+                ProtectedRoute(match: match, entry: entry.runtimeEntry)
             } else {
                 MarPageHost(runtime: PageRuntime(page: match.page,
                                                  user: nil,
-                                                 params: match.page.isDynamic ? match.params : nil))
+                                                 params: match.page.isDynamic ? match.params : nil,
+                                                 entry: entry.runtimeEntry))
             }
         } else {
             ContentUnavailableView(
@@ -313,6 +319,7 @@ private struct RouteView: View {
 /// scoped to the SwiftUI lifecycle of that route.
 private struct ProtectedRoute: View {
     let match: PageMatch
+    let entry: Int?
 
     @State private var ctx = AppContext.shared
 
@@ -323,7 +330,8 @@ private struct ProtectedRoute: View {
             } else if let user = unwrapJustUser(ctx.currentUser) {
                 MarPageHost(runtime: PageRuntime(page: match.page,
                                                  user: user,
-                                                 params: match.page.isDynamic ? match.params : nil))
+                                                 params: match.page.isDynamic ? match.params : nil,
+                                                 entry: entry))
             } else if !ctx.signInPath.isEmpty {
                 // No session: replace the stack with [signInPath].
                 // navigate(replace:true) wipes the back-history so a

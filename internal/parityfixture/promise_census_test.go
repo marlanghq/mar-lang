@@ -61,7 +61,7 @@ var promiseCensus = []promiseSource{
 	{"iosbundle/AppViewModel.swift", 2, 0, "screens", "the snapshot and cache formats, whose only requirement is being the same on both platforms; observable as a screen that does or does not come back"},
 	{"iosbundle/MarRenderer.swift", 2, 0, "screens", "the renderer is compared by the screens it produces"},
 	{"iosbundle/MarPageRuntime.swift", 4, 0, "screens", "page lifecycle, compared by the navigation fixture"},
-	{"iosbundle/MarDispatcher.swift", 1, 0, "screens", "dispatch is observable only as a screen that changed"},
+	{"iosbundle/MarDispatcher.swift", 2, 0, "screens", "where a result goes and what a covered page may do, both observable as screens: parity.RouteSource runs the same route-batch script with the same expected string on both clients"},
 	{"iosbundle/MarSound.swift", 3, 0, "sound", "the playback comparator reads the automation events"},
 }
 

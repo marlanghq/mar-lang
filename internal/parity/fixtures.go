@@ -499,3 +499,154 @@ main : Cmd ()
 main =
     App.frontend [ pageN, pageA, pageB, pageP, pageL, pageK ]
 `
+
+// RouteSource checks that a value an update asks for goes back to the page
+// that asked, though the same update also navigated away. A's "go" both
+// pushes B and performs a task whose result is 5; the 5 belongs to A, now
+// covered. B's update counts any message it is handed, so a result that went
+// to the page on screen shows on B. On the 5, A asks to push B again: a
+// covered page does not navigate, so Back from B still lands on A.
+//
+// T's "twice" pushes B and then C in one update. T is on screen when its
+// effects start, so both run, though the first push has covered it: covered
+// is decided when the effects start, not as each one runs.
+//
+// R's "load" opens the sheet S and asks for a value. The value reaches R
+// while S covers it, and turns R's timer on. The timer waits for R to be on
+// screen again: it starts when S closes, never behind it.
+const RouteSource = `module Main exposing (main)
+
+
+import UI exposing (vstack, text, button, navigationStack, navigationTitle)
+
+
+type Msg
+    = Go
+    | Stamp Int
+
+
+type alias Model =
+    { n : Int }
+
+
+pageA : Page
+pageA =
+    Page.create
+        { path = "/"
+        , title = "A"
+        , init = ( { n = 0 }, Cmd.none )
+        , update =
+            \msg model ->
+                case msg of
+                    Go -> ( model, Cmd.batch [ Nav.push "/b", Cmd.perform Stamp (Task.succeed 5) ] )
+                    Stamp k -> ( { n = k }, Nav.push "/b" )
+        , view =
+            \model ->
+                navigationStack [ navigationTitle "A" ]
+                    [ vstack [] [ text [] ("A=" ++ String.fromInt model.n), button [] Go "go" ] ]
+        , subscriptions = always Sub.none
+        }
+
+
+pageB : Page
+pageB =
+    Page.create
+        { path = "/b"
+        , title = "B"
+        , init = ( { n = 0 }, Cmd.none )
+        , update = \_ model -> ( { n = model.n + 1 }, Cmd.none )
+        , view =
+            \model ->
+                navigationStack [ navigationTitle "B" ]
+                    [ vstack [] [ text [] ("B=" ++ String.fromInt model.n) ] ]
+        , subscriptions = always Sub.none
+        }
+
+
+pageC : Page
+pageC =
+    Page.create
+        { path = "/c"
+        , title = "C"
+        , init = ( { n = 0 }, Cmd.none )
+        , update = \_ model -> ( { n = model.n + 1 }, Cmd.none )
+        , view =
+            \model ->
+                navigationStack [ navigationTitle "C" ]
+                    [ vstack [] [ text [] ("C=" ++ String.fromInt model.n) ] ]
+        , subscriptions = always Sub.none
+        }
+
+
+type TMsg
+    = Twice
+
+
+pageT : Page
+pageT =
+    Page.create
+        { path = "/t"
+        , title = "T"
+        , init = ( { n = 0 }, Cmd.none )
+        , update = \_ model -> ( model, Cmd.batch [ Nav.push "/b", Nav.push "/c" ] )
+        , view =
+            \model ->
+                navigationStack [ navigationTitle "T" ]
+                    [ vstack [] [ text [] ("T=" ++ String.fromInt model.n), button [] Twice "twice" ] ]
+        , subscriptions = always Sub.none
+        }
+
+
+type RMsg
+    = Load
+    | Ready Int
+    | Tick Time
+
+
+pageR : Page
+pageR =
+    Page.create
+        { path = "/r"
+        , title = "R"
+        , init = ( { n = 0, ready = False }, Cmd.none )
+        , update =
+            \msg model ->
+                case msg of
+                    Load -> ( model, Cmd.batch [ Nav.push "/s", Cmd.perform Ready (Task.succeed 1) ] )
+                    Ready _ -> ( { model | ready = True }, Cmd.none )
+                    Tick _ -> ( { model | n = 1 }, Cmd.none )
+        , view =
+            \model ->
+                navigationStack [ navigationTitle "R" ]
+                    [ vstack [] [ text [] ("R=" ++ String.fromInt model.n), button [] Load "load" ] ]
+        , subscriptions =
+            \model ->
+                if model.ready then
+                    Time.every (Time.millis 100) Tick
+
+                else
+                    Sub.none
+        }
+
+
+pageS : Page
+pageS =
+    Page.sheet
+        (Page.create
+            { path = "/s"
+            , title = "S"
+            , init = ( { n = 0 }, Cmd.none )
+            , update = \_ model -> ( { n = model.n + 1 }, Cmd.none )
+            , view =
+                \model ->
+                    navigationStack [ navigationTitle "S" ]
+                        [ vstack [] [ text [] ("S=" ++ String.fromInt model.n) ] ]
+            , subscriptions = always Sub.none
+            }
+        )
+
+
+main : Cmd ()
+main =
+    App.frontend [ pageA, pageB, pageC, pageT, pageR, pageS ]
+`

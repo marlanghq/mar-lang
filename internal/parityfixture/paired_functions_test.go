@@ -62,7 +62,14 @@ func TestEveryFunctionImplementedTwiceIsAccountedFor(t *testing.T) {
 	// compares all three. The wire round trip (parityfixture.WireCases)
 	// compares them on the way in.
 	//
-	// `deliverState` (browser and phone) is the newest: every delivery of a
+	// `refusedFromCovered` (browser and phone) is the newest: a page that is
+	// not on screen does not navigate or play sound. What compares the two is
+	// behaviour: parity.RouteSource's route-batch script, in which a covered
+	// page asks to navigate, with the same expected string in
+	// internal/jsserve/effect_routing_test.go and
+	// internal/iosbundle/ios_route_test.go.
+	//
+	// `deliverState` (browser and phone) came just before: every delivery of a
 	// state source (Device, Keyboard, Gamepad) goes through it, a change to
 	// every subscriber or the state handed to one that starts listening, and
 	// it remembers what the page on screen was handed. What compares the two is
@@ -118,8 +125,8 @@ func TestEveryFunctionImplementedTwiceIsAccountedFor(t *testing.T) {
 	// had it, left the name count unmoved and the test silent. Measured, not
 	// reasoned -- the sabotage was supposed to fail and did not.
 	const (
-		pairs           = 107
-		implementations = 255
+		pairs           = 108
+		implementations = 257
 	)
 
 	js := namesIn(t, []string{"../jsserve/runtime.js"},

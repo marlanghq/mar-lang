@@ -1565,6 +1565,7 @@ enum MarBuiltins {
             let path: String
             if case .string(let s) = args[0] { path = s } else { path = "" }
             return .effect(MarEffect(tag: "navPush") {
+                if MarDispatcher.shared.refusedFromCovered("Nav.push") { return .unit }
                 Task { @MainActor in AppContext.shared.navigate(path: path, replace: false) }
                 return .unit
             })
@@ -1576,6 +1577,7 @@ enum MarBuiltins {
             let path: String
             if case .string(let s) = args[0] { path = s } else { path = "" }
             return .effect(MarEffect(tag: "navReplace") {
+                if MarDispatcher.shared.refusedFromCovered("Nav.replace") { return .unit }
                 Task { @MainActor in AppContext.shared.navigate(path: path, replace: true) }
                 return .unit
             })
@@ -1590,6 +1592,7 @@ enum MarBuiltins {
         // gives. With a pushed route on top it pops that instead, and at
         // the app's first screen it does nothing. A VALUE, not a function.
         let navDismiss = MarValue.effect(MarEffect(tag: "navDismiss") {
+            if MarDispatcher.shared.refusedFromCovered("Nav.dismiss") { return .unit }
             Task { @MainActor in AppContext.shared.dismissTop() }
             return .unit
         })
@@ -1617,6 +1620,7 @@ enum MarBuiltins {
         // specific cleanup with the navigation step; Nav.* is kept
         // focused on pure navigation primitives.
         let authCompleteSignIn = MarEffect(tag: "authCompleteSignIn") {
+            if MarDispatcher.shared.refusedFromCovered("Auth.completeSignIn") { return .unit }
             Task { @MainActor in
                 let target = AppContext.shared.pendingReturnPath ?? "/"
                 AppContext.shared.pendingReturnPath = nil
@@ -1659,6 +1663,7 @@ enum MarBuiltins {
             // at the call site, not later inside the Effect closure.
             let url = try MarPath.build(pattern, params: args[1])
             return .effect(MarEffect(tag: "navPushTo") {
+                if MarDispatcher.shared.refusedFromCovered("Nav.pushTo") { return .unit }
                 Task { @MainActor in AppContext.shared.navigate(path: url, replace: false) }
                 return .unit
             })
@@ -1673,6 +1678,7 @@ enum MarBuiltins {
             let pattern = MarPath.parse(src)
             let url = try MarPath.build(pattern, params: args[1])
             return .effect(MarEffect(tag: "navReplaceTo") {
+                if MarDispatcher.shared.refusedFromCovered("Nav.replaceTo") { return .unit }
                 Task { @MainActor in AppContext.shared.navigate(path: url, replace: true) }
                 return .unit
             })
@@ -1929,9 +1935,10 @@ enum MarBuiltins {
         let randomGenerate = MarFn.native(2) { args in
             let toMsg = args[0], g = args[1]
             return .effect(MarEffect(tag: "randomGenerate") {
+                let reply = MarDispatcher.shared.replyTo()
                 let (v, _) = try runGen(g, entropySeed())
                 let msg = try Eval.apply(toMsg, v)
-                Task { @MainActor in MarDispatcher.shared.dispatch(msg) }
+                Task { @MainActor in reply(msg) }
                 return .unit
             })
         }
@@ -2044,9 +2051,10 @@ enum MarBuiltins {
             }
             let toMsg = args[0]
             return .effect(MarEffect(tag: "perform") {
+                let reply = MarDispatcher.shared.replyTo()
                 let v = try task.run()
                 let msg = try Eval.apply(toMsg, v)
-                Task { @MainActor in MarDispatcher.shared.dispatch(msg) }
+                Task { @MainActor in reply(msg) }
                 return .unit
             })
         }
@@ -2511,7 +2519,8 @@ enum MarBuiltins {
                     throw MarRuntimeError.message("Service.call: not a service contract")
                 }
                 let built = buildServiceRequest(verb: verb, pattern: pattern, req: req)
-                MarHTTP.fireService(method: verb, path: built.url, body: built.body, toMsg: toMsg)
+                MarHTTP.fireService(method: verb, path: built.url, body: built.body, toMsg: toMsg,
+                                    reply: MarDispatcher.shared.replyTo())
                 return .unit
             })
         }
@@ -2523,7 +2532,7 @@ enum MarBuiltins {
             let url = asString(args[0])
             let toMsg = args[1]
             return .effect(MarEffect(tag: "httpGet") {
-                MarHTTP.fire(method: "GET", url: url, body: nil, toMsg: toMsg)
+                MarHTTP.fire(method: "GET", url: url, body: nil, toMsg: toMsg, reply: MarDispatcher.shared.replyTo())
                 return .unit
             })
         }
@@ -2535,7 +2544,7 @@ enum MarBuiltins {
             let body = asString(args[1])
             let toMsg = args[2]
             return .effect(MarEffect(tag: "httpPost") {
-                MarHTTP.fire(method: "POST", url: url, body: body, toMsg: toMsg)
+                MarHTTP.fire(method: "POST", url: url, body: body, toMsg: toMsg, reply: MarDispatcher.shared.replyTo())
                 return .unit
             })
         }
@@ -2599,7 +2608,8 @@ enum MarBuiltins {
                                         body: req,
                                         okOutcome: { _ in .ctor(tag: "CodeSent", args: []) },
                                         mapCode: MarHTTP.requestCodeOutcome,
-                                        toMsg: toMsg)
+                                        toMsg: toMsg,
+                                        reply: MarDispatcher.shared.replyTo())
                 return .unit
             })
         }
@@ -2615,7 +2625,8 @@ enum MarBuiltins {
                                         body: req,
                                         okOutcome: { user in .ctor(tag: "SignedIn", args: [user]) },
                                         mapCode: MarHTTP.verifyCodeOutcome,
-                                        toMsg: toMsg)
+                                        toMsg: toMsg,
+                                        reply: MarDispatcher.shared.replyTo())
                 return .unit
             })
         }
@@ -2638,6 +2649,7 @@ enum MarBuiltins {
         let authLogout = MarFn.native(1) { args in
             let toMsg = args[0]
             return .effect(MarEffect(tag: "Auth.logout") {
+                let reply = MarDispatcher.shared.replyTo()
                 Task { @MainActor in
                     if let url = MarDispatcher.shared.resolve(path: "/_auth/logout") {
                         var req = URLRequest(url: url)
@@ -2675,7 +2687,7 @@ enum MarBuiltins {
                     // Dispatch Ok(()) so the mar update fires its
                     // post-logout action (typically Auth.completeSignIn).
                     let msg = (try? Eval.apply(toMsg, .ctor(tag: "Ok", args: [.unit]))) ?? .unit
-                    MarDispatcher.shared.dispatch(msg)
+                    reply(msg)
                 }
                 return .unit
             })
@@ -2688,7 +2700,7 @@ enum MarBuiltins {
         let authMe = MarFn.native(1) { args in
             let toMsg = args[0]
             return .effect(MarEffect(tag: "Auth.me") {
-                MarHTTP.fireAuthMe(toMsg: toMsg)
+                MarHTTP.fireAuthMe(toMsg: toMsg, reply: MarDispatcher.shared.replyTo())
                 return .unit
             })
         }

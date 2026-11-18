@@ -46,7 +46,25 @@ final class AppContext {
     /// entry without any extra wiring. `Nav.push` appends, `Nav.replace`
     /// resets to a single entry, `Auth.completeSignIn` resets to the
     /// pendingReturnPath.
-    var navPath: [String] = []
+    var stack: [NavEntry] = []
+
+    /// The paths on the stack, bottom first. Read-only: every write goes
+    /// through `stack`, so an entry is minted once and keeps its identity.
+    var navPath: [String] { stack.map(\.path) }
+
+    @ObservationIgnored private var lastEntryID = 0
+
+    private func mint(_ path: String) -> NavEntry {
+        lastEntryID += 1
+        return NavEntry(id: lastEntryID, path: path)
+    }
+
+    /// Whether an entry is still on the stack: what decides if a page's late
+    /// result is delivered or dropped.
+    func holds(_ id: Int) -> Bool { stack.contains { $0.id == id } }
+
+    /// A whole new stack, every entry fresh.
+    func setStack(_ paths: [String]) { stack = paths.map(mint) }
 
     /// The page the user is currently looking at. Computed from
     /// `navPath` so there's a single source of truth for "where am I"
@@ -112,7 +130,7 @@ final class AppContext {
 
     func reset() {
         pages = []
-        navPath = []
+        stack = []
         currentUser = nil
         authPending = false
         authEpoch += 1
@@ -127,8 +145,8 @@ final class AppContext {
     /// only sets when the stack is empty so a hot-reload or program
     /// refresh doesn't bulldoze the user's current location.
     func seedRoot(_ path: String, pages: [DecodedPage] = []) {
-        if navPath.isEmpty {
-            navPath = Self.stackFor(path, pages: pages)
+        if stack.isEmpty {
+            setStack(Self.stackFor(path, pages: pages))
         }
     }
 
@@ -199,8 +217,8 @@ final class AppContext {
     /// last entry: at the app's first screen there is nothing to close,
     /// and popping it would leave the renderer with no route at all.
     func dismissTop() {
-        guard navPath.count > 1 else { return }
-        navPath.removeLast()
+        guard stack.count > 1 else { return }
+        stack.removeLast()
     }
 
     /// Mutate the navigation stack. `replace` clears history and lands
@@ -221,7 +239,7 @@ final class AppContext {
     func navigate(path: String, replace: Bool) {
         if replace {
             forgetUser()
-            // Bump the generation BEFORE mutating navPath so SwiftUI
+            // Bump the generation BEFORE mutating the stack so SwiftUI
             // sees both observable changes in the same tick and treats
             // the NavigationStack as identity-swapped: triggering the
             // cross-fade transition instead of the default
@@ -229,9 +247,9 @@ final class AppContext {
             // path changed first, SwiftUI might already start animating
             // a stack-pop before the identity change supersedes it.
             rootGeneration += 1
-            navPath = [path]
+            stack = [mint(path)]
         } else {
-            navPath.append(path)
+            stack.append(mint(path))
         }
     }
 
@@ -254,7 +272,7 @@ final class AppContext {
         pendingReturnPath = nil
         redirectingToSignIn = false
         rootGeneration += 1
-        navPath = Self.stackFor(start, pages: pages)
+        setStack(Self.stackFor(start, pages: pages))
     }
 
     /// Decoded view of the captured pages, ready for the renderer
@@ -420,6 +438,24 @@ extension Array where Element == DecodedPage {
         if contains(where: { $0.matchURL("/") != nil }) { return "/" }
         return first?.path
     }
+}
+
+/// One entry of the navigation stack. The identity is the ENTRY, not the
+/// path: /a -> /b -> /a holds two /a entries, each with its own page and
+/// model (ADR 0009), and a late result for the first must not reach the
+/// second.
+struct NavEntry: Hashable {
+    let id: Int
+    let path: String
+
+    /// The root shown in the moment before the stack is seeded on a cold
+    /// start. Minted ids start at 1, so this one is never on the stack, and
+    /// a page built for it must not be taken for an entry that left it.
+    static let unseated = 0
+
+    /// The entry a page runtime is told it belongs to: none for the unseated
+    /// root, which is then treated like the one-page shell, always on top.
+    var runtimeEntry: Int? { id == NavEntry.unseated ? nil : id }
 }
 
 struct DecodedPage: Identifiable {

@@ -328,7 +328,7 @@ final class AppViewModel {
         // The fixture's page labels. Named once so adding a page to the
         // fixture cannot silently start reporting "?" for it, which is how
         // the nested-sheet case first read as a runtime bug.
-        let parity: Set<Character> = ["A", "B", "S", "N", "P", "L", "K"]
+        let parity: Set<Character> = ["A", "B", "C", "S", "N", "P", "L", "K", "R", "T"]
         func counter(_ runtime: PageRuntime?) -> String {
             guard let runtime, let view = runtime.currentView() else { return "-" }
             for piece in visibleText(view).components(separatedBy: " ¦ ") {
@@ -416,7 +416,7 @@ final class AppViewModel {
 
             // What the Back button and the swipe-back gesture both do: drop
             // the top entry. StackShell's binding writes exactly this.
-            ctx.navPath.removeLast()
+            ctx.stack.removeLast()
             await settle()
             note("back-a")
 
@@ -443,7 +443,7 @@ final class AppViewModel {
             await settle()
             noteBoth("presented")
 
-            ctx.navPath.removeLast()
+            ctx.stack.removeLast()
             await settle()
             noteBoth("dismissed")
 
@@ -473,7 +473,7 @@ final class AppViewModel {
             ctx.navigate(path: "/b", replace: false)
             await settle()
             note("push-b")
-            ctx.navPath.removeLast()
+            ctx.stack.removeLast()
             try? await Task.sleep(nanoseconds: 1_200_000_000)
             note("back-a")
             ctx.navigate(path: "/b", replace: false)
@@ -482,6 +482,62 @@ final class AppViewModel {
             ctx.navigate(path: "/a", replace: true)
             await settle()
             note("replace-a")
+
+        // parity.RouteSource: A's update pushes B and asks for a value in one
+        // go. The value is A's: after Back, A shows it and B never saw it.
+        case "route-batch":
+            try? await Task.sleep(nanoseconds: 1_000_000_000)
+            note("start")
+            bump()
+            await settle()
+            note("after-go")
+            ctx.stack.removeLast()
+            try? await Task.sleep(nanoseconds: 1_200_000_000)
+            note("back-a")
+
+        // parity.RouteSource: T, on screen, pushes B and then C in one
+        // update. Both pushes run, so the stack ends on C, and Back shows B.
+        case "route-twice":
+            try? await Task.sleep(nanoseconds: 1_000_000_000)
+            ctx.navigate(path: "/t", replace: false)
+            await settle()
+            note("on-t")
+            bump()
+            await settle()
+            note("after-twice")
+            ctx.stack.removeLast()
+            try? await Task.sleep(nanoseconds: 1_200_000_000)
+            note("back")
+
+        // parity.RouteSource: R opens the sheet S and its value arrives while
+        // S covers it. R's timer starts when S closes, never behind it.
+        case "route-sheet-subs":
+            try? await Task.sleep(nanoseconds: 1_000_000_000)
+            ctx.navigate(path: "/r", replace: false)
+            await settle()
+            note("on-r")
+            bump()
+            await settle()
+            try? await Task.sleep(nanoseconds: 600_000_000)
+            seen.append("covered:\(counter(live("/r")))")
+            ctx.stack.removeLast()
+            try? await Task.sleep(nanoseconds: 1_200_000_000)
+            note("closed")
+
+        // Pushing K makes SwiftUI mount P again. K's init message still goes
+        // to K, the page that ran the effect, whoever mounted last.
+        case "subs-remount":
+            try? await Task.sleep(nanoseconds: 1_000_000_000)
+            note("start")
+            ctx.navigate(path: "/p", replace: false)
+            await settle()
+            ctx.navigate(path: "/l", replace: false)
+            await settle()
+            bump()
+            await settle()
+            ctx.navigate(path: "/k", replace: false)
+            await settle()
+            note("push-k")
 
         // K first, straight from the landing page: its init arms it in the
         // same turn its store's source starts, and with no covered page under
@@ -1117,10 +1173,10 @@ final class AppViewModel {
             // the same seeding the app uses, so the parent it should be
             // presented over comes along.
             if script == "sheet-cold" {
-                AppContext.shared.navPath = AppContext.stackFor("/s", pages: decoded)
+                AppContext.shared.setStack(AppContext.stackFor("/s", pages: decoded))
             }
             if script == "sheet-cold-nested" {
-                AppContext.shared.navPath = AppContext.stackFor("/a/nested", pages: decoded)
+                AppContext.shared.setStack(AppContext.stackFor("/a/nested", pages: decoded))
             }
             MarLiveRuntimes.reset()
             Task { @MainActor in

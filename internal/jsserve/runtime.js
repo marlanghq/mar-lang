@@ -2740,6 +2740,64 @@
   // to dispatch a Msg into the running update loop.
   let currentDispatch = null;
 
+  // A message an effect produces belongs to whoever issued the effect: the page
+  // whose init or update returned it, or the shared store whose update did. It
+  // used to go to whatever page was on screen when it landed, so a result that
+  // arrived after a navigation went to the next page (whose update could take
+  // it as its own) and the page that asked for it waited forever.
+  //
+  // effectIssuer is the issuer of the effect being run right now. Effects run
+  // synchronously (Cmd.batch, Task.map and andThen all call .run() in place),
+  // so it is visible to every async effect the moment it starts, and each one
+  // copies it before its result can come back.
+  //
+  // Whether the issuer is covered is decided once, when its effects start to
+  // run, as the phone does: `Cmd.batch [ Nav.push b, Sound.play s ]` from the
+  // page on screen plays the sound, though the push already ran.
+  let effectIssuer = null;
+  let effectCovered = false;
+  function runEffectAs(issuer, eff) {
+    const prev = effectIssuer;
+    const prevCovered = effectCovered;
+    effectIssuer = issuer;
+    effectCovered = issuerIsCovered(issuer);
+    try { runEffect(eff); } finally { effectIssuer = prev; effectCovered = prevCovered; }
+  }
+  // Set by mountPages: delivers to a page's stack entry, on screen or covered.
+  let pageDeliverHook = null;
+  // An effect with no issuer (a test hook running a Cmd directly) still goes
+  // to the page on screen.
+  function deliverFrom(issuer, msg) {
+    if (issuer && issuer.shared) { sharedDispatch(issuer.shared, msg); return; }
+    if (issuer && issuer.key && pageDeliverHook) { pageDeliverHook(issuer, msg); return; }
+    if (currentDispatch) currentDispatch(msg);
+  }
+  // Whether an issuer is a page that is not on screen (set by mountPages).
+  // Such a page's model is kept up to date, but it does not move the person
+  // off the page they are looking at (no navigation) or play sound behind it.
+  let issuerIsCovered = () => false;
+  function refusedFromCovered(what) {
+    if (!effectCovered) return false;
+    if (__MAR_DEV__ && global.__marDevMode && typeof console !== 'undefined' && console.warn) {
+      console.warn('[mar] ignored ' + what + ' from a page that is not on screen');
+    }
+    return true;
+  }
+  // The history entries on the stack: entryId -> { depth, key }. An entry
+  // that leaves the stack is retired for good: browser Forward back onto it
+  // starts the page over, as a pushed page does (ADR 0009). Module level so a
+  // hot reload (which re-runs mountPages) keeps it, like preservedScreenModels.
+  const liveEntries = new Map();
+  const retiredEntries = new Set();
+  // A retired id met again (Forward onto it, or onto the UI.sheet entry that
+  // shares it) gets one new id, the same for every entry that carried it, so
+  // a page and its sheet entry stay one screen: retired id -> its new id.
+  const restampedEntries = new Map();
+  // A failure in the update of a page that is not on screen is held until that
+  // page is shown again, and shown then: over the page that failed, not over
+  // the one the person is looking at.
+  const pendingPageErrors = new Map(); // page key -> error
+
   // ---- Shared: the client state that outlives navigation -------------------
   //
   // Page models live on the nav stack and die on forward navigation (ADR
@@ -2783,7 +2841,7 @@
     sharedStores.set(def, store);
     if (preserved === undefined) {
       preservedSharedModels[def.__originKey] = store.model;
-      pendingSharedCmds.push(initTuple.xs[1]);
+      pendingSharedCmds.push({ def, cmd: initTuple.xs[1] });
     }
     return store;
   }
@@ -2802,7 +2860,7 @@
     }
     store.model = out.model;
     preservedSharedModels[def.__originKey] = out.model;
-    runEffect(out.effect);
+    runEffectAs({ shared: def }, out.effect);
     // Repaint: pages read shared through their builder, so a change to the
     // model is a change to the view even though no page model moved.
     if (sharedRerender) sharedRerender();
@@ -6325,6 +6383,7 @@
     // runs the real introspection body (internal/jsserve/admin_mar.go),
     // returning the Mar Value as JSON which jsToMar rebuilds here.
     const marAdminFetch = (path, toMsg) => VEffect(() => {
+      const issuer = effectIssuer;
       fetch(path, { method: 'GET', credentials: 'same-origin' })
         .then(r => r.text().then(t => ({ ok: r.ok, body: t, status: r.status })))
         .then(r => {
@@ -6339,19 +6398,19 @@
             return;
           }
           if (!r.ok) {
-            if (currentDispatch) currentDispatch(apply(toMsg, VCtor('Err', [VString(decodeServerError(r.body) || ('HTTP ' + r.status))])));
+            deliverFrom(issuer, apply(toMsg, VCtor('Err', [VString(decodeServerError(r.body) || ('HTTP ' + r.status))])));
             return;
           }
           let parsed;
           try { parsed = jsToMar(jsonBodyOrThrow(r.body)); }
           catch (e) {
-            if (currentDispatch) currentDispatch(apply(toMsg, VCtor('Err', [VString('decode failed: ' + (e && e.message || e))])));
+            deliverFrom(issuer, apply(toMsg, VCtor('Err', [VString('decode failed: ' + (e && e.message || e))])));
             return;
           }
-          if (currentDispatch) currentDispatch(apply(toMsg, VCtor('Ok', [parsed])));
+          deliverFrom(issuer, apply(toMsg, VCtor('Ok', [parsed])));
         })
         .catch(err => {
-          if (currentDispatch) currentDispatch(apply(toMsg, VCtor('Err', [VString(friendlyFetchError(err))])));
+          deliverFrom(issuer, apply(toMsg, VCtor('Err', [VString(friendlyFetchError(err))])));
         });
       return VUnit();
     }, 'marAdmin');
@@ -6467,6 +6526,7 @@
     // (full-screen, nothing behind it) cannot walk the reader off the
     // site.
     def('navDismiss', VEffect(() => {
+      if (refusedFromCovered('Nav.dismiss')) return VUnit();
       if (globalThis.__marPresentedActive && globalThis.__marPresentedActive()) {
         globalThis.__marDismissPresented();
       } else if (currentNavDepth() > 0) {
@@ -6834,8 +6894,9 @@
     // Random.generate : (a -> msg) -> Generator a -> Cmd msg, seeds from
     // entropy, steps once, dispatches the value as a Msg.
     const randomGenerate = native(2, ([toMsg, g]) => VEffect(() => {
+      const issuer = effectIssuer;
       const [v] = runGen(g, entropySeed());
-      if (currentDispatch) currentDispatch(apply(toMsg, v));
+      deliverFrom(issuer, apply(toMsg, v));
       return VUnit();
     }, 'randomGenerate'));
     def('randomGenerate', randomGenerate); def('Random.generate', randomGenerate);
@@ -6885,8 +6946,9 @@
     // its produced value to the MVU loop as a msg. The only way a Task
     // (Time.now, future client reads) reaches `update` on the frontend.
     const cmdPerformImpl = native(2, ([toMsg, task]) => VEffect(() => {
+      const issuer = effectIssuer;
       const v = task.run();
-      if (currentDispatch) currentDispatch(apply(toMsg, v));
+      deliverFrom(issuer, apply(toMsg, v));
       return VUnit();
     }, 'perform'));
     def('cmdPerform', cmdPerformImpl);
@@ -7234,7 +7296,12 @@
     const soundRestImpl = native(1, ([ms]) => mkSound([{ wave: 'Rest', freq: 0, ms: ms.n, endFreq: 0, holdMs: 0, volume: 0, delayMs: 0, tremDepth: 0, tremRate: 0, decay: 0, sustain: 100, detune: 0, pan: 0 }]));
     def('soundRest', soundRestImpl); def('Sound.rest', soundRestImpl);
     // play : Sound -> Cmd msg  (fire once).
-    const soundPlayImpl = native(1, ([snd]) => VEffect(() => { soundPlayNow(snd); return VUnit(); }, 'soundPlay'));
+    // A page that is not on screen does not play sound behind the one that is
+    // (refusedFromCovered).
+    const soundPlayImpl = native(1, ([snd]) => VEffect(() => {
+      if (!refusedFromCovered('Sound.play')) soundPlayNow(snd);
+      return VUnit();
+    }, 'soundPlay'));
     def('soundPlay', soundPlayImpl); def('Sound.play', soundPlayImpl);
     // loop : Sound -> Sub msg  (replay seamlessly while subscribed). Keyed by FULL
     // content INCLUDING volume, so any change swaps the song (a restart): fine for
@@ -7427,6 +7494,7 @@
     // and is delivered as a Msg.
     def('httpGet', native(2, ([url, toMsg]) => {
       return VEffect(() => {
+        const issuer = effectIssuer;
         fetch(url.s)
           .then(r => r.text().then(t => ({ ok: r.ok, body: t, status: r.status })))
           .then(r => {
@@ -7434,11 +7502,11 @@
               ? VCtor('Ok', [VString(r.body)])
               : VCtor('Err', [VString(decodeServerError(r.body) || ('HTTP ' + (r.status || 0)))]);
             const msg = apply(toMsg, result);
-            if (currentDispatch) currentDispatch(msg);
+            deliverFrom(issuer, msg);
           })
           .catch(err => {
             const msg = apply(toMsg, VCtor('Err', [VString(friendlyFetchError(err))]));
-            if (currentDispatch) currentDispatch(msg);
+            deliverFrom(issuer, msg);
           });
         return VUnit();
       }, 'httpGet');
@@ -7532,6 +7600,7 @@
 
     function serviceCallImpl(svc, req, toMsg, respShape) {
       return VEffect(() => {
+        const issuer = effectIssuer;
         const verb = svc.verb || 'POST';
         const built = buildServiceRequest(verb, svc.path || '/', req);
         const init = { method: verb, credentials: 'same-origin', headers: {} };
@@ -7558,7 +7627,7 @@
             if (r.status === 401 && handleAuthExpired()) return;
             if (!r.ok) {
               const msg = apply(toMsg, VCtor('Err', [serviceErrorFromResponse(r.status, r.body)]));
-              if (currentDispatch) currentDispatch(msg);
+              deliverFrom(issuer, msg);
               return;
             }
             let parsed;
@@ -7568,7 +7637,7 @@
               // Response arrived but its body was not decodable: a server
               // contract bug, surfaced as a ServerError so the app can show it.
               const msg = apply(toMsg, VCtor('Err', [VCtor('ServerError', [VString('decode failed: ' + (e && e.message || e))])]));
-              if (currentDispatch) currentDispatch(msg);
+              deliverFrom(issuer, msg);
               return;
             }
             // The response was not produced by the type system either. It
@@ -7581,19 +7650,19 @@
               if (shapeErr) {
                 const bad = apply(toMsg, VCtor('Err', [VCtor('ServerError',
                   [VString('the response does not match what this app expects: ' + shapeErr)])]));
-                if (currentDispatch) currentDispatch(bad);
+                deliverFrom(issuer, bad);
                 return;
               }
               parsed = coerceWire(parsed, respShape);
             }
             const msg = apply(toMsg, VCtor('Ok', [parsed]));
-            if (currentDispatch) currentDispatch(msg);
+            deliverFrom(issuer, msg);
           })
           .catch(err => {
             // fetch() rejects only when the request never completed (offline,
             // DNS, connection dropped): that is the Offline case.
             const msg = apply(toMsg, VCtor('Err', [serviceErrorOffline()]));
-            if (currentDispatch) currentDispatch(msg);
+            deliverFrom(issuer, msg);
           });
         return VUnit();
       }, 'serviceCall');
@@ -7685,6 +7754,7 @@
     // Service.call shape so user code looks identical.
     function authPost(path, body, toMsg, decodeOk) {
       return VEffect(() => {
+        const issuer = effectIssuer;
         fetch(path, {
           method: 'POST',
           credentials: 'same-origin',
@@ -7696,7 +7766,7 @@
             if (!r.ok) {
               const errStr = decodeAuthError(r.body) || ('HTTP ' + r.status);
               const msg = apply(toMsg, VCtor('Err', [VString(errStr)]));
-              if (currentDispatch) currentDispatch(msg);
+              deliverFrom(issuer, msg);
               return;
             }
             let parsed;
@@ -7704,15 +7774,15 @@
               parsed = decodeOk(r.body);
             } catch (e) {
               const msg = apply(toMsg, VCtor('Err', [VString('decode failed: ' + (e && e.message || e))]));
-              if (currentDispatch) currentDispatch(msg);
+              deliverFrom(issuer, msg);
               return;
             }
             const msg = apply(toMsg, VCtor('Ok', [parsed]));
-            if (currentDispatch) currentDispatch(msg);
+            deliverFrom(issuer, msg);
           })
           .catch(err => {
             const msg = apply(toMsg, VCtor('Err', [VString(friendlyFetchError(err))]));
-            if (currentDispatch) currentDispatch(msg);
+            deliverFrom(issuer, msg);
           });
         return VUnit();
       }, 'authPost');
@@ -7774,6 +7844,7 @@
     // domain code or null. Mirrors the Swift MarHTTP boundary.
     function authOutcomePost(path, body, toMsg, okOutcome, mapCode) {
       return VEffect(() => {
+        const issuer = effectIssuer;
         fetch(path, {
           method: 'POST',
           credentials: 'same-origin',
@@ -7804,10 +7875,10 @@
                 ? VCtor('Ok', [domain])
                 : VCtor('Err', [serviceErrorFromResponse(r.status, r.body)]);
             }
-            if (currentDispatch) currentDispatch(apply(toMsg, result));
+            deliverFrom(issuer, apply(toMsg, result));
           })
           .catch(() => {
-            if (currentDispatch) currentDispatch(apply(toMsg, VCtor('Err', [serviceErrorOffline()])));
+            deliverFrom(issuer, apply(toMsg, VCtor('Err', [serviceErrorOffline()])));
           });
         return VUnit();
       }, 'authPost');
@@ -7876,6 +7947,7 @@
       // irrelevant to the user's intent. The .catch on the fetch
       // just swallows the error so it doesn't surface in console.
       return VEffect(() => {
+        const issuer = effectIssuer;
         // Forget the cached user here rather than leaving it to whatever
         // navigation the app does next: signing out is the moment the
         // answer to "who is this" changes, so it is the moment to drop it.
@@ -7885,7 +7957,7 @@
           credentials: 'same-origin',
         }).catch(() => { /* fire-and-forget: server-side cleanup is best-effort */ });
         const msg = apply(toMsg, VCtor('Ok', [VUnit()]));
-        if (currentDispatch) currentDispatch(msg);
+        deliverFrom(issuer, msg);
       }, 'authLogout');
     }));
     def('Auth.logout', envLookup(env, 'authLogout'));
@@ -7900,12 +7972,13 @@
     function authMeEffect(toMsg, shape) {
       // GET /_auth/whoami: Maybe user.
       return VEffect(() => {
+        const issuer = effectIssuer;
         fetch('/_auth/whoami', { credentials: 'same-origin' })
           .then(r => r.text().then(t => ({ ok: r.ok, body: t })))
           .then(r => {
             if (!r.ok) {
               const msg = apply(toMsg, VCtor('Err', [VString('HTTP ' + r.body)]));
-              if (currentDispatch) currentDispatch(msg);
+              deliverFrom(issuer, msg);
               return;
             }
             let parsed;
@@ -7920,15 +7993,15 @@
               const text = (e && e.marWire) ? e.message
                 : 'decode failed: ' + (e && e.message || e);
               const msg = apply(toMsg, VCtor('Err', [VString(text)]));
-              if (currentDispatch) currentDispatch(msg);
+              deliverFrom(issuer, msg);
               return;
             }
             const msg = apply(toMsg, VCtor('Ok', [parsed]));
-            if (currentDispatch) currentDispatch(msg);
+            deliverFrom(issuer, msg);
           })
           .catch(err => {
             const msg = apply(toMsg, VCtor('Err', [VString(friendlyFetchError(err))]));
-            if (currentDispatch) currentDispatch(msg);
+            deliverFrom(issuer, msg);
           });
         return VUnit();
       }, 'authMe');
@@ -7937,6 +8010,7 @@
 
     def('httpPost', native(3, ([url, body, toMsg]) => {
       return VEffect(() => {
+        const issuer = effectIssuer;
         fetch(url.s, { method: 'POST', body: body.s })
           .then(r => r.text().then(t => ({ ok: r.ok, body: t, status: r.status })))
           .then(r => {
@@ -7944,11 +8018,11 @@
               ? VCtor('Ok', [VString(r.body)])
               : VCtor('Err', [VString(decodeServerError(r.body) || ('HTTP ' + (r.status || 0)))]);
             const msg = apply(toMsg, result);
-            if (currentDispatch) currentDispatch(msg);
+            deliverFrom(issuer, msg);
           })
           .catch(err => {
             const msg = apply(toMsg, VCtor('Err', [VString(friendlyFetchError(err))]));
-            if (currentDispatch) currentDispatch(msg);
+            deliverFrom(issuer, msg);
           });
         return VUnit();
       }, 'httpPost');
@@ -9243,6 +9317,18 @@
   // by every push / replace. Returns 0 when the entry has no state
   // yet (e.g. the very first page load before mountPages runs the
   // initial replace).
+  // Every history entry the app creates carries an id (history.state.marEntry),
+  // and a page's model belongs to its entry, not to its route: A, B, then A
+  // again is two models for A, and Back from the second A to B to the first A
+  // finds the first one as it was left. A UI.sheet's own history entry copies
+  // the id of the page under it: it is the same screen. The boot stamp keeps
+  // ids unique across a full reload, whose entries keep the ids they had.
+  const entryBoot = Date.now().toString(36);
+  let entrySeq = 0;
+  function newEntryId() { return entryBoot + '.' + (++entrySeq); }
+  function curEntryId() {
+    return (history.state && history.state.marEntry) || 'e0';
+  }
   function currentNavDepth() {
     return (history.state && typeof history.state.marDepth === 'number')
       ? history.state.marDepth
@@ -12654,6 +12740,7 @@
       history.pushState(
         { __marSheet: outlet
         , marDepth: (typeof cur.marDepth === 'number' ? cur.marDepth : 0)
+        , marEntry: cur.marEntry
         , prevTitle: cur.prevTitle || ''
         },
         '',
@@ -13469,6 +13556,10 @@
           forgetPageStates(key);
         },
         initWith: (user, params) => initWith(user, params, entry.activeKey),
+        // After a hot reload a covered entry's model is only in
+        // preservedScreenModels until the entry is shown again.
+        modelAt: (key) => (models[key] !== undefined ? models[key] : preservedScreenModels[key]),
+        setModelAt: (key, v) => { models[key] = v; preservedScreenModels[key] = v; },
         // Getters, not values: under Page.withShared these resolve against
         // the shared model as it is right now, so a store change repaints
         // with the new view without the page's own model moving.
@@ -13477,12 +13568,6 @@
         get view()          { return fns().view; },
         get subscriptions() { return fns().subscriptions; },
       };
-
-      if (!isProtected && !isDynamic) {
-        // Static public pages can init eagerly: no auth dependency,
-        // no URL-derived params.
-        initWith(null, null, path);
-      }
 
       return entry;
     }
@@ -13560,7 +13645,7 @@
       // 1) literal match
       if (pages[urlPath]) {
         const pg = pages[urlPath];
-        pg.activeKey = pg.path;
+        pg.activeKey = pg.path + '#' + curEntryId();
         pg.params = null;
         return pg;
       }
@@ -13571,7 +13656,7 @@
           // Dynamic pages key model state by URL, not by path: navigating
           // /notes/abc → /notes/xyz is a fresh model slot, not a re-render.
           // (Static pages key by path: see the literal match above.)
-          dp.page.activeKey = urlPath;
+          dp.page.activeKey = urlPath + '#' + curEntryId();
           dp.page.params = params;
           return dp.page;
         }
@@ -13593,7 +13678,7 @@
       //    for a program that could not have started.
       const fallback = pages[firstPath] || null;
       if (fallback) {
-        fallback.activeKey = fallback.path;
+        fallback.activeKey = fallback.path + '#' + curEntryId();
         fallback.params = null;
       }
       return fallback;
@@ -13917,8 +14002,28 @@
     }
 
     function renderPage() {
+      // An entry with no id (made before ids existed) gets one of its own.
+      // An entry that left the stack never comes back (browser Forward after
+      // Back lands on it again): it arrives as a new entry, the same new
+      // entry for every history entry that carried the old id.
+      const stamped = history.state && history.state.marEntry;
+      if (!stamped || retiredEntries.has(stamped)) {
+        let fresh = null;
+        if (stamped) {
+          let r = stamped;
+          for (let hops = 0; restampedEntries.has(r) && hops < 64; hops++) r = restampedEntries.get(r);
+          fresh = (r !== stamped && !retiredEntries.has(r)) ? r : newEntryId();
+          if (fresh !== r) restampedEntries.set(r, fresh);
+          restampedEntries.set(stamped, fresh);
+        } else {
+          fresh = newEntryId();
+        }
+        history.replaceState(Object.assign({}, history.state, { marEntry: fresh }), '',
+          window.location.pathname + window.location.search + window.location.hash);
+      }
       const pg = currentPage();
       if (!pg) return;
+      syncLiveStack(curEntryId(), currentNavDepth(), pg.activeKey);
 
       // ── Re-init on navigation: push is fresh, pop restores ──
       // Going somewhere NEW runs that page's `init` from scratch, as if
@@ -14044,17 +14149,10 @@
           pg.initWith(null, pg.params);
         }
       } else {
-        // Static public pages. These are init'd eagerly in
-        // buildPageEntry: no user to wait for, no params to read from
-        // the URL, but eager means ONCE, at mount. They still need
-        // this branch, because the guard above retires the key on every
-        // push and something has to run init again afterwards.
-        //
-        // Without it a static page kept its very first model for the
-        // life of the tab: the guard would clear the flags, nothing
-        // would re-init, and `get model()` went on returning the old
-        // model. Visibly: leave a search page, come back, your old
-        // query is still there.
+        // Static public pages init the first time their stack entry is
+        // shown, like every other page: each entry has a model of its own
+        // (see newEntryId), so a page pushed again is a new entry and
+        // starts over, and Back finds the entry it left as it was.
         if (!pg.initialized) {
           pg.initWith(null, null);
         }
@@ -14085,7 +14183,7 @@
         // drops nothing: the screen the app actually moved to has already
         // been drawn, or is waiting on a fetch that will draw it.
         const pathBefore = window.location.pathname;
-        runEffect(pg.initEffect);
+        runEffectAs(issuerFor(pg), pg.initEffect);
         if (window.location.pathname !== pathBefore) return;
       }
       // Per-page browser-tab title. Empty title (the default when the
@@ -14128,6 +14226,13 @@
       // (so opening it pauses at the present) or you've jumped to a past frame.
       if (preservedTimeTravel && (preservedTimeTravel.traveling || timeTravelPanelOpen())) desiredSub = stripClockSubs(desiredSub);
       reconcileSubs(desiredSub);
+      // A failure this page's update had while it was covered shows now that
+      // the page is on screen (see pendingPageErrors).
+      if (pendingPageErrors.has(pg.activeKey)) {
+        const err = pendingPageErrors.get(pg.activeKey);
+        pendingPageErrors.delete(pg.activeKey);
+        reportRuntimeError('update', err);
+      }
       // Read-only time-travel: while inspecting, DRAW the selected frame's
       // snapshot, but never touch pg.model: the live model keeps advancing
       // underneath (async results append at the tail). Only applies when the
@@ -14362,7 +14467,7 @@
     }
     function pushNav(path) {
       const leavingTitle = document.title || '';
-      const st = { marDepth: currentNavDepth() + 1, prevTitle: leavingTitle };
+      const st = { marDepth: currentNavDepth() + 1, prevTitle: leavingTitle, marEntry: newEntryId() };
       adoptPendingSheetEntry();
       // If a sheet's synthetic entry is the current top (a navigation
       // launched from an open sheet, e.g. "create, then jump to the new
@@ -14380,8 +14485,13 @@
     function replaceNav(path) {
       const prev = (history.state && history.state.prevTitle) || '';
       adoptPendingSheetEntry();
+      // Same url keeps the entry (and its model, as today); another url is
+      // another page in this slot.
+      let sameUrl = false;
+      try { sameUrl = new URL(path, window.location.href).pathname === window.location.pathname; } catch (_) {}
+      const keep = sameUrl && history.state && history.state.marEntry;
       history.replaceState(
-        { marDepth: currentNavDepth(), prevTitle: prev },
+        { marDepth: currentNavDepth(), prevTitle: prev, marEntry: keep || newEntryId() },
         '',
         path,
       );
@@ -14392,11 +14502,13 @@
     // (e.g. hot-reload) replace the table.
     globalThis.__marNav = {
       push: (path) => {
+        if (refusedFromCovered('Nav.push')) return;
         pendingNavKind = 'push';
         pushNav(path);
         render();
       },
       replace: (path) => {
+        if (refusedFromCovered('Nav.replace')) return;
         pendingNavKind = 'replace';
         replaceNav(path);
         // DROPPING THE CACHED USER HERE IS LOAD-BEARING, and it is worth
@@ -14429,9 +14541,10 @@
       // where "going back" makes no sense (you'd land on a page you
       // either can't access yet, or that you just finished with).
       replaceFresh: (path) => {
+        if (refusedFromCovered('Auth.completeSignIn')) return;
         pendingNavKind = 'replaceFresh';
         adoptPendingSheetEntry();
-        history.replaceState({ marDepth: 0, prevTitle: '' }, '', path);
+        history.replaceState({ marDepth: 0, prevTitle: '', marEntry: newEntryId() }, '', path);
         authUser = null;
         render();
       },
@@ -14464,6 +14577,7 @@
     // which page a past frame belongs to. Harmless in production (never called
     //: preservedTimeTravel is null so the traveling branch is dead).
     function lookupPageForFrame(framePath) {
+      framePath = String(framePath).split('#')[0];
       if (pages[framePath]) return pages[framePath];
       for (const dp of dynamicPages) {
         if (matchPathPattern(framePath, dp.pattern) !== null) {
@@ -15118,6 +15232,7 @@
       if (!pg) return;
 
       const prevModel = pg.model;
+      const issuer = issuerFor(pg);
       // Frame-time probe (gated by ?perf): stamp the start of the work so we
       // can measure update + render below. Zero cost when the flag is off.
       const __t0 = (__PERF_ON && typeof performance !== 'undefined') ? performance.now() : 0;
@@ -15163,26 +15278,12 @@
         // a new live msg (an async result; clock ticks are paused while
         // traveling) just goes on the end. It never rewrites history or the
         // model the user is looking at.
-        timeTravel.total = timeTravel.total + 1;   // the badge counter: grows forever
-        timeTravel.frames.push({
+        recordTimeTravelFrame({
           msg, prevModel, nextModel: out.model, hadEffect,
-          // pagePath records activeKey (URL for dynamic pages, pattern path
-          // otherwise) so a frame renders against the right page.
+          // pagePath records activeKey (route and history entry) so a frame
+          // renders against the right page.
           pagePath: pg.activeKey, time: Date.now(),
         });
-        const TT_MAX_FRAMES = 10000;
-        // The counter keeps climbing, but the SCRUBBABLE window is the last
-        // TT_MAX_FRAMES: drop older frames (you just can't rewind past them).
-        // Trim + follow the tail ONLY when live; while inspecting a past frame
-        // we drop nothing (the frame under the cursor must never be evicted)
-        // and leave the cursor parked. Both resume when the user goes live.
-        if (!timeTravel.traveling) {
-          if (timeTravel.frames.length > TT_MAX_FRAMES) {
-            timeTravel.frames = timeTravel.frames.slice(-TT_MAX_FRAMES);
-          }
-          timeTravel.cursor = timeTravel.frames.length - 1;
-        }
-        pushTimeTravelState();
       }
 
       // Intermediate catch-up ticks (ADR-0003) advance the model without
@@ -15202,7 +15303,104 @@
         if (tickBurst) { tickBurstPerfCarry += el; }
         else { perfRecord(tickBurstPerfCarry + el); tickBurstPerfCarry = 0; }
       }
-      runEffect(out.effect);
+      runEffectAs(issuer, out.effect);
+    };
+
+    function recordTimeTravelFrame(frame) {
+      timeTravel.total = timeTravel.total + 1;   // the badge counter: grows forever
+      timeTravel.frames.push(frame);
+      const TT_MAX_FRAMES = 10000;
+      // The counter keeps climbing, but the SCRUBBABLE window is the last
+      // TT_MAX_FRAMES: drop older frames (you just can't rewind past them).
+      // Trim + follow the tail ONLY when live; while inspecting a past frame
+      // we drop nothing (the frame under the cursor must never be evicted)
+      // and leave the cursor parked. Both resume when the user goes live.
+      if (!timeTravel.traveling) {
+        if (timeTravel.frames.length > TT_MAX_FRAMES) {
+          timeTravel.frames = timeTravel.frames.slice(-TT_MAX_FRAMES);
+        }
+        timeTravel.cursor = timeTravel.frames.length - 1;
+      }
+      pushTimeTravelState();
+    }
+
+    // The issuer of a page's effects: its stack entry, and the key its model
+    // lives under (route plus entry). Captured when the effect runs, so a
+    // result finds the page that asked for it wherever the person has gone.
+    function issuerFor(pg) {
+      return { key: pg.activeKey, entryId: curEntryId(), params: pg.params };
+    }
+    // Brings liveEntries up to date with the entry being shown: the entries at
+    // its depth or deeper, other than itself, have left the stack (Back popped
+    // them, or a push replaced what was above). Their models are freed and
+    // their ids retired.
+    function syncLiveStack(id, depth, key) {
+      for (const [eid, e] of [...liveEntries]) {
+        if (eid === id) { if (e.key !== key) dropKey(e.key); continue; }
+        if (e.depth >= depth) { liveEntries.delete(eid); retiredEntries.add(eid); dropKey(e.key); }
+      }
+      liveEntries.set(id, { depth, key });
+    }
+    function dropKey(key) {
+      const p = lookupPageForFrame(key);
+      if (p) p.resetKey(key);
+      pendingPageErrors.delete(key);
+    }
+    issuerIsCovered = (issuer) => {
+      if (!issuer || !issuer.key) return false;
+      const top = currentPage();
+      return !(top && top.activeKey === issuer.key);
+    };
+    pageDeliverHook = (issuer, msg) => {
+      if (halted) return;
+      const live = liveEntries.get(issuer.entryId);
+      if (!live || live.key !== issuer.key) {
+        if (__MAR_DEV__ && global.__marDevMode && typeof console !== 'undefined' && console.warn) {
+          console.warn('[mar] dropped a result for a page that left the stack: ' + describeValue(msg));
+        }
+        return;
+      }
+      const top = currentPage();
+      if (top && top.activeKey === issuer.key) { if (currentDispatch) currentDispatch(msg); return; }
+      // Covered: run its update on the model its entry keeps.
+      const cpg = lookupPageForFrame(issuer.key);
+      if (!cpg) return;
+      const prevModel = cpg.modelAt(issuer.key);
+      if (prevModel === undefined) return;
+      // A protected page needs its person. Not known yet (a replace or a
+      // reload forgets the cached answer): ask, then deliver. Signed out:
+      // there is nobody to update for.
+      if (cpg.isProtected && authUser == null) {
+        fetchAuthMe().then(() => pageDeliverHook(issuer, msg));
+        return;
+      }
+      const user = getUser();
+      if (cpg.isProtected && user == null) return;
+      let out;
+      try {
+        let f = cpg.update;
+        if (cpg.isProtected) f = apply(f, user);
+        if (cpg.isDynamic) f = apply(f, issuer.params);
+        out = unwrapModelTuple(apply(apply(f, msg), prevModel));
+      } catch (err) {
+        if (err && err.marNoCaseBranch) return;   // see currentDispatch
+        if (!pendingPageErrors.has(issuer.key)) pendingPageErrors.set(issuer.key, err);
+        return;
+      }
+      cpg.setModelAt(issuer.key, out.model);
+      // An update that worked clears a failure held from an earlier one, as
+      // a dispatch that works clears the banner on screen.
+      pendingPageErrors.delete(issuer.key);
+      if (__MAR_DEV__ && global.__marDevMode) {
+        const hadEffect = !!(out.effect && out.effect.k === 'E' && out.effect.tag !== 'none');
+        recordTimeTravelFrame({ msg, prevModel, nextModel: out.model, hadEffect,
+          pagePath: issuer.key, offscreen: true, time: Date.now() });
+      }
+      // Not repainted, even under a presented route where it shows: a page
+      // that is not on top does not change the screen. Its view could open
+      // a UI.sheet or a confirm whose history entry and messages would land
+      // on the route above it. It shows its model when it is on top again.
+      runEffectAs(issuer, out.effect);
     };
 
     // Stamp marDepth: 0 onto the initial history entry so every
@@ -15211,7 +15409,7 @@
     // 0, pushes with depth 1, which is correct but only by accident.
     // Doing it explicitly here keeps `currentNavDepth()` honest from
     // the very first render onward.
-    if (history.state == null || typeof history.state.marDepth !== 'number') {
+    if (history.state == null || typeof history.state.marDepth !== 'number' || !history.state.marEntry) {
       replaceNav(window.location.pathname + window.location.search + window.location.hash);
     }
 
@@ -15285,7 +15483,7 @@
     // Service.call fired there would resolve into nothing.
     const cmds = pendingSharedCmds;
     pendingSharedCmds = [];
-    for (const c of cmds) runEffect(c);
+    for (const c of cmds) runEffectAs({ shared: c.def }, c.cmd);
     return VUnit();
   }
 
@@ -15543,6 +15741,7 @@
     // sign you out or refetch your profile, exactly as it does not reset a
     // page model.
     sharedStores.clear();
+    pendingPageErrors.clear();
     sharedRerender = null;
     pendingSharedCmds = [];
     sharedDefSeq = 0;

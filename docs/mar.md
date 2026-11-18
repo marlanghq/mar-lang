@@ -736,10 +736,13 @@ around:
 - **Opened cold it renders full screen.** A deep link, a reload or a
   shared URL has no page behind it to present over, so the route mounts
   like any other page. Write it so it reads on its own.
-- **The covered page is inert while it is covered**, and it comes back
-  exactly as it was — same model, same scroll. Nothing refetches on
-  dismissal, so if the task changed data the page underneath is showing,
-  that page will be stale until something asks it to reload.
+- **The covered page waits underneath**, and comes back with the same
+  model and the same scroll. A result it asked for before the sheet opened
+  still reaches it while it is covered. A navigation or a sound that result
+  asks for is ignored, and a timer or a sound loop it turns on waits until
+  the sheet closes: the person is looking at the sheet. Nothing
+  refetches on dismissal, so if the task changed data the page underneath
+  is showing, that page will be stale until something asks it to reload.
 
 A presented route has no navigation bar of its own — the sheet is not on
 the stack — so its own header is the chrome: the dismiss on one side, the
@@ -778,6 +781,8 @@ update msg model =
 `replace` swaps the current entry, so Back does not return to it; `push` adds one. After a successful sign-in, `Auth.completeSignIn` returns the user to wherever a 401 sent them (or home).
 
 `Nav.dismiss` closes a route that is being presented (`Page.sheet`) — the verb its own Cancel / Done needs, doing exactly what a tap outside or Back does. With nothing presented it steps back one screen, and at the app's first screen it does nothing, so a sheet route opened cold cannot walk the reader off the site.
+
+Each screen on the stack has a model of its own, even two of the same page: from A to B and to A again, Back twice finds the first A as you left it. A result a page asked for (a `Service.call`, a `Cmd.perform`) goes back to that page wherever you have gone since: a page covered by another one is updated while it waits underneath, but it does not navigate or play a sound, since you are looking at another screen. A result for a screen that has left the stack is dropped, and the browser's Forward onto a screen you went Back from starts that screen over, as a push does.
 
 ### 5.5 Shared state (`App.shared`)
 

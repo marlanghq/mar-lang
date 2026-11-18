@@ -21,13 +21,13 @@ import (
 // answers differently per platform, the same program is two programs.
 //
 // The old iOS TabView broke exactly that, and not because it was a tab bar:
-// it mounted every page at once and switched by visibility, so navPath never
+// it mounted every page at once and switched by visibility, so the stack never
 // moved and there was no push to re-init from. A tab bar that selects by
-// writing navPath would keep the lifecycle intact and is fine.
+// writing the stack would keep the lifecycle intact and is fine.
 //
 // So the invariant checked here is chrome-agnostic: the shell RESOLVES a
 // route, it does not mount pages. Exactly one page host is alive, and which
-// one is a function of AppContext.navPath.
+// one is a function of AppContext.stack.
 func TestTheShellResolvesRoutesAndDoesNotMountPages(t *testing.T) {
 	dir := filepath.Join("template", "Sources")
 	b, err := os.ReadFile(filepath.Join(dir, "ContentView.swift"))
@@ -53,28 +53,27 @@ func TestTheShellResolvesRoutesAndDoesNotMountPages(t *testing.T) {
 				"move between them is a visibility change, not a push: init never "+
 				"re-runs, Back restores nothing, and ADR-0009 quietly stops "+
 				"holding on iOS while the web still honors it.\n"+
-				"  Mount through RouteView(path:) so the live page stays a "+
-				"function of navPath.", shell)
+				"  Mount through RouteView(entry:) so the live page stays a "+
+				"function of the navigation stack.", shell)
 		}
 	}
 
-	// And the multi-page shell has to actually read the nav path: a shell
-	// that mounts through RouteView but picks the path from somewhere else
-	// (a @State selection, an index into `pages`) satisfies the check above
-	// and still detaches navigation from Nav.push/Nav.replace.
+	// And the multi-page shell has to actually read the stack: a shell that
+	// mounts through RouteView but picks the entry from somewhere else (a
+	// @State selection, an index into `pages`) satisfies the check above and
+	// still detaches navigation from Nav.push/Nav.replace.
 	body, ok := structBody(source, "StackShell")
-	if ok && !containsStatement(body, "ctx.navPath") {
-		t.Error("StackShell no longer reads ctx.navPath.\n" +
+	if ok && !containsStatement(body, "ctx.stack") {
+		t.Error("StackShell no longer reads ctx.stack.\n" +
 			"  symptom: Nav.push and Nav.replace stop driving what is on screen, " +
 			"so the app's own navigation effects and the chrome disagree.")
 	}
 
 	// This is a proxy and it is worth naming as one: it can show that the
-	// wiring still runs through navPath, never that the lifecycle is right.
-	// The web has a real behavioural guard for that (nav_lifecycle_test.go
-	// drives the actual runtime); iOS does not, and the sequence was checked
-	// by hand on the simulator. Until an iOS equivalent exists, a change to
-	// the shell deserves that check re-run by hand.
+	// wiring still runs through the stack, never that the lifecycle is right.
+	// The behavioural guards are TestNavigationLifecycleOnIOS and
+	// TestEffectResultsReachTheirPageOnIOS, which drive the real shell on the
+	// simulator, and nav_lifecycle_test.go on the web.
 }
 
 // structBody returns the source between `struct <name>` and the closing brace

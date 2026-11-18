@@ -34,6 +34,11 @@ var iosSubsScripts = []struct {
 		want:   "start:N=0 push-a:A=1 push-b:B=1 back-a:A=1 push-b-again:B=1 replace-a:A=1",
 	},
 	{
+		name:   "AnInitMessageReachesItsPageWhenSwiftUIMountsAnother",
+		script: "subs-remount",
+		want:   "start:N=0 push-k:K=1",
+	},
+	{
 		name:   "APageJoiningItsStoresRunningSourceGetsTheDevice",
 		script: "subs-shared",
 		want:   "start:N=0 push-k:K=1 replace-p:P=0 push-l:L=0 armed:L=1",

@@ -723,3 +723,18 @@ process.stdout.write(seen.join(' '));
 			"reset[A seen=0 w=0] → the fresh model kept the old page's owner and was handed nothing.", got, want)
 	}
 }
+
+// The order that once handed K's init message to another page on the phone
+// (internal/iosbundle/ios_sub_seed_test.go, subs-remount), same string.
+func TestAnInitMessageReachesItsPage(t *testing.T) {
+	got := runSubsDriver(t, parity.SubsSource, subsScript(`
+globalThis.__marNav.push('/p'); await flush();
+globalThis.__marNav.push('/l'); await flush();
+press('arm'); await flush();
+globalThis.__marNav.push('/k'); await flush(); note('push-k');
+`))
+	want := "start:N=0 push-k:K=1"
+	if got != want {
+		t.Fatalf("K's init message did not reach K.\n got: %s\nwant: %s", got, want)
+	}
+}

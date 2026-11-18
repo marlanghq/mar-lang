@@ -59,7 +59,7 @@ final class MarSharedStore {
             model = out
         }
         MarSharedRegistry.preserve(key: key, model: model)
-        if let effect { MarSharedRegistry.runEffect(effect) }
+        if let effect { MarSharedRegistry.runEffect(effect, owner: key) }
         MarSharedRegistry.notifyChanged()
     }
 
@@ -97,7 +97,7 @@ enum MarSharedRegistry {
     /// so the Service.call that fills the store dispatches into a live loop
     /// rather than into a dead one. The web defers these the same way
     /// (`pendingSharedCmds`).
-    private static var pendingInitEffects: [MarValue] = []
+    private static var pendingInitEffects: [(key: String, effect: MarValue)] = []
 
     /// Mounted pages that want to hear about a shared change, keyed by the
     /// page runtime's identity. A SET rather than one slot, because a pushed
@@ -148,7 +148,7 @@ enum MarSharedRegistry {
         stores[key] = made
         if preserved == nil {
             preservedModels[key] = made.model
-            if let initEffect { pendingInitEffects.append(initEffect) }
+            if let initEffect { pendingInitEffects.append((key, initEffect)) }
         }
         return made
     }
@@ -183,10 +183,15 @@ enum MarSharedRegistry {
     /// page's would make whichever page happened to be on screen the owner of
     /// app-wide work. The web runs shared effects through its global
     /// `runEffect` for the same reason.
-    static func runEffect(_ v: MarValue) {
+    ///
+    /// Its async results come back to this store, by KEY: a program reload
+    /// rebuilds the store object but keeps the key and the model, so a reply
+    /// still in flight lands on the store that holds that model now.
+    static func runEffect(_ v: MarValue, owner key: String) {
         guard case .effect(let eff) = v else { return }
+        let reply: MarReply = { msg in MarSharedRegistry.lookup(key)?.dispatch(msg) }
         do {
-            _ = try eff.run()
+            _ = try MarDispatcher.shared.issuing(reply) { try eff.run() }
         } catch {
             print("[mar] shared effect [\(eff.tag)] failed: \(error.localizedDescription)")
         }
@@ -197,6 +202,6 @@ enum MarSharedRegistry {
     static func drainInitEffects() {
         let queued = pendingInitEffects
         pendingInitEffects = []
-        for eff in queued { runEffect(eff) }
+        for q in queued { runEffect(q.effect, owner: q.key) }
     }
 }

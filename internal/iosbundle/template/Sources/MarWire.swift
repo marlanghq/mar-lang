@@ -431,7 +431,8 @@ enum MarWire {
                 }
                 let built = MarBuiltins.buildServiceRequest(verb: verb, pattern: pattern, req: args[1])
                 MarHTTP.fireService(method: verb, path: built.url, body: built.body,
-                                    toMsg: toMsg, responseShape: shape)
+                                    toMsg: toMsg, responseShape: shape,
+                                    reply: MarDispatcher.shared.replyTo())
                 return .unit
             })
         })
@@ -454,7 +455,8 @@ enum MarWire {
                     okOutcome: { user in .ctor(tag: "SignedIn", args: [user]) },
                     mapCode: MarHTTP.verifyCodeOutcome,
                     toMsg: toMsg,
-                    userShape: shape)
+                    userShape: shape,
+                    reply: MarDispatcher.shared.replyTo())
                 return .unit
             })
         })
@@ -470,7 +472,7 @@ enum MarWire {
         .fn(MarFn.native(1) { args in
             let toMsg = args[0]
             return .effect(MarEffect(tag: "Auth.me") {
-                MarHTTP.fireAuthMe(toMsg: toMsg, userShape: shape)
+                MarHTTP.fireAuthMe(toMsg: toMsg, userShape: shape, reply: MarDispatcher.shared.replyTo())
                 return .unit
             })
         })

@@ -1376,7 +1376,12 @@ final class MarSound: @unchecked Sendable {
         // --- play (Cmd) + loop/ambient/once (Sub) + app controls ---
         env.defineFn("soundPlay", "Sound.play", 1) { a in
             let snd = a[0]
-            return .effect(MarEffect(tag: "soundPlay") { MarSound.shared.playOnce(snd); return .unit })
+            return .effect(MarEffect(tag: "soundPlay") {
+                // A page that is not on screen does not play sound behind the
+                // one that is (MarDispatcher.refusedFromCovered).
+                if !MarDispatcher.shared.refusedFromCovered("Sound.play") { MarSound.shared.playOnce(snd) }
+                return .unit
+            })
         }
         func soundSub(_ mode: String, _ snd: MarValue) -> MarValue {
             .ctor(tag: "__Sub", args: [.ctor(tag: "__SubSound", args: [.string(mode), snd])])
