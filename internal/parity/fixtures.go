@@ -360,3 +360,142 @@ main : Cmd ()
 main =
     App.frontend [ page ]
 `
+
+// SubsSource is an app whose pages watch the device, to check that a page
+// gets the device's state each time it is shown: when it is pushed, when Back
+// returns to it, when it replaces another, and when it starts watching while
+// a shared store already does.
+//
+// Each count is the number of Device messages that page received. A page
+// shown once, with nothing changing, must read 1: 0 is a page left without
+// the state, 2 is a state handed over twice.
+//
+// N is the landing page and watches nothing, so the first page that watches
+// is shown by a navigation. The store's own count is not shown: what is under
+// test is what each page receives. (On the web the store watches from the
+// first render, so A and B join its running source; on the phone each page
+// runtime starts its own. The counts are the same either way.)
+const SubsSource = `module Main exposing (main)
+
+
+import UI exposing (vstack, text, button, navigationStack, navigationTitle)
+
+
+type StoreMsg
+    = StoreGot Device
+
+
+store : App.Shared Int StoreMsg
+store =
+    App.shared
+        { init = ( 0, Cmd.none )
+        , update = \_ n -> ( n + 1, Cmd.none )
+        , subscriptions = \_ -> Device.watch StoreGot
+        }
+
+
+type alias Model =
+    { n : Int, armed : Bool }
+
+
+type Msg
+    = Arm
+    | Got Device
+
+
+init : (Model, Cmd Msg)
+init = ( { n = 0, armed = False }, Cmd.none )
+
+
+update : Msg -> Model -> (Model, Cmd Msg)
+update msg model =
+    case msg of
+        Arm -> ( { model | armed = True }, Cmd.none )
+        Got _ -> ( { model | n = model.n + 1 }, Cmd.none )
+
+
+viewFor : String -> Model -> View Msg
+viewFor label model =
+    navigationStack [ navigationTitle label ]
+        [ vstack []
+            [ text [] (label ++ "=" ++ String.fromInt model.n)
+            , button [] Arm "arm"
+            ]
+        ]
+
+
+page : String -> String -> (Model -> Sub Msg) -> Page
+page path label subs =
+    Page.create
+        { path = path
+        , title = label
+        , init = init
+        , update = update
+        , view = viewFor label
+        , subscriptions = subs
+        }
+
+
+watchingAlways : Model -> Sub Msg
+watchingAlways _ =
+    Device.watch Got
+
+
+-- L starts watching only when "arm" is pressed, while the store it reads
+-- has been watching all along: it joins a source that is already running.
+watchingOnceArmed : Model -> Sub Msg
+watchingOnceArmed model =
+    if model.armed then Device.watch Got else Sub.none
+
+
+-- K arms itself in init: it starts watching in the same turn as the store's
+-- source starts, and is handed the state once.
+armAtOnce : (Model, Cmd Msg)
+armAtOnce =
+    ( { n = 0, armed = False }, Cmd.perform (\_ -> Arm) Time.now )
+
+
+pageN : Page
+pageN =
+    page "/" "N" (always Sub.none)
+
+
+pageA : Page
+pageA =
+    page "/a" "A" watchingAlways
+
+
+pageB : Page
+pageB =
+    page "/b" "B" watchingAlways
+
+
+pageP : Page
+pageP =
+    Page.withShared store (\_ -> page "/p" "P" (always Sub.none))
+
+
+pageL : Page
+pageL =
+    Page.withShared store (\_ -> page "/l" "L" watchingOnceArmed)
+
+
+pageK : Page
+pageK =
+    Page.withShared store
+        (\_ ->
+            Page.create
+                { path = "/k"
+                , title = "K"
+                , init = armAtOnce
+                , update = update
+                , view = viewFor "K"
+                , subscriptions = watchingOnceArmed
+                }
+        )
+
+
+main : Cmd ()
+main =
+    App.frontend [ pageN, pageA, pageB, pageP, pageL, pageK ]
+`

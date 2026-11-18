@@ -210,3 +210,278 @@ process.stdout.write(
 		})
 	}
 }
+
+// A message that lands while Back is still animating must reach the page Back
+// restored, not wipe it.
+//
+// Under View Transitions the DOM swap runs a frame after render() returns. The
+// nav bookkeeping (lastSeenNavDepth) advances in render(), but which page is
+// live (mountedPath) used to be stamped only in the swap. A message dispatched
+// in between re-rendered with the depth already caught up, so it no longer read
+// as 'back', and the old mountedPath made it look like a new arrival: the
+// re-init guard reset the restored page. A forward push had the same race and
+// claims mountedPath in the guard; Back did not.
+//
+// The fake browser has no startViewTransition, so its swap is synchronous and
+// the window never opened. This driver adds one that runs the swap a frame
+// later, the way a browser does, and resizes the window inside it: the
+// restored page hears the device change while Back is still sliding.
+func TestAMessageDuringTheBackTransitionKeepsTheRestoredPage(t *testing.T) {
+	src := `module Main exposing (main)
+
+
+import UI exposing (vstack, text, button)
+
+
+type alias Model =
+    { taps : Int, seen : Int }
+
+
+type Msg
+    = Tap
+    | Got Device
+
+
+init : (Model, Cmd Msg)
+init = ( { taps = 0, seen = 0 }, Cmd.none )
+
+
+update : Msg -> Model -> (Model, Cmd Msg)
+update msg model =
+    case msg of
+        Tap -> ( { model | taps = model.taps + 1 }, Cmd.none )
+        Got _ -> ( { model | seen = model.seen + 1 }, Cmd.none )
+
+
+watching : String -> String -> Page
+watching path name =
+    Page.create
+        { path = path, title = name, init = init, update = update
+        , view = \m -> vstack [] [ text [] (name ++ " taps=" ++ String.fromInt m.taps ++ " seen=" ++ String.fromInt m.seen), button [] Tap "bump" ]
+        , subscriptions = \_ -> Device.watch Got }
+
+
+pageA : Page
+pageA =
+    watching "/a" "A"
+
+
+pageB : Page
+pageB =
+    watching "/b" "B"
+
+
+main : Cmd ()
+main =
+    App.frontend [ pageA, pageB ]
+`
+	program, err := parity.Compile(src, SerializeModule)
+	if err != nil {
+		t.Fatalf("compiling the fixture: %v", err)
+	}
+	got, err := parity.RunWeb(runtimeJS, program, `
+const fs = require('fs');
+(0, eval)(fs.readFileSync(process.argv[2], 'utf8'));
+const program = JSON.parse(fs.readFileSync(process.argv[3], 'utf8'));
+// A browser runs the swap in a later frame.
+document.startViewTransition = (swap) => {
+  const finished = new Promise((done) => setTimeout(() => { swap(); done(); }, 16));
+  return { finished };
+};
+const frame = () => new Promise((r) => setTimeout(r, 40));
+const seen = [];
+const note = (l) => seen.push(l + '[' + (screenText().match(/[AB] taps=\d+ seen=\d+/) || ['?'])[0] + ']');
+window.marRun(program);
+(async () => {
+await frame(); bump(); await frame(); note('tapped');
+globalThis.__marNav.push('/b'); await frame(); note('on-b');
+history.back();
+window.innerWidth = 500; fireWindow('resize');
+await frame(); note('back-a');
+process.stdout.write(seen.join(' '));
+})().catch((e) => { process.stdout.write('THREW ' + e); });
+`)
+	if errors.Is(err, parity.ErrNoNode) {
+		t.Skip("node not installed")
+	}
+	if err != nil {
+		t.Fatalf("node run: %v", err)
+	}
+	want := "tapped[A taps=1 seen=1] on-b[B taps=0 seen=1] back-a[A taps=1 seen=2]"
+	if got != want {
+		t.Fatalf("a message during the Back transition changed which page was restored.\n got: %s\nwant: %s\n\n"+
+			"back-a[A taps=0 ...] → the message re-initialized the page Back restored.", got, want)
+	}
+}
+
+// The browser captures the page being left when a View Transition starts, and
+// slides from it to the new one. A message the new page receives before the
+// swap (here the device's state, which a page joining a running source is
+// handed at once) must not swap the new page in early: the browser would
+// capture the new page as the old one and slide the page onto itself, and the
+// page would be built twice.
+func TestAViewTransitionSlidesFromThePageBeingLeft(t *testing.T) {
+	src := `module Main exposing (main)
+
+
+import UI exposing (vstack, text)
+
+
+type alias Model =
+    { seen : Int }
+
+
+type Msg
+    = Got Device
+
+
+watching : String -> String -> Page
+watching path name =
+    Page.create
+        { path = path, title = name
+        , init = ( { seen = 0 }, Cmd.none )
+        , update = \_ m -> ( { seen = m.seen + 1 }, Cmd.none )
+        , view = \m -> vstack [] [ text [] (name ++ " seen=" ++ String.fromInt m.seen) ]
+        , subscriptions = \_ -> Device.watch Got }
+
+
+pageA : Page
+pageA =
+    watching "/a" "A"
+
+
+pageB : Page
+pageB =
+    watching "/b" "B"
+
+
+main : Cmd ()
+main =
+    App.frontend [ pageA, pageB ]
+`
+	program, err := parity.Compile(src, SerializeModule)
+	if err != nil {
+		t.Fatalf("compiling the fixture: %v", err)
+	}
+	got, err := parity.RunWeb(runtimeJS, program, `
+const fs = require('fs');
+(0, eval)(fs.readFileSync(process.argv[2], 'utf8'));
+const program = JSON.parse(fs.readFileSync(process.argv[3], 'utf8'));
+const shown = () => (screenText().match(/[AB] seen=\d+/) || ['?'])[0];
+const seen = [];
+let swaps = 0;
+// Like a browser: the old state is captured at the next task, the swap runs a
+// frame later.
+document.startViewTransition = (swap) => {
+  setTimeout(() => seen.push('captured[' + shown() + ']'), 0);
+  const finished = new Promise((done) => setTimeout(() => { swaps++; swap(); done(); }, 16));
+  return { finished };
+};
+const frame = () => new Promise((r) => setTimeout(r, 40));
+window.marRun(program);
+(async () => {
+await frame();
+globalThis.__marNav.push('/b'); await frame(); seen.push('on-b[' + shown() + ']');
+process.stdout.write(seen.join(' ') + ' swaps=' + swaps);
+})().catch((e) => { process.stdout.write('THREW ' + e); });
+`)
+	if errors.Is(err, parity.ErrNoNode) {
+		t.Skip("node not installed")
+	}
+	if err != nil {
+		t.Fatalf("node run: %v", err)
+	}
+	want := "captured[A seen=1] on-b[B seen=1] swaps=1"
+	if got != want {
+		t.Fatalf("the transition did not slide from the page being left.\n got: %s\nwant: %s\n\n"+
+			"captured[B ...] → the new page was swapped in before the browser captured the old one.", got, want)
+	}
+}
+
+// Claiming the live page on Back also keeps a sheet's model when a second
+// sheet over it is dismissed: the sheet path never stamped mountedPath, so the
+// next message to the first sheet looked like a new arrival and reset it.
+func TestDismissingASheetOverASheetKeepsTheFirst(t *testing.T) {
+	src := `module Main exposing (main)
+
+
+import UI exposing (vstack, text, button)
+
+
+type alias Model =
+    { n : Int }
+
+
+type Msg
+    = Bump
+
+
+sheetPage : String -> String -> Page
+sheetPage path name =
+    Page.sheet
+        (Page.create
+            { path = path, title = name
+            , init = ( { n = 0 }, Cmd.none )
+            , update = \_ m -> ( { n = m.n + 1 }, Cmd.none )
+            , view = \m -> vstack [] [ text [] (name ++ "=" ++ String.fromInt m.n), button [] Bump "bump" ]
+            , subscriptions = always Sub.none
+            })
+
+
+home : Page
+home =
+    Page.create
+        { path = "/a", title = "A"
+        , init = ( { n = 0 }, Cmd.none )
+        , update = \_ m -> ( m, Cmd.none )
+        , view = \_ -> vstack [] [ text [] "A=0" ]
+        , subscriptions = always Sub.none
+        }
+
+
+sheetOne : Page
+sheetOne =
+    sheetPage "/s1" "S"
+
+
+sheetTwo : Page
+sheetTwo =
+    sheetPage "/s2" "N"
+
+
+main : Cmd ()
+main =
+    App.frontend [ home, sheetOne, sheetTwo ]
+`
+	program, err := parity.Compile(src, SerializeModule)
+	if err != nil {
+		t.Fatalf("compiling the fixture: %v", err)
+	}
+	got, err := parity.RunWeb(runtimeJS, program, `
+const fs = require('fs');
+(0, eval)(fs.readFileSync(process.argv[2], 'utf8'));
+const program = JSON.parse(fs.readFileSync(process.argv[3], 'utf8'));
+window.marRun(program);
+// The sheet on top is the last open sheet host; its last "bump" is its own.
+const sheetHost = () => (document.body.children || []).filter((c) => c.classList && c.classList.contains('mar-page-sheet') && c.classList.contains('mar-sheet-open')).pop();
+const lastBump = (node) => { let found = null; const walk = (n) => { if (n.textContent === 'bump' && n._on && n._on.click) found = n; (n.children || []).forEach(walk); }; if (node) walk(node); return found; };
+const sheet = () => ([...sheetText().matchAll(/[SN]=\d+/g)].map((m) => m[0]).pop() || '-');
+const seen = [];
+globalThis.__marNav.push('/s1');
+lastBump(sheetHost()).click(); seen.push('s1[' + sheet() + ']');
+globalThis.__marNav.push('/s2'); seen.push('s2[' + sheet() + ']');
+history.back(); seen.push('back[' + sheet() + ']');
+lastBump(sheetHost()).click(); seen.push('bumped[' + sheet() + ']');
+process.stdout.write(seen.join(' '));
+`)
+	if errors.Is(err, parity.ErrNoNode) {
+		t.Skip("node not installed")
+	}
+	if err != nil {
+		t.Fatalf("node run: %v", err)
+	}
+	want := "s1[S=1] s2[N=0] back[S=1] bumped[S=2]"
+	if got != want {
+		t.Fatalf("dismissing the second sheet reset the first.\n got: %s\nwant: %s", got, want)
+	}
+}

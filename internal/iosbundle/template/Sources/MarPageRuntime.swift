@@ -238,12 +238,24 @@ final class PageRuntime {
     /// records + activeSubs map in internal/jsserve/runtime.js.
     final class LiveSub {
         var taggers: [MarValue]
+        /// Who each tagger belongs to, index for index: "page", or the key of
+        /// the shared store whose subscription it is. Taggers are fresh
+        /// closures on every reconcile, so only the owner says that a
+        /// subscriber is new rather than the same one again.
+        var owners: [String] = []
         let stop: () -> Void
         /// Optional live-retarget hook, called with the item's payload when
         /// the SAME key survives a reconcile. Sound.voice / Sound.glide use it to slide
         /// the held bed to a new pitch/volume (the JS `update:` on the
         /// ambient subSource); sources without live state leave it nil.
         var update: ((MarValue) -> Void)?
+        /// A source that reports a state (Device, Keyboard, Gamepad): each
+        /// owner that starts listening, when the source starts or by joining
+        /// it, is handed the current state (see seedOwners).
+        var reportsState = false
+        /// Owners waiting for their seed, delivered as one dispatch on the
+        /// main actor. Nil when nothing is pending.
+        var seedFor: Set<String>?
         init(taggers: [MarValue], stop: @escaping () -> Void) { self.taggers = taggers; self.stop = stop }
     }
 
@@ -438,12 +450,13 @@ final class PageRuntime {
     // (loop / ambient / once). Compile-checked, verified on a real iOS build.
     private func reconcileSubs() {
         var desired: [String: [MarValue]] = [:]      // key -> taggers
+        var desiredOwners: [String: [String]] = [:]  // key -> owner of each tagger
         var makers: [String: () -> LiveSub] = [:]    // key -> native source factory
         var payloads: [String: MarValue] = [:]       // key -> live-retarget payload
 
-        func want(_ key: String, _ tagger: MarValue?, _ make: @escaping () -> LiveSub) {
-            if desired[key] == nil { desired[key] = []; makers[key] = make }
-            if let tagger { desired[key]!.append(tagger) }
+        func want(_ key: String, _ tagger: MarValue?, _ owner: String, _ make: @escaping () -> LiveSub) {
+            if desired[key] == nil { desired[key] = []; desiredOwners[key] = []; makers[key] = make }
+            if let tagger { desired[key]!.append(tagger); desiredOwners[key]!.append(owner) }
         }
 
         var subVal: MarValue?
@@ -461,8 +474,10 @@ final class PageRuntime {
         // this and solved it the same way (deliverSub in runtime.js).
         var sharedTaggers: [String: String] = [:]   // tagger identity -> store key
         var allItems: [MarValue] = []
+        var itemOwners: [String] = []               // owner of each item, index for index
         if let subVal, case .ctor("__Sub", let items) = subVal {
             allItems.append(contentsOf: items)
+            itemOwners.append(contentsOf: items.map { _ in "page" })
         }
         if let shared, let store = MarSharedRegistry.lookup(shared.key),
            case .ctor("__Sub", let items) = store.subscriptions() {
@@ -472,25 +487,25 @@ final class PageRuntime {
                 }
             }
             allItems.append(contentsOf: items)
+            itemOwners.append(contentsOf: items.map { _ in "shared:\(shared.key)" })
         }
         self.sharedTaggerOwners = sharedTaggers
 
         if !allItems.isEmpty {
-            let items = allItems
-            for item in items {
+            for (item, owner) in zip(allItems, itemOwners) {
                 guard case .ctor(let itag, let a) = item else { continue }
                 switch itag {
                 case "__SubEvery":
                     guard a.count == 2, case .duration(let ms) = a[0] else { continue }
                     let key = "every:\(ms)"
                     let seconds = Double(ms) / 1000
-                    want(key, a[1]) { [weak self] in self?.makeTimer(key, seconds) ?? LiveSub(taggers: []) {} }
+                    want(key, a[1], owner) { [weak self] in self?.makeTimer(key, seconds) ?? LiveSub(taggers: []) {} }
                 case "__SubKeyboard":
-                    want("keyboard", a.first) { [weak self] in self?.makeKeyboard() ?? LiveSub(taggers: []) {} }
+                    want("keyboard", a.first, owner) { [weak self] in self?.makeKeyboard() ?? LiveSub(taggers: []) {} }
                 case "__SubGamepad":
-                    want("gamepad", a.first) { [weak self] in self?.makeGamepad() ?? LiveSub(taggers: []) {} }
+                    want("gamepad", a.first, owner) { [weak self] in self?.makeGamepad() ?? LiveSub(taggers: []) {} }
                 case "__SubDevice":
-                    want("device", a.first) { [weak self] in self?.makeDevice() ?? LiveSub(taggers: []) {} }
+                    want("device", a.first, owner) { [weak self] in self?.makeDevice() ?? LiveSub(taggers: []) {} }
                 case "__SubSound":
                     guard a.count == 2, case .string(let mode) = a[0] else { continue }
                     let snd = a[1]
@@ -508,7 +523,7 @@ final class PageRuntime {
                         ? "sound:\(mode):\(MarSound.heldKey(snd, withFreq: mode == "voice"))"
                         : "sound:\(mode):\(MarSound.contentKey(snd))"
                     if held { payloads[key] = snd }
-                    want(key, nil) { [weak self] in self?.makeSound(mode, snd) ?? LiveSub(taggers: []) {} }
+                    want(key, nil, owner) { [weak self] in self?.makeSound(mode, snd) ?? LiveSub(taggers: []) {} }
                 default:
                     continue
                 }
@@ -523,15 +538,75 @@ final class PageRuntime {
         // Start new sources; refresh taggers on survivors and let sources
         // with live state (the ambient bed) retarget to the new payload.
         for (key, taggers) in desired {
+            let owners = desiredOwners[key] ?? []
             if let live = activeSubs[key] {
+                let joined = live.reportsState ? owners.filter { !live.owners.contains($0) } : []
                 live.taggers = taggers
+                live.owners = owners
                 if let p = payloads[key] { live.update?(p) }
+                seedOwners(key, live, joined)
             } else {
                 let live = makers[key]!()
                 live.taggers = taggers
+                live.owners = owners
                 activeSubs[key] = live
+                seedOwners(key, live, owners)
             }
         }
+    }
+
+    /// What the page was last handed by each state source, by source key. The
+    /// runtime outlives an unmount: SwiftUI can unmount a page a push covers
+    /// and mount it again, model and all, when Back shows it. A page shown
+    /// again is handed the state only if it changed meanwhile, as if it had
+    /// kept listening; a fresh runtime has nothing here and is always handed
+    /// it. Mirrors pageStateSeen in runtime.js.
+    @ObservationIgnored private var pageStateSeen: [String: MarValue] = [:]
+
+    private func readState(_ key: String) -> MarValue? {
+        switch key {
+        case "device": return DeviceHub.shared.currentRecord()
+        case "keyboard": return KeyboardHub.shared.currentRecord()
+        case "gamepad": return GamepadHub.shared.currentRecord()
+        default: return nil
+        }
+    }
+
+    /// Every delivery of a state source goes through here: a change to every
+    /// subscriber, or a seed to the ones that started listening.
+    private func deliverState(_ key: String, _ taggers: [MarValue], _ owners: [String], _ value: MarValue) {
+        if owners.contains("page") { pageStateSeen[key] = value }
+        let site = "a \(key) subscription"
+        for t in taggers { if let m = applyTagger(t, value, site) { dispatch(m) } }
+    }
+
+    /// Each owner that starts listening to a state source, when the source
+    /// starts or by joining one already running (a page that starts watching
+    /// the device while its shared store already does), is handed the current
+    /// state once, as one dispatch on the main actor. Who receives it is
+    /// decided at delivery: an owner that left in between gets nothing, and an
+    /// owner that started listening twice before it landed gets it once.
+    /// Mirrors seedSub in runtime.js.
+    private func seedOwners(_ key: String, _ live: LiveSub, _ owners: [String]) {
+        guard live.reportsState, !owners.isEmpty else { return }
+        if live.seedFor == nil {
+            live.seedFor = []
+            Task { @MainActor [weak self, weak live] in
+                guard let self, let live else { return }
+                let pending = live.seedFor ?? []
+                live.seedFor = nil
+                guard self.activeSubs[key] === live, let value = self.readState(key) else { return }
+                let unchanged = self.pageStateSeen[key].map { $0.equalsMar(value) } ?? false
+                var taggers: [MarValue] = []
+                var who: [String] = []
+                for (t, o) in zip(live.taggers, live.owners) where pending.contains(o) && !(o == "page" && unchanged) {
+                    taggers.append(t)
+                    who.append(o)
+                }
+                if !taggers.isEmpty { self.deliverState(key, taggers, who, value) }
+            }
+        }
+        live.seedFor?.formUnion(owners)
     }
 
     // MARK: source factories
@@ -564,35 +639,28 @@ final class PageRuntime {
         for t in live.taggers { if let m = applyTagger(t, now, "a Time.every subscription") { dispatch(m) } }
     }
 
-    // Keyboard.watch / Gamepad.watch: held-state mirrors. Each registers a
-    // change listener on its hub (which seeds the current snapshot on subscribe,
-    // deferred, like Device.watch) and delivers the whole record on every
-    // change. Mirrors subSources.keyboardWatch / gamepadWatch in runtime.js.
-    private func makeKeyboard() -> LiveSub {
-        let tok = KeyboardHub.shared.add { [weak self] in
-            guard let self, let live = self.activeSubs["keyboard"] else { return }
-            let rec = KeyboardHub.shared.currentRecord()
-            for t in live.taggers { if let m = self.applyTagger(t, rec, "a keyboard subscription") { self.dispatch(m) } }
-        }
-        return LiveSub(taggers: []) { KeyboardHub.shared.remove(tok) }
-    }
+    // Keyboard.watch / Gamepad.watch / Device.watch: state mirrors. Each
+    // registers a change listener on its hub and delivers the whole record on
+    // every change; a subscriber is handed the current record when it starts
+    // listening (seedOwners). Mirrors subSources.keyboardWatch / gamepadWatch /
+    // deviceWatch in runtime.js.
+    private func makeKeyboard() -> LiveSub { makeStateSource("keyboard", KeyboardHub.shared.add, KeyboardHub.shared.remove) }
+    private func makeGamepad() -> LiveSub { makeStateSource("gamepad", GamepadHub.shared.add, GamepadHub.shared.remove) }
+    private func makeDevice() -> LiveSub { makeStateSource("device", DeviceHub.shared.add, DeviceHub.shared.remove) }
 
-    private func makeGamepad() -> LiveSub {
-        let tok = GamepadHub.shared.add { [weak self] in
-            guard let self, let live = self.activeSubs["gamepad"] else { return }
-            let rec = GamepadHub.shared.currentRecord()
-            for t in live.taggers { if let m = self.applyTagger(t, rec, "a gamepad subscription") { self.dispatch(m) } }
+    /// A state source: its hub calls back on every change, which goes to every
+    /// subscriber; the state a subscriber is handed when it starts listening
+    /// comes from seedOwners, not from the hub.
+    private func makeStateSource(_ key: String,
+                                 _ add: (@escaping () -> Void) -> Int,
+                                 _ remove: @escaping (Int) -> Void) -> LiveSub {
+        let tok = add { [weak self] in
+            guard let self, let live = self.activeSubs[key], let value = self.readState(key) else { return }
+            self.deliverState(key, live.taggers, live.owners, value)
         }
-        return LiveSub(taggers: []) { GamepadHub.shared.remove(tok) }
-    }
-
-    private func makeDevice() -> LiveSub {
-        let tok = DeviceHub.shared.add { [weak self] in
-            guard let self, let live = self.activeSubs["device"] else { return }
-            let rec = DeviceHub.shared.currentRecord()
-            for t in live.taggers { if let m = self.applyTagger(t, rec, "a device subscription") { self.dispatch(m) } }
-        }
-        return LiveSub(taggers: []) { DeviceHub.shared.remove(tok) }
+        let live = LiveSub(taggers: []) { remove(tok) }
+        live.reportsState = true
+        return live
     }
 
     private func makeSound(_ mode: String, _ snd: MarValue) -> LiveSub {

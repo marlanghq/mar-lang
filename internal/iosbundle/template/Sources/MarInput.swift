@@ -40,9 +40,11 @@ final class GamepadHub {
     private var pressed: [String] = []        // held buttons, canonical order
     private var lx = 0, ly = 0, rx = 0, ry = 0
 
+    /// Calls `cb` on every change. The state a subscriber is handed when it
+    /// starts listening comes from the page runtime (seedOwners), not from
+    /// here.
     func add(_ cb: @escaping () -> Void) -> Int {
         wire(); token += 1; listeners[token] = cb
-        DispatchQueue.main.async { cb() }      // seed on subscribe
         return token
     }
     func remove(_ t: Int) { listeners[t] = nil }
@@ -140,9 +142,11 @@ final class KeyboardHub {
     private var wired = false
     private var held: [String] = []     // held codes, in press order
 
+    /// Calls `cb` on every change. The state a subscriber is handed when it
+    /// starts listening comes from the page runtime (seedOwners), not from
+    /// here.
     func add(_ cb: @escaping () -> Void) -> Int {
         wire(); token += 1; listeners[token] = cb
-        DispatchQueue.main.async { cb() }   // seed on subscribe
         return token
     }
     func remove(_ t: Int) { listeners[t] = nil }
@@ -232,11 +236,11 @@ final class DeviceHub {
     private var token = 0
     private var wired = false
 
+    /// Calls `cb` on every change. The state a subscriber is handed when it
+    /// starts listening comes from the page runtime (seedOwners), not from
+    /// here.
     func add(_ cb: @escaping () -> Void) -> Int {
         wire(); token += 1; listeners[token] = cb
-        // Fire once immediately (Device.watch delivers the current value on
-        // subscribe), deferred so it lands as its own dispatch.
-        DispatchQueue.main.async { cb() }
         return token
     }
     func remove(_ t: Int) { listeners[t] = nil }

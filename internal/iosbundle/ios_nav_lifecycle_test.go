@@ -133,7 +133,7 @@ var buildNavHostOnce struct {
 func buildNavHost(t *testing.T) *navHost {
 	t.Helper()
 	buildNavHostOnce.Do(func() {
-		host, skip, fail := makeNavHost(t)
+		host, skip, fail := makeHost(t, parity.NavSource, "NavCheck", navBundleID)
 		buildNavHostOnce.host = host
 		buildNavHostOnce.skip = skip
 		buildNavHostOnce.fail = fail
@@ -151,14 +151,14 @@ func buildNavHost(t *testing.T) *navHost {
 	return buildNavHostOnce.host
 }
 
-// makeNavHost scaffolds a project around the fixture, builds it for the
+// makeHost scaffolds a project around a fixture, builds it for the
 // simulator, and boots a device.
 //
 // Returns (host, skip, fail). Skip is for a machine that cannot run this at
 // all, no Xcode, no simulator, because a missing toolchain is not a failing
 // invariant and turning it into one would make the suite unusable off macOS.
 // Fail is for everything the machine COULD have done and did not.
-func makeNavHost(t *testing.T) (host *navHost, skip string, fail string) {
+func makeHost(t *testing.T, source, appName, bundleID string) (host *navHost, skip string, fail string) {
 	t.Helper()
 	if _, err := exec.LookPath("xcrun"); err != nil {
 		return nil, "xcrun not found (needs Xcode)", ""
@@ -173,16 +173,16 @@ func makeNavHost(t *testing.T) (host *navHost, skip string, fail string) {
 	// turn an unrelated flake into a lifecycle failure. DefaultBaseURL points
 	// at a closed port on purpose, so the background refresh fails fast and
 	// the embedded snapshot is what runs.
-	program, err := parity.Compile(parity.NavSource, jsserve.SerializeModule)
+	program, err := parity.Compile(source, jsserve.SerializeModule)
 	if err != nil {
 		t.Fatalf("compiling the fixture: %v", err)
 	}
 
 	dir := t.TempDir()
 	projectDir, err := Generate(Spec{
-		AppName:          "NavCheck",
-		BundleID:         navBundleID,
-		DisplayName:      "NavCheck",
+		AppName:          appName,
+		BundleID:         bundleID,
+		DisplayName:      appName,
 		MarketingVersion: "1.0.0",
 		BuildNumber:      "1",
 		DefaultBaseURL:   "http://127.0.0.1:1",
@@ -193,8 +193,8 @@ func makeNavHost(t *testing.T) (host *navHost, skip string, fail string) {
 	}
 
 	build := exec.Command("xcodebuild",
-		"-project", filepath.Join(projectDir, "NavCheck.xcodeproj"),
-		"-scheme", "NavCheck",
+		"-project", filepath.Join(projectDir, appName+".xcodeproj"),
+		"-scheme", appName,
 		"-sdk", "iphonesimulator",
 		"-destination", "platform=iOS Simulator,id="+udid,
 		"-derivedDataPath", filepath.Join(dir, "dd"),
@@ -203,11 +203,11 @@ func makeNavHost(t *testing.T) (host *navHost, skip string, fail string) {
 		return nil, "", "the iOS template does not compile:\n" + swiftErrors(string(outBytes))
 	}
 
-	app := filepath.Join(dir, "dd", "Build", "Products", "Debug-iphonesimulator", "NavCheck.app")
+	app := filepath.Join(dir, "dd", "Build", "Products", "Debug-iphonesimulator", appName+".app")
 	if _, err := os.Stat(app); err != nil {
-		return nil, "", "the build produced no NavCheck.app"
+		return nil, "", "the build produced no " + appName + ".app"
 	}
-	return &navHost{appPath: app, bundleID: navBundleID, udid: udid}, "", ""
+	return &navHost{appPath: app, bundleID: bundleID, udid: udid}, "", ""
 }
 
 // runNavScript installs the host, launches it with the script selected, and

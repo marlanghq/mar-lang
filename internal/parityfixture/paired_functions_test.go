@@ -62,7 +62,15 @@ func TestEveryFunctionImplementedTwiceIsAccountedFor(t *testing.T) {
 	// compares all three. The wire round trip (parityfixture.WireCases)
 	// compares them on the way in.
 	//
-	// The newest six are a Decimal's two bounds (ADR 0039), written once per
+	// `deliverState` (browser and phone) is the newest: every delivery of a
+	// state source (Device, Keyboard, Gamepad) goes through it, a change to
+	// every subscriber or the state handed to one that starts listening, and
+	// it remembers what the page on screen was handed. What compares the two is
+	// behaviour: parity.SubsSource runs through the same scripts with the same
+	// expected strings in internal/jsserve/sub_seed_test.go and
+	// internal/iosbundle/ios_sub_seed_test.go.
+	//
+	// The six before it are a Decimal's two bounds (ADR 0039), written once per
 	// runtime: errDecimalOverflow, errDecimalPlaces and errScaleArgument (the
 	// three sentences), decimalFromWireNumber (a JSON number's text, now on all
 	// three), and placesToDrop and decimalFromDigits (the rule itself, on the
@@ -110,8 +118,8 @@ func TestEveryFunctionImplementedTwiceIsAccountedFor(t *testing.T) {
 	// had it, left the name count unmoved and the test silent. Measured, not
 	// reasoned -- the sabotage was supposed to fail and did not.
 	const (
-		pairs           = 106
-		implementations = 253
+		pairs           = 107
+		implementations = 255
 	)
 
 	js := namesIn(t, []string{"../jsserve/runtime.js"},

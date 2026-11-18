@@ -2820,7 +2820,7 @@
       if (!it.tagger) return it;
       const routed = native(1, ([v]) => apply(it.tagger, v));
       routed.__sharedDef = store.def;
-      return Object.assign({}, it, { tagger: routed });
+      return Object.assign({}, it, { tagger: routed, owner: store.def.__originKey });
     });
   }
 
@@ -2915,7 +2915,47 @@
   // `Time.every` at the same interval share one timer. `activeSubs` is module
   // level so a hot reload (which re-runs mountPages) can tear down the previous
   // mount's live timers via teardownAllSubs().
-  const activeSubs = new Map(); // key -> { src, handle, taggers: [fn] }
+  //
+  // Each tagger travels with its OWNER, the subscriber it belongs to: the page
+  // on screen, or a shared store. A source with a current state (Device,
+  // Keyboard, Gamepad) hands that state to every subscriber that starts
+  // listening, and because subscribers merge by key, starting to listen is not
+  // the same as the source starting: a page reached from another page that
+  // already holds Device.watch joins a source that is running.
+  const activeSubs = new Map(); // key -> { key, src, handle, taggers: [fn], owners: [string] }
+  // A page subscribes anew each time it is shown: navigation to it (push,
+  // replace, Back) or a fresh model in place. Only the page on screen listens,
+  // so the web's owner for a page is one showing of it, numbered here. A shared
+  // store subscribes once, for its life, under its own key.
+  let subPageKey = null;
+  let subPageShowing = 0;
+  function pageSubOwner(key) {
+    if (key !== subPageKey) { subPageKey = key; subPageShowing++; }
+    return 'page:' + subPageShowing;
+  }
+  function isPageOwner(owner) {
+    return typeof owner === 'string' && owner.startsWith('page:');
+  }
+  // What each page was last handed by each state source, by page key and
+  // source key, while it was on screen. A page shown again with the model it
+  // had (Back, a sheet closing) is handed the state only if it changed while
+  // the page was covered: as if it had kept listening, so a page that acts on
+  // the state is not made to act again for nothing (one that navigates on the
+  // device's width would otherwise be sent forward again by every Back). A
+  // fresh model has no entry and is always handed it: resetKey and
+  // resetTimeTravel drop the page's entries, and teardownAllSubs drops them
+  // all.
+  const pageStateSeen = new Map(); // pageKey + '\u0000' + sourceKey -> value
+  function forgetPageStates(pageKey) {
+    const prefix = pageKey + '\u0000';
+    for (const k of [...pageStateSeen.keys()]) if (k.startsWith(prefix)) pageStateSeen.delete(k);
+  }
+  // Every delivery of a state source goes through here: a change to every
+  // subscriber, or a seed to the ones that joined.
+  function deliverState(rec, taggers, owners, value) {
+    if (owners.some(isPageOwner)) pageStateSeen.set(subPageKey + '\u0000' + rec.key, value);
+    for (const tg of taggers) deliverSub(tg, value);
+  }
   // ---- Keyboard subs (Keyboard.watch) ----
   // event.code values that scroll / activate the page: preventDefault these so
   // a game holding arrows or space doesn't also scroll. Everything else passes.
@@ -4066,35 +4106,35 @@
     // heldKeyCodes current; any change (or a blur/tab-hide clear) notifies every
     // sub, which delivers the whole set as { down : List Keyboard.Key }. Each
     // Key is VCtor(event.code): it matches the qualified pattern Keyboard.<code>
-    // by bare tag; a code outside the enum just won't match a branch. Seeds the
-    // current set on subscribe (queueMicrotask). NOT clock: input keeps flowing
-    // during time-travel inspection.
+    // by bare tag; a code outside the enum just won't match a branch. Reports
+    // state: each subscriber gets the current set when it starts listening (see
+    // seedSub). NOT clock: input keeps flowing during time-travel inspection.
     keyboardWatch: {
+      reportsState: true,
       start: (g, fire) => {
-        const h = { fire, stopped: false };
+        const h = { fire };
         kbWatchFires.add(fire);
         installKbListeners();
-        const kick = () => { if (!h.stopped) fire(); };
-        if (typeof queueMicrotask !== 'undefined') queueMicrotask(kick); else setTimeout(kick, 0);
         return h;
       },
-      stop: (rec) => { const h = rec.handle; if (!h) return; h.stopped = true; kbWatchFires.delete(h.fire); },
-      fire: (rec) => { const r = keyboardStateRecord(); for (const tg of rec.taggers) deliverSub(tg, r); },
+      stop: (rec) => { const h = rec.handle; if (!h) return; kbWatchFires.delete(h.fire); },
+      read: () => keyboardStateRecord(),
+      fire: (rec) => deliverState(rec, rec.taggers, rec.owners, keyboardStateRecord()),
     },
     // Gamepad.watch: the full-pad mirror. The shared poll (padPoll) keeps
     // connection + both sticks + held-button set current and notifies every sub
-    // on change; fire() delivers the whole snapshot record. Seeds on subscribe.
-    // NOT clock: input flows during time-travel.
+    // on change; fire() delivers the whole snapshot record. Reports state (see
+    // seedSub). NOT clock: input flows during time-travel.
     gamepadWatch: {
+      reportsState: true,
       start: (g, fire) => {
         const h = { fire, stopped: false };
         padWatchAdd(fire);
-        const kick = () => { if (!h.stopped) fire(); };
-        if (typeof queueMicrotask !== 'undefined') queueMicrotask(kick); else setTimeout(kick, 0);
         return h;
       },
       stop: (rec) => { const h = rec.handle; if (!h) return; h.stopped = true; padWatchRemove(h.fire); },
-      fire: (rec) => { const r = gamepadStateRecord(); for (const tg of rec.taggers) deliverSub(tg, r); },
+      read: () => gamepadStateRecord(),
+      fire: (rec) => deliverState(rec, rec.taggers, rec.owners, gamepadStateRecord()),
     },
     // Sound.voice and Sound.glide: a held source, alive for as long as the
     // subscription is. Same start and stop; they differ in exactly two things,
@@ -4138,13 +4178,13 @@
       fire: () => {},
     },
     // Device.watch: reports live device capabilities (docs/proposals/device.md).
-    // Fires the current record ONCE on subscribe (deferred to a microtask so it
-    // lands as its own dispatch, not re-entrant with the render that created the
-    // sub), then a fresh record on every change: a media-query flip (mouse
+    // Each subscriber gets the current record when it starts listening (see
+    // seedSub), then a fresh record on every change: a media-query flip (mouse
     // plugged into an iPad, dark mode at sunset) or a window resize / rotation /
     // split-view (all coalesced to a single rAF). NOT clock: capability changes
     // are external input like keys, so they keep flowing during time-travel.
     deviceWatch: {
+      reportsState: true,
       start: (g, fire) => {
         const queries = deviceMediaQueries();
         const h = { queries, onChange: null, stopped: false };
@@ -4157,8 +4197,6 @@
         };
         for (const k in queries) { const mq = queries[k]; if (mq && mq.addEventListener) mq.addEventListener('change', h.onChange); }
         if (typeof window !== 'undefined') window.addEventListener('resize', h.onChange);
-        const kick = () => { if (!h.stopped) fire(); };
-        if (typeof queueMicrotask !== 'undefined') queueMicrotask(kick); else setTimeout(kick, 0);
         return h;
       },
       stop: (rec) => {
@@ -4168,10 +4206,8 @@
         for (const k in h.queries) { const mq = h.queries[k]; if (mq && mq.removeEventListener) mq.removeEventListener('change', h.onChange); }
         if (typeof window !== 'undefined') window.removeEventListener('resize', h.onChange);
       },
-      fire: (rec) => {
-        const d = readDevice();
-        for (const tg of rec.taggers) deliverSub(tg, d);
-      },
+      read: () => readDevice(),
+      fire: (rec) => deliverState(rec, rec.taggers, rec.owners, readDevice()),
     },
   };
   // Drop clock-type sub items (Time.every, …) from a Sub value. Used only by
@@ -4193,14 +4229,18 @@
   function teardownAllSubs() {
     for (const rec of activeSubs.values()) subSources[rec.src].stop(rec);
     activeSubs.clear();
+    // Every source starts again, so every subscriber is handed its state again
+    // (a hot reload runs the new update on the state as it is).
+    pageStateSeen.clear();
   }
   function reconcileSubs(subValue) {
-    const desired = new Map(); // key -> { src, intervalMs, taggers: [] }
+    const desired = new Map(); // key -> { src, intervalMs, sound, taggers: [], owners: [] }
     const items = (subValue && subValue.k === 'SUB' && subValue.items) ? subValue.items : [];
     for (const it of items) {
       let g = desired.get(it.key);
-      if (!g) { g = { src: it.src, intervalMs: it.intervalMs, sound: it.sound, taggers: [] }; desired.set(it.key, g); }
+      if (!g) { g = { src: it.src, intervalMs: it.intervalMs, sound: it.sound, taggers: [], owners: [] }; desired.set(it.key, g); }
       g.taggers.push(it.tagger);
+      g.owners.push(it.owner);
     }
     for (const [key, rec] of [...activeSubs]) {
       if (!desired.has(key)) { subSources[rec.src].stop(rec); activeSubs.delete(key); }
@@ -4208,19 +4248,62 @@
     for (const [key, g] of desired) {
       const existing = activeSubs.get(key);
       if (existing) {
+        const joined = subSources[existing.src].reportsState
+          ? g.owners.filter((o) => existing.owners.indexOf(o) < 0)
+          : [];
         existing.taggers = g.taggers;
+        existing.owners = g.owners;
         // Same key, new payload (e.g. the same bed at a new volume): let the
         // source retune the live node instead of restarting it.
         existing.sound = g.sound;
         const up = subSources[existing.src].update;
         if (up) up(existing, g);
+        seedSub(existing, joined);
       }
       else {
-        const rec = { src: g.src, intervalMs: g.intervalMs, sound: g.sound, taggers: g.taggers, handle: null };
+        const rec = { key, src: g.src, intervalMs: g.intervalMs, sound: g.sound, taggers: g.taggers, owners: g.owners, handle: null, seedFor: null };
         rec.handle = subSources[g.src].start(g, () => subSources[g.src].fire(rec));
         activeSubs.set(key, rec);
+        seedSub(rec, g.owners);
       }
     }
+  }
+
+  // A source that reports a state hands it to each subscriber that starts
+  // listening, once, as a dispatch of its own: a microtask, never re-entrant
+  // with the render that subscribed. Who receives it is decided when it is
+  // delivered, not when it was asked for: a subscriber that left in between
+  // gets nothing (the page navigated away before the microtask ran), and the
+  // one that replaced it gets its own, so nobody receives a seed twice or a
+  // seed meant for another page. A page shown again with the model it had is
+  // handed the state only if it changed (see pageStateSeen).
+  //
+  // A subscriber is the page or the store, not each tagger: a page that adds a
+  // second tagger for a source it already listens to is handed the state on
+  // the next change, like a second handler for one event.
+  function seedSub(rec, owners) {
+    if (!subSources[rec.src].reportsState || owners.length === 0) return;
+    if (!rec.seedFor) {
+      rec.seedFor = new Set();
+      const flush = () => {
+        const pending = rec.seedFor;
+        rec.seedFor = null;
+        if (activeSubs.get(rec.key) !== rec) return;
+        const value = subSources[rec.src].read();
+        const seen = pageStateSeen.get(subPageKey + '\u0000' + rec.key);
+        const unchanged = seen !== undefined && eqValues(seen, value);
+        const taggers = [], owners = [];
+        rec.taggers.forEach((tg, i) => {
+          const o = rec.owners[i];
+          if (!pending.has(o) || (isPageOwner(o) && unchanged)) return;
+          taggers.push(tg);
+          owners.push(o);
+        });
+        if (taggers.length) deliverState(rec, taggers, owners, value);
+      };
+      if (typeof queueMicrotask !== 'undefined') queueMicrotask(flush); else setTimeout(flush, 0);
+    }
+    for (const o of owners) rec.seedFor.add(o);
   }
 
   // ---------- Binary operators ----------
@@ -13379,6 +13462,11 @@
           delete initEffects[key];
           delete preservedScreenModels[key];
           delete initEffectsRun[key];
+          // A fresh model is a new showing of the page, and its sources hand
+          // it their state whatever it was last handed (pageSubOwner,
+          // pageStateSeen).
+          if (key === subPageKey) subPageKey = null;
+          forgetPageStates(key);
         },
         initWith: (user, params) => initWith(user, params, entry.activeKey),
         // Getters, not values: under Page.withShared these resolve against
@@ -13563,6 +13651,17 @@
     let presentedHost = null;  // the .mar-sheet-backdrop we own
     let drawnPath = null;     // the page currently PAINTED: differs from mountedPath only
                               // while time-travel draws a past frame from another page
+    // The page a View Transition is about to swap in, and which swap is the
+    // latest. Between startViewTransition and its callback (a frame later) the
+    // DOM still shows the page being left, on purpose: that is what the browser
+    // captures as the old state. A render for the same page in that window (a
+    // message the page received: a seed, a tick, a fetch) must not swap it in
+    // early, or the browser captures the new page as the old one and the slide
+    // animates the page onto itself; the pending swap builds from the live
+    // model anyway. A render for another page (Back during a push's slide)
+    // supersedes the pending swap, which then does nothing.
+    let pendingSwapKey = null;
+    let swapSeq = 0;
     let routerInstalled = false;
     // Tracks the marDepth at the last DOM-swap render. The next swap
     // compares newDepth vs this to pick the view-transition direction
@@ -13852,27 +13951,28 @@
       // To share data across screens (instead of refetching per page),
       // lift it out of the page model: the server is the shared source in
       // fullstack apps.
-      if (mounted != null && mountedPath !== pg.activeKey && navKind() !== 'back') {
-        pg.resetKey(pg.activeKey);
-        // Claim the navigation HERE, not in swap(). swap() also assigns
-        // mountedPath, but it runs after this render computes a view and
-        // (under View Transitions) a frame later still, and the init
-        // effect we are about to run fires in between.
+      if (mounted != null && mountedPath !== pg.activeKey) {
+        if (navKind() !== 'back') pg.resetKey(pg.activeKey);
+        // Claim the navigation HERE, not in swap(), Back included. swap()
+        // also assigns mountedPath, but it runs after this render computes
+        // a view and (under View Transitions) a frame later still, while
+        // this render has already advanced the nav depth. Anything that
+        // dispatches in between re-enters render() with the depth caught
+        // up, so it no longer reads as 'back', and with mountedPath still
+        // pointing at the PREVIOUS page it looks like a new arrival:
         //
-        // An init effect that dispatches WITHOUT waiting on the network
-        // re-enters render() synchronously: `Cmd.perform GotToday
-        // Time.now` has its value immediately, so the Msg lands before
-        // swap() ever executes. With mountedPath still pointing at the
-        // PREVIOUS page, that nested render saw a key change again, reset
-        // the key it had just initialized, and ran init a second time:
-        // which fired the effect again. Unbounded recursion: a frozen UI
-        // and thousands of identical requests from one tap, with the page
-        // model stuck at its init values because every cycle replaced it.
+        // - An init effect that dispatches WITHOUT waiting on the network
+        //   (`Cmd.perform GotToday Time.now` has its value immediately):
+        //   the nested render reset the key it had just initialized and ran
+        //   init again, which fired the effect again. Unbounded recursion:
+        //   a frozen UI and thousands of identical requests from one tap.
+        // - Any message during Back's transition (a timer tick, a fetch
+        //   result, the device's state handed to the page shown again):
+        //   the nested render reset the page Back had just restored.
         //
         // Assigning it now makes the guard idempotent per navigation,
-        // which is all it ever meant: retire the old key ONCE when the
-        // destination changes. Effects that resolve instantly and effects
-        // that go to the network now take the same path.
+        // which is all it ever meant: decide ONCE, when the destination
+        // changes, whether the page starts over.
         mountedPath = pg.activeKey;
       }
 
@@ -14002,6 +14102,13 @@
       // inspecting a past frame (traveling), strip the clock sources so the
       // world's autonomous timers freeze: non-clock subs keep running.
       let desiredSub = pg.subscriptions ? apply(applyExtras(pg, pg.subscriptions), pg.model) : null;
+      // Stamp the page's items with this showing of the page (pageSubOwner).
+      // Copies, never in place: a top-level `subs = Device.watch Got` is one
+      // value that every page using it returns.
+      const pageOwner = pageSubOwner(pg.activeKey);
+      if (desiredSub && desiredSub.items && desiredSub.items.length) {
+        desiredSub = { k: 'SUB', items: desiredSub.items.map((it) => Object.assign({}, it, { owner: pageOwner })) };
+      }
       // Shared subs belong to the STORE, not the screen, so they join every
       // render's desired set instead of starting and stopping with the page.
       // A `Time.every 1000` here is an app-wide heartbeat.
@@ -14081,7 +14188,10 @@
         firstRender = false;
         lastSeenNavDepth = currentNavDepth();
         pendingNavKind = null;
-      } else if (mounted == null || drawnPath !== viewPg.activeKey) {
+      } else if (pendingSwapKey !== null && pendingSwapKey === viewPg.activeKey && !isTraveling) {
+        // The page is already on its way in (see pendingSwapKey).
+        pendingNavKind = null;
+      } else if (mounted == null || (pendingSwapKey !== null ? pendingSwapKey : drawnPath) !== viewPg.activeKey) {
         // The slide direction, from the same classification the
         // re-init guard used at the top of this render (see navKind).
         // 'forward' slides in from the right with the old screen
@@ -14113,7 +14223,10 @@
         //     at the top or intentionally not navigating, so no
         //     reset.
         const shouldScrollTop = (dir === 'forward' || dir === 'fade');
+        const mySwap = ++swapSeq;
         const swap = () => {
+          if (mySwap !== swapSeq) return;   // superseded (see pendingSwapKey)
+          pendingSwapKey = null;
           // Its own boundary: under View Transitions this body runs a frame
           // later, so render()'s try/catch has already returned and a throw
           // from the recompute below would escape as an unhandled rejection:
@@ -14169,6 +14282,7 @@
           // render doesn't accidentally inherit the previous run's
           // direction.
           document.documentElement.dataset.marNavDir = dir;
+          pendingSwapKey = viewPg.activeKey;
           const t = document.startViewTransition(swap);
           t.finished
             .catch(() => { /* user-cancelled / skipped: ignore */ })
@@ -14474,10 +14588,15 @@
       // anyway: render() routes to redirect).
       if (pg.isProtected && getUser() == null) return;
       // Apply User then Params (if present), matching the init type
-      // signature. applyExtras handles the four flavors uniformly.
-      const initFn = applyExtras(pg, pg.init);
-      const fresh = unwrapModelTuple(apply(initFn, VUnit()));
+      // signature. applyExtras handles the four flavors uniformly, and
+      // what it returns IS the (model, effect) tuple: a plain page
+      // declares init as the tuple itself (see initWith).
+      const fresh = unwrapModelTuple(applyExtras(pg, pg.init));
       pg.model = fresh.model;
+      // A fresh model is a new showing of the page, handed the state whatever
+      // it was last handed (pageSubOwner, pageStateSeen).
+      subPageKey = null;
+      forgetPageStates(pg.activeKey);
       // Allow the init effect to fire again on the next render path:
       // mountPages gates it via initEffectsRun (keyed on activeKey so
       // dynamic pages reset cleanly per-URL), which we toggle off here.

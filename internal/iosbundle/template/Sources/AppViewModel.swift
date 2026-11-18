@@ -328,7 +328,7 @@ final class AppViewModel {
         // The fixture's page labels. Named once so adding a page to the
         // fixture cannot silently start reporting "?" for it, which is how
         // the nested-sheet case first read as a runtime bug.
-        let parity: Set<Character> = ["A", "B", "S", "N"]
+        let parity: Set<Character> = ["A", "B", "S", "N", "P", "L", "K"]
         func counter(_ runtime: PageRuntime?) -> String {
             guard let runtime, let view = runtime.currentView() else { return "-" }
             for piece in visibleText(view).components(separatedBy: " ¦ ") {
@@ -455,6 +455,52 @@ final class AppViewModel {
             // Seeded before the first render (see runProgramSync), so this is
             // what a shared link or a relaunch lands on.
             noteBoth("cold")
+
+        // parity.SubsSource: what each page is handed by the device when it
+        // is shown. The landing page watches nothing, and the wait lets the
+        // launch's own didBecomeActive pass before any page listens, so every
+        // count below is a page's own.
+        //
+        // After Back the wait is the pop animation's: whether SwiftUI
+        // unmounted the covered page and mounts it again when the animation
+        // ends, or kept it mounted, it must end up handed nothing new.
+        case "subs-push":
+            try? await Task.sleep(nanoseconds: 1_000_000_000)
+            note("start")
+            ctx.navigate(path: "/a", replace: false)
+            await settle()
+            note("push-a")
+            ctx.navigate(path: "/b", replace: false)
+            await settle()
+            note("push-b")
+            ctx.navPath.removeLast()
+            try? await Task.sleep(nanoseconds: 1_200_000_000)
+            note("back-a")
+            ctx.navigate(path: "/b", replace: false)
+            await settle()
+            note("push-b-again")
+            ctx.navigate(path: "/a", replace: true)
+            await settle()
+            note("replace-a")
+
+        // K first, straight from the landing page: its init arms it in the
+        // same turn its store's source starts, and with no covered page under
+        // it that SwiftUI could mount again and hand its init's message to.
+        case "subs-shared":
+            try? await Task.sleep(nanoseconds: 1_000_000_000)
+            note("start")
+            ctx.navigate(path: "/k", replace: false)
+            await settle()
+            note("push-k")
+            ctx.navigate(path: "/p", replace: true)
+            await settle()
+            note("replace-p")
+            ctx.navigate(path: "/l", replace: false)
+            await settle()
+            note("push-l")
+            bump()
+            await settle()
+            note("armed")
 
         default:
             print("[mar] NAV UNKNOWN SCRIPT \(script)")
