@@ -6471,9 +6471,12 @@
     // positional arg, so every existing reader that destructures
     // [path, init, update, view, title, subscriptions] keeps working
     // untouched.
+    // A copy with one more flag. Every flag the page already carries rides
+    // along (Page.adminProtected's adminOnly among them), so wrapping a page
+    // in Page.sheet changes where it is drawn and nothing else.
     const pageSheetImpl = native(1, ([p]) => {
       if (!p || p.k !== 'C') return p;
-      return { k: 'C', tag: p.tag, args: p.args, presented: true };
+      return Object.assign({}, p, { presented: true });
     });
     def('pageSheet', pageSheetImpl);
     def('Page.sheet', pageSheetImpl);
@@ -13586,20 +13589,33 @@
     for (const p0 of pageList) {
       if (p0.k !== 'C') continue;
 
-      // Page.withShared wraps any of the four ctors below. Unwrap it here so
-      // everything downstream, routing, auth, init, dispatch, subs, sees an
-      // ordinary page and stays oblivious to shared entirely.
+      // Page.withShared wraps any of the four ctors below, or another
+      // Page.withShared: a page that reads several stores. Unwrap every layer
+      // here so everything downstream, routing, auth, init, dispatch, subs,
+      // sees an ordinary page and stays oblivious to shared entirely.
       //
-      // The builder is re-applied only when the model actually changes;
-      // identity is enough because Mar models are immutable, so a new model
-      // is always a new object.
-      let p = p0, fns = null;
+      // Each layer's builder is applied to its store's live model, outermost
+      // first. The page is rebuilt only when one of those models actually
+      // changed; identity is enough because Mar models are immutable, so a
+      // new model is always a new object.
+      //
+      // Page.sheet can mark any layer, the outside of a Page.withShared as
+      // well as the page inside it, so every layer is asked.
+      let p = p0, fns = null, sheetLayer = false;
       if (p0.tag === '__SharedPage') {
-        const store = sharedStoreFor(p0.args[0]);
-        const builder = p0.args[1];
-        let built = null, builtFor = {};   // {} can never equal a Mar value
+        let built = null, readFrom = null;   // [{store, model}] the page was built from
         const rebuild = () => {
-          if (builtFor !== store.model) { built = apply(builder, store.model); builtFor = store.model; }
+          if (readFrom !== null && readFrom.every((r) => r.store.model === r.model)) return built;
+          const reads = [];
+          let layer = p0;
+          while (layer.k === 'C' && layer.tag === '__SharedPage') {
+            if (layer.presented === true) sheetLayer = true;
+            const store = sharedStoreFor(layer.args[0]);
+            reads.push({ store, model: store.model });
+            layer = apply(layer.args[1], store.model);
+          }
+          built = layer;
+          readFrom = reads;
           return built;
         };
         p = rebuild();
@@ -13621,7 +13637,7 @@
       const isDynamic   = (p.tag === '__DynamicPage'   || p.tag === '__DynamicProtectedPage');
       // Presentation rides as a property (set by Page.sheet), not a tag
       // or an arg slot, so it composes with all four ctors above.
-      const isSheet     = p.presented === true;
+      const isSheet     = sheetLayer || p.presented === true;
       const isAdminOnly = p.adminOnly === true;
       if (firstPath === null) firstPath = path;
       // Path, title and the flags are read ONCE: they are the route, and a

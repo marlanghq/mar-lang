@@ -159,6 +159,43 @@ enum MarSharedRegistry {
 
     static func lookup(_ key: String) -> MarSharedStore? { stores[key] }
 
+    /// A page from `Page.withShared`, built against the stores' live models.
+    /// Each layer's builder is applied to its store's model, outermost first,
+    /// until a page ctor comes out: a page that reads several stores is a
+    /// Page.withShared inside another. `keys` are the stores it read,
+    /// outermost first. `presented` says whether Page.sheet marked any layer,
+    /// the outside of a Page.withShared as well as the page inside it.
+    static func resolve(_ wrapped: MarValue) throws -> (page: MarValue, keys: [String], presented: Bool) {
+        var layer = wrapped
+        var keys: [String] = []
+        var presented = false
+        while case .ctor("__SharedPage", let args) = layer, args.count >= 2,
+              case .string(let key) = args[0] {
+            if args.count >= 7, case .bool(true) = args[6] { presented = true }
+            guard let store = lookup(key) else {
+                throw MarRuntimeError.message("no store for \(key)")
+            }
+            keys.append(key)
+            layer = try Eval.apply(args[1], store.model)
+        }
+        return (layer, keys, presented)
+    }
+
+    /// The stores a `Page.withShared` page reads, outermost first, each once.
+    /// Walks as far as the builders allow: a builder that fails on the current
+    /// model ends the walk, and the stores read before it still count.
+    static func storeKeys(_ wrapped: MarValue) -> [String] {
+        var layer = wrapped
+        var keys: [String] = []
+        while case .ctor("__SharedPage", let args) = layer, args.count >= 2,
+              case .string(let key) = args[0], let store = lookup(key) {
+            if !keys.contains(key) { keys.append(key) }
+            guard let inner = try? Eval.apply(args[1], store.model) else { break }
+            layer = inner
+        }
+        return keys
+    }
+
     // MARK: - Observers
 
     static func addObserver(_ owner: ObjectIdentifier, _ handler: @escaping () -> Void) {

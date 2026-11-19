@@ -284,37 +284,35 @@ final class AppContext {
     ///
     /// A seventh ctor arg (set by `Page.sheet`) marks the page as
     /// PRESENTED rather than pushed; it is orthogonal to the four tags,
-    /// which is why it rides as an arg instead of multiplying them.
+    /// which is why it rides as an arg instead of multiplying them. It can
+    /// sit on a Page.withShared wrapper too, which is why every layer is
+    /// asked (MarSharedRegistry.resolve).
     func decodedPages() -> [DecodedPage] {
         pages.compactMap { v in
-            // Page.withShared wraps a page. Unwrap it against the store's
-            // CURRENT model to read the route, and keep the builder so the
-            // runtime can re-resolve the four functions as the model moves.
+            // Page.withShared wraps a page, or another Page.withShared for a
+            // page that reads several stores. Unwrap every layer against the
+            // stores' CURRENT models to read the route, and keep the wrapper so
+            // the runtime can re-resolve the four functions as the models move.
             var v = v
             var binding: DecodedPage.SharedBinding?
-            if case .ctor("__SharedPage", let wargs) = v, wargs.count >= 2,
-               case .string(let key) = wargs[0] {
+            var presentedOutside = false
+            if case .ctor("__SharedPage", _) = v {
                 // Say so when this fails. A dropped page does not crash and
                 // does not draw anything: it simply is not in the app, and
                 // the first symptom is the WRONG SCREEN at launch, because
                 // the root is whichever page happened to survive.
-                guard let store = MarSharedRegistry.lookup(key) else {
-                    print("[mar] dropping a Page.withShared: no store for \(key)")
-                    return nil
-                }
-                let inner: MarValue
                 do {
-                    inner = try Eval.apply(wargs[1], store.model)
+                    let resolved = try MarSharedRegistry.resolve(v)
+                    binding = DecodedPage.SharedBinding(wrapper: v)
+                    presentedOutside = resolved.presented
+                    v = resolved.page
                 } catch {
-                    print("[mar] dropping a Page.withShared (\(key)): "
-                          + "the builder failed: \(error.localizedDescription)")
+                    print("[mar] dropping a Page.withShared: \(error.localizedDescription)")
                     return nil
                 }
-                binding = DecodedPage.SharedBinding(key: key, builder: wargs[1])
-                v = inner
             }
             guard case .ctor(let tag, let args) = v else { return nil }
-            let isSheet = args.count >= 7 && boolOf(args[6]) == true
+            let isSheet = presentedOutside || (args.count >= 7 && boolOf(args[6]) == true)
             switch tag {
             case "__Page":
                 guard args.count >= 4 else { return nil }
@@ -460,12 +458,13 @@ struct NavEntry: Hashable {
 
 struct DecodedPage: Identifiable {
     /// Set when the page came from `Page.withShared`. The page is a FUNCTION
-    /// of the shared model, so the builder is kept unapplied and re-run on
+    /// of the shared models, so its builders are kept unapplied and re-run on
     /// every read: see MarPageRuntime. Path, title and the flags are read
     /// once, because a route cannot change with the model.
     struct SharedBinding {
-        let key: String
-        let builder: MarValue
+        /// The `__SharedPage` value as the program built it, every layer
+        /// still unapplied (MarSharedRegistry.resolve applies them).
+        let wrapper: MarValue
     }
 
     var shared: SharedBinding?

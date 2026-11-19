@@ -497,6 +497,56 @@ final class AppViewModel {
             try? await Task.sleep(nanoseconds: 1_200_000_000)
             noteSheets("closed")
 
+        // parity.SharedWrapSource: every nesting of Page.sheet and
+        // Page.withShared, and a page that reads two stores. The root is the
+        // page under the sheets, or the page on top when none is presented.
+        case "shared-wrap":
+            func noteWrap(_ label: String) {
+                let presented = MarPresentation.current != nil
+                let root = presented ? counter(MarLiveRuntimes.stack.first) : counter(onScreen())
+                let sheet = presented ? counter(onScreen()) : "-"
+                seen.append("\(label):root=\(root),sheet=\(sheet)")
+            }
+            func open(_ path: String) async {
+                ctx.navigate(path: path, replace: false)
+                try? await Task.sleep(nanoseconds: 900_000_000)
+            }
+            func close() async {
+                ctx.stack.removeLast()
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
+            }
+            try? await Task.sleep(nanoseconds: 800_000_000)
+            noteWrap("start")
+            await open("/p")
+            noteWrap("p")
+            press("hit-a")
+            await settle()
+            noteWrap("p-hit")
+            await close()
+            await open("/l")
+            noteWrap("l")
+            await close()
+            await open("/k")
+            noteWrap("k")
+            await close()
+            await open("/t")
+            noteWrap("t")
+            press("hit-a")
+            await settle()
+            noteWrap("hit-a")
+            press("hit-b")
+            await settle()
+            noteWrap("hit-b")
+
+        // parity.SharedWrapSource's R, on a fresh launch: both stores hand
+        // Device.watch the same tagger and R reads store A twice. The wait
+        // lets the launch's own didBecomeActive pass before anything listens.
+        case "shared-subs":
+            try? await Task.sleep(nanoseconds: 1_000_000_000)
+            ctx.navigate(path: "/r", replace: false)
+            await settle()
+            seen.append("r:root=\(counter(onScreen()))")
+
         // The presented entry changes in place: S comes off and N goes on in
         // one turn, so the sheet never closes. What it shows has to be N's
         // own page, not S's page kept in the slot.

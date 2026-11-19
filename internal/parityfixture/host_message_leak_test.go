@@ -24,9 +24,8 @@ import (
 func TestNoHostMessageReachesAMarProgram(t *testing.T) {
 	// path -> why this one is allowed to carry the host's words.
 	allowed := map[string]string{
-		"APIClient.swift":     "the template's own sample API client, which is app code and not the runtime",
-		"AppViewModel.swift":  "the app shell's own error display, not a Mar value",
-		"MarAppContext.swift": "a builder failure on the developer's screen, at dev time",
+		"APIClient.swift":    "the template's own sample API client, which is app code and not the runtime",
+		"AppViewModel.swift": "the app shell's own error display, not a Mar value",
 	}
 
 	files, err := filepath.Glob("../iosbundle/template/Sources/*.swift")

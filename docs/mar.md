@@ -811,6 +811,20 @@ page =
         )
 ```
 
+A page that reads several stores wraps once per store, and `Page.sheet` goes on the outside or anywhere inside: the page is presented either way.
+
+```elm
+page : Page
+page =
+    Page.sheet
+        (Page.withShared Frontend.Profile.def
+            (\profile ->
+                Page.withShared Frontend.Cart.def
+                    (\cart -> Page.create { path = "/checkout", init = init, update = update, view = view profile cart, subscriptions = always Sub.none })
+            )
+        )
+```
+
 A page **writes** to it the way it talks to itself, by sending a message:
 
 ```elm
@@ -825,7 +839,7 @@ There is no registration step: `Main` does not mention the store, and the runtim
 Semantics worth knowing:
 
 - `init` runs once, before the first page's `init`. Its `Cmd` — typically the one `Service.call` that fills the store — runs after the first render.
-- A shared change repaints the page on screen: its builder is re-applied with the new value. The page's own model is untouched and its `update` is **not** called.
+- A shared change repaints the page on screen: its builders are re-applied with the new values. The page's own model is untouched and its `update` is **not** called.
 - A `Cmd.toShared` issued before a navigation still applies after it. Shared is page-independent, so unlike a page msg it is never dropped at the dispatch boundary.
 - `subscriptions` here are alive for the life of the store, not the page. A `Time.every` is an app-wide heartbeat.
 - The store dies with the tab. Persistence is out of scope; a `localStorage`-backed variant is future work.

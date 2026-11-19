@@ -473,7 +473,7 @@ var appDescriptions = map[string]string{
 	"Page.dynamic":               "A page whose path carries parameters, like an item id. The parameters arrive as a record, already parsed and typed.",
 	"Page.dynamicProtected":      "A page with both path parameters and a required signed-in user.",
 	"Page.sheet":                 "Present a page over the screen it was reached from, instead of pushing it. For a task the reader finishes or abandons. Opened cold it renders full-screen.",
-	"Page.withShared":            "Wrap any page so it can read the app-wide state built by App.shared. The builder runs again whenever that state changes, so the page always sees the current value.",
+	"Page.withShared":            "Wrap any page so it can read the app-wide state built by App.shared. The builder runs again whenever that state changes, so the page always sees the current value. A page that reads several stores wraps once per store.",
 	"Page.dynamicAdminProtected": "A page with both path parameters and a required admin session.",
 
 	// Nav

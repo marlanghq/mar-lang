@@ -1460,15 +1460,17 @@ enum MarBuiltins {
         // MARK: Page.sheet
         //
         // Presentation, not a fifth page kind: takes a page built by any
-        // of the constructors here and marks it as PRESENTED over the
-        // screen it was reached from rather than pushed onto the stack.
-        // The route is unchanged, same path, same navPath entry, so
-        // only ContentView's StackShell reads this, to hand the top entry
-        // to `.sheet` instead of `.navigationDestination`.
+        // of the constructors here, or a Page.withShared, and marks it as
+        // PRESENTED over the screen it was reached from rather than pushed
+        // onto the stack. The route is unchanged, same path, same stack
+        // entry, so only ContentView's StackShell reads this, to hand the
+        // sheet routes on top of the stack to `.sheet` instead of
+        // `.navigationDestination`.
         //
-        // Carried as a seventh ctor arg. Every reader indexes args
-        // defensively (`args.count >= n`), so appending is invisible to
-        // the four existing shapes.
+        // Carried as a seventh ctor arg, on whichever value it wraps; a
+        // Page.withShared wrapper is padded to it like a page. Every reader
+        // indexes args defensively (`args.count >= n`), so appending is
+        // invisible to the four existing shapes.
         let pageSheet = MarFn.native(1) { args in
             guard case .ctor(let tag, let ctorArgs) = args[0] else {
                 throw MarRuntimeError.typeMismatch(expected: "Page", got: Eval.typeOf(args[0]))

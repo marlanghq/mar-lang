@@ -100,9 +100,9 @@ final class PageRuntime {
     let path: String
     let title: String
     // A page from `Page.withShared` (ADR-0026) is a FUNCTION of the shared
-    // model, so its four functions cannot be captured once. `shared` holds the
-    // builder and the four become computed: every read rebuilds the page ctor
-    // against the store's CURRENT model. A plain page keeps the captured
+    // models, so its four functions cannot be captured once. `shared` holds
+    // the wrapper and the four become computed: every read rebuilds the page
+    // ctor against the stores' CURRENT models. A plain page keeps the captured
     // values and pays nothing.
     //
     // The web hit this too and solved it the same way, by passing an accessor
@@ -113,12 +113,11 @@ final class PageRuntime {
     @ObservationIgnored private let capturedView: MarValue
     @ObservationIgnored private let capturedSubs: MarValue
 
-    /// The page ctor as it stands right now: rebuilt from the shared model
-    /// when there is one, otherwise nil so the captured values are used.
+    /// The page ctor as it stands right now: rebuilt from the shared models
+    /// when there are any, otherwise nil so the captured values are used.
     private var liveArgs: [MarValue]? {
         guard let shared,
-              let store = MarSharedRegistry.lookup(shared.key),
-              let page = try? Eval.apply(shared.builder, store.model),
+              let page = try? MarSharedRegistry.resolve(shared.wrapper).page,
               case .ctor(_, let args) = page, args.count >= 4
         else { return nil }
         return args
@@ -210,27 +209,19 @@ final class PageRuntime {
         record(site, .dispatch, error.localizedDescription)
     }
 
-    /// Applies a subscription tagger, reporting instead of swallowing.
-    /// Which store, if any, owns a delivered tagger. Rebuilt on every
-    /// reconcile, because a page can gain or lose shared subscriptions as the
-    /// shared model moves.
-    @ObservationIgnored private var sharedTaggerOwners: [String: String] = [:]
+    /// The owner of a store's subscription items: "shared:" and its key.
+    private static let storeOwnerPrefix = "shared:"
 
-    /// A stable identity for a tagger value. Taggers are closures, and Swift
-    /// closures are not Equatable: the pointer is what the reconciler already
-    /// keys survivors on, so it is the honest choice here too.
-    private static func taggerIdentity(_ v: MarValue) -> String {
-        if case .fn(let f) = v { return String(UInt(bitPattern: ObjectIdentifier(f).hashValue)) }
-        return String(describing: v)
-    }
-
-    private func applyTagger(_ tagger: MarValue, _ value: MarValue, _ site: String) -> MarValue? {
+    /// Applies a subscription tagger, reporting instead of swallowing, and
+    /// sends the message to the tagger's owner: the page, or the store whose
+    /// subscription it is. By owner, not by tagger: one source key can have
+    /// owners on both sides, two stores can hand in the very same tagger, and
+    /// the page's update would not understand a store's message.
+    private func applyTagger(_ tagger: MarValue, owner: String, _ value: MarValue, _ site: String) -> MarValue? {
         do {
             let msg = try Eval.apply(tagger, value)
-            // Route by tagger, not by source: one key can have owners on both
-            // sides, and the page's update would not understand a shared msg.
-            if let key = sharedTaggerOwners[Self.taggerIdentity(tagger)] {
-                MarSharedRegistry.lookup(key)?.dispatch(msg)
+            if owner.hasPrefix(Self.storeOwnerPrefix) {
+                MarSharedRegistry.lookup(String(owner.dropFirst(Self.storeOwnerPrefix.count)))?.dispatch(msg)
                 return nil
             }
             return msg
@@ -353,7 +344,9 @@ final class PageRuntime {
         if shared != nil {
             MarSharedRegistry.addObserver(ObjectIdentifier(self)) { [weak self] in
                 guard let self else { return }
-                self.reconcileSubs()
+                // Only the page on top starts or stops subscriptions, as in
+                // dispatch: a covered page catches up when it is on top again.
+                if self.isOnTop { self.reconcileSubs() }
                 self.touch += 1
             }
             MarSharedRegistry.drainInitEffects()
@@ -479,27 +472,23 @@ final class PageRuntime {
 
         // A shared store subscribes too, and its messages belong to ITS update
         // , not to whichever page happened to mount the source. The reconciler
-        // groups by key across owners, so the destination has to travel with
-        // each TAGGER rather than sit on the registration. The web hit exactly
-        // this and solved it the same way (deliverSub in runtime.js).
-        var sharedTaggers: [String: String] = [:]   // tagger identity -> store key
+        // groups by key across owners, so the destination travels with each
+        // tagger as its owner (applyTagger). The web does the same
+        // (deliverSub in runtime.js).
         var allItems: [MarValue] = []
         var itemOwners: [String] = []               // owner of each item, index for index
         if let subVal, case .ctor("__Sub", let items) = subVal {
             allItems.append(contentsOf: items)
             itemOwners.append(contentsOf: items.map { _ in "page" })
         }
-        if let shared, let store = MarSharedRegistry.lookup(shared.key),
-           case .ctor("__Sub", let items) = store.subscriptions() {
-            for item in items {
-                if case .ctor(_, let a) = item, let tagger = a.last {
-                    sharedTaggers[Self.taggerIdentity(tagger)] = shared.key
-                }
-            }
+        // Every store the page reads, each once: a page can read several.
+        let storeKeys = shared.map { MarSharedRegistry.storeKeys($0.wrapper) } ?? []
+        for key in storeKeys {
+            guard let store = MarSharedRegistry.lookup(key),
+                  case .ctor("__Sub", let items) = store.subscriptions() else { continue }
             allItems.append(contentsOf: items)
-            itemOwners.append(contentsOf: items.map { _ in "shared:\(shared.key)" })
+            itemOwners.append(contentsOf: items.map { _ in Self.storeOwnerPrefix + key })
         }
-        self.sharedTaggerOwners = sharedTaggers
 
         if !allItems.isEmpty {
             for (item, owner) in zip(allItems, itemOwners) {
@@ -587,7 +576,7 @@ final class PageRuntime {
     private func deliverState(_ key: String, _ taggers: [MarValue], _ owners: [String], _ value: MarValue) {
         if owners.contains("page") { pageStateSeen[key] = value }
         let site = "a \(key) subscription"
-        for t in taggers { if let m = applyTagger(t, value, site) { dispatch(m) } }
+        for (t, o) in zip(taggers, owners) { if let m = applyTagger(t, owner: o, value, site) { dispatch(m) } }
     }
 
     /// Each owner that starts listening to a state source, when the source
@@ -646,7 +635,9 @@ final class PageRuntime {
     private func fireTime(_ key: String) {
         guard let live = activeSubs[key] else { return }
         guard let now = MarCivil.everyTick() else { return }
-        for t in live.taggers { if let m = applyTagger(t, now, "a Time.every subscription") { dispatch(m) } }
+        for (t, o) in zip(live.taggers, live.owners) {
+            if let m = applyTagger(t, owner: o, now, "a Time.every subscription") { dispatch(m) }
+        }
     }
 
     // Keyboard.watch / Gamepad.watch / Device.watch: state mirrors. Each

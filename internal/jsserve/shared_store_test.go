@@ -222,3 +222,154 @@ func runSharedDriver(t *testing.T, driver string) string {
 	}
 	return out
 }
+
+// parity.SharedWrapSource, the same string as TestSharedWrappersOnIOS: every
+// way to nest Page.sheet and Page.withShared presents the page, and a page
+// that reads two stores is drawn and follows both. P's own hit-a moves store
+// A, which every later page reads.
+func TestSheetAndSharedWrappersCompose(t *testing.T) {
+	program, err := parity.Compile(parity.SharedWrapSource, SerializeModule)
+	if err != nil {
+		t.Fatalf("compiling the fixture: %v", err)
+	}
+	got, err := parity.RunWeb(runtimeJS, program, `
+const fs = require('fs');
+(0, eval)(fs.readFileSync(process.argv[2], 'utf8'));
+const program = JSON.parse(fs.readFileSync(process.argv[3], 'utf8'));
+history.replaceState({ marDepth: 0, prevTitle: '' }, '', '/');
+window.marRun(program);
+const flush = async () => { for (let i = 0; i < 4; i++) await new Promise((r) => setTimeout(r, 0)); };
+const seen = [];
+const label = /[APLKT]=\d+/;
+const root  = () => (screenText().match(label) || ['-'])[0];
+const sheet = () => (sheetText().match(label) || ['-'])[0];
+const note = (l) => seen.push(l + ':root=' + root() + ',sheet=' + sheet());
+const sheetHost = () => (document.body.children || []).filter((c) => c.classList && c.classList.contains('mar-page-sheet') && c.classList.contains('mar-sheet-open')).pop();
+const press = (text, node) => { if (!node) return false; if (node.textContent === text && node._on && node._on.click) { node.click(); return true; } return (node.children || []).some((c) => press(text, c)); };
+(async () => {
+await flush(); note('start');
+globalThis.__marNav.push('/p'); await flush(); note('p');
+press('hit-a', sheetHost()); await flush(); note('p-hit');
+history.back(); await flush();
+globalThis.__marNav.push('/l'); await flush(); note('l');
+history.back(); await flush();
+globalThis.__marNav.push('/k'); await flush(); note('k');
+history.back(); await flush();
+globalThis.__marNav.push('/t'); await flush(); note('t');
+press('hit-a', marRoot); await flush(); note('hit-a');
+press('hit-b', marRoot); await flush(); note('hit-b');
+process.stdout.write(seen.join(' '));
+})().catch((e) => process.stdout.write('THREW ' + e.stack));
+`)
+	if errors.Is(err, parity.ErrNoNode) {
+		t.Skip("node not installed")
+	}
+	if err != nil {
+		t.Fatalf("node run: %v", err)
+	}
+	want := "start:root=A=0,sheet=- p:root=A=0,sheet=P=7 p-hit:root=A=0,sheet=P=8 " +
+		"l:root=A=0,sheet=L=8 k:root=A=0,sheet=K=809 " +
+		"t:root=T=809,sheet=- hit-a:root=T=909,sheet=- hit-b:root=T=910,sheet=-"
+	if got != want {
+		t.Fatalf("Page.sheet and Page.withShared do not compose.\n got: %s\nwant: %s\n\n"+
+			"p:root=P=7,sheet=- → Page.sheet around a Page.withShared was pushed, not presented.\n"+
+			"t:root=A=0          → the page that reads two stores was never drawn.", got, want)
+	}
+}
+
+// parity.SharedWrapSource's R, the same string as TestSharedWrappersOnIOS's
+// second run: both stores hand Device.watch the very same tagger, and R reads
+// store A twice. Each store is handed the device once.
+func TestStoresThatShareATaggerEachGetTheirOwn(t *testing.T) {
+	program, err := parity.Compile(parity.SharedWrapSource, SerializeModule)
+	if err != nil {
+		t.Fatalf("compiling the fixture: %v", err)
+	}
+	got, err := parity.RunWeb(runtimeJS, program, `
+const fs = require('fs');
+(0, eval)(fs.readFileSync(process.argv[2], 'utf8'));
+const program = JSON.parse(fs.readFileSync(process.argv[3], 'utf8'));
+history.replaceState({ marDepth: 0, prevTitle: '' }, '', '/');
+window.marRun(program);
+const flush = async () => { for (let i = 0; i < 4; i++) await new Promise((r) => setTimeout(r, 0)); };
+const seen = [];
+const note = (l) => seen.push(l + ':root=' + ((screenText().match(/[AR]=\d+/) || ['-'])[0]));
+(async () => {
+await flush();
+globalThis.__marNav.push('/r'); await flush(); note('r');
+process.stdout.write(seen.join(' '));
+})().catch((e) => process.stdout.write('THREW ' + e.stack));
+`)
+	if errors.Is(err, parity.ErrNoNode) {
+		t.Skip("node not installed")
+	}
+	if err != nil {
+		t.Fatalf("node run: %v", err)
+	}
+	if want := "r:root=R=101"; got != want {
+		t.Fatalf("a store was handed the device a number of times other than once.\n got: %s\nwant: %s\n\n"+
+			"R=2   → store A's messages went to store B.\n"+
+			"R=201 → store A, read twice, got each message twice.", got, want)
+	}
+}
+
+// Page.sheet changes where a page is drawn and nothing else: wrapped around
+// Page.adminProtected, the admin gate still sends a visitor with no admin
+// session to the admin sign-in.
+func TestASheetKeepsTheAdminGate(t *testing.T) {
+	src := `module Main exposing (main)
+
+
+import UI exposing (text)
+
+
+home : Page
+home =
+    Page.create
+        { path = "/", title = "Home", init = ( 0, Cmd.none )
+        , update = \_ m -> ( m, Cmd.none ), view = \_ -> text [] "home"
+        , subscriptions = always Sub.none }
+
+
+ops : Page
+ops =
+    Page.sheet
+        (Page.adminProtected
+            { path = "/ops", title = "Ops", init = \_ -> ( 0, Cmd.none )
+            , update = \_ _ m -> ( m, Cmd.none ), view = \_ _ -> text [] "ops"
+            , subscriptions = \_ _ -> Sub.none })
+
+
+main : Cmd ()
+main =
+    App.frontend [ home, ops ]
+`
+	program, err := parity.Compile(src, SerializeModule)
+	if err != nil {
+		t.Fatalf("compiling the fixture: %v", err)
+	}
+	got, err := parity.RunWeb(runtimeJS, program, `
+const fs = require('fs');
+(0, eval)(fs.readFileSync(process.argv[2], 'utf8'));
+const program = JSON.parse(fs.readFileSync(process.argv[3], 'utf8'));
+let assigned = '-';
+window.location.assign = (u) => { assigned = u; };
+global.fetch = () => Promise.resolve({ ok: false, status: 401, json: () => Promise.resolve({}) });
+history.replaceState({ marDepth: 0, prevTitle: '' }, '', '/ops');
+window.marRun(program);
+const flush = async () => { for (let i = 0; i < 6; i++) await new Promise((r) => setTimeout(r, 0)); };
+(async () => {
+await flush();
+process.stdout.write('assigned=' + assigned + ' shows-ops=' + /ops/.test(screenText() + ' ' + sheetText()));
+})().catch((e) => process.stdout.write('THREW ' + e.stack));
+`)
+	if errors.Is(err, parity.ErrNoNode) {
+		t.Skip("node not installed")
+	}
+	if err != nil {
+		t.Fatalf("node run: %v", err)
+	}
+	if want := "assigned=/_mar/admin/login shows-ops=false"; got != want {
+		t.Fatalf("Page.sheet dropped the admin gate.\n got: %s\nwant: %s", got, want)
+	}
+}

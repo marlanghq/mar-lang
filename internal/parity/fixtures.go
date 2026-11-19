@@ -739,3 +739,137 @@ main : Cmd ()
 main =
     App.frontend [ pageA, pageS, pageN ]
 `
+
+// SharedWrapSource nests Page.sheet and Page.withShared every way a program
+// can write them, and has a page that reads two stores.
+//
+// P is Page.sheet around a Page.withShared, L is a Page.sheet inside one,
+// and K reads two stores with the Page.sheet between them: all three are
+// presented. T reads two stores and is pushed. Each shows a number built
+// from the stores it reads (A's 7 and B's 9), so a page drawn against the
+// wrong store, or not drawn at all, shows a different number. R reads a
+// store twice and shows how many device messages each store was handed.
+const SharedWrapSource = `module Main exposing (main)
+
+
+import UI exposing (vstack, text, button, navigationStack, navigationTitle)
+
+
+type alias Store =
+    { hits : Int, seen : Int }
+
+
+type StoreMsg
+    = Hit
+    | Seen Device
+
+
+storeUpdate : StoreMsg -> Store -> ( Store, Cmd StoreMsg )
+storeUpdate msg store =
+    case msg of
+        Hit -> ( { store | hits = store.hits + 1 }, Cmd.none )
+        Seen _ -> ( { store | seen = store.seen + 1 }, Cmd.none )
+
+
+-- Both stores hand in the very same tagger. Each store's device messages
+-- still have to reach that store, and only once.
+storeSubs : Store -> Sub StoreMsg
+storeSubs _ =
+    Device.watch Seen
+
+
+storeA : App.Shared Store StoreMsg
+storeA =
+    App.shared
+        { init = ( { hits = 7, seen = 0 }, Cmd.none )
+        , update = storeUpdate
+        , subscriptions = storeSubs
+        }
+
+
+storeB : App.Shared Store StoreMsg
+storeB =
+    App.shared
+        { init = ( { hits = 9, seen = 0 }, Cmd.none )
+        , update = storeUpdate
+        , subscriptions = storeSubs
+        }
+
+
+type alias Model =
+    { n : Int }
+
+
+type Msg
+    = HitA
+    | HitB
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+        HitA -> ( model, Cmd.toShared storeA Hit )
+        HitB -> ( model, Cmd.toShared storeB Hit )
+
+
+screen : String -> Int -> Model -> View Msg
+screen label shown _ =
+    navigationStack [ navigationTitle label ]
+        [ vstack []
+            [ text [] (label ++ "=" ++ String.fromInt shown)
+            , button [] HitA "hit-a"
+            , button [] HitB "hit-b"
+            ]
+        ]
+
+
+plain : String -> String -> Int -> Page
+plain path label shown =
+    Page.create
+        { path = path
+        , title = label
+        , init = ( { n = 0 }, Cmd.none )
+        , update = update
+        , view = screen label shown
+        , subscriptions = always Sub.none
+        }
+
+
+pageA : Page
+pageA =
+    plain "/" "A" 0
+
+
+pageP : Page
+pageP =
+    Page.sheet (Page.withShared storeA (\a -> plain "/p" "P" a.hits))
+
+
+pageL : Page
+pageL =
+    Page.withShared storeA (\a -> Page.sheet (plain "/l" "L" a.hits))
+
+
+pageK : Page
+pageK =
+    Page.withShared storeA
+        (\a -> Page.sheet (Page.withShared storeB (\b -> plain "/k" "K" (a.hits * 100 + b.hits))))
+
+
+pageT : Page
+pageT =
+    Page.withShared storeA
+        (\a -> Page.withShared storeB (\b -> plain "/t" "T" (a.hits * 100 + b.hits)))
+
+
+-- R reads A, then B, then A again: how many device messages each store got.
+pageR : Page
+pageR =
+    Page.withShared storeA
+        (\a -> Page.withShared storeB (\b -> Page.withShared storeA (\_ -> plain "/r" "R" (a.seen * 100 + b.seen))))
+
+
+main : Cmd ()
+main =
+    App.frontend [ pageA, pageP, pageL, pageK, pageT, pageR ]
+`

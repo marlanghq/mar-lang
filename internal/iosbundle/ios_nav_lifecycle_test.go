@@ -151,6 +151,50 @@ func TestSheetOverSheetOnIOS(t *testing.T) {
 	}
 }
 
+// parity.SharedWrapSource against the string TestSheetAndSharedWrappersCompose
+// holds the web to: every nesting of Page.sheet and Page.withShared presents
+// the page, and a page that reads two stores is drawn and follows both.
+func TestSharedWrappersOnIOS(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds an iOS app and drives a simulator")
+	}
+	buildWrapHostOnce.Do(func() {
+		buildWrapHostOnce.host, buildWrapHostOnce.skip, buildWrapHostOnce.fail =
+			makeHost(t, parity.SharedWrapSource, "WrapCheck", wrapBundleID)
+	})
+	if buildWrapHostOnce.fail != "" {
+		t.Fatal(buildWrapHostOnce.fail)
+	}
+	if buildWrapHostOnce.host == nil {
+		t.Skip(buildWrapHostOnce.skip)
+	}
+	got := runNavScript(t, buildWrapHostOnce.host, "shared-wrap")
+	want := "start:root=A=0,sheet=- p:root=A=0,sheet=P=7 p-hit:root=A=0,sheet=P=8 " +
+		"l:root=A=0,sheet=L=8 k:root=A=0,sheet=K=809 " +
+		"t:root=T=809,sheet=- hit-a:root=T=909,sheet=- hit-b:root=T=910,sheet=-"
+	if got != want {
+		t.Fatalf("Page.sheet and Page.withShared compose differently from the web.\n got: %s\nwant: %s\n\n"+
+			"p:root=P=7,sheet=- → Page.sheet around a Page.withShared was pushed, not presented.\n"+
+			"t:root=-            → the page that reads two stores was dropped.", got, want)
+	}
+
+	subs := runNavScript(t, buildWrapHostOnce.host, "shared-subs")
+	if want := "r:root=R=101"; subs != want {
+		t.Fatalf("a store was handed the device a number of times other than once.\n got: %s\nwant: %s\n\n"+
+			"R=2   → store A's messages went to store B.\n"+
+			"R=201 → store A, read twice, got each message twice.", subs, want)
+	}
+}
+
+const wrapBundleID = "dev.marlang.wrapcheck"
+
+var buildWrapHostOnce struct {
+	sync.Once
+	host *navHost
+	skip string
+	fail string
+}
+
 const sheetsBundleID = "dev.marlang.sheetscheck"
 
 var buildSheetsHostOnce struct {

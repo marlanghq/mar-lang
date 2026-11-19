@@ -64,8 +64,8 @@ func TestSharedStoreIsWiredNotStubbed(t *testing.T) {
 			"a page built with Page.withShared would vanish from the app",
 		},
 		{
-			"the decoder keeps the builder unapplied",
-			context, "SharedBinding(key: key, builder:",
+			"the decoder keeps the builders unapplied",
+			context, "SharedBinding(wrapper: v)",
 			"the page would freeze against the model it had at launch",
 		},
 		{
@@ -90,7 +90,7 @@ func TestSharedStoreIsWiredNotStubbed(t *testing.T) {
 		},
 		{
 			"a shared subscription routes to the store",
-			runtime, "sharedTaggerOwners[Self.taggerIdentity(tagger)]",
+			runtime, "if owner.hasPrefix(Self.storeOwnerPrefix) {",
 			"a shared sub's message would land in the page's update instead",
 		},
 		{
