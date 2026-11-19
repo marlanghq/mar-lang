@@ -35,6 +35,7 @@ func TestSharedStoreIsWiredNotStubbed(t *testing.T) {
 	builtins := read("MarBuiltins.swift")
 	context := read("MarAppContext.swift")
 	runtime := read("MarPageRuntime.swift")
+	subs := read("MarSubscriptions.swift")
 	viewModel := read("AppViewModel.swift")
 
 	checks := []struct {
@@ -81,7 +82,7 @@ func TestSharedStoreIsWiredNotStubbed(t *testing.T) {
 		{
 			"the page stops listening when it goes away",
 			runtime, "MarSharedRegistry.removeObserver(ObjectIdentifier(self))",
-			"a torn-down page would keep reconciling subs forever",
+			"a torn-down page would keep redrawing on every shared change",
 		},
 		{
 			"the view actually reads the change signal",
@@ -90,8 +91,13 @@ func TestSharedStoreIsWiredNotStubbed(t *testing.T) {
 		},
 		{
 			"a shared subscription routes to the store",
-			runtime, "if owner.hasPrefix(Self.storeOwnerPrefix) {",
+			subs, "if owner.hasPrefix(Self.storeOwnerPrefix) {",
 			"a shared sub's message would land in the page's update instead",
+		},
+		{
+			"every store subscribes, whatever page is on top",
+			subs, "for key in MarSharedRegistry.keys {",
+			"a store would stop listening while a page that does not read it is on top",
 		},
 		{
 			"loading a program restarts the key sequence",

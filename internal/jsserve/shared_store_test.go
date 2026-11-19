@@ -373,3 +373,56 @@ process.stdout.write('assigned=' + assigned + ' shows-ops=' + /ops/.test(screenT
 		t.Fatalf("Page.sheet dropped the admin gate.\n got: %s\nwant: %s", got, want)
 	}
 }
+
+// parity.StoreLifeSource, the same string as TestAStoreLivesAsLongAsTheAppOnIOS:
+// a store watching the device is handed it once whatever pages come and go, a
+// store a page only writes to still runs its init Cmd after the first render,
+// and a page a sheet covers stops listening.
+func TestAStoreLivesAsLongAsTheApp(t *testing.T) {
+	program, err := parity.Compile(parity.StoreLifeSource, SerializeModule)
+	if err != nil {
+		t.Fatalf("compiling the fixture: %v", err)
+	}
+	got, err := parity.RunWeb(runtimeJS, program, `
+const fs = require('fs');
+(0, eval)(fs.readFileSync(process.argv[2], 'utf8'));
+const program = JSON.parse(fs.readFileSync(process.argv[3], 'utf8'));
+history.replaceState({ marDepth: 0, prevTitle: '' }, '', '/');
+window.marRun(program);
+const flush = async () => { for (let i = 0; i < 4; i++) await new Promise((r) => setTimeout(r, 0)); };
+const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+const seen = [];
+const top = () => (screenText().match(/[NPCTBS]=\d+/) || ['-'])[0];
+const note = (l) => seen.push(l + ':' + top());
+const ticks = () => { const m = screenText().match(/T=(\d+)/); return m ? Number(m[1]) : -1; };
+(async () => {
+await flush();
+globalThis.__marNav.push('/c'); await flush(); note('c');
+globalThis.__marNav.push('/p'); await flush(); note('p');
+history.back(); await flush(); note('back-c');
+history.back(); await flush();
+globalThis.__marNav.push('/c'); await flush(); note('c-again');
+globalThis.__marNav.push('/b'); await flush(); note('b');
+history.back(); await flush();
+globalThis.__marNav.push('/t'); await wait(450);
+const before = ticks();
+globalThis.__marNav.push('/s'); await wait(800);
+history.back(); await flush();
+const after = ticks();
+seen.push('t-under-sheet:' + (before >= 0 && after - before <= 1 ? 'frozen' : 'ticking'));
+process.stdout.write(seen.join(' '));
+process.exit(0);
+})().catch((e) => process.stdout.write('THREW ' + e.stack));
+`)
+	if errors.Is(err, parity.ErrNoNode) {
+		t.Skip("node not installed")
+	}
+	if err != nil {
+		t.Fatalf("node run: %v", err)
+	}
+	want := "c:C=101 p:P=0 back-c:C=101 c-again:C=101 b:B=2 t-under-sheet:frozen"
+	if got != want {
+		t.Fatalf("a store or a covered page lives differently than it should.\n got: %s\nwant: %s\n\n"+
+			"C=100 → the store a page only writes to never ran its init Cmd.", got, want)
+	}
+}

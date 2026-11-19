@@ -93,16 +93,16 @@ enum MarSharedRegistry {
     /// it does not reset a page model.
     private static var preservedModels: [String: MarValue] = [:]
 
-    /// Cmds returned by a store's `init`, deferred until the first page mounts
-    /// so the Service.call that fills the store dispatches into a live loop
-    /// rather than into a dead one. The web defers these the same way
-    /// (`pendingSharedCmds`).
+    /// Cmds returned by a store's `init`, deferred until the first render, so
+    /// the Service.call that fills the store dispatches into a live loop
+    /// rather than into a dead one. Every store's, whether or not a page reads
+    /// it. The web defers these the same way (`pendingSharedCmds`).
     private static var pendingInitEffects: [(key: String, effect: MarValue)] = []
 
     /// Mounted pages that want to hear about a shared change, keyed by the
-    /// page runtime's identity. A SET rather than one slot, because a pushed
-    /// stack keeps the screens beneath it alive and every one of them is a
-    /// function of this model. Registered by `mount`, dropped by `unmount`:
+    /// page runtime's identity. A SET rather than one slot, because every
+    /// mounted page that reads a store is a function of its model, whichever
+    /// is on top. Registered by `mount`, dropped by `unmount`:
     /// never by `init`, which SwiftUI runs on throwaway instances every time
     /// a parent view's body is re-evaluated.
     private static var observers: [ObjectIdentifier: () -> Void] = [:]
@@ -113,10 +113,55 @@ enum MarSharedRegistry {
     /// a brand-new empty store. The MODELS survive: that is the whole point
     /// of keying them by declaration order. Mirrors `marReload` on the web.
     static func beginProgramLoad() {
+        previous = (stores, keys, nextIndex, pendingInitEffects)
         stores = [:]
+        keys = []
         nextIndex = 0
         pendingInitEffects = []
+        madeByLoad = []
+        loadingProgram = true
     }
+
+    /// The program's top level has run. Once the app is past its first screen,
+    /// a store this load made runs its init Cmd now, as the web runs a
+    /// reload's after its first render.
+    static func endProgramLoad() {
+        loadingProgram = false
+        previous = nil
+        madeByLoad = []
+        if initEffectsRan { drainInitEffects() }
+    }
+
+    /// The load threw, and the program already on screen keeps running: its
+    /// stores come back as they were. A store the failed load made is
+    /// forgotten, model and all, so the next load makes it afresh and runs
+    /// its init Cmd.
+    static func abortProgramLoad() {
+        loadingProgram = false
+        for key in madeByLoad { preservedModels.removeValue(forKey: key) }
+        madeByLoad = []
+        if let previous {
+            stores = previous.stores
+            keys = previous.keys
+            nextIndex = previous.nextIndex
+            pendingInitEffects = previous.pending
+        }
+        previous = nil
+    }
+
+    /// Between beginProgramLoad and its end or abort.
+    private static var loadingProgram = false
+    /// The registry as it was before the load, for abortProgramLoad.
+    private static var previous: (stores: [String: MarSharedStore], keys: [String], nextIndex: Int,
+                                  pending: [(key: String, effect: MarValue)])?
+    /// Stores this load made with no model to keep.
+    private static var madeByLoad: [String] = []
+    /// The first screen ran the queued init Cmds.
+    private static var initEffectsRan = false
+
+    /// Every store's key, in the order the program declares them. Every store
+    /// subscribes for as long as the app runs (MarSubscriptions.refresh).
+    private(set) static var keys: [String] = []
 
     /// Mints the key for one `App.shared` call, in evaluation order.
     static func nextKey() -> String {
@@ -146,8 +191,10 @@ enum MarSharedRegistry {
             updateFn: updateFn,
             subscriptionsFn: subscriptionsFn)
         stores[key] = made
+        if loadingProgram { keys.append(key) }
         if preserved == nil {
             preservedModels[key] = made.model
+            if loadingProgram { madeByLoad.append(key) }
             if let initEffect { pendingInitEffects.append((key, initEffect)) }
         }
         return made
@@ -181,21 +228,6 @@ enum MarSharedRegistry {
         return (layer, keys, presented)
     }
 
-    /// The stores a `Page.withShared` page reads, outermost first, each once.
-    /// Walks as far as the builders allow: a builder that fails on the current
-    /// model ends the walk, and the stores read before it still count.
-    static func storeKeys(_ wrapped: MarValue) -> [String] {
-        var layer = wrapped
-        var keys: [String] = []
-        while case .ctor("__SharedPage", let args) = layer, args.count >= 2,
-              case .string(let key) = args[0], let store = lookup(key) {
-            if !keys.contains(key) { keys.append(key) }
-            guard let inner = try? Eval.apply(args[1], store.model) else { break }
-            layer = inner
-        }
-        return keys
-    }
-
     // MARK: - Observers
 
     static func addObserver(_ owner: ObjectIdentifier, _ handler: @escaping () -> Void) {
@@ -211,6 +243,9 @@ enum MarSharedRegistry {
     /// hears about it, not just the top of the stack.
     static func notifyChanged() {
         for handler in observers.values { handler() }
+        // A store's subscriptions are a function of its model, and so is a
+        // page on top that reads it.
+        MarSubscriptions.shared.refresh()
     }
 
     // MARK: - Effects
@@ -234,9 +269,12 @@ enum MarSharedRegistry {
         }
     }
 
-    /// Fires the queued `init` Cmds. Called from the first page mount, and a
-    /// no-op on every mount after that.
+    /// Fires the queued `init` Cmds: after the first page's own init, or when
+    /// the first screen waits on the session check; after that, when a
+    /// program load made new stores (endProgramLoad). A no-op with nothing
+    /// queued.
     static func drainInitEffects() {
+        initEffectsRan = true
         let queued = pendingInitEffects
         pendingInitEffects = []
         for q in queued { runEffect(q.effect, owner: q.key) }

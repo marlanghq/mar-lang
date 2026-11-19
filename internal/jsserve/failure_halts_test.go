@@ -63,11 +63,22 @@ func TestAViewFailureHaltsTheProgram(t *testing.T) {
 		t.Fatalf("read %s: %v", swiftPath, err)
 	}
 	swift := string(swiftSrc)
-	for _, want := range []string{"halted = true", "teardownSubs()", "if halted { return }"} {
+	for _, want := range []string{"halted = true", "MarSubscriptions.shared.refresh()", "if halted { return }"} {
 		if !strings.Contains(swift, want) {
 			t.Errorf("MarPageRuntime.swift must contain %q: ADR 0028 is a runtime "+
 				"policy, and a policy one platform keeps is a drift", want)
 		}
+	}
+	// The halted page's refresh is what quiets the program: the app's
+	// subscriptions run nothing while a page that failed to draw is on top.
+	subsPath := filepath.Join("..", "iosbundle", "template", "Sources", "MarSubscriptions.swift")
+	subsSrc, err := os.ReadFile(subsPath)
+	if err != nil {
+		t.Fatalf("read %s: %v", subsPath, err)
+	}
+	halt, ok := functionBody(string(subsSrc), "if let onTop, onTop.halted {")
+	if !ok || !strings.Contains(halt, "reconcileSubs([])") {
+		t.Error("MarSubscriptions.refresh must run nothing while a halted page is on top (ADR 0028)")
 	}
 	// ...and only for the case that cannot recover. If the Swift side ever
 	// halts on a `dispatch` failure too, an app whose screen is still correct

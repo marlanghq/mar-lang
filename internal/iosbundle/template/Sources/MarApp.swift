@@ -98,9 +98,6 @@ struct MarPageHost: View {
         .navigationBarTitleDisplayMode(.inline)
         .onAppear { runtime.mount() }
         .onDisappear { runtime.unmount() }
-        // A page under a sheet stays mounted, so closing the sheet fires no
-        // onAppear here. The top of the stack moving is what tells it.
-        .onChange(of: AppContext.shared.stack.last?.id) { runtime.stackMoved() }
     }
 
     /// Whether the top-level view tag renders to a SwiftUI primitive

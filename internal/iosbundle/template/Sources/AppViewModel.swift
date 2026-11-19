@@ -547,6 +547,43 @@ final class AppViewModel {
             await settle()
             seen.append("r:root=\(counter(onScreen()))")
 
+        // parity.StoreLifeSource: the store watching the device is handed it
+        // once, whatever pages come and go; the store a page only writes to
+        // ran its init Cmd; and T, covered by the sheet, stops ticking.
+        case "store-life":
+            func noteTop(_ label: String) { seen.append("\(label):\(counter(onScreen()))") }
+            func ticks(_ runtime: PageRuntime?) -> Int {
+                Int(counter(runtime).split(separator: "=").last ?? "") ?? -1
+            }
+            try? await Task.sleep(nanoseconds: 1_000_000_000)
+            ctx.navigate(path: "/c", replace: false)
+            await settle()
+            noteTop("c")
+            ctx.navigate(path: "/p", replace: false)
+            await settle()
+            noteTop("p")
+            ctx.stack.removeLast()
+            try? await Task.sleep(nanoseconds: 1_200_000_000)
+            noteTop("back-c")
+            ctx.stack.removeLast()
+            try? await Task.sleep(nanoseconds: 1_200_000_000)
+            ctx.navigate(path: "/c", replace: false)
+            await settle()
+            noteTop("c-again")
+            ctx.navigate(path: "/b", replace: false)
+            await settle()
+            noteTop("b")
+            ctx.stack.removeLast()
+            try? await Task.sleep(nanoseconds: 1_200_000_000)
+            ctx.navigate(path: "/t", replace: false)
+            try? await Task.sleep(nanoseconds: 900_000_000)
+            let before = ticks(onScreen())
+            ctx.navigate(path: "/s", replace: false)
+            try? await Task.sleep(nanoseconds: 1_000_000_000)
+            ctx.stack.removeLast()
+            let after = ticks(onScreen())
+            seen.append("t-under-sheet:" + (before >= 0 && after - before <= 1 ? "frozen" : "ticking"))
+
         // The presented entry changes in place: S comes off and N goes on in
         // one turn, so the sheet never closes. What it shows has to be N's
         // own page, not S's page kept in the slot.
@@ -1250,28 +1287,45 @@ final class AppViewModel {
         // are preserved across the reload: a refresh should no more empty the
         // cart than a `mar dev` save should.
         MarSharedRegistry.beginProgramLoad()
-        let env = MarBuiltins.makeEnv()
-        for module in program.modules {
-            try MarLoader.load(module: module, into: env)
-        }
+        do {
+            let env = MarBuiltins.makeEnv()
+            for module in program.modules {
+                try MarLoader.load(module: module, into: env)
+            }
 
-        // Resolve the entry: typically `main`. The Go side stamps
-        // entry as "main" or the synthetic "__entry" depending on
-        // load path. Try both.
-        let entry: MarValue
-        if let v = env.lookup(program.entry) {
-            entry = v
-        } else if let v = env.lookup("main") {
-            entry = v
-        } else {
-            throw MarRuntimeError.message("entry not found: \(program.entry)")
-        }
+            // Resolve the entry: typically `main`. The Go side stamps
+            // entry as "main" or the synthetic "__entry" depending on
+            // load path. Try both.
+            let entry: MarValue
+            if let v = env.lookup(program.entry) {
+                entry = v
+            } else if let v = env.lookup("main") {
+                entry = v
+            } else {
+                throw MarRuntimeError.message("entry not found: \(program.entry)")
+            }
 
-        guard case .effect(let eff) = entry else {
-            throw MarRuntimeError.message("entry is not an Effect")
+            guard case .effect(let eff) = entry else {
+                throw MarRuntimeError.message("entry is not an Effect")
+            }
+            // Run main: captures pages into AppContext.shared.
+            _ = try eff.run()
+        } catch {
+            // The program on screen keeps running, and so do its stores.
+            MarSharedRegistry.abortProgramLoad()
+            throw error
         }
-        // Run main: captures pages into AppContext.shared.
-        _ = try eff.run()
+        // The program's stores exist now; a store this load added runs its
+        // init Cmd once the app is past its first screen.
+        MarSharedRegistry.endProgramLoad()
+        // A new program on a running app: bring the subscriptions up to what
+        // it asks for. Sources it still asks for keep running (a loop keeps
+        // playing, a store is not handed its state again); at launch the
+        // first screen starts them, once there is a window for a state source
+        // to report on, as the web's first render does.
+        if !isInitialLoad {
+            MarSubscriptions.shared.refresh()
+        }
 
         let decoded = AppContext.shared.decodedPages()
         #if DEBUG

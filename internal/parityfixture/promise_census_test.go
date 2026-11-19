@@ -60,7 +60,8 @@ var promiseCensus = []promiseSource{
 	{"iosbundle/MarHTTP.swift", 8, 0, "table", "decodeServerError to HTTPErrorCases, the shape-mismatch sentence and the domain-code table to AuthPortCases, and handleAuthExpired to AuthExpiryCases. That last one was the gap: the decision was inside an @Observable the offline harnesses cannot build, so it is a function now, and the platform keeps only WHERE the remembered path lives"},
 	{"iosbundle/AppViewModel.swift", 2, 0, "screens", "the snapshot and cache formats, whose only requirement is being the same on both platforms; observable as a screen that does or does not come back"},
 	{"iosbundle/MarRenderer.swift", 2, 0, "screens", "the renderer is compared by the screens it produces"},
-	{"iosbundle/MarPageRuntime.swift", 4, 0, "screens", "page lifecycle, compared by the navigation fixture"},
+	{"iosbundle/MarPageRuntime.swift", 2, 0, "screens", "page lifecycle, compared by the navigation fixture"},
+	{"iosbundle/MarSubscriptions.swift", 1, 0, "screens", "one reconciler for the page on top and every store, as on the web: parity.StoreLifeSource, SubsSource and SharedWrapSource run the same scripts with the same expected strings on both clients"},
 	{"iosbundle/MarDispatcher.swift", 2, 0, "screens", "where a result goes and what a covered page may do, both observable as screens: parity.RouteSource runs the same route-batch script with the same expected string on both clients"},
 	{"iosbundle/MarSound.swift", 3, 0, "sound", "the playback comparator reads the automation events"},
 }

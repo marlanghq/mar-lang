@@ -62,7 +62,17 @@ func TestEveryFunctionImplementedTwiceIsAccountedFor(t *testing.T) {
 	// compares all three. The wire round trip (parityfixture.WireCases)
 	// compares them on the way in.
 	//
-	// `refusedFromCovered` (browser and phone) is the newest: a page that is
+	// `isPageOwner` (browser and phone) is the newest: whether a subscription
+	// belongs to a showing of the page on top rather than to a store. The two
+	// clients run one reconciler for the page on top and every store, and
+	// this is how each tells whose message it is and whose state seen to
+	// check. What compares them is behaviour: parity.StoreLifeSource and
+	// parity.SubsSource run the same scripts with the same expected strings
+	// on both clients (internal/jsserve shared_store_test.go and
+	// sub_seed_test.go, internal/iosbundle ios_nav_lifecycle_test.go and
+	// ios_sub_seed_test.go).
+	//
+	// `refusedFromCovered` (browser and phone) came just before: a page that is
 	// not on screen does not navigate or play sound. What compares the two is
 	// behaviour: parity.RouteSource's route-batch script, in which a covered
 	// page asks to navigate, with the same expected string in
@@ -125,8 +135,8 @@ func TestEveryFunctionImplementedTwiceIsAccountedFor(t *testing.T) {
 	// had it, left the name count unmoved and the test silent. Measured, not
 	// reasoned -- the sabotage was supposed to fail and did not.
 	const (
-		pairs           = 108
-		implementations = 257
+		pairs           = 109
+		implementations = 259
 	)
 
 	js := namesIn(t, []string{"../jsserve/runtime.js"},

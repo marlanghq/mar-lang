@@ -873,3 +873,153 @@ main : Cmd ()
 main =
     App.frontend [ pageA, pageP, pageL, pageK, pageT, pageR ]
 `
+
+// StoreLifeSource is the life of a store and of the page on top.
+//
+// `counter` watches the device from the first screen, whatever page is on
+// screen: it is handed the device once, and nothing more while pages come and
+// go. `boot` is read by no page; P only writes to it. Its init Cmd still runs
+// once, after the first render, before anything writes to it, and tells
+// `counter`. C shows both, as seen * 100 + started.
+//
+// T ticks every 100 ms. Only the page on top listens, so while the sheet S
+// covers it T stops, and it is where it was when the sheet closes. B watches
+// the device through two taggers, and each is handed it.
+const StoreLifeSource = `module Main exposing (main)
+
+
+import UI exposing (vstack, text, button, navigationStack, navigationTitle)
+
+
+type alias Count =
+    { seen : Int, started : Int }
+
+
+type CountMsg
+    = Seen Device
+    | Started
+
+
+counterUpdate : CountMsg -> Count -> ( Count, Cmd CountMsg )
+counterUpdate msg count =
+    case msg of
+        Seen _ -> ( { count | seen = count.seen + 1 }, Cmd.none )
+        Started -> ( { count | started = count.started + 1 }, Cmd.none )
+
+
+counter : App.Shared Count CountMsg
+counter =
+    App.shared
+        { init = ( { seen = 0, started = 0 }, Cmd.none )
+        , update = counterUpdate
+        , subscriptions = \_ -> Device.watch Seen
+        }
+
+
+type BootMsg
+    = Poked
+
+
+boot : App.Shared Int BootMsg
+boot =
+    App.shared
+        { init = ( 0, Cmd.toShared counter Started )
+        , update = \_ n -> ( n, Cmd.none )
+        , subscriptions = always Sub.none
+        }
+
+
+type alias Model =
+    { n : Int }
+
+
+type Msg
+    = Tick Time
+    | Width Device
+    | Theme Device
+
+
+screen : String -> Int -> View Msg
+screen label shown =
+    navigationStack [ navigationTitle label ]
+        [ vstack [] [ text [] (label ++ "=" ++ String.fromInt shown) ] ]
+
+
+plain : String -> String -> Page
+plain path label =
+    Page.create
+        { path = path
+        , title = label
+        , init = ( { n = 0 }, Cmd.none )
+        , update = \_ model -> ( model, Cmd.none )
+        , view = \_ -> screen label 0
+        , subscriptions = always Sub.none
+        }
+
+
+pageN : Page
+pageN =
+    plain "/" "N"
+
+
+pageP : Page
+pageP =
+    Page.create
+        { path = "/p"
+        , title = "P"
+        , init = ( { n = 0 }, Cmd.toShared boot Poked )
+        , update = \_ model -> ( model, Cmd.none )
+        , view = \_ -> screen "P" 0
+        , subscriptions = always Sub.none
+        }
+
+
+pageC : Page
+pageC =
+    Page.withShared counter
+        (\count ->
+            Page.create
+                { path = "/c"
+                , title = "C"
+                , init = ( { n = 0 }, Cmd.none )
+                , update = \_ model -> ( model, Cmd.none )
+                , view = \_ -> screen "C" (count.seen * 100 + count.started)
+                , subscriptions = always Sub.none
+                }
+        )
+
+
+pageT : Page
+pageT =
+    Page.create
+        { path = "/t"
+        , title = "T"
+        , init = ( { n = 0 }, Cmd.none )
+        , update = \_ model -> ( { n = model.n + 1 }, Cmd.none )
+        , view = \model -> screen "T" model.n
+        , subscriptions = \_ -> Time.every (Time.millis 100) Tick
+        }
+
+
+-- B watches the device twice, through two taggers: each is handed it.
+pageB : Page
+pageB =
+    Page.create
+        { path = "/b"
+        , title = "B"
+        , init = ( { n = 0 }, Cmd.none )
+        , update = \_ model -> ( { n = model.n + 1 }, Cmd.none )
+        , view = \model -> screen "B" model.n
+        , subscriptions = \_ -> Sub.batch [ Device.watch Width, Device.watch Theme ]
+        }
+
+
+pageS : Page
+pageS =
+    Page.sheet (plain "/s" "S")
+
+
+main : Cmd ()
+main =
+    App.frontend [ pageN, pageP, pageC, pageT, pageB, pageS ]
+`

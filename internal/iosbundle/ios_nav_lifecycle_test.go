@@ -509,3 +509,41 @@ func tailLines(s string, n int) string {
 	}
 	return strings.Join(lines, "\n")
 }
+
+// parity.StoreLifeSource against the string TestAStoreLivesAsLongAsTheApp
+// holds the web to: a store watching the device is handed it once whatever
+// pages come and go, a store a page only writes to still runs its init Cmd, and
+// a page a sheet covers stops listening.
+func TestAStoreLivesAsLongAsTheAppOnIOS(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds an iOS app and drives a simulator")
+	}
+	buildLifeHostOnce.Do(func() {
+		buildLifeHostOnce.host, buildLifeHostOnce.skip, buildLifeHostOnce.fail =
+			makeHost(t, parity.StoreLifeSource, "LifeCheck", lifeBundleID)
+	})
+	if buildLifeHostOnce.fail != "" {
+		t.Fatal(buildLifeHostOnce.fail)
+	}
+	if buildLifeHostOnce.host == nil {
+		t.Skip(buildLifeHostOnce.skip)
+	}
+	got := runNavScript(t, buildLifeHostOnce.host, "store-life")
+	want := "c:C=101 p:P=0 back-c:C=101 c-again:C=101 b:B=2 t-under-sheet:frozen"
+	if got != want {
+		t.Fatalf("a store or a covered page lives differently from the web.\n got: %s\nwant: %s\n\n"+
+			"C=100           → the store a page only writes to never ran its init Cmd.\n"+
+			"back-c:C=201    → the store stopped listening while a plain page was on top, and was handed the device again.\n"+
+			"b:B=1           → a page watching the device through two taggers was handed it once.\n"+
+			"t-under-sheet:ticking → the page under the sheet kept listening.", got, want)
+	}
+}
+
+const lifeBundleID = "dev.marlang.lifecheck"
+
+var buildLifeHostOnce struct {
+	sync.Once
+	host *navHost
+	skip string
+	fail string
+}

@@ -16,6 +16,7 @@
 		3261C4D120A0A85998999F24 /* APIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = B978C6A4C024308BE99BE1A3 /* APIClient.swift */; };
 		34107512D960020FE2233B04 /* MarWire.swift in Sources */ = {isa = PBXBuildFile; fileRef = E781E4F57603C4ADA03DC036 /* MarWire.swift */; };
 		34BD268845E2FD3AD976DEAF /* MarJSONText.swift in Sources */ = {isa = PBXBuildFile; fileRef = 44DA4DA762F728712BFF879D /* MarJSONText.swift */; };
+		39811D0FD602BD8C8DD98413 /* MarSubscriptions.swift in Sources */ = {isa = PBXBuildFile; fileRef = 07B310A432906C78A9CDB840 /* MarSubscriptions.swift */; };
 		493D3C02C5420E09DC9A9D58 /* MarPageRuntime.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49572645D20DFF429518E618 /* MarPageRuntime.swift */; };
 		4F5F61AC66A3FB62634EC9D5 /* MarSharedStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7514C4E0930E690C37F202EA /* MarSharedStore.swift */; };
 		4FA4A6208515E57314147BD2 /* MarEval.swift in Sources */ = {isa = PBXBuildFile; fileRef = D82563539CB5C35B24C312D6 /* MarEval.swift */; };
@@ -47,6 +48,7 @@
 
 /* Begin PBXFileReference section */
 		00F580760830045A6160A79D /* MarMathTable.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarMathTable.swift; sourceTree = "<group>"; };
+		07B310A432906C78A9CDB840 /* MarSubscriptions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarSubscriptions.swift; sourceTree = "<group>"; };
 		17AA2A49371B78A0E17CA081 /* MarBuiltins.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarBuiltins.swift; sourceTree = "<group>"; };
 		188C4335F604FB991926BD68 /* MarSound.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarSound.swift; sourceTree = "<group>"; };
 		232B6AA41600028041EB6429 /* MarDispatcher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarDispatcher.swift; sourceTree = "<group>"; };
@@ -147,6 +149,7 @@
 				C8CBCB8DB09D9A40304B3DAA /* MarRuntimeIOSApp.swift */,
 				7514C4E0930E690C37F202EA /* MarSharedStore.swift */,
 				188C4335F604FB991926BD68 /* MarSound.swift */,
+				07B310A432906C78A9CDB840 /* MarSubscriptions.swift */,
 				E73011F6F0CF37ADFC8EF5DC /* MarValue.swift */,
 				E781E4F57603C4ADA03DC036 /* MarWire.swift */,
 			);
@@ -257,6 +260,7 @@
 				ACFDBA1661EBFB6A10831879 /* MarRuntimeIOSApp.swift in Sources */,
 				4F5F61AC66A3FB62634EC9D5 /* MarSharedStore.swift in Sources */,
 				7D2DE8EFDDCD7D1944E69693 /* MarSound.swift in Sources */,
+				39811D0FD602BD8C8DD98413 /* MarSubscriptions.swift in Sources */,
 				83074E905DC05A40B0E08DE3 /* MarValue.swift in Sources */,
 				34107512D960020FE2233B04 /* MarWire.swift in Sources */,
 			);

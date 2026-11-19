@@ -2822,6 +2822,13 @@
   // Service.call that fills the store: dispatches into a live loop rather
   // than into a null one.
   let pendingSharedCmds = [];
+  // Every App.shared def the program's top level built, in declaration
+  // order. Each gets its store before the first render, whether a page reads
+  // it or only writes to it: a store's init runs once at launch and its
+  // subscriptions live as long as the app does. Closed once the pages mount;
+  // a def is a top-level binding (ADR 0026).
+  let sharedDefs = [];
+  let sharedDefsOpen = true;
 
   function sharedStoreFor(def) {
     let store = sharedStores.get(def);
@@ -6703,6 +6710,7 @@
       const f = rec.fields;
       const d = VCtor('__Shared', [f.init, f.update, f.subscriptions]);
       d.__originKey = 'shared:' + (sharedDefSeq++);
+      if (sharedDefsOpen) sharedDefs.push(d);
       return d;
     });
     def('appShared', appSharedImpl);
@@ -13373,6 +13381,11 @@
     // A fresh mount (cold load or hot reload) owns the live timers; clear any
     // the previous mountPages left running so they do not double-fire.
     teardownAllSubs();
+    // Every store exists from launch, in declaration order, whether a page
+    // reads it or only writes to it: its init Cmd runs after the first render
+    // and its subscriptions join every render (see render).
+    for (const d of sharedDefs) sharedStoreFor(d);
+    sharedDefsOpen = false;
     // `halted` needs no reset here: it is declared inside this function, so a
     // hot reload re-enters mountPages and gets a fresh binding that starts
     // false. That is the developer saying "try again", and it costs nothing.
@@ -15760,6 +15773,8 @@
     pendingPageErrors.clear();
     sharedRerender = null;
     pendingSharedCmds = [];
+    sharedDefs = [];
+    sharedDefsOpen = true;
     sharedDefSeq = 0;
     const root = document.getElementById('mar-root');
     if (root) while (root.firstChild) root.removeChild(root.firstChild);

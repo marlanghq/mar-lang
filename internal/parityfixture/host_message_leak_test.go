@@ -47,12 +47,13 @@ func TestNoHostMessageReachesAMarProgram(t *testing.T) {
 	// belonged to is watched. Measured -- a new leak written with a different
 	// Foundation accessor passed this test in silence until the count existed.
 	population := map[string]int{
-		"APIClient.swift":      2,
-		"AppViewModel.swift":   3,
-		"MarAppContext.swift":  1,
-		"MarHTTP.swift":        4,
-		"MarPageRuntime.swift": 5,
-		"MarSharedStore.swift": 2,
+		"APIClient.swift":        2,
+		"AppViewModel.swift":     3,
+		"MarAppContext.swift":    1,
+		"MarHTTP.swift":          4,
+		"MarPageRuntime.swift":   5,
+		"MarSharedStore.swift":   2,
+		"MarSubscriptions.swift": 1,
 	}
 
 	var problems []string

@@ -221,6 +221,11 @@ private struct StackShell: View {
         .id(ctx.rootGeneration)
         .transition(.opacity)
         .animation(.easeInOut(duration: 0.25), value: ctx.rootGeneration)
+        // Only the page on top subscribes, so the top moving changes who
+        // listens: a page under a sheet that closed listens again, and one a
+        // push covered stops. It stays mounted either way, so its own
+        // onAppear / onDisappear cannot say so.
+        .onChange(of: ctx.stack.last?.id) { MarSubscriptions.shared.refresh() }
     }
 
     /// The entry SwiftUI renders as the root view of NavigationStack.
@@ -354,7 +359,11 @@ private struct ProtectedRoute: View {
     var body: some View {
         Group {
             if ctx.authPending || ctx.currentUser == nil {
+                // A first screen that waits on the session check is still the
+                // first render: the stores' init Cmds do not wait for it. Their
+                // subscriptions start with the first page, as on the web.
                 ProgressView("Checking session…")
+                    .onAppear { MarSharedRegistry.drainInitEffects() }
             } else if let user = unwrapJustUser(ctx.currentUser) {
                 MarPageHost(runtime: PageRuntime(page: match.page,
                                                  user: user,

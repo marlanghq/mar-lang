@@ -838,10 +838,10 @@ There is no registration step: `Main` does not mention the store, and the runtim
 
 Semantics worth knowing:
 
-- `init` runs once, before the first page's `init`. Its `Cmd` — typically the one `Service.call` that fills the store — runs after the first render.
+- `init` runs once, before the first page's `init`. Its `Cmd` — typically the one `Service.call` that fills the store — runs after the first render, for every store the app uses, whether a page reads it or only writes to it.
 - A shared change repaints the page on screen: its builders are re-applied with the new values. The page's own model is untouched and its `update` is **not** called.
 - A `Cmd.toShared` issued before a navigation still applies after it. Shared is page-independent, so unlike a page msg it is never dropped at the dispatch boundary.
-- `subscriptions` here are alive for the life of the store, not the page. A `Time.every` is an app-wide heartbeat.
+- `subscriptions` here are alive for the life of the store, not the page, whatever page is on screen. A `Time.every` is an app-wide heartbeat. A page's own subscriptions run only while it is the page on screen: a page a push or a sheet covers stops listening until it is shown again.
 - The store dies with the tab. Persistence is out of scope; a `localStorage`-backed variant is future work.
 
 Shared is not a server cache. There is no revalidation or staleness policy — if the data can rot, the app decides when to refresh it. And it is not a place for page state: if only one screen cares, it stays in that screen's model.

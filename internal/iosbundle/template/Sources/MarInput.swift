@@ -11,7 +11,7 @@
 //   - Device   -> UITraitCollection + scene bounds + GCMouse + UIAccessibility
 //
 // Each is a @MainActor hub singleton: native events fan out to listeners the
-// page runtime registers (reconcileSubs), and the builtins produce the same
+// app's subscriptions register (MarSubscriptions), and the builtins produce the same
 // `__Sub` items the runtime consumes. Constructors (Gamepad.<Button>,
 // Keyboard.<Key>, Coarse/Fine) and the Device record match the other runtimes.
 //
@@ -41,7 +41,7 @@ final class GamepadHub {
     private var lx = 0, ly = 0, rx = 0, ry = 0
 
     /// Calls `cb` on every change. The state a subscriber is handed when it
-    /// starts listening comes from the page runtime (seedOwners), not from
+    /// starts listening comes from MarSubscriptions (seedOwners), not from
     /// here.
     func add(_ cb: @escaping () -> Void) -> Int {
         wire(); token += 1; listeners[token] = cb
@@ -143,7 +143,7 @@ final class KeyboardHub {
     private var held: [String] = []     // held codes, in press order
 
     /// Calls `cb` on every change. The state a subscriber is handed when it
-    /// starts listening comes from the page runtime (seedOwners), not from
+    /// starts listening comes from MarSubscriptions (seedOwners), not from
     /// here.
     func add(_ cb: @escaping () -> Void) -> Int {
         wire(); token += 1; listeners[token] = cb
@@ -237,7 +237,7 @@ final class DeviceHub {
     private var wired = false
 
     /// Calls `cb` on every change. The state a subscriber is handed when it
-    /// starts listening comes from the page runtime (seedOwners), not from
+    /// starts listening comes from MarSubscriptions (seedOwners), not from
     /// here.
     func add(_ cb: @escaping () -> Void) -> Int {
         wire(); token += 1; listeners[token] = cb
@@ -261,6 +261,9 @@ final class DeviceHub {
         }
     }
 
+    /// Some of these do not change the record (coming back to the foreground
+    /// is a check, not a change); MarSubscriptions hands each subscriber a
+    /// record only once.
     private func fire() { for cb in listeners.values { cb() } }
 
     /// The current Device record. iOS primary input is a finger (Coarse) with

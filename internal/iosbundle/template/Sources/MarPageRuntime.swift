@@ -188,7 +188,7 @@ final class PageRuntime {
         // frames a second for as long as the phone stays awake.
         if where_ == .page {
             halted = true
-            teardownSubs()
+            MarSubscriptions.shared.refresh()
         }
     }
 
@@ -209,59 +209,15 @@ final class PageRuntime {
         record(site, .dispatch, error.localizedDescription)
     }
 
-    /// The owner of a store's subscription items: "shared:" and its key.
-    private static let storeOwnerPrefix = "shared:"
-
-    /// Applies a subscription tagger, reporting instead of swallowing, and
-    /// sends the message to the tagger's owner: the page, or the store whose
-    /// subscription it is. By owner, not by tagger: one source key can have
-    /// owners on both sides, two stores can hand in the very same tagger, and
-    /// the page's update would not understand a store's message.
-    private func applyTagger(_ tagger: MarValue, owner: String, _ value: MarValue, _ site: String) -> MarValue? {
-        do {
-            let msg = try Eval.apply(tagger, value)
-            if owner.hasPrefix(Self.storeOwnerPrefix) {
-                MarSharedRegistry.lookup(String(owner.dropFirst(Self.storeOwnerPrefix.count)))?.dispatch(msg)
-                return nil
-            }
-            return msg
-        } catch {
-            report(site, error)
-            return nil
-        }
+    /// A subscription of this page failed: building it, or a tagger. The
+    /// model is untouched, so the screen behind the message is still a
+    /// consistent one.
+    func reportSubscriptionFailure(_ site: String, _ error: Error) {
+        report(site, error)
     }
 
     @ObservationIgnored private var initEffectFired = false
     @ObservationIgnored private var pendingInitEffect: MarValue?
-    @ObservationIgnored private var activeSubs: [String: LiveSub] = [:]
-
-    /// A live subscription source. Different kinds (timer, keyboard, gamepad,
-    /// device, sound) hold different native handles behind `stop`; all carry
-    /// the current taggers, refreshed on reconcile without a restart (identity
-    /// is the item content, never the tagger). Mirrors the JS `subSources`
-    /// records + activeSubs map in internal/jsserve/runtime.js.
-    final class LiveSub {
-        var taggers: [MarValue]
-        /// Who each tagger belongs to, index for index: "page", or the key of
-        /// the shared store whose subscription it is. Taggers are fresh
-        /// closures on every reconcile, so only the owner says that a
-        /// subscriber is new rather than the same one again.
-        var owners: [String] = []
-        let stop: () -> Void
-        /// Optional live-retarget hook, called with the item's payload when
-        /// the SAME key survives a reconcile. Sound.voice / Sound.glide use it to slide
-        /// the held bed to a new pitch/volume (the JS `update:` on the
-        /// ambient subSource); sources without live state leave it nil.
-        var update: ((MarValue) -> Void)?
-        /// A source that reports a state (Device, Keyboard, Gamepad): each
-        /// owner that starts listening, when the source starts or by joining
-        /// it, is handed the current state (see seedOwners).
-        var reportsState = false
-        /// Owners waiting for their seed, delivered as one dispatch on the
-        /// main actor. Nil when nothing is pending.
-        var seedFor: Set<String>?
-        init(taggers: [MarValue], stop: @escaping () -> Void) { self.taggers = taggers; self.stop = stop }
-    }
 
     /// Public-page constructor (no User threading, no params).
     convenience init(page: DecodedPage) {
@@ -321,9 +277,10 @@ final class PageRuntime {
     }
 
     /// Called when the page appears on screen. Fires the init Effect the
-    /// first time and starts the subscriptions. Nothing here decides where
-    /// async results go: each effect carries its issuer (runEffect), so a
-    /// SwiftUI re-mount of a covered page cannot take another page's result.
+    /// first time; the page's subscriptions run while it is the page on top
+    /// (MarSubscriptions). Nothing here decides where async results go: each
+    /// effect carries its issuer (runEffect), so a SwiftUI re-mount of a
+    /// covered page cannot take another page's result.
     func mount() {
         mounted = true
         // One line per screen that comes up, naming what it drew. "mounted
@@ -333,49 +290,37 @@ final class PageRuntime {
         print("[mar] mount \(path) drew=\(currentView().map { $0.tag } ?? "nothing")")
         MarLiveRuntimes.mounted(self)
         #endif
-        // A page built by Page.withShared IS a function of the shared model,
+        // A page built by Page.withShared IS a function of the shared models,
         // so a change there changes what this page is, not merely what it
-        // shows. Re-reconcile and let @Observable redraw; the four functions
-        // are computed, so the next read already sees the new model.
+        // shows. Let @Observable redraw; the four functions are computed, so
+        // the next read already sees the new model.
         //
-        // Registered per MOUNTED page rather than in one slot on the store: a
-        // pushed stack keeps the screens beneath it alive, and every one of
-        // them is reading the same model.
+        // Registered per MOUNTED page rather than in one slot on the store:
+        // every mounted page that reads a store is a function of its model.
         if shared != nil {
             MarSharedRegistry.addObserver(ObjectIdentifier(self)) { [weak self] in
-                guard let self else { return }
-                // Only the page on top starts or stops subscriptions, as in
-                // dispatch: a covered page catches up when it is on top again.
-                if self.isOnTop { self.reconcileSubs() }
-                self.touch += 1
+                self?.touch += 1
             }
-            MarSharedRegistry.drainInitEffects()
         }
         if !initEffectFired, let eff = pendingInitEffect {
             initEffectFired = true
             runEffect(eff)
         }
-        reconcileSubs()
+        // The stores' init Cmds run after the first page's own init (a no-op
+        // once they ran).
+        MarSharedRegistry.drainInitEffects()
+        MarSubscriptions.shared.pageMounted(self)
     }
 
-    /// Called when the page leaves the screen, covered or popped. Stops the
-    /// subscriptions; the model stays, and so does delivery of this page's
-    /// own results while its entry is on the stack.
+    /// Called when the page leaves the screen. The model stays, and so does
+    /// delivery of this page's own results while its entry is on the stack.
     func unmount() {
         mounted = false
         #if DEBUG
         MarLiveRuntimes.unmounted(self)
         #endif
-        teardownSubs()
         MarSharedRegistry.removeObserver(ObjectIdentifier(self))
-    }
-
-    /// The top of the stack moved. A page that is mounted and now on top,
-    /// as a page under a sheet is when the sheet closes, brings its
-    /// subscriptions up to its model: results that reached it while it was
-    /// covered may have changed what it subscribes to.
-    func stackMoved() {
-        if mounted && isOnTop { reconcileSubs() }
+        MarSubscriptions.shared.pageUnmounted(self)
     }
 
     /// A result of an effect this page ran. Dropped when the page's entry
@@ -404,11 +349,10 @@ final class PageRuntime {
                 lastErrorSite = nil
             }
             runEffect(eff)
-            // Only the page on top starts or stops subscriptions: a covered
-            // page's result must not start a timer or a sound loop behind the
-            // screen the person is looking at. It catches up when it is on
-            // top again (mount, or stackMoved under a sheet).
-            if mounted && isOnTop { reconcileSubs() }
+            // Only the page on top subscribes: a covered page's result must
+            // not start a timer or a sound loop behind the screen the person
+            // is looking at. It catches up when it is on top again.
+            if mounted && isOnTop { MarSubscriptions.shared.refresh() }
         } catch {
             record("update", .dispatch, error.localizedDescription)
         }
@@ -442,254 +386,29 @@ final class PageRuntime {
     }
 
     // MARK: - Subscriptions
-    //
-    // Reconcile the live subscription sources against `subscriptions model`.
-    // Run after init (mount) and after every dispatch: the same funnel as the
-    // JS runtime's render(): start newly-returned sources, stop ones no longer
-    // returned, refresh taggers on survivors. Identity is the item content,
-    // never the tagger. Mirrors reconcileSubs + subSources in
-    // internal/jsserve/runtime.js. Handles Time.every plus the web-first
-    // sources: Keyboard / Gamepad / Device (input + capability) and Sound
-    // (loop / ambient / once). Compile-checked, verified on a real iOS build.
-    private func reconcileSubs() {
-        var desired: [String: [MarValue]] = [:]      // key -> taggers
-        var desiredOwners: [String: [String]] = [:]  // key -> owner of each tagger
-        var makers: [String: () -> LiveSub] = [:]    // key -> native source factory
-        var payloads: [String: MarValue] = [:]       // key -> live-retarget payload
 
-        func want(_ key: String, _ tagger: MarValue?, _ owner: String, _ make: @escaping () -> LiveSub) {
-            if desired[key] == nil { desired[key] = []; desiredOwners[key] = []; makers[key] = make }
-            if let tagger { desired[key]!.append(tagger); desiredOwners[key]!.append(owner) }
-        }
-
-        var subVal: MarValue?
+    /// What this page subscribes to now: `subscriptions` applied to the model.
+    /// MarSubscriptions runs these while the page is on top. A failure is
+    /// reported on this page and subscribes to nothing.
+    func subscriptionItems() -> [MarValue] {
         do {
             let applied = try PageRuntime.applyExtras(subscriptionsFn, user: user, params: params)
-            subVal = try Eval.apply(applied, model)
+            if case .ctor("__Sub", let items) = try Eval.apply(applied, model) { return items }
+            return []
         } catch {
             report("subscriptions", error)
-        }
-
-        // A shared store subscribes too, and its messages belong to ITS update
-        // , not to whichever page happened to mount the source. The reconciler
-        // groups by key across owners, so the destination travels with each
-        // tagger as its owner (applyTagger). The web does the same
-        // (deliverSub in runtime.js).
-        var allItems: [MarValue] = []
-        var itemOwners: [String] = []               // owner of each item, index for index
-        if let subVal, case .ctor("__Sub", let items) = subVal {
-            allItems.append(contentsOf: items)
-            itemOwners.append(contentsOf: items.map { _ in "page" })
-        }
-        // Every store the page reads, each once: a page can read several.
-        let storeKeys = shared.map { MarSharedRegistry.storeKeys($0.wrapper) } ?? []
-        for key in storeKeys {
-            guard let store = MarSharedRegistry.lookup(key),
-                  case .ctor("__Sub", let items) = store.subscriptions() else { continue }
-            allItems.append(contentsOf: items)
-            itemOwners.append(contentsOf: items.map { _ in Self.storeOwnerPrefix + key })
-        }
-
-        if !allItems.isEmpty {
-            for (item, owner) in zip(allItems, itemOwners) {
-                guard case .ctor(let itag, let a) = item else { continue }
-                switch itag {
-                case "__SubEvery":
-                    guard a.count == 2, case .duration(let ms) = a[0] else { continue }
-                    let key = "every:\(ms)"
-                    let seconds = Double(ms) / 1000
-                    want(key, a[1], owner) { [weak self] in self?.makeTimer(key, seconds) ?? LiveSub(taggers: []) {} }
-                case "__SubKeyboard":
-                    want("keyboard", a.first, owner) { [weak self] in self?.makeKeyboard() ?? LiveSub(taggers: []) {} }
-                case "__SubGamepad":
-                    want("gamepad", a.first, owner) { [weak self] in self?.makeGamepad() ?? LiveSub(taggers: []) {} }
-                case "__SubDevice":
-                    want("device", a.first, owner) { [weak self] in self?.makeDevice() ?? LiveSub(taggers: []) {} }
-                case "__SubSound":
-                    guard a.count == 2, case .string(let mode) = a[0] else { continue }
-                    let snd = a[1]
-                    // voice / glide are HELD sources (docs/proposals/sound.md):
-                    // their identity is the structure without volume, and for
-                    // glide without pitch either (MarSound.heldKey, the JS
-                    // heldKey). Handing one back with only a live parameter
-                    // changed must GLIDE the running node (the survivor's
-                    // update hook below), never stop+restart it: restarting
-                    // clicked AND, at 60 renders/sec, stalled the frame rate.
-                    // loop / once keep the full content key so a genuine
-                    // change swaps the track.
-                    let held = mode == "voice" || mode == "glide"
-                    let key = held
-                        ? "sound:\(mode):\(MarSound.heldKey(snd, withFreq: mode == "voice"))"
-                        : "sound:\(mode):\(MarSound.contentKey(snd))"
-                    if held { payloads[key] = snd }
-                    want(key, nil, owner) { [weak self] in self?.makeSound(mode, snd) ?? LiveSub(taggers: []) {} }
-                default:
-                    continue
-                }
-            }
-        }
-        // Stop sources no longer desired (collect keys first, never mutate
-        // while iterating).
-        for key in activeSubs.keys.filter({ desired[$0] == nil }) {
-            activeSubs[key]?.stop()
-            activeSubs.removeValue(forKey: key)
-        }
-        // Start new sources; refresh taggers on survivors and let sources
-        // with live state (the ambient bed) retarget to the new payload.
-        for (key, taggers) in desired {
-            let owners = desiredOwners[key] ?? []
-            if let live = activeSubs[key] {
-                let joined = live.reportsState ? owners.filter { !live.owners.contains($0) } : []
-                live.taggers = taggers
-                live.owners = owners
-                if let p = payloads[key] { live.update?(p) }
-                seedOwners(key, live, joined)
-            } else {
-                let live = makers[key]!()
-                live.taggers = taggers
-                live.owners = owners
-                activeSubs[key] = live
-                seedOwners(key, live, owners)
-            }
+            return []
         }
     }
 
-    /// What the page was last handed by each state source, by source key. The
-    /// runtime outlives an unmount: SwiftUI can unmount a page a push covers
-    /// and mount it again, model and all, when Back shows it. A page shown
-    /// again is handed the state only if it changed meanwhile, as if it had
-    /// kept listening; a fresh runtime has nothing here and is always handed
-    /// it. Mirrors pageStateSeen in runtime.js.
+    /// What the page was last handed by each state source, by source key,
+    /// while it was on top. A page shown again with the model it had is handed
+    /// the state only if it changed while the page was covered, as if it had
+    /// kept listening. Mirrors pageStateSeen in runtime.js.
     @ObservationIgnored private var pageStateSeen: [String: MarValue] = [:]
 
-    private func readState(_ key: String) -> MarValue? {
-        switch key {
-        case "device": return DeviceHub.shared.currentRecord()
-        case "keyboard": return KeyboardHub.shared.currentRecord()
-        case "gamepad": return GamepadHub.shared.currentRecord()
-        default: return nil
-        }
-    }
-
-    /// Every delivery of a state source goes through here: a change to every
-    /// subscriber, or a seed to the ones that started listening.
-    private func deliverState(_ key: String, _ taggers: [MarValue], _ owners: [String], _ value: MarValue) {
-        if owners.contains("page") { pageStateSeen[key] = value }
-        let site = "a \(key) subscription"
-        for (t, o) in zip(taggers, owners) { if let m = applyTagger(t, owner: o, value, site) { dispatch(m) } }
-    }
-
-    /// Each owner that starts listening to a state source, when the source
-    /// starts or by joining one already running (a page that starts watching
-    /// the device while its shared store already does), is handed the current
-    /// state once, as one dispatch on the main actor. Who receives it is
-    /// decided at delivery: an owner that left in between gets nothing, and an
-    /// owner that started listening twice before it landed gets it once.
-    /// Mirrors seedSub in runtime.js.
-    private func seedOwners(_ key: String, _ live: LiveSub, _ owners: [String]) {
-        guard live.reportsState, !owners.isEmpty else { return }
-        if live.seedFor == nil {
-            live.seedFor = []
-            Task { @MainActor [weak self, weak live] in
-                guard let self, let live else { return }
-                let pending = live.seedFor ?? []
-                live.seedFor = nil
-                guard self.activeSubs[key] === live, let value = self.readState(key) else { return }
-                let unchanged = self.pageStateSeen[key].map { $0.equalsMar(value) } ?? false
-                var taggers: [MarValue] = []
-                var who: [String] = []
-                for (t, o) in zip(live.taggers, live.owners) where pending.contains(o) && !(o == "page" && unchanged) {
-                    taggers.append(t)
-                    who.append(o)
-                }
-                if !taggers.isEmpty { self.deliverState(key, taggers, who, value) }
-            }
-        }
-        live.seedFor?.formUnion(owners)
-    }
-
-    // MARK: source factories
-
-    private func makeTimer(_ key: String, _ seconds: Double) -> LiveSub {
-        // Game-rate ticks (<= ~40fps, e.g. Time.every (millis 16)) ride a
-        // CADisplayLink: a vsync-aligned game clock (ADR-0003), locked 1:1
-        // on a healthy display, capped catch-up when frames drop, never an
-        // unbounded backlog. A 60Hz Timer both misaligns with vsync and
-        // QUEUES ticks under load: a heavy game then spirals into
-        // unplayability as the queue never drains. This mirrors the web
-        // runtime's rAF tick source for Time.every ≤20ms.
-        if seconds <= 0.025 {
-            let proxy = DisplayLinkProxy(interval: seconds)
-            proxy.onFrame = { [weak self] in self?.fireTime(key) }
-            proxy.start()
-            return LiveSub(taggers: []) { proxy.stop() }
-        }
-        // Slower clocks stay on a Timer (a display link can't do long
-        // intervals and would freeze in a backgrounded tab). 1ms floor so
-        // Time.millis can still drive sub-second ticks.
-        let timer = Timer.scheduledTimer(withTimeInterval: max(seconds, 0.001), repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.fireTime(key) }
-        }
-        return LiveSub(taggers: []) { timer.invalidate() }
-    }
-    private func fireTime(_ key: String) {
-        guard let live = activeSubs[key] else { return }
-        guard let now = MarCivil.everyTick() else { return }
-        for (t, o) in zip(live.taggers, live.owners) {
-            if let m = applyTagger(t, owner: o, now, "a Time.every subscription") { dispatch(m) }
-        }
-    }
-
-    // Keyboard.watch / Gamepad.watch / Device.watch: state mirrors. Each
-    // registers a change listener on its hub and delivers the whole record on
-    // every change; a subscriber is handed the current record when it starts
-    // listening (seedOwners). Mirrors subSources.keyboardWatch / gamepadWatch /
-    // deviceWatch in runtime.js.
-    private func makeKeyboard() -> LiveSub { makeStateSource("keyboard", KeyboardHub.shared.add, KeyboardHub.shared.remove) }
-    private func makeGamepad() -> LiveSub { makeStateSource("gamepad", GamepadHub.shared.add, GamepadHub.shared.remove) }
-    private func makeDevice() -> LiveSub { makeStateSource("device", DeviceHub.shared.add, DeviceHub.shared.remove) }
-
-    /// A state source: its hub calls back on every change, which goes to every
-    /// subscriber; the state a subscriber is handed when it starts listening
-    /// comes from seedOwners, not from the hub.
-    private func makeStateSource(_ key: String,
-                                 _ add: (@escaping () -> Void) -> Int,
-                                 _ remove: @escaping (Int) -> Void) -> LiveSub {
-        let tok = add { [weak self] in
-            guard let self, let live = self.activeSubs[key], let value = self.readState(key) else { return }
-            self.deliverState(key, live.taggers, live.owners, value)
-        }
-        let live = LiveSub(taggers: []) { remove(tok) }
-        live.reportsState = true
-        return live
-    }
-
-    private func makeSound(_ mode: String, _ snd: MarValue) -> LiveSub {
-        switch mode {
-        case "loop":
-            let handle = MarSound.shared.startLoop(snd)
-            return LiveSub(taggers: []) { MarSound.shared.stop(handle) }
-        case "voice", "glide":
-            let handle = MarSound.shared.startHeld(snd)
-            let live = LiveSub(taggers: []) { MarSound.shared.stop(handle) }
-            // Same held key surviving a reconcile = slide the running node to
-            // the new levels, and for glide to the new pitch as well (the
-            // racer's engine note). What the key covers decides which.
-            live.update = { MarSound.shared.glideTo(handle, $0, promptLevel: mode == "voice") }
-            return live
-        default:
-            let handle = MarSound.shared.startOnce(snd)
-            return LiveSub(taggers: []) { MarSound.shared.stop(handle) }
-        }
-    }
-
-    /// Invalidate every live source. Called from unmount() so leaving a page
-    /// stops its subscriptions (mirrors the JS reconciler dropping the page's
-    /// keys on navigation).
-    private func teardownSubs() {
-        for (_, live) in activeSubs { live.stop() }
-        activeSubs.removeAll()
-    }
+    func stateSeen(_ key: String) -> MarValue? { pageStateSeen[key] }
+    func noteStateSeen(_ key: String, _ value: MarValue) { pageStateSeen[key] = value }
 
     // MARK: - Helpers
 
@@ -704,7 +423,7 @@ final class PageRuntime {
 
     /// Whether this page's entry is the top of the stack: on screen, not
     /// covered by a pushed or presented page.
-    private var isOnTop: Bool {
+    var isOnTop: Bool {
         guard let entry else { return true }
         return AppContext.shared.stack.last?.id == entry
     }
