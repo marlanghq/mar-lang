@@ -158,62 +158,36 @@ private struct StackShell: View {
         // portion); set rewrites that suffix while preserving the root
         // entry. When the user swipes back the only pushed entry, set
         // is called with [], leaving the stack with just the root.
-        // A Page.sheet route at the TOP of the stack is presented, not
-        // pushed: it comes off the pushed array and goes to `.sheet`
-        // below, so the screen it was reached from stays on screen
-        // underneath. As the ROOT it has nothing to present over and
-        // mounts normally: the same graceful fallback the web gives a
-        // cold load of a sheet route.
-        let presented: NavEntry? = {
-            var route: NavEntry?
-            if ctx.stack.count > 1, let top = ctx.stack.last, isSheetRoute(top.path) {
-                route = top
-            }
-            #if DEBUG
-            // Publish the decision this shell actually made. The lifecycle
-            // harness asks THIS rather than working it out from the route
-            // table again: a shell that resolved a sheet route and then
-            // pushed it anyway would agree with a re-derivation and disagree
-            // with the screen. A plain box, not observable state, so writing
-            // it during a body pass invalidates nothing. Inside the closure
-            // because a bare assignment in a ViewBuilder is read as a view.
-            MarPresentation.current = route?.path
-            #endif
-            return route
-        }()
+        // The Page.sheet routes at the TOP of the stack are presented, not
+        // pushed: they come off the pushed array and go to `.sheet` below,
+        // so the screen they were reached from stays on screen underneath.
+        // As the ROOT a sheet route has nothing to present over and mounts
+        // normally: the same graceful fallback the web gives a cold load of
+        // a sheet route.
+        let chain = presentedChain(ctx.stack, pages)
+        #if DEBUG
+        // Publish the decision this shell actually made. The lifecycle
+        // harness asks THIS rather than working it out from the route
+        // table again: a shell that resolved a sheet route and then
+        // pushed it anyway would agree with a re-derivation and disagree
+        // with the screen. A plain box, not observable state, so writing
+        // it during a body pass invalidates nothing.
+        let _ = { MarPresentation.current = chain.last?.path }()
+        #endif
 
         let pushedBinding = Binding<[NavEntry]>(
             get: {
-                let pushed = Array(ctx.stack.dropFirst())
-                return presented == nil ? pushed : Array(pushed.dropLast())
+                let stack = ctx.stack
+                return Array(stack.dropFirst().dropLast(presentedChain(stack, pages).count))
             },
             set: { newPushed in
                 // While a route is presented the stack underneath is
-                // covered and cannot pop, so the presented entry is
-                // preserved here; `.sheet`'s own binding is what removes
-                // it (swipe down, or a Nav effect from the sheet).
-                let tail = presented.map { [$0] } ?? []
-                if let first = ctx.stack.first {
-                    ctx.stack = [first] + newPushed + tail
-                } else {
-                    ctx.stack = newPushed + tail
-                }
-            }
-        )
-
-        // Dismissal drops the presented entry from the stack, so the route
-        // and what is on screen can never disagree: the same rule the
-        // web follows by routing every dismissal through history. Only
-        // while that entry is still on top: when Nav.dismiss or Back has
-        // already taken it off, SwiftUI reports the sheet closing too, and
-        // a second removal would take the page underneath with it.
-        let presentedBinding = Binding<Bool>(
-            get: { presented != nil },
-            set: { showing in
-                if !showing, let shown = presented, ctx.stack.count > 1,
-                   ctx.stack.last?.id == shown.id {
-                    ctx.stack.removeLast()
-                }
+                // covered and cannot pop, so the presented entries are
+                // preserved here; each `.sheet`'s own binding is what
+                // removes its entry (swipe down, or a Nav effect from it).
+                let stack = ctx.stack
+                let tail = presentedChain(stack, pages)
+                ctx.stack = Array(stack.prefix(1)) + newPushed + tail
             }
         )
 
@@ -239,9 +213,9 @@ private struct StackShell: View {
                     RouteView(entry: entry, pages: pages)
                 }
         }
-        .sheet(isPresented: presentedBinding) {
-            if let entry = presented {
-                RouteView(entry: entry, pages: pages)
+        .sheet(isPresented: dismissing(chain.first)) {
+            if let entry = chain.first {
+                PresentedRoute(entry: entry, pages: pages)
             }
         }
         .id(ctx.rootGeneration)
@@ -258,8 +232,62 @@ private struct StackShell: View {
         ctx.stack.first ?? NavEntry(id: NavEntry.unseated, path: pages.startPath ?? "/")
     }
 
-    private func isSheetRoute(_ url: String) -> Bool {
-        pages.isSheetRoute(url)
+}
+
+/// The entries the shell presents instead of pushing: the run of Page.sheet
+/// routes at the top of the stack, bottom first. Never the root, which has
+/// nothing to present over. Empty when the top is an ordinary page.
+@MainActor
+private func presentedChain(_ stack: [NavEntry], _ pages: [DecodedPage]) -> [NavEntry] {
+    var start = stack.count
+    while start > 1, pages.isSheetRoute(stack[start - 1].path) { start -= 1 }
+    return Array(stack[start...])
+}
+
+/// Whether `shown` is presented, as a binding a `.sheet` can close. Closing
+/// drops the entry from the stack, so the route and what is on screen can
+/// never disagree: the same rule the web follows by routing every dismissal
+/// through history. Only while that entry is still on top: when Nav.dismiss
+/// or Back has already taken it off, SwiftUI reports the sheet closing too,
+/// and a second removal would take the page underneath with it.
+@MainActor
+private func dismissing(_ shown: NavEntry?) -> Binding<Bool> {
+    Binding(
+        get: { shown != nil },
+        set: { showing in
+            let ctx = AppContext.shared
+            if !showing, let shown, ctx.stack.count > 1, ctx.stack.last?.id == shown.id {
+                ctx.stack.removeLast()
+            }
+        }
+    )
+}
+
+/// One presented route, and the presented route over it, if any. A sheet
+/// route that opens another sheet route presents it over itself, so the one
+/// underneath stays alive with its model, as a covered page does, and Back
+/// from the second finds the first as it was left.
+///
+/// `.id(entry.id)`: each entry gets its own page host. Without it, SwiftUI
+/// keeps the host's @State when the entry in this slot changes, and the
+/// screen would go on showing the page that was there before.
+private struct PresentedRoute: View {
+    let entry: NavEntry
+    let pages: [DecodedPage]
+
+    @State private var ctx = AppContext.shared
+
+    var body: some View {
+        let chain = presentedChain(ctx.stack, pages)
+        let above = chain.firstIndex(where: { $0.id == entry.id })
+            .flatMap { $0 + 1 < chain.count ? chain[$0 + 1] : nil }
+        RouteView(entry: entry, pages: pages)
+            .id(entry.id)
+            .sheet(isPresented: dismissing(above)) {
+                if let above {
+                    PresentedRoute(entry: above, pages: pages)
+                }
+            }
     }
 }
 

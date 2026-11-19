@@ -144,6 +144,11 @@ function mkEl(tag) {
   const el = {
     tagName: String(tag).toUpperCase(), nodeType: 1,
     children: [], childNodes: [], firstChild: null, parentNode: null,
+    // Read by every "remove the extras" loop in the renderer. Without it
+    // those loops removed nothing: a presented route painted over another
+    // one kept both in its sheet, and a loop that removes until a count is
+    // reached would never end.
+    get lastChild() { return this.children[this.children.length - 1] || null; },
     textContent: '', value: '', id: '',
     style: {}, dataset: {}, _on: {},
     classList: {

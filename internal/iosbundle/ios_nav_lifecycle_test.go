@@ -112,6 +112,54 @@ func TestNavigationLifecycleOnIOS(t *testing.T) {
 	}
 }
 
+// A sheet that opens another sheet, parity.SheetsSource, against the string
+// TestDismissingASheetOverASheetKeepsTheFirst holds the web to. The web swaps
+// the sheet's content and iOS presents the second sheet over the first; which
+// model each screen has, and which Done closes what, has to be the same.
+func TestSheetOverSheetOnIOS(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds an iOS app and drives a simulator")
+	}
+	buildSheetsHostOnce.Do(func() {
+		buildSheetsHostOnce.host, buildSheetsHostOnce.skip, buildSheetsHostOnce.fail =
+			makeHost(t, parity.SheetsSource, "SheetsCheck", sheetsBundleID)
+	})
+	if buildSheetsHostOnce.fail != "" {
+		t.Fatal(buildSheetsHostOnce.fail)
+	}
+	if buildSheetsHostOnce.host == nil {
+		t.Skip(buildSheetsHostOnce.skip)
+	}
+	got := runNavScript(t, buildSheetsHostOnce.host, "sheets")
+	want := "start:root=A=0,sheet=- s1:root=A=0,sheet=S=1 s2:root=A=0,sheet=N=0 " +
+		"back:root=A=0,sheet=S=1 bumped:root=A=0,sheet=S=2 closed:root=A=0,sheet=-"
+	if got != want {
+		t.Fatalf("a sheet over a sheet differs from the web.\n got: %s\nwant: %s\n\n"+
+			"s2:sheet=-       → the second sheet never got a page of its own; the first stayed on screen.\n"+
+			"s2:root=S=…      → the first sheet was pushed as a page under the second.\n"+
+			"back:sheet=S=0   → closing the second sheet reset the first.\n"+
+			"closed:sheet=S=… → the first sheet's Done did nothing.", got, want)
+	}
+
+	// No web counterpart: the web paints every presented route it has not
+	// painted yet from scratch (paintPresented), so it cannot keep one
+	// page's screen for another.
+	swap := runNavScript(t, buildSheetsHostOnce.host, "sheets-swap")
+	wantSwap := "s:root=A=0,sheet=S=1 swapped:root=A=0,sheet=N=0 bumped:root=A=0,sheet=N=1"
+	if swap != wantSwap {
+		t.Fatalf("a sheet whose route changed in place kept the page that was there.\n got: %s\nwant: %s", swap, wantSwap)
+	}
+}
+
+const sheetsBundleID = "dev.marlang.sheetscheck"
+
+var buildSheetsHostOnce struct {
+	sync.Once
+	host *navHost
+	skip string
+	fail string
+}
+
 const navBundleID = "dev.marlang.navcheck"
 
 // navHost is a built app with the fixture's program baked in, reused across

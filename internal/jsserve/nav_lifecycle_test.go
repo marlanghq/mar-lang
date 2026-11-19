@@ -398,62 +398,15 @@ process.stdout.write(seen.join(' ') + ' swaps=' + swaps);
 	}
 }
 
-// Claiming the live page on Back also keeps a sheet's model when a second
-// sheet over it is dismissed: the sheet path never stamped mountedPath, so the
-// next message to the first sheet looked like a new arrival and reset it.
+// A sheet that opens another sheet: parity.SheetsSource, the same string as
+// TestSheetOverSheetOnIOS. The second sheet starts fresh, its Done closes it,
+// and the first is as it was left.
+//
+// Claiming the live page on Back is what keeps the first sheet's model: the
+// sheet path never stamped mountedPath, so the next message to the first
+// sheet looked like a new arrival and reset it.
 func TestDismissingASheetOverASheetKeepsTheFirst(t *testing.T) {
-	src := `module Main exposing (main)
-
-
-import UI exposing (vstack, text, button)
-
-
-type alias Model =
-    { n : Int }
-
-
-type Msg
-    = Bump
-
-
-sheetPage : String -> String -> Page
-sheetPage path name =
-    Page.sheet
-        (Page.create
-            { path = path, title = name
-            , init = ( { n = 0 }, Cmd.none )
-            , update = \_ m -> ( { n = m.n + 1 }, Cmd.none )
-            , view = \m -> vstack [] [ text [] (name ++ "=" ++ String.fromInt m.n), button [] Bump "bump" ]
-            , subscriptions = always Sub.none
-            })
-
-
-home : Page
-home =
-    Page.create
-        { path = "/a", title = "A"
-        , init = ( { n = 0 }, Cmd.none )
-        , update = \_ m -> ( m, Cmd.none )
-        , view = \_ -> vstack [] [ text [] "A=0" ]
-        , subscriptions = always Sub.none
-        }
-
-
-sheetOne : Page
-sheetOne =
-    sheetPage "/s1" "S"
-
-
-sheetTwo : Page
-sheetTwo =
-    sheetPage "/s2" "N"
-
-
-main : Cmd ()
-main =
-    App.frontend [ home, sheetOne, sheetTwo ]
-`
-	program, err := parity.Compile(src, SerializeModule)
+	program, err := parity.Compile(parity.SheetsSource, SerializeModule)
 	if err != nil {
 		t.Fatalf("compiling the fixture: %v", err)
 	}
@@ -461,18 +414,26 @@ main =
 const fs = require('fs');
 (0, eval)(fs.readFileSync(process.argv[2], 'utf8'));
 const program = JSON.parse(fs.readFileSync(process.argv[3], 'utf8'));
+history.replaceState({ marDepth: 0, prevTitle: '' }, '', '/');
 window.marRun(program);
-// The sheet on top is the last open sheet host; its last "bump" is its own.
-const sheetHost = () => (document.body.children || []).filter((c) => c.classList && c.classList.contains('mar-page-sheet') && c.classList.contains('mar-sheet-open')).pop();
-const lastBump = (node) => { let found = null; const walk = (n) => { if (n.textContent === 'bump' && n._on && n._on.click) found = n; (n.children || []).forEach(walk); }; if (node) walk(node); return found; };
-const sheet = () => ([...sheetText().matchAll(/[SN]=\d+/g)].map((m) => m[0]).pop() || '-');
+const flush = async () => { for (let i = 0; i < 4; i++) await new Promise((r) => setTimeout(r, 0)); };
 const seen = [];
-globalThis.__marNav.push('/s1');
-lastBump(sheetHost()).click(); seen.push('s1[' + sheet() + ']');
-globalThis.__marNav.push('/s2'); seen.push('s2[' + sheet() + ']');
-history.back(); seen.push('back[' + sheet() + ']');
-lastBump(sheetHost()).click(); seen.push('bumped[' + sheet() + ']');
+const root  = () => (screenText().match(/[ASN]=\d+/) || ['-'])[0];
+const sheet = () => (sheetText().match(/[ASN]=\d+/) || ['-'])[0];
+const note = (label) => seen.push(label + ':root=' + root() + ',sheet=' + sheet());
+// The open sheet, where the presented route's buttons are.
+const sheetHost = () => (document.body.children || []).filter((c) => c.classList && c.classList.contains('mar-page-sheet') && c.classList.contains('mar-sheet-open')).pop();
+const press = (label, node) => { if (!node) return false; if (node.textContent === label && node._on && node._on.click) { node.click(); return true; } return (node.children || []).some((c) => press(label, c)); };
+(async () => {
+await flush(); note('start');
+globalThis.__marNav.push('/s'); await flush();
+press('bump', sheetHost()); await flush(); note('s1');
+press('more', sheetHost()); await flush(); note('s2');
+press('done', sheetHost()); await flush(); note('back');
+press('bump', sheetHost()); await flush(); note('bumped');
+press('done', sheetHost()); await flush(); note('closed');
 process.stdout.write(seen.join(' '));
+})().catch((e) => process.stdout.write('THREW ' + e.stack));
 `)
 	if errors.Is(err, parity.ErrNoNode) {
 		t.Skip("node not installed")
@@ -480,8 +441,11 @@ process.stdout.write(seen.join(' '));
 	if err != nil {
 		t.Fatalf("node run: %v", err)
 	}
-	want := "s1[S=1] s2[N=0] back[S=1] bumped[S=2]"
+	want := "start:root=A=0,sheet=- s1:root=A=0,sheet=S=1 s2:root=A=0,sheet=N=0 " +
+		"back:root=A=0,sheet=S=1 bumped:root=A=0,sheet=S=2 closed:root=A=0,sheet=-"
 	if got != want {
-		t.Fatalf("dismissing the second sheet reset the first.\n got: %s\nwant: %s", got, want)
+		t.Fatalf("a sheet over a sheet broke the first one.\n got: %s\nwant: %s\n\n"+
+			"back:sheet=S=0   → closing the second sheet reset the first.\n"+
+			"back:sheet=N=0   → the second sheet's Done did nothing.", got, want)
 	}
 }

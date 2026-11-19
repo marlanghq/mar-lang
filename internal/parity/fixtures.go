@@ -650,3 +650,92 @@ main : Cmd ()
 main =
     App.frontend [ pageA, pageB, pageC, pageT, pageR, pageS ]
 `
+
+// SheetsSource is a sheet route that opens another sheet route. A is the
+// page underneath; S and N are sheets, and each has its own Done.
+//
+// The second sheet starts fresh, and closing it finds the first as it was
+// left: the first sheet's model belongs to its entry, like a covered page's.
+// How the two are drawn is the platform's call (the web swaps the sheet's
+// content, iOS presents the second over the first); which model each screen
+// has is not.
+const SheetsSource = `module Main exposing (main)
+
+
+import UI exposing (vstack, text, button, navigationStack, navigationTitle)
+
+
+type alias Model =
+    { n : Int }
+
+
+type Msg
+    = Bump
+    | More
+    | Done
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+        Bump -> ( { model | n = model.n + 1 }, Cmd.none )
+        More -> ( model, Nav.push "/n" )
+        Done -> ( model, Nav.dismiss )
+
+
+viewFor : String -> Model -> View Msg
+viewFor label model =
+    navigationStack [ navigationTitle label ]
+        [ vstack []
+            [ text [] (label ++ "=" ++ String.fromInt model.n)
+            , button [] Bump "bump"
+            , button [] More "more"
+            , button [] Done "done"
+            ]
+        ]
+
+
+pageA : Page
+pageA =
+    Page.create
+        { path = "/"
+        , title = "A"
+        , init = ( { n = 0 }, Cmd.none )
+        , update = update
+        , view = viewFor "A"
+        , subscriptions = always Sub.none
+        }
+
+
+pageS : Page
+pageS =
+    Page.sheet
+        (Page.create
+            { path = "/s"
+            , title = "S"
+            , init = ( { n = 0 }, Cmd.none )
+            , update = update
+            , view = viewFor "S"
+            , subscriptions = always Sub.none
+            }
+        )
+
+
+pageN : Page
+pageN =
+    Page.sheet
+        (Page.create
+            { path = "/n"
+            , title = "N"
+            , init = ( { n = 0 }, Cmd.none )
+            , update = update
+            , view = viewFor "N"
+            , subscriptions = always Sub.none
+            }
+        )
+
+
+main : Cmd ()
+main =
+    App.frontend [ pageA, pageS, pageN ]
+`

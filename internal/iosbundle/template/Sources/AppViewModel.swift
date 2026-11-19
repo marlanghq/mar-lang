@@ -380,6 +380,22 @@ final class AppViewModel {
 
         func topRuntime() -> PageRuntime? { live(ctx.navPath.last) }
 
+        // The page on screen, by ENTRY: the runtime built for the entry on
+        // top of the stack. By path, a shell that kept showing the page that
+        // was there before would still find a runtime to answer for it.
+        func onScreen() -> PageRuntime? {
+            guard let top = ctx.stack.last else { return nil }
+            return MarLiveRuntimes.stack.last { $0.entry == top.id }
+        }
+
+        // A tap on the button with this label on the screen on top: the web
+        // driver clicks the same label in the same place.
+        func press(_ label: String) {
+            guard let runtime = onScreen(), let view = runtime.currentView(),
+                  let msg = Self.buttonMessage(view, labeled: label) else { return }
+            runtime.dispatch(msg)
+        }
+
         // One tap on whatever the screen offers first: the same thing the
         // web driver does by clicking the button it finds by label.
         func bump() {
@@ -450,6 +466,59 @@ final class AppViewModel {
             ctx.navigate(path: "/s", replace: false)
             await settle()
             noteBoth("reopened")
+
+        // parity.SheetsSource: a sheet that opens another sheet. The second
+        // starts fresh, and its own Done closes it to find the first as it
+        // was left. Read by entry: the sheet on screen has to be the page
+        // built for the entry on top.
+        case "sheets":
+            func noteSheets(_ label: String) {
+                let root = counter(MarLiveRuntimes.stack.first)
+                let sheet = MarPresentation.current == nil ? "-" : counter(onScreen())
+                seen.append("\(label):root=\(root),sheet=\(sheet)")
+            }
+            try? await Task.sleep(nanoseconds: 800_000_000)
+            noteSheets("start")
+            ctx.navigate(path: "/s", replace: false)
+            try? await Task.sleep(nanoseconds: 800_000_000)
+            press("bump")
+            await settle()
+            noteSheets("s1")
+            press("more")
+            try? await Task.sleep(nanoseconds: 1_000_000_000)
+            noteSheets("s2")
+            press("done")
+            try? await Task.sleep(nanoseconds: 1_200_000_000)
+            noteSheets("back")
+            press("bump")
+            await settle()
+            noteSheets("bumped")
+            press("done")
+            try? await Task.sleep(nanoseconds: 1_200_000_000)
+            noteSheets("closed")
+
+        // The presented entry changes in place: S comes off and N goes on in
+        // one turn, so the sheet never closes. What it shows has to be N's
+        // own page, not S's page kept in the slot.
+        case "sheets-swap":
+            func noteSheets(_ label: String) {
+                let root = counter(MarLiveRuntimes.stack.first)
+                let sheet = MarPresentation.current == nil ? "-" : counter(onScreen())
+                seen.append("\(label):root=\(root),sheet=\(sheet)")
+            }
+            try? await Task.sleep(nanoseconds: 800_000_000)
+            ctx.navigate(path: "/s", replace: false)
+            try? await Task.sleep(nanoseconds: 800_000_000)
+            press("bump")
+            await settle()
+            noteSheets("s")
+            ctx.stack.removeLast()
+            ctx.navigate(path: "/n", replace: false)
+            try? await Task.sleep(nanoseconds: 1_000_000_000)
+            noteSheets("swapped")
+            press("bump")
+            await settle()
+            noteSheets("bumped")
 
         case "sheet-cold", "sheet-cold-nested":
             // Seeded before the first render (see runProgramSync), so this is
@@ -645,6 +714,24 @@ final class AppViewModel {
         if view.tag == "button", !disabled, let msg = view.msg, !isFunction(msg) { return msg }
         for child in view.children {
             if let found = firstMessage(child) { return found }
+        }
+        return nil
+    }
+
+    /// The message of the button showing exactly `label`, in tree order.
+    /// Disabled buttons are skipped, as in firstMessage.
+    private static func buttonMessage(_ view: MarView, labeled label: String) -> MarValue? {
+        let disabled = view.attrs.contains { attr in
+            guard attr.name == "disabled" else { return false }
+            if case .bool(let b) = attr.value { return b }
+            return true
+        }
+        if view.tag == "button", !disabled, let msg = view.msg, !isFunction(msg),
+           visibleText(view) == label {
+            return msg
+        }
+        for child in view.children {
+            if let found = buttonMessage(child, labeled: label) { return found }
         }
         return nil
     }

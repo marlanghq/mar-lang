@@ -743,6 +743,10 @@ around:
   the sheet closes: the person is looking at the sheet. Nothing
   refetches on dismissal, so if the task changed data the page underneath
   is showing, that page will be stale until something asks it to reload.
+- **A sheet can open another.** The second starts fresh, and its own
+  `Nav.dismiss` closes it to find the first as it was left. On the web the
+  sheet's content changes in place; on the iPhone the second sheet slides
+  up over the first.
 
 A presented route has no navigation bar of its own — the sheet is not on
 the stack — so its own header is the chrome: the dismiss on one side, the
